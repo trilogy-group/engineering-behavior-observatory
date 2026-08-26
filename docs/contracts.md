@@ -9,12 +9,14 @@ not contain an evaluation corpus or a fixed operating matrix.
 `schemas/task-packet.v1.schema.json` divides a packet into two surfaces:
 
 - `agentInput` is the only surface a workspace materializer may use. It holds
-  the public prompt, a digest-verified sanitized archive, and an explicit
+  the public prompt, a digest-verified sanitized TAR+gzip v1 archive with
+  compressed-byte, expanded-byte, and member-count limits, and an explicit
   workspace-relative allowlist. A materializer verifies the archive digest and
   copies only `includePaths`; it must not materialize a raw repository checkout.
 - Its archive locator is a secret-free, bundle-relative logical path. URLs,
   absolute local paths, credentials, and path traversal are invalid there.
-  Include paths are POSIX logical paths only; leading slashes, backslashes,
+  Include paths are canonical POSIX logical paths only; leading slashes, trailing
+  slashes, backslashes,
   drive letters, UNC paths, and traversal forms are invalid.
 - `verified-archive-literal-paths-v1` resolves each literal from the sanitized
   archive root. A file includes that file; a directory includes its complete

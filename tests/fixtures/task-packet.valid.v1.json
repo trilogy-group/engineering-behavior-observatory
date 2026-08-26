@@ -5,8 +5,14 @@
     "prompt": "Update the documented API contract and verify the fixture.",
     "fixture": {
       "source": {
-        "kind": "sanitized-archive",
-        "locator": "fixtures/example-contract-change.tar.gz",
+      "kind": "sanitized-archive",
+      "format": "tar-gzip-v1",
+      "limits": {
+        "maxCompressedBytes": 1048576,
+        "maxExpandedBytes": 10485760,
+        "maxMembers": 1000
+      },
+      "locator": "fixtures/example-contract-change.tar.gz",
         "digest": { "algorithm": "sha256", "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }
       },
       "materializer": {

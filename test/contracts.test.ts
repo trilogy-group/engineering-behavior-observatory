@@ -122,7 +122,7 @@ test("task packets expose only a verified, allowlisted materialization surface",
   const packet = fixture("task-packet.valid.v1.json") as {
     agentInput: {
       fixture: {
-        source: { kind: string; digest: object };
+        source: { kind: string; format: string; limits: object; digest: object };
         materializer: { kind: string; includePaths: string[] };
       };
     };
@@ -132,6 +132,7 @@ test("task packets expose only a verified, allowlisted materialization surface",
 
   assert.equal(validate(packet), true, JSON.stringify(validate.errors));
   assert.equal(packet.agentInput.fixture.source.kind, "sanitized-archive");
+  assert.equal(packet.agentInput.fixture.source.format, "tar-gzip-v1");
   assert.equal(packet.agentInput.fixture.materializer.kind, "verified-archive-literal-paths-no-links-v1");
   assert.deepEqual(packet.agentInput.fixture.materializer.includePaths, ["README.md", "package.json", "src"]);
   assert.doesNotMatch(JSON.stringify(packet.agentInput), /referenceSolution|reviewRecord|verifier/);
@@ -161,6 +162,10 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   (ipv6Host.provenance as Document).repositoryUrl = "https://[2001:db8::1]/org/repository.git";
   assert.equal(validatorWithoutFormatAssertion("task-packet.v1.schema.json")(ipv6Host), true);
 
+  const ipv4EmbeddedIpv6Host = structuredClone(admitted) as Document;
+  (ipv4EmbeddedIpv6Host.provenance as Document).repositoryUrl = "https://[::ffff:192.0.2.128]/org/repository.git";
+  assert.equal(validatorWithoutFormatAssertion("task-packet.v1.schema.json")(ipv4EmbeddedIpv6Host), true);
+
   const malformedIpv6Host = structuredClone(admitted) as Document;
   (malformedIpv6Host.provenance as Document).repositoryUrl = "https://[.]/repository.git";
   expectInvalid(validatorWithoutFormatAssertion("task-packet.v1.schema.json"), malformedIpv6Host, "repositoryUrl");
@@ -168,6 +173,19 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   const unperturbed = structuredClone(admitted) as Document;
   unperturbed.controlledPerturbation = { status: "not-applied" };
   assert.equal(validate(unperturbed), true, JSON.stringify(validate.errors));
+
+  for (const includePath of ["README.md/", "src/"]) {
+    const trailingSlash = structuredClone(admitted) as Document;
+    ((trailingSlash.agentInput as Document).fixture as Document).materializer = {
+      ...((trailingSlash.agentInput as Document).fixture as Document).materializer as Document,
+      includePaths: [includePath],
+    };
+    expectInvalid(validate, trailingSlash, "includePaths");
+  }
+
+  const archiveBomb = structuredClone(admitted) as Document;
+  ((((archiveBomb.agentInput as Document).fixture as Document).source as Document).limits as Document).maxMembers = 100001;
+  expectInvalid(validate, archiveBomb, "maxMembers");
 
   const malformedReviewTime = structuredClone(admitted) as Document;
   ((malformedReviewTime.admission as Document).review as Document).reviewedAt = "unknown";
@@ -280,6 +298,8 @@ test("experiment fixtures pin identity and preserve native harness limits", () =
   );
 
   const declaredConfiguration: ExperimentConfiguration = {
+    schemaVersion: "ebo.experiment/v1",
+    id: "declared-configuration",
     taskSet: twentyFour.taskSet as TaskConditionSet,
     modelSet: configurationExperiment.modelSet,
     harnessSet: configurationExperiment.harnessSet,

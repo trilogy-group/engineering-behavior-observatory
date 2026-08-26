@@ -50,6 +50,8 @@ export type DeclaredMatrixCell = {
 };
 
 export type ExperimentConfiguration = {
+  schemaVersion: "ebo.experiment/v1";
+  id: string;
   taskSet: TaskConditionSet;
   modelSet: Record<string, { configurationRef: ArtifactReference }>;
   harnessSet: Record<string, {
