@@ -1,0 +1,6 @@
+.opensymphony*
+!.opensymphony/
+.opensymphony/*
+!.opensymphony/memory/
+.opensymphony/memory/*
+!.opensymphony/memory/memory.yaml
