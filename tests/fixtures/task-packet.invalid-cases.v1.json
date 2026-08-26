@@ -70,6 +70,12 @@
     "field": "includePaths",
     "operation": "replace",
     "path": ["agentInput", "fixture", "materializer", "includePaths"],
+    "value": ["/etc/passwd"]
+  },
+  {
+    "field": "includePaths",
+    "operation": "replace",
+    "path": ["agentInput", "fixture", "materializer", "includePaths"],
     "value": ["\\\\server\\share\\fixture"]
   },
   {

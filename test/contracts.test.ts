@@ -118,6 +118,10 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   (verifierOnly.restricted as Document).referenceSolution = { status: "not-provided" };
   assert.equal(validate(verifierOnly), true, JSON.stringify(validate.errors));
 
+  const explicitPort = structuredClone(admitted) as Document;
+  (explicitPort.provenance as Document).repositoryUrl = "https://git.example.test:8443/org/repository.git";
+  assert.equal(validate(explicitPort), true, JSON.stringify(validate.errors));
+
   for (const invalidCase of fixture("task-packet.invalid-cases.v1.json") as InvalidCase[]) {
     expectInvalid(validate, applyInvalidCase(admitted, invalidCase), invalidCase.field);
   }

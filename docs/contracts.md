@@ -14,8 +14,8 @@ not contain an evaluation corpus or a fixed operating matrix.
   copies only `includePaths`; it must not materialize a raw repository checkout.
 - Its archive locator is a secret-free, bundle-relative logical path. URLs,
   absolute local paths, credentials, and path traversal are invalid there.
-  Include paths are POSIX logical paths only; backslashes, drive letters, UNC
-  paths, and traversal forms are invalid.
+  Include paths are POSIX logical paths only; leading slashes, backslashes,
+  drive letters, UNC paths, and traversal forms are invalid.
 - `verified-archive-literal-paths-v1` resolves each literal from the sanitized
   archive root. A file includes that file; a directory includes its complete
   descendant tree. Wildcards are intentionally unsupported.
@@ -31,9 +31,9 @@ bytes; admission-freeze tooling owns the whole-packet identity later.
 
 `proposed` packets explicitly set `admission.review` to `null`. `admitted` and
 `rejected` packets require a reviewer, RFC 3339 `date-time` evidence, and the
-restricted review-record reference. Repository provenance is an HTTPS,
-credential-free repository URL plus a full immutable Git object ID, not a
-branch or tag. A verifier is always required; `referenceSolution.status` may be
+restricted review-record reference. Repository provenance is a credential-free
+HTTPS repository URI, optionally on an explicit port, plus a full immutable Git
+object ID—not a branch or tag. A verifier is always required; `referenceSolution.status` may be
 `not-provided` or `unsupported` for verifier-only work. Controlled perturbation
 content is an external, digest-addressed artifact; EBO does not prescribe a
 task-authoring taxonomy.
