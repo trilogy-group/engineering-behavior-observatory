@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "capture-report/v1",
+  "bundleId": "bundle-telemetry-incomplete",
+  "qualification": "incomplete",
+  "capabilities": {
+    "semantic": { "status": "available" },
+    "timingResource": { "status": "missing" },
+    "outcome": { "status": "available" }
+  },
+  "missingEvidence": [
+    {
+      "kind": "telemetry-span",
+      "reason": "optional-beta-unavailable",
+      "affects": ["timing-resource"]
+    }
+  ]
+}

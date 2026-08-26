@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "verifier-result/v1",
+  "bundleId": "bundle-telemetry-incomplete",
+  "status": "passed",
+  "exitCode": 0,
+  "assertions": [
+    { "id": "example-check", "status": "passed" }
+  ]
+}

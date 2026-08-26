@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "capture-report/v1",
+  "bundleId": "bundle-task-failed",
+  "qualification": "qualified",
+  "capabilities": {
+    "semantic": { "status": "available" },
+    "timingResource": { "status": "unsupported" },
+    "outcome": { "status": "available" }
+  },
+  "missingEvidence": [
+    {
+      "kind": "telemetry",
+      "reason": "unsupported",
+      "affects": ["timing-resource"]
+    }
+  ]
+}

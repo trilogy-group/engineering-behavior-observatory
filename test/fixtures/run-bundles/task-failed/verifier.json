@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "verifier-result/v1",
+  "bundleId": "bundle-task-failed",
+  "status": "failed",
+  "exitCode": 1,
+  "assertions": [
+    { "id": "example-check", "status": "failed" }
+  ]
+}

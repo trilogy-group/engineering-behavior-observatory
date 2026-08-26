@@ -1,0 +1,358 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ebo:schema:run-bundle:v1",
+  "title": "EBO run-bundle v1",
+  "$ref": "#/$defs/runManifest",
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9._-]*)(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$"
+    },
+    "sharingClass": {
+      "enum": ["restricted", "internal", "partner", "public"]
+    },
+    "nativeReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "$ref": "#/$defs/identifier" },
+        "id": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "evidenceDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source",
+        "kind",
+        "authority",
+        "mediaType",
+        "digest",
+        "sizeBytes",
+        "sharingClass",
+        "relativePath"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "source": { "$ref": "#/$defs/identifier" },
+        "kind": {
+          "enum": [
+            "session",
+            "hook",
+            "telemetry",
+            "workspace",
+            "verifier",
+            "capture-report",
+            "export-manifest"
+          ]
+        },
+        "authority": {
+          "enum": ["semantic", "timing-resource", "outcome", "capture", "export"]
+        },
+        "mediaType": { "type": "string", "minLength": 1 },
+        "digest": { "$ref": "#/$defs/digest" },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "sharingClass": { "$ref": "#/$defs/sharingClass" },
+        "relativePath": { "$ref": "#/$defs/relativePath" },
+        "nativeReference": { "$ref": "#/$defs/nativeReference" }
+      }
+    },
+    "terminal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "failureClass", "stopReason"],
+      "properties": {
+        "state": { "enum": ["completed", "failed", "stopped", "interrupted"] },
+        "failureClass": { "enum": ["none", "infrastructure", "task"] },
+        "stopReason": { "enum": ["none", "budget", "policy"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "completed" } }, "required": ["state"] },
+          "then": {
+            "properties": {
+              "failureClass": { "const": "none" },
+              "stopReason": { "const": "none" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "state": { "const": "failed" } }, "required": ["state"] },
+          "then": {
+            "properties": {
+              "failureClass": { "enum": ["infrastructure", "task"] },
+              "stopReason": { "const": "none" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "state": { "const": "stopped" } }, "required": ["state"] },
+          "then": {
+            "properties": {
+              "failureClass": { "const": "none" },
+              "stopReason": { "enum": ["budget", "policy"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "state": { "const": "interrupted" } }, "required": ["state"] },
+          "then": {
+            "properties": {
+              "failureClass": { "const": "infrastructure" },
+              "stopReason": { "const": "none" }
+            }
+          }
+        }
+      ]
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["available", "missing", "unsupported", "not-checked"] }
+      }
+    },
+    "runManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "bundleId",
+        "run",
+        "attempt",
+        "configuration",
+        "terminal",
+        "evidence"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "run-manifest/v1" },
+        "bundleId": { "$ref": "#/$defs/identifier" },
+        "run": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "task", "fixture", "model", "harness", "runtime"],
+          "properties": {
+            "id": { "$ref": "#/$defs/identifier" },
+            "task": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id"],
+              "properties": { "id": { "$ref": "#/$defs/identifier" } }
+            },
+            "fixture": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "digest"],
+              "properties": {
+                "id": { "$ref": "#/$defs/identifier" },
+                "digest": { "$ref": "#/$defs/digest" }
+              }
+            },
+            "model": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["provider", "id"],
+              "properties": {
+                "provider": { "$ref": "#/$defs/identifier" },
+                "id": { "$ref": "#/$defs/identifier" }
+              }
+            },
+            "harness": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "version"],
+              "properties": {
+                "id": { "$ref": "#/$defs/identifier" },
+                "version": { "$ref": "#/$defs/identifier" }
+              }
+            },
+            "runtime": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["sdk", "cli"],
+              "properties": {
+                "sdk": { "$ref": "#/$defs/runtimeComponent" },
+                "cli": { "$ref": "#/$defs/runtimeComponent" }
+              }
+            },
+            "native": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "sessionId": { "$ref": "#/$defs/identifier" },
+                "traceId": { "$ref": "#/$defs/identifier" }
+              }
+            }
+          }
+        },
+        "attempt": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "number"],
+          "properties": {
+            "id": { "$ref": "#/$defs/identifier" },
+            "number": { "type": "integer", "minimum": 1 },
+            "retryOf": { "$ref": "#/$defs/identifier" }
+          }
+        },
+        "configuration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["digest", "budgetDigest", "toolPolicyDigest"],
+          "properties": {
+            "digest": { "$ref": "#/$defs/digest" },
+            "budgetDigest": { "$ref": "#/$defs/digest" },
+            "toolPolicyDigest": { "$ref": "#/$defs/digest" }
+          }
+        },
+        "terminal": { "$ref": "#/$defs/terminal" },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidenceDescriptor" }
+        }
+      }
+    },
+    "runtimeComponent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "version": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "verifierResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "bundleId", "status", "assertions"],
+      "properties": {
+        "schemaVersion": { "const": "verifier-result/v1" },
+        "bundleId": { "$ref": "#/$defs/identifier" },
+        "status": { "enum": ["passed", "failed", "error", "not-run"] },
+        "exitCode": { "type": "integer" },
+        "assertions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "status"],
+            "properties": {
+              "id": { "$ref": "#/$defs/identifier" },
+              "status": { "enum": ["passed", "failed", "not-run"] }
+            }
+          }
+        }
+      }
+    },
+    "captureReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "bundleId", "qualification", "capabilities", "missingEvidence"],
+      "properties": {
+        "schemaVersion": { "const": "capture-report/v1" },
+        "bundleId": { "$ref": "#/$defs/identifier" },
+        "qualification": { "enum": ["qualified", "incomplete"] },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["semantic", "timingResource", "outcome"],
+          "properties": {
+            "semantic": { "$ref": "#/$defs/capability" },
+            "timingResource": { "$ref": "#/$defs/capability" },
+            "outcome": { "$ref": "#/$defs/capability" }
+          }
+        },
+        "missingEvidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "reason", "affects"],
+            "properties": {
+              "kind": { "$ref": "#/$defs/identifier" },
+              "reason": {
+                "enum": [
+                  "not-emitted",
+                  "not-collected",
+                  "optional-beta-unavailable",
+                  "process-interrupted",
+                  "policy-restricted",
+                  "unsupported",
+                  "not-checked"
+                ]
+              },
+              "affects": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "enum": ["semantic", "timing-resource", "outcome"] }
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "qualification": { "const": "qualified" } }, "required": ["qualification"] },
+          "then": {
+            "properties": {
+              "capabilities": {
+                "properties": {
+                  "semantic": { "properties": { "status": { "const": "available" } } },
+                  "outcome": { "properties": { "status": { "const": "available" } } }
+                }
+              },
+              "missingEvidence": {
+                "not": {
+                  "contains": {
+                    "properties": {
+                      "affects": {
+                        "contains": { "enum": ["semantic", "outcome"] }
+                      }
+                    },
+                    "required": ["affects"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "qualification": { "const": "incomplete" } }, "required": ["qualification"] },
+          "then": {
+            "properties": {
+              "missingEvidence": { "minItems": 1 }
+            }
+          }
+        }
+      ]
+    },
+    "exportManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "bundleId", "status", "sharingClass", "policyDigest", "artifactIds"],
+      "properties": {
+        "schemaVersion": { "const": "export-manifest/v1" },
+        "bundleId": { "$ref": "#/$defs/identifier" },
+        "status": { "enum": ["not-requested", "blocked", "ready", "exported"] },
+        "sharingClass": { "$ref": "#/$defs/sharingClass" },
+        "policyDigest": { "$ref": "#/$defs/digest" },
+        "artifactIds": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      }
+    }
+  }
+}
