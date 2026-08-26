@@ -6,6 +6,7 @@ export {
   assertNoSelectedSymlinks,
   assertResolvedExperimentConfigurationDigests,
   declaredMatrixCells,
+  resolveBundleConfiguration,
 } from "./contracts.js";
 export type {
   ArtifactReference,

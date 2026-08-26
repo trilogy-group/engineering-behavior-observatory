@@ -40,8 +40,9 @@ restricted review-record reference. Repository provenance is a credential-free
 HTTPS repository URI, optionally on an explicit port, plus a full immutable Git
 object ID—not a branch or tag. A verifier is always required; `referenceSolution.status` may be
 `not-provided` or `unsupported` for verifier-only work. Controlled perturbation
-content is an external, digest-addressed artifact; EBO does not prescribe a
-task-authoring taxonomy.
+content is either an external, digest-addressed artifact or an explicit
+`not-applied`/`unsupported` state; EBO does not prescribe a task-authoring
+taxonomy.
 
 Before scheduling, EBO requires an admitted packet's review time to be a valid
 RFC 3339 calendar timestamp and the resolved verifier bytes to match the

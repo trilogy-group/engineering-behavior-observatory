@@ -23,6 +23,7 @@ import {
   type ResolvedTaskPacket,
   type TaskConditionSet,
 } from "../src/contracts.js";
+import { resolveBundleConfiguration as exportedResolveBundleConfiguration } from "../src/index.js";
 
 const addFormats = formats.default as unknown as (instance: Ajv2020) => void;
 
@@ -156,6 +157,18 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   (explicitPort.provenance as Document).repositoryUrl = "https://git.example.test:8443/org/repository.git";
   assert.equal(validate(explicitPort), true, JSON.stringify(validate.errors));
 
+  const ipv6Host = structuredClone(admitted) as Document;
+  (ipv6Host.provenance as Document).repositoryUrl = "https://[2001:db8::1]/org/repository.git";
+  assert.equal(validatorWithoutFormatAssertion("task-packet.v1.schema.json")(ipv6Host), true);
+
+  const malformedIpv6Host = structuredClone(admitted) as Document;
+  (malformedIpv6Host.provenance as Document).repositoryUrl = "https://[.]/repository.git";
+  expectInvalid(validatorWithoutFormatAssertion("task-packet.v1.schema.json"), malformedIpv6Host, "repositoryUrl");
+
+  const unperturbed = structuredClone(admitted) as Document;
+  unperturbed.controlledPerturbation = { status: "not-applied" };
+  assert.equal(validate(unperturbed), true, JSON.stringify(validate.errors));
+
   const malformedReviewTime = structuredClone(admitted) as Document;
   ((malformedReviewTime.admission as Document).review as Document).reviewedAt = "unknown";
   expectInvalid(validatorWithoutFormatAssertion("task-packet.v1.schema.json"), malformedReviewTime, "reviewedAt");
@@ -197,6 +210,10 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     { path: "src", kind: "directory" },
     { path: "src/", kind: "directory" },
   ]), /collides/);
+  assert.throws(() => assertNoSelectedSymlinks([
+    { path: "src", kind: "file" },
+    { path: "src/index.ts", kind: "file" },
+  ]), /file destination/);
 });
 
 test("configuration references stay inside the bundle without following links", () => {
@@ -207,6 +224,7 @@ test("configuration references stay inside the bundle without following links", 
     mkdirSync(join(bundleRoot, "models"));
     writeFileSync(configurationPath, "{}");
     assert.equal(resolveBundleConfiguration(bundleRoot, "models/model-a.json"), realpathSync(configurationPath));
+    assert.equal(exportedResolveBundleConfiguration, resolveBundleConfiguration);
     symlinkSync("../../outside.json", join(bundleRoot, "models", "escaped.json"));
     assert.throws(() => resolveBundleConfiguration(bundleRoot, "models/escaped.json"), /escapes/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, "models/./model-a.json"), /unsafe/);

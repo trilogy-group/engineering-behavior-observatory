@@ -96,7 +96,7 @@ export function* declaredMatrixCells(
 }
 
 export function assertNoSelectedSymlinks(entries: readonly ArchiveEntry[]): void {
-  const destinations = new Set<string>();
+  const destinations = new Map<string, string>();
 
   for (const entry of entries) {
     const destination = canonicalArchiveMemberPath(entry.path);
@@ -107,7 +107,13 @@ export function assertNoSelectedSymlinks(entries: readonly ArchiveEntry[]): void
     if (destinations.has(destination)) {
       throw new Error(`Selected archive entry "${entry.path}" collides with another selected destination.`);
     }
-    destinations.add(destination);
+    for (const [selectedPath, selectedKind] of destinations) {
+      if ((selectedKind === "file" && destination.startsWith(`${selectedPath}/`))
+          || (entry.kind === "file" && selectedPath.startsWith(`${destination}/`))) {
+        throw new Error(`Selected archive entry "${entry.path}" collides with a file destination.`);
+      }
+    }
+    destinations.set(destination, entry.kind);
   }
 }
 
