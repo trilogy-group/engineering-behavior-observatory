@@ -16,13 +16,16 @@ not contain an evaluation corpus or a fixed operating matrix.
   absolute local paths, credentials, and path traversal are invalid there.
   Include paths are POSIX logical paths only; backslashes, drive letters, UNC
   paths, and traversal forms are invalid.
+- `verified-archive-literal-paths-v1` resolves each literal from the sanitized
+  archive root. A file includes that file; a directory includes its complete
+  descendant tree. Wildcards are intentionally unsupported.
 - `restricted` contains only digest-addressed references to the reference
   solution and verifier. It deliberately cannot embed their contents.
 
 The packet records repository provenance, a controlled perturbation, admission
 review status, sharing classification, and SHA-256 digests for every frozen
 component. Every digest has one authority: the safe fixture source, controlled
-perturbation, and restricted component references carry their own. The schema
+perturbation artifact, and restricted component references carry their own. The schema
 does not claim a separate agent-input digest without defining its canonical
 bytes; admission-freeze tooling owns the whole-packet identity later.
 
@@ -30,7 +33,10 @@ bytes; admission-freeze tooling owns the whole-packet identity later.
 `rejected` packets require a reviewer, RFC 3339 `date-time` evidence, and the
 restricted review-record reference. Repository provenance is an HTTPS,
 credential-free repository URL plus a full immutable Git object ID, not a
-branch or tag.
+branch or tag. A verifier is always required; `referenceSolution.status` may be
+`not-provided` or `unsupported` for verifier-only work. Controlled perturbation
+content is an external, digest-addressed artifact; EBO does not prescribe a
+task-authoring taxonomy.
 
 ## Experiments
 
@@ -41,6 +47,12 @@ only one matrix condition. Every referenced configuration has a SHA-256 digest.
 Each harness condition separately names source-specific native-limits and
 native-tool-policy configurations; EBO does not define a shared turn count or
 tool namespace.
+
+Every experiment configuration reference is a portable bundle-relative logical
+path, resolved from the experiment bundle root rather than the current working
+directory. URLs, absolute paths, traversal, and backslashes are invalid. A
+`permuted` order also names a digest-pinned permutation-algorithm reference;
+that versioned artifact defines how the supplied seed orders matrix cells.
 
 `declared` ordering carries explicit task, model, and harness ID lists. Matrix
 compilers use those lists, never object-property enumeration, and reject a list

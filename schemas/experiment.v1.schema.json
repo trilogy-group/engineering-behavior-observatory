@@ -61,7 +61,10 @@
       "additionalProperties": false,
       "required": ["locator", "digest"],
       "properties": {
-        "locator": { "type": "string", "minLength": 1 },
+        "locator": {
+          "type": "string",
+          "pattern": "^(?!.*//)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]*$"
+        },
         "digest": { "$ref": "#/$defs/digest" }
       }
     },
@@ -104,10 +107,11 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["seed", "strategy"],
+          "required": ["seed", "strategy", "permutationAlgorithmRef"],
           "properties": {
             "seed": { "type": "string", "minLength": 1 },
-            "strategy": { "const": "permuted" }
+            "strategy": { "const": "permuted" },
+            "permutationAlgorithmRef": { "$ref": "#/$defs/configurationReference" }
           }
         },
         {

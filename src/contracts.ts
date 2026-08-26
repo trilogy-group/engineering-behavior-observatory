@@ -3,6 +3,11 @@ export type Digest = {
   value: string;
 };
 
+export type ArtifactReference = {
+  locator: string;
+  digest: Digest;
+};
+
 export type TaskCondition = {
   packetRef: {
     locator: string;
@@ -36,6 +41,18 @@ export function assertDeclaredOrder(
   assertExactIds("task", declaredOrder.taskIds, conditionSets.taskSet);
   assertExactIds("model", declaredOrder.modelIds, conditionSets.modelSet);
   assertExactIds("harness", declaredOrder.harnessIds, conditionSets.harnessSet);
+}
+
+export function assertControlledPerturbationDigest(
+  reference: ArtifactReference,
+  resolvedDigest: Digest,
+): void {
+  if (
+    reference.digest.algorithm !== resolvedDigest.algorithm
+    || reference.digest.value !== resolvedDigest.value
+  ) {
+    throw new Error("Controlled perturbation digest does not match its reference.");
+  }
 }
 
 export function assertAdmittedTaskPackets(

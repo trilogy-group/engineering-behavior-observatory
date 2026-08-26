@@ -9,7 +9,9 @@ import * as formats from "ajv-formats";
 
 import {
   assertAdmittedTaskPackets,
+  assertControlledPerturbationDigest,
   assertDeclaredOrder,
+  type ArtifactReference,
   type DeclaredOrder,
   type ResolvedTaskPacket,
   type TaskConditionSet,
@@ -95,8 +97,8 @@ test("task packets expose only a verified, allowlisted materialization surface",
 
   assert.equal(validate(packet), true, JSON.stringify(validate.errors));
   assert.equal(packet.agentInput.fixture.source.kind, "sanitized-archive");
-  assert.equal(packet.agentInput.fixture.materializer.kind, "verified-archive");
-  assert.deepEqual(packet.agentInput.fixture.materializer.includePaths, ["README.md", "package.json", "src/**"]);
+  assert.equal(packet.agentInput.fixture.materializer.kind, "verified-archive-literal-paths-v1");
+  assert.deepEqual(packet.agentInput.fixture.materializer.includePaths, ["README.md", "package.json", "src"]);
   assert.doesNotMatch(JSON.stringify(packet.agentInput), /referenceSolution|reviewRecord|verifier/);
   assert.deepEqual(Object.keys(packet.restricted.referenceSolution).sort(), ["digest", "locator"]);
 });
@@ -112,9 +114,24 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   assert.deepEqual((proposed.admission as Document).review, null);
   assert.deepEqual(Object.keys(proposed.restricted as Document).sort(), ["referenceSolution", "verifier"]);
 
+  const verifierOnly = structuredClone(admitted) as Document;
+  (verifierOnly.restricted as Document).referenceSolution = { status: "not-provided" };
+  assert.equal(validate(verifierOnly), true, JSON.stringify(validate.errors));
+
   for (const invalidCase of fixture("task-packet.invalid-cases.v1.json") as InvalidCase[]) {
     expectInvalid(validate, applyInvalidCase(admitted, invalidCase), invalidCase.field);
   }
+});
+
+test("controlled perturbation references reject tampered digests", () => {
+  const packet = fixture("task-packet.valid.v1.json") as Document;
+  const reference = (packet.controlledPerturbation as Document).reference as ArtifactReference;
+
+  assert.doesNotThrow(() => assertControlledPerturbationDigest(reference, reference.digest));
+  assert.throws(
+    () => assertControlledPerturbationDigest(reference, { algorithm: "sha256", value: "0".repeat(64) }),
+    /Controlled perturbation digest/,
+  );
 });
 
 test("experiment fixtures pin identity and preserve native harness limits", () => {

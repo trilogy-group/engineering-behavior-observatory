@@ -10,9 +10,9 @@
         "digest": { "algorithm": "sha256", "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }
       },
       "materializer": {
-        "kind": "verified-archive",
+        "kind": "verified-archive-literal-paths-v1",
         "destination": "workspace",
-        "includePaths": ["README.md", "package.json", "src/**"]
+        "includePaths": ["README.md", "package.json", "src"]
       }
     }
   },
@@ -22,9 +22,10 @@
     "license": "MIT"
   },
   "controlledPerturbation": {
-    "kind": "contract-change",
-    "summary": "A public function changed its return shape.",
-    "digest": { "algorithm": "sha256", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+    "reference": {
+      "locator": "perturbations/example-contract-change.v1.json",
+      "digest": { "algorithm": "sha256", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+    }
   },
   "sharing": { "classification": "open" },
   "admission": { "status": "proposed", "review": null },

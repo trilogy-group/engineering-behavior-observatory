@@ -91,6 +91,23 @@
     "value": { "agentInput": { "algorithm": "sha256", "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } }
   },
   {
+    "field": "digest",
+    "operation": "remove",
+    "path": ["controlledPerturbation", "reference", "digest"]
+  },
+  {
+    "field": "reference",
+    "operation": "replace",
+    "path": ["controlledPerturbation"],
+    "value": { "kind": "feature-addition", "summary": "External task taxonomy value." }
+  },
+  {
+    "field": "includePaths",
+    "operation": "replace",
+    "path": ["agentInput", "fixture", "materializer", "includePaths"],
+    "value": ["src/**"]
+  },
+  {
     "field": "schemaVersion",
     "operation": "replace",
     "path": ["schemaVersion"],

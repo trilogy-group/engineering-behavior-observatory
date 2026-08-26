@@ -18,7 +18,14 @@
     }
   },
   "trialCount": 3,
-  "ordering": { "seed": "matrix-seed-1", "strategy": "permuted" },
+  "ordering": {
+    "seed": "matrix-seed-1",
+    "strategy": "permuted",
+    "permutationAlgorithmRef": {
+      "locator": "algorithms/ebo-permutation-fisher-yates-v1.json",
+      "digest": { "algorithm": "sha256", "value": "4444444444444444444444444444444444444444444444444444444444444444" }
+    }
+  },
   "coordinatorBudget": { "maxWallClockMs": 300000 },
   "captureProfile": {
     "locator": "capture-profiles/native-minimum.json",

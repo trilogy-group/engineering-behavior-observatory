@@ -34,7 +34,7 @@
               "additionalProperties": false,
               "required": ["kind", "destination", "includePaths"],
               "properties": {
-                "kind": { "const": "verified-archive" },
+                "kind": { "const": "verified-archive-literal-paths-v1" },
                 "destination": { "const": "workspace" },
                 "includePaths": {
                   "type": "array",
@@ -42,7 +42,7 @@
                   "uniqueItems": true,
                   "items": {
                     "type": "string",
-                    "pattern": "^(?!.*//)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/*-]+$"
+                    "pattern": "^(?!.*//)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
                   }
                 }
               }
@@ -67,13 +67,9 @@
     "controlledPerturbation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "summary", "digest"],
+      "required": ["reference"],
       "properties": {
-        "kind": {
-          "enum": ["contract-change", "seeded-defect", "long-horizon-constraint"]
-        },
-        "summary": { "type": "string", "minLength": 1 },
-        "digest": { "$ref": "#/$defs/digest" }
+        "reference": { "$ref": "#/$defs/artifactReference" }
       }
     },
     "sharing": {
@@ -90,7 +86,19 @@
       "additionalProperties": false,
       "required": ["referenceSolution", "verifier"],
       "properties": {
-        "referenceSolution": { "$ref": "#/$defs/restrictedReference" },
+        "referenceSolution": {
+          "oneOf": [
+            { "$ref": "#/$defs/restrictedReference" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status"],
+              "properties": {
+                "status": { "enum": ["not-provided", "unsupported"] }
+              }
+            }
+          ]
+        },
         "verifier": { "$ref": "#/$defs/restrictedReference" }
       }
     }
@@ -145,6 +153,18 @@
         "locator": {
           "type": "string",
           "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*://)(?!.*@)[A-Za-z0-9][A-Za-z0-9._/-]*$"
+        },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "artifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["locator", "digest"],
+      "properties": {
+        "locator": {
+          "type": "string",
+          "pattern": "^(?!.*//)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]*$"
         },
         "digest": { "$ref": "#/$defs/digest" }
       }

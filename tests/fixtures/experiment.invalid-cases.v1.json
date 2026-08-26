@@ -36,6 +36,23 @@
     "value": { "id": "missing-profile", "contentCapture": false }
   },
   {
+    "field": "permutationAlgorithmRef",
+    "operation": "remove",
+    "path": ["ordering", "permutationAlgorithmRef"]
+  },
+  {
+    "field": "locator",
+    "operation": "replace",
+    "path": ["captureProfile", "locator"],
+    "value": "/private/capture-profile.json"
+  },
+  {
+    "field": "locator",
+    "operation": "replace",
+    "path": ["modelSet", "model-a", "configurationRef", "locator"],
+    "value": "https://example.test/model.json"
+  },
+  {
     "field": "trialCount",
     "operation": "replace",
     "path": ["trialCount"],
