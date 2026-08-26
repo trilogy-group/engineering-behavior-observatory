@@ -23,9 +23,18 @@ export function main(
   return 1;
 }
 
-if (
-  process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
-) {
+function isDirectExecution(entryPath = process.argv[1]): boolean {
+  if (entryPath === undefined) {
+    return false;
+  }
+
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(entryPath)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectExecution()) {
   process.exitCode = main();
 }

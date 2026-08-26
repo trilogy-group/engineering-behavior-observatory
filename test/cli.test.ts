@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -17,25 +17,53 @@ test("help succeeds without configuring an evaluation", () => {
   assert.match(output, /^Usage: ebo \[--help\]/);
 });
 
-test("the installed package exposes an executable ebo binary", () => {
+test("a clean source checkout packs an executable ebo binary", () => {
   const installationRoot = mkdtempSync(join(tmpdir(), "ebo-bin-"));
+  const sourceRoot = join(installationRoot, "source");
+  const consumerRoot = join(installationRoot, "consumer");
 
   try {
-    writeFileSync(join(installationRoot, "package.json"), '{"private":true}');
+    for (const file of execFileSync("git", ["ls-files", "-z"], {
+      cwd: repositoryRoot,
+    }).toString().split("\0").filter(Boolean)) {
+      const destination = join(sourceRoot, file);
+
+      mkdirSync(dirname(destination), { recursive: true });
+      cpSync(join(repositoryRoot, file), destination);
+    }
+    assert.equal(existsSync(join(sourceRoot, "dist")), false);
+
     const npmEnvironment: NodeJS.ProcessEnv = {
       ...process.env,
       HOME: installationRoot,
       npm_config_userconfig: join(installationRoot, ".npmrc"),
     };
     delete npmEnvironment.npm_config_allow_scripts;
+
     execFileSync(
       "npm",
-      ["install", "--no-audit", "--no-fund", repositoryRoot],
-      { cwd: installationRoot, env: npmEnvironment, stdio: "pipe" },
+      ["ci"],
+      { cwd: sourceRoot, env: npmEnvironment, stdio: "pipe" },
+    );
+    const [{ filename }] = JSON.parse(
+      execFileSync("npm", ["pack", "--json"], {
+        cwd: sourceRoot,
+        encoding: "utf8",
+        env: npmEnvironment,
+      }),
+    ) as Array<{ filename: string }>;
+
+    assert.equal(existsSync(join(sourceRoot, "dist", "src", "cli.js")), true);
+    mkdirSync(consumerRoot);
+    writeFileSync(join(consumerRoot, "package.json"), '{"private":true}');
+    execFileSync(
+      "npm",
+      ["install", "--no-audit", "--no-fund", join(sourceRoot, filename)],
+      { cwd: consumerRoot, env: npmEnvironment, stdio: "pipe" },
     );
 
     const output = execFileSync(
-      join(installationRoot, "node_modules", ".bin", "ebo"),
+      join(consumerRoot, "node_modules", ".bin", "ebo"),
       ["--help"],
       { encoding: "utf8" },
     );
@@ -44,6 +72,16 @@ test("the installed package exposes an executable ebo binary", () => {
   } finally {
     rmSync(installationRoot, { force: true, recursive: true });
   }
+});
+
+test("CLI import ignores a non-filesystem argv entry", () => {
+  assert.doesNotThrow(() =>
+    execFileSync(
+      process.execPath,
+      ["--input-type=module", "-e", "await import('./dist/src/cli.js')", "does-not-exist"],
+      { cwd: repositoryRoot, stdio: "pipe" },
+    ),
+  );
 });
 
 test("generated output ignores are root-scoped", () => {
