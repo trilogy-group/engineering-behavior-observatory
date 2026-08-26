@@ -74,13 +74,32 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   }
 
   const declaredSessionId = (((manifest.run as JsonObject).native as JsonObject | undefined)?.sessionId);
+  const declaredTraceId = (((manifest.run as JsonObject).native as JsonObject | undefined)?.traceId);
   const sessionDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "session");
+  const telemetryDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "telemetry");
 
   if (declaredSessionId !== undefined && sessionDescriptors.length > 0 &&
       !sessionDescriptors.some((descriptor) =>
         ((descriptor.nativeReference as JsonObject | undefined)?.id) === declaredSessionId,
       )) {
     errors.push("/run/native/sessionId does not match retained session evidence");
+  }
+  if (declaredTraceId !== undefined && telemetryDescriptors.length > 0 &&
+      !telemetryDescriptors.some((descriptor) =>
+        ((descriptor.nativeReference as JsonObject | undefined)?.id) === declaredTraceId,
+      )) {
+    errors.push("/run/native/traceId does not match retained telemetry evidence");
+  }
+
+  const runtime = (manifest.run as JsonObject).runtime;
+  if (Array.isArray(runtime)) {
+    const runtimeIds = runtime.map((component) => {
+      const value = component as JsonObject;
+      return `${String(value.source)}\u0000${String(value.name)}\u0000${String(value.version)}`;
+    });
+    if (new Set(runtimeIds).size !== runtimeIds.length) {
+      errors.push("/run/runtime contains duplicate components");
+    }
   }
 
   for (const descriptor of evidence as JsonObject[]) {
@@ -102,6 +121,11 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
 
       if (new Set(assertionIds).size !== assertionIds.length) {
         errors.push(`/evidence/${String(descriptor.id)} contains duplicate verifier assertion IDs`);
+      }
+      const terminal = manifest.terminal as JsonObject;
+      if ((terminal.state === "completed" && report.status !== "passed") ||
+          (terminal.state === "failed" && terminal.failureClass === "task" && report.status !== "failed")) {
+        errors.push(`/evidence/${String(descriptor.id)} contradicts the manifest terminal outcome`);
       }
       continue;
     }
@@ -131,11 +155,10 @@ function assertContractInvalid(manifest: JsonObject, artifacts?: Map<string, Jso
 }
 
 function assertExportSafe(manifest: JsonObject, exportManifest: JsonObject): void {
+  assert.equal(exportManifest.bundleId, manifest.bundleId, "export manifest bundle ID must match the containing bundle");
   if (!["ready", "exported"].includes(String(exportManifest.status))) {
     return;
   }
-
-  assert.equal(exportManifest.bundleId, manifest.bundleId, "export manifest bundle ID must match the containing bundle");
 
   const evidenceById = new Map(
     (manifest.evidence as JsonObject[]).map((descriptor) => [descriptor.id, descriptor]),
@@ -215,6 +238,10 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
   const publicManifest = structuredClone(manifest);
   (publicManifest.evidence as JsonObject[])[0].sharingClass = "public";
   assert.doesNotThrow(() => assertExportSafe(publicManifest, publicRestricted));
+
+  const emptyReadyExport = structuredClone(readyExport);
+  emptyReadyExport.artifactIds = [];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, emptyReadyExport), []);
 });
 
 test("rejects contradictory and incomplete contract records", () => {
@@ -284,6 +311,16 @@ test("rejects contradictory and incomplete contract records", () => {
   (selfRetry.attempt as JsonObject).retryOf = (selfRetry.attempt as JsonObject).id;
   assertContractInvalid(selfRetry, completeArtifacts);
 
+  const mismatchedNativeTrace = structuredClone(complete);
+  ((mismatchedNativeTrace.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "telemetry")!.nativeReference as JsonObject).id = "other-trace";
+  assertContractInvalid(mismatchedNativeTrace, completeArtifacts);
+
+  const duplicateRuntime = structuredClone(complete);
+  ((duplicateRuntime.run as JsonObject).runtime as JsonObject[]).push({
+    ...((duplicateRuntime.run as JsonObject).runtime as JsonObject[])[0],
+  });
+  assertContractInvalid(duplicateRuntime, completeArtifacts);
+
   const mismatchedCaptureReport = new Map(completeArtifacts);
   mismatchedCaptureReport.set("capture-report", {
     ...completeCaptureReport,
@@ -294,6 +331,18 @@ test("rejects contradictory and incomplete contract records", () => {
   const mismatchedVerifier = new Map(completeArtifacts);
   mismatchedVerifier.set("verifier", { ...completeVerifier, bundleId: "other-bundle" });
   assertContractInvalid(complete, mismatchedVerifier);
+
+  const completedWithFailedVerifier = new Map(completeArtifacts);
+  completedWithFailedVerifier.set("verifier", {
+    ...completeVerifier,
+    status: "failed",
+    assertions: [{ id: "example-check", status: "failed" }],
+  });
+  assertContractInvalid(complete, completedWithFailedVerifier);
+
+  const blockedExportWithOtherBundle = readJson(resolve(fixtureRoot, "complete/export/manifest.json"));
+  blockedExportWithOtherBundle.bundleId = "other-bundle";
+  assert.throws(() => assertExportSafe(complete, blockedExportWithOtherBundle));
 
   const duplicateVerifierAssertion = new Map(completeArtifacts);
   duplicateVerifierAssertion.set("verifier", {

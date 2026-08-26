@@ -218,6 +218,7 @@
             "runtime": {
               "type": "array",
               "minItems": 1,
+              "uniqueItems": true,
               "items": { "$ref": "#/$defs/runtimeComponent" }
             },
             "native": {
@@ -531,7 +532,13 @@
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/identifier" }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "enum": ["ready", "exported"] } }, "required": ["status"] },
+          "then": { "properties": { "artifactIds": { "minItems": 1 } } }
+        }
+      ]
     }
   }
 }

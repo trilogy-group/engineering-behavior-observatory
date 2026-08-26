@@ -57,6 +57,8 @@ execution of that run; retries get a new attempt ID and may point at `retryOf`.
 `retryOf` cannot name the attempt itself. No attempt replaces prior evidence.
 When a run declares a native session ID and retains session evidence, at least
 one retained session reference names that same native session.
+The same rule applies to a declared native trace ID and retained telemetry
+evidence. Runtime components are unique by source, name, and version.
 
 `runtime` is a non-empty list of source-specific components, each with source,
 name, and version. An Agent SDK run can record SDK and CLI components; an Agent
@@ -90,7 +92,8 @@ report remains a valid retained partial bundle but is not capture-qualified.
 Verifier results cannot contradict their assertions: passed results have no
 failed assertion, while failed results retain at least one failed assertion.
 Assertion IDs are unique, and a retained verifier result names the containing
-bundle.
+bundle. Completed runs retain passed verifier results; task-failed runs retain
+failed verifier results.
 
 ## Sharing boundary
 
@@ -101,7 +104,9 @@ bypass lookup or classification, and both partner and public packages need
 separately sanitized artifacts. The export pipeline performs the actual
 sanitization and readback; the v1 contract fixture makes the unsafe direct
 reference visibly blocked. A ready or exported manifest also names its
-containing bundle before its artifact list is approved.
+containing bundle before its artifact list is approved. Ready and exported
+manifests contain at least one artifact; blocked and unrequested records may be
+empty but still name their containing bundle.
 
 The contract is intentionally only a declaration. Schema loading, safe path
 resolution, atomic persistence, and byte-level digest verification are shared
