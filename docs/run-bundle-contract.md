@@ -27,7 +27,8 @@ retains exactly one capture-report descriptor.
 
 All paths are bundle-relative. The schema rejects absolute and parent-traversal
 paths; the shared artifact utilities will also resolve symlinks and verify
-digests before use. Each retained path appears exactly once. A sanitized
+digests before use. Each retained path appears exactly once under a
+case-folded portable identity. A sanitized
 partner or public artifact therefore has its own retained path, and source bytes
 cannot masquerade as another evidence class.
 

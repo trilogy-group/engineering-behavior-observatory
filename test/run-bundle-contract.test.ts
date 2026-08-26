@@ -59,12 +59,12 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
 
   for (const descriptor of evidence as JsonObject[]) {
     const relativePath = String(descriptor.relativePath);
-    const existingDescriptor = descriptorByPath.get(relativePath);
+    const existingDescriptor = descriptorByPath.get(relativePath.toLowerCase());
 
     if (existingDescriptor !== undefined) {
       errors.push(`/evidence reuses ${relativePath}`);
     }
-    descriptorByPath.set(relativePath, descriptor);
+    descriptorByPath.set(relativePath.toLowerCase(), descriptor);
   }
 
   const attempt = manifest.attempt as JsonObject;
@@ -203,6 +203,7 @@ function assertExportSafe(manifest: JsonObject, exportManifest: JsonObject): voi
   const evidenceById = new Map(
     (manifest.evidence as JsonObject[]).map((descriptor) => [descriptor.id, descriptor]),
   );
+  let hasNonExportArtifact = false;
 
   for (const artifactId of exportManifest.artifactIds as string[]) {
     const descriptor = evidenceById.get(artifactId);
@@ -213,7 +214,9 @@ function assertExportSafe(manifest: JsonObject, exportManifest: JsonObject): voi
       exportManifest.sharingClass,
       `${String(exportManifest.sharingClass)} export cannot include ${artifactId} with ${String(descriptor.sharingClass)} sharing class`,
     );
+    hasNonExportArtifact ||= descriptor.kind !== "export-manifest";
   }
+  assert.ok(hasNonExportArtifact, "ready or exported manifests must include non-export evidence");
 }
 
 test("validates retained run-bundle fixtures and their references", () => {
@@ -282,6 +285,11 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
   const emptyReadyExport = structuredClone(readyExport);
   emptyReadyExport.artifactIds = [];
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, emptyReadyExport), []);
+
+  const selfReferentialExport = structuredClone(readyExport);
+  selfReferentialExport.sharingClass = "internal";
+  selfReferentialExport.artifactIds = ["export-manifest"];
+  assert.throws(() => assertExportSafe(manifest, selfReferentialExport));
 });
 
 test("rejects contradictory and incomplete contract records", () => {
@@ -335,6 +343,14 @@ test("rejects contradictory and incomplete contract records", () => {
     authority: "outcome",
   });
   assertContractInvalid(authorityAlias, completeArtifacts);
+
+  const caseFoldedAlias = structuredClone(complete);
+  (caseFoldedAlias.evidence as JsonObject[]).push({
+    ...(caseFoldedAlias.evidence as JsonObject[])[0],
+    id: "case-folded-session-alias",
+    relativePath: "SESSION.jsonl",
+  });
+  assertContractInvalid(caseFoldedAlias, completeArtifacts);
 
   const nativeIdentityAlias = structuredClone(complete);
   const sessionDescriptor = (nativeIdentityAlias.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "session")!;
