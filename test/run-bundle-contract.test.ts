@@ -92,6 +92,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   }
 
   const runtime = (manifest.run as JsonObject).runtime;
+  const harness = (manifest.run as JsonObject).harness as JsonObject;
   if (Array.isArray(runtime)) {
     const runtimeIds = runtime.map((component) => {
       const value = component as JsonObject;
@@ -99,6 +100,12 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     });
     if (new Set(runtimeIds).size !== runtimeIds.length) {
       errors.push("/run/runtime contains duplicate components");
+    }
+    if (!runtime.some((component) => {
+      const value = component as JsonObject;
+      return value.version === harness.version && (value.name === harness.id || value.source === harness.id);
+    })) {
+      errors.push("/run/harness is not represented by its runtime composition");
     }
   }
 
@@ -161,6 +168,10 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   if ((terminal.state === "completed" && !verifierStatuses.includes("passed")) ||
       (terminal.state === "failed" && terminal.failureClass === "task" && !verifierStatuses.includes("failed"))) {
     errors.push("/terminal outcome requires a matching retained verifier result");
+  }
+  if ((terminal.state === "completed" || (terminal.state === "failed" && terminal.failureClass === "task"))
+      && !(evidence as JsonObject[]).some((descriptor) => descriptor.kind === "workspace")) {
+    errors.push("/terminal outcome requires retained workspace evidence");
   }
   const captureReport = [...artifacts.entries()]
     .find(([artifactId]) => (evidence as JsonObject[]).some((descriptor) =>
@@ -282,6 +293,7 @@ test("rejects contradictory and incomplete contract records", () => {
     ["verifier", completeVerifier],
   ]);
   const telemetryReport = readJson(resolve(fixtureRoot, "telemetry-incomplete/capture-report.json"));
+  const interruptedReport = readJson(resolve(fixtureRoot, "interrupted/capture-report.json"));
   const taskFailed = readJson(resolve(fixtureRoot, "task-failed/manifest.json"));
   const taskFailedArtifacts = new Map([
     ["capture-report", readJson(resolve(fixtureRoot, "task-failed/capture-report.json"))],
@@ -348,10 +360,17 @@ test("rejects contradictory and incomplete contract records", () => {
   assertContractInvalid(duplicateCaptureReport, completeArtifacts);
 
   const serverRuntime = structuredClone(complete);
+  (serverRuntime.run as JsonObject).harness = { id: "openhands-agent-server", version: "1.0.0" };
   (serverRuntime.run as JsonObject).runtime = [
     { source: "openhands-agent-server", name: "agent-server", version: "1.0.0" },
   ];
   assertContractValid(serverRuntime, completeArtifacts);
+
+  const mismatchedHarnessRuntime = structuredClone(complete);
+  (mismatchedHarnessRuntime.run as JsonObject).runtime = [
+    { source: "openhands-agent-server", name: "agent-server", version: "1.0.0" },
+  ];
+  assertContractInvalid(mismatchedHarnessRuntime, completeArtifacts);
 
   const selfRetry = structuredClone(complete);
   (selfRetry.attempt as JsonObject).retryOf = (selfRetry.attempt as JsonObject).id;
@@ -368,6 +387,7 @@ test("rejects contradictory and incomplete contract records", () => {
   assertContractInvalid(duplicateRuntime, completeArtifacts);
 
   const distinctDelimiterRuntime = structuredClone(complete);
+  (distinctDelimiterRuntime.run as JsonObject).harness = { id: "a\u0000b", version: "d" };
   (distinctDelimiterRuntime.run as JsonObject).runtime = [
     { source: "a\u0000b", name: "c", version: "d" },
     { source: "a", name: "b\u0000c", version: "d" },
@@ -452,6 +472,12 @@ test("rejects contradictory and incomplete contract records", () => {
   );
   assertContractInvalid(missingNativeSession, completeArtifacts);
 
+  const missingWorkspace = structuredClone(complete);
+  missingWorkspace.evidence = (missingWorkspace.evidence as JsonObject[]).filter(
+    (descriptor) => descriptor.kind !== "workspace",
+  );
+  assertContractInvalid(missingWorkspace, completeArtifacts);
+
   const missingSemanticReason = structuredClone(telemetryReport);
   ((missingSemanticReason.capabilities as JsonObject).semantic as JsonObject).status = "missing";
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, missingSemanticReason), []);
@@ -467,6 +493,14 @@ test("rejects contradictory and incomplete contract records", () => {
   const unsupportedStatusWithoutReason = structuredClone(telemetryReport);
   ((unsupportedStatusWithoutReason.capabilities as JsonObject).timingResource as JsonObject).status = "unsupported";
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, unsupportedStatusWithoutReason), []);
+
+  const notCheckedReasonWithMissingStatus = structuredClone(interruptedReport);
+  (notCheckedReasonWithMissingStatus.missingEvidence as JsonObject[])[0].reason = "not-emitted";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, notCheckedReasonWithMissingStatus), []);
+
+  const notCheckedStatusWithoutReason = structuredClone(interruptedReport);
+  ((notCheckedStatusWithoutReason.capabilities as JsonObject).timingResource as JsonObject).status = "missing";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, notCheckedStatusWithoutReason), []);
 
   const nonJsonVerifierDescriptor = structuredClone(complete);
   ((nonJsonVerifierDescriptor.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "verifier")!).mediaType = "text/plain";

@@ -27,9 +27,8 @@ retains exactly one capture-report descriptor.
 
 All paths are bundle-relative. The schema rejects absolute and parent-traversal
 paths; the shared artifact utilities will also resolve symlinks and verify
-digests before use. A path cannot be indexed under more than one sharing class:
-a sanitized partner or public artifact must have its own retained path. Reusing
-a path also requires the same evidence kind and authority, so source bytes
+digests before use. Each retained path appears exactly once. A sanitized
+partner or public artifact therefore has its own retained path, and source bytes
 cannot masquerade as another evidence class.
 
 ## Evidence authority
@@ -55,13 +54,14 @@ capture report is capture; and the export manifest is export.
 A run identifies the declared task/model/harness condition. An attempt is one
 execution of that run; retries get a new attempt ID and may point at `retryOf`.
 `retryOf` cannot name the attempt itself. No attempt replaces prior evidence.
-When a run declares a native session ID and retains session evidence, at least
-one retained session reference names that same native session.
+When a run declares a native session ID, it retains at least one session
+reference naming that same native session.
 The same rule applies to a declared native trace ID and retained telemetry
 evidence. Runtime components are unique by source, name, and version.
 
 `runtime` is a non-empty list of source-specific components, each with source,
-name, and version. An Agent SDK run can record SDK and CLI components; an Agent
+name, and version. One component's source or name and version represents the
+declared harness. An Agent SDK run can record SDK and CLI components; an Agent
 Server run can record only its server component. No integration invents an
 absent SDK or CLI identity.
 
@@ -89,15 +89,17 @@ An available capability requires an indexed artifact with that authority. The
 embedded capture report must also name the containing bundle. An `incomplete`
 report remains a valid retained partial bundle but is not capture-qualified.
 Missing-evidence effects cannot contradict a capability reported as available.
+`unsupported` and `not-checked` reasons each match their corresponding
+capability status.
 
 Verifier results cannot contradict their assertions: passed results have no
 failed assertion, while failed results retain at least one failed assertion.
 Assertion IDs are unique, and a retained verifier result names the containing
 bundle. Completed runs retain passed verifier results; task-failed runs retain
-failed verifier results. Both outcomes require that retained verifier evidence;
-workspace evidence alone cannot establish task pass or task failure. A passed
-verifier result contains only passed assertions and, when retained, an exit
-code of zero.
+at least one failed verifier result and may retain independent passed results.
+Both outcomes require retained verifier and workspace evidence; workspace
+evidence alone cannot establish task pass or task failure. A passed verifier
+result contains only passed assertions and, when retained, an exit code of zero.
 
 ## Sharing boundary
 

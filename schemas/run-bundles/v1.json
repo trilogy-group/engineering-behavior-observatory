@@ -580,6 +580,30 @@
         {
           "if": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/unsupportedOutcomeEvidence" } } } },
           "then": { "properties": { "capabilities": { "properties": { "outcome": { "properties": { "status": { "const": "unsupported" } } } } } } }
+        },
+        {
+          "if": { "properties": { "capabilities": { "properties": { "semantic": { "properties": { "status": { "const": "not-checked" } } } }, "required": ["semantic"] } } },
+          "then": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/notCheckedSemanticEvidence" } } } }
+        },
+        {
+          "if": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/notCheckedSemanticEvidence" } } } },
+          "then": { "properties": { "capabilities": { "properties": { "semantic": { "properties": { "status": { "const": "not-checked" } } } } } } }
+        },
+        {
+          "if": { "properties": { "capabilities": { "properties": { "timingResource": { "properties": { "status": { "const": "not-checked" } } } }, "required": ["timingResource"] } } },
+          "then": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/notCheckedTimingEvidence" } } } }
+        },
+        {
+          "if": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/notCheckedTimingEvidence" } } } },
+          "then": { "properties": { "capabilities": { "properties": { "timingResource": { "properties": { "status": { "const": "not-checked" } } } } } } }
+        },
+        {
+          "if": { "properties": { "capabilities": { "properties": { "outcome": { "properties": { "status": { "const": "not-checked" } } } }, "required": ["outcome"] } } },
+          "then": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/notCheckedOutcomeEvidence" } } } }
+        },
+        {
+          "if": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/notCheckedOutcomeEvidence" } } } },
+          "then": { "properties": { "capabilities": { "properties": { "outcome": { "properties": { "status": { "const": "not-checked" } } } } } } }
         }
       ]
     },
@@ -604,6 +628,30 @@
       "required": ["reason", "affects"],
       "properties": {
         "reason": { "const": "unsupported" },
+        "affects": { "type": "array", "contains": { "const": "outcome" } }
+      }
+    },
+    "notCheckedSemanticEvidence": {
+      "type": "object",
+      "required": ["reason", "affects"],
+      "properties": {
+        "reason": { "const": "not-checked" },
+        "affects": { "type": "array", "contains": { "const": "semantic" } }
+      }
+    },
+    "notCheckedTimingEvidence": {
+      "type": "object",
+      "required": ["reason", "affects"],
+      "properties": {
+        "reason": { "const": "not-checked" },
+        "affects": { "type": "array", "contains": { "const": "timing-resource" } }
+      }
+    },
+    "notCheckedOutcomeEvidence": {
+      "type": "object",
+      "required": ["reason", "affects"],
+      "properties": {
+        "reason": { "const": "not-checked" },
         "affects": { "type": "array", "contains": { "const": "outcome" } }
       }
     },
