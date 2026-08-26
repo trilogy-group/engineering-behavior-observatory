@@ -1,3 +1,4 @@
+enabled: true
 code_intel:
   enabled: true
   ast:
@@ -16,4 +17,33 @@ docs:
   public_root: docs
   default_visibility: public
   deny_private_links: true
-areas: {}
+areas:
+  quality:
+    title: Quality
+    docs_target: docs/quality.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - quality
+    source_refs:
+      linear_labels:
+      - area:quality
+      - area:repository
+      linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+  repository:
+    title: Repository
+    docs_target: docs/repository.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - repository
+    source_refs:
+      linear_labels:
+      - area:repository
+      linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+redaction:
+  deny_patterns: []
