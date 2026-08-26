@@ -394,6 +394,10 @@ test("rejects contradictory and incomplete contract records", () => {
   ((missingSemanticReason.capabilities as JsonObject).semantic as JsonObject).status = "missing";
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, missingSemanticReason), []);
 
+  const qualifiedTelemetryGap = structuredClone(telemetryReport);
+  qualifiedTelemetryGap.qualification = "qualified";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, qualifiedTelemetryGap), []);
+
   const wrongOptionalBetaAuthority = structuredClone(telemetryReport);
   ((wrongOptionalBetaAuthority.missingEvidence as JsonObject[])[0].affects as string[]) = [
     "timing-resource",
@@ -404,6 +408,10 @@ test("rejects contradictory and incomplete contract records", () => {
   const passedWithFailure = structuredClone(verifier);
   (passedWithFailure.assertions as JsonObject[])[0].status = "failed";
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, passedWithFailure), []);
+
+  const passedWithNonzeroExit = structuredClone(verifier);
+  passedWithNonzeroExit.exitCode = 1;
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, passedWithNonzeroExit), []);
 
   const failedWithoutFailure = structuredClone(verifier);
   failedWithoutFailure.status = "failed";

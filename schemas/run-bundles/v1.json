@@ -309,7 +309,8 @@
                     "required": ["status"]
                   }
                 }
-              }
+              },
+              "exitCode": { "const": 0 }
             }
           }
         },
@@ -399,7 +400,8 @@
               "capabilities": {
                 "properties": {
                   "semantic": { "properties": { "status": { "const": "available" } } },
-                  "outcome": { "properties": { "status": { "const": "available" } } }
+                  "outcome": { "properties": { "status": { "const": "available" } } },
+                  "timingResource": { "properties": { "status": { "enum": ["available", "unsupported"] } } }
                 }
               },
               "missingEvidence": {

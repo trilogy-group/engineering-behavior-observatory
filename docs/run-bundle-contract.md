@@ -81,7 +81,7 @@ capture-report qualification with an explicit missing-evidence reason.
 
 `capture-report/v1` records `semantic`, `timingResource`, and `outcome`
 capabilities separately. A `qualified` report requires available semantic and
-outcome evidence and cannot declare either authority missing. Missing optional beta spans are recorded as
+outcome evidence and checked timing-resource evidence. Missing optional beta spans are recorded as
 `optional-beta-unavailable` affecting `timing-resource`; they never assert that
 semantic evidence is missing. Every unavailable capability has an explicit
 missing-evidence entry; optional-beta-unavailable affects timing-resource only.
@@ -94,7 +94,8 @@ failed assertion, while failed results retain at least one failed assertion.
 Assertion IDs are unique, and a retained verifier result names the containing
 bundle. Completed runs retain passed verifier results; task-failed runs retain
 failed verifier results. Both outcomes require that retained verifier evidence;
-workspace evidence alone cannot establish task pass or task failure.
+workspace evidence alone cannot establish task pass or task failure. A passed
+verifier result with a retained exit code records zero.
 
 ## Sharing boundary
 
