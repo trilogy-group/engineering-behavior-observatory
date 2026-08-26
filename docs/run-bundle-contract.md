@@ -95,7 +95,8 @@ Assertion IDs are unique, and a retained verifier result names the containing
 bundle. Completed runs retain passed verifier results; task-failed runs retain
 failed verifier results. Both outcomes require that retained verifier evidence;
 workspace evidence alone cannot establish task pass or task failure. A passed
-verifier result with a retained exit code records zero.
+verifier result contains only passed assertions and, when retained, an exit
+code of zero.
 
 ## Sharing boundary
 

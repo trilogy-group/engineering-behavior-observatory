@@ -303,11 +303,9 @@
           "then": {
             "properties": {
               "assertions": {
-                "not": {
-                  "contains": {
-                    "properties": { "status": { "const": "failed" } },
-                    "required": ["status"]
-                  }
+                "items": {
+                  "properties": { "status": { "const": "passed" } },
+                  "required": ["status"]
                 }
               },
               "exitCode": { "const": 0 }

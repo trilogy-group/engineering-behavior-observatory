@@ -413,6 +413,14 @@ test("rejects contradictory and incomplete contract records", () => {
   passedWithNonzeroExit.exitCode = 1;
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, passedWithNonzeroExit), []);
 
+  const passedWithNotRun = structuredClone(verifier);
+  (passedWithNotRun.assertions as JsonObject[])[0].status = "not-run";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, passedWithNotRun), []);
+
+  const passedWithOnlyNotRun = structuredClone(verifier);
+  passedWithOnlyNotRun.assertions = [{ id: "example-check", status: "not-run" }];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, passedWithOnlyNotRun), []);
+
   const failedWithoutFailure = structuredClone(verifier);
   failedWithoutFailure.status = "failed";
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, failedWithoutFailure), []);
