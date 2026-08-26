@@ -21,7 +21,9 @@ not contain an evaluation corpus or a fixed operating matrix.
   descendant tree. Wildcards are intentionally unsupported.
 - `verified-archive-literal-paths-no-links-v1` adds the required v1 link rule:
   enumerate every selected entry and selected directory descendant before copy,
-  then reject any symbolic link. Links are never copied or dereferenced.
+  then reject any symbolic link. Links are never copied or dereferenced. Every
+  selected member name must be a canonical root-relative logical path before
+  joining either archive or workspace roots.
 - `restricted` contains only digest-addressed references to the reference
   solution and verifier. It deliberately cannot embed their contents.
 
@@ -68,7 +70,8 @@ configuration-reference shape as other immutable experiment inputs.
 
 For declared matrices, traversal is task outermost, then model, then harness,
 with one-based trial replicas innermost. The compiler rejects duplicate task
-packet digests across task IDs before expansion.
+packet digests across task IDs before expansion. The declared cell iterator is
+lazy, so externally supplied trial counts do not allocate a full matrix.
 
 The fixtures include a generic 18-cell matrix and a differently shaped matrix
 to show that no study dimensions are built into the contract. Parsed numeric

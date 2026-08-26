@@ -24,6 +24,7 @@ export type TaskConditionSet = Record<string, TaskCondition>;
 
 export type ResolvedTaskPacket = {
   digest: Digest;
+  reviewedDigest: Digest | null;
   admission: {
     status: "proposed" | "admitted" | "rejected";
   };
@@ -69,30 +70,28 @@ export function assertDeclaredOrder(
   assertExactIds("harness", declaredOrder.harnessIds, conditionSets.harnessSet);
 }
 
-export function declaredMatrixCells(
+export function* declaredMatrixCells(
   declaredOrder: DeclaredOrder,
   trialCount: number,
-): DeclaredMatrixCell[] {
-  const cells: DeclaredMatrixCell[] = [];
+): Generator<DeclaredMatrixCell> {
 
   for (const taskId of declaredOrder.taskIds) {
     for (const modelId of declaredOrder.modelIds) {
       for (const harnessId of declaredOrder.harnessIds) {
         for (let trialIndex = 1; trialIndex <= trialCount; trialIndex += 1) {
-          cells.push({ taskId, modelId, harnessId, trialIndex });
+          yield { taskId, modelId, harnessId, trialIndex };
         }
       }
     }
   }
 
-  return cells;
 }
 
 export function assertNoSelectedSymlinks(entries: readonly ArchiveEntry[]): void {
-  const link = entries.find((entry) => entry.kind === "symlink");
+  const invalid = entries.find((entry) => entry.kind === "symlink" || !isSafeArchiveMemberPath(entry.path));
 
-  if (link !== undefined) {
-    throw new Error(`Selected archive entry "${link.path}" is a symlink.`);
+  if (invalid !== undefined) {
+    throw new Error(`Selected archive entry "${invalid.path}" is unsafe.`);
   }
 }
 
@@ -112,10 +111,19 @@ export function assertResolvedExperimentConfigurationDigests(
   experiment: ExperimentConfiguration,
   resolvedDigests: Record<string, Digest>,
 ): void {
+  const modelDigests = new Set<string>();
+  const harnessCompositions = new Set<string>();
   for (const [modelId, condition] of Object.entries(experiment.modelSet)) {
+    const identity = digestIdentity(condition.configurationRef.digest);
+    if (modelDigests.has(identity)) throw new Error(`Model "${modelId}" duplicates a configuration digest.`);
+    modelDigests.add(identity);
     assertResolvedDigest(`model "${modelId}"`, condition.configurationRef, resolvedDigests);
   }
   for (const [harnessId, condition] of Object.entries(experiment.harnessSet)) {
+    const identity = [condition.configurationRef, condition.nativeLimitsRef, condition.nativeToolPolicyRef]
+      .map((reference) => digestIdentity(reference.digest)).join("|");
+    if (harnessCompositions.has(identity)) throw new Error(`Harness "${harnessId}" duplicates a composition.`);
+    harnessCompositions.add(identity);
     assertResolvedDigest(`harness "${harnessId}"`, condition.configurationRef, resolvedDigests);
     assertResolvedDigest(`harness limits "${harnessId}"`, condition.nativeLimitsRef, resolvedDigests);
     assertResolvedDigest(`harness tool policy "${harnessId}"`, condition.nativeToolPolicyRef, resolvedDigests);
@@ -149,6 +157,14 @@ export function assertAdmittedTaskPackets(
     }
     const packet = resolvedPackets[taskId]!;
 
+    if (packet.admission.status === "admitted" && (
+      packet.reviewedDigest === null
+      || packet.reviewedDigest.algorithm !== packet.digest.algorithm
+      || packet.reviewedDigest.value !== packet.digest.value
+    )) {
+      throw new Error(`Task packet "${taskId}" review does not match its digest.`);
+    }
+
     if (
       packet.digest.algorithm !== condition.packetRef.digest.algorithm
       || packet.digest.value !== condition.packetRef.digest.value
@@ -177,6 +193,14 @@ function assertResolvedDigest(
   ) {
     throw new Error(`${label} digest does not match its reference.`);
   }
+}
+
+function digestIdentity(digest: Digest): string {
+  return `${digest.algorithm}:${digest.value}`;
+}
+
+function isSafeArchiveMemberPath(path: string): boolean {
+  return /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(path);
 }
 
 function assertExactIds(

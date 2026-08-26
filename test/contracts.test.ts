@@ -83,7 +83,7 @@ function admittedResolutions(taskSet: TaskConditionSet): Record<string, Resolved
   return Object.fromEntries(
     Object.entries(taskSet).map(([taskId, condition]) => [
       taskId,
-      { digest: condition.packetRef.digest, admission: { status: "admitted" } },
+      { digest: condition.packetRef.digest, reviewedDigest: condition.packetRef.digest, admission: { status: "admitted" } },
     ]),
   );
 }
@@ -167,7 +167,11 @@ test("literal archive selection rejects every symlink entry", () => {
   ]));
   assert.throws(
     () => assertNoSelectedSymlinks([{ path: "src/config", kind: "symlink" }]),
-    /src\/config.*symlink/,
+    /src\/config.*unsafe/,
+  );
+  assert.throws(
+    () => assertNoSelectedSymlinks([{ path: "src/../../restricted/verifier.json", kind: "file" }]),
+    /unsafe/,
   );
 });
 
@@ -190,7 +194,7 @@ test("experiment fixtures pin identity and preserve native harness limits", () =
   assert.deepEqual(twentyFour.ordering.declaredOrder.taskIds, ["10", "2"]);
   assert.doesNotThrow(() => assertDeclaredOrder(twentyFour, twentyFour.ordering.declaredOrder));
   assert.deepEqual(
-    declaredMatrixCells(twentyFour.ordering.declaredOrder, twentyFour.trialCount).slice(0, 4),
+    [...declaredMatrixCells(twentyFour.ordering.declaredOrder, twentyFour.trialCount)].slice(0, 4),
     [
       { taskId: "10", modelId: "model-a", harnessId: "harness-a", trialIndex: 1 },
       { taskId: "10", modelId: "model-a", harnessId: "harness-a", trialIndex: 2 },
@@ -198,6 +202,8 @@ test("experiment fixtures pin identity and preserve native harness limits", () =
       { taskId: "10", modelId: "model-a", harnessId: "harness-b", trialIndex: 2 },
     ],
   );
+  const huge = declaredMatrixCells(twentyFour.ordering.declaredOrder, 2147483647);
+  assert.deepEqual(huge.next().value, { taskId: "10", modelId: "model-a", harnessId: "harness-a", trialIndex: 1 });
 
   const configurationExperiment = fixture("experiment.18-cell.v1.json") as ExperimentConfiguration;
   const configurationDigests = resolvedConfigurationDigests(configurationExperiment);
@@ -206,6 +212,12 @@ test("experiment fixtures pin identity and preserve native harness limits", () =
   assert.throws(
     () => assertResolvedExperimentConfigurationDigests(configurationExperiment, configurationDigests),
     /model "model-a" digest/,
+  );
+  const duplicateModel = structuredClone(configurationExperiment);
+  duplicateModel.modelSet["model-c"] = duplicateModel.modelSet["model-a"];
+  assert.throws(
+    () => assertResolvedExperimentConfigurationDigests(duplicateModel, resolvedConfigurationDigests(duplicateModel)),
+    /Model "model-c" duplicates/,
   );
 });
 
@@ -268,9 +280,14 @@ test("task resolution accepts only matching admitted packets", () => {
 
   resolutions["task-a"] = {
     digest: { algorithm: "sha256", value: "0".repeat(64) },
+    reviewedDigest: { algorithm: "sha256", value: "0".repeat(64) },
     admission: { status: "admitted" },
   };
   assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, resolutions), /task-a.*digest/);
+
+  const staleReview = admittedResolutions(experiment.taskSet);
+  staleReview["task-a"] = { ...staleReview["task-a"], digest: { algorithm: "sha256", value: "0".repeat(64) } };
+  assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, staleReview), /review does not match/);
 
   const constructorTaskSet = Object.assign(Object.create(null), {
     constructor: experiment.taskSet["task-a"],
