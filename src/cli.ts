@@ -1,3 +1,6 @@
+#!/usr/bin/env node
+
+import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const usage = `Usage: ebo [--help]
@@ -22,7 +25,7 @@ export function main(
 
 if (
   process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
+  import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
 ) {
   process.exitCode = main();
 }

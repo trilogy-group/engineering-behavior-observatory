@@ -19,8 +19,8 @@ dist/
 credentials/
 
 # Generated local observation material
-.ebo/
-collector/
-workspaces/
-run-bundles/
-exports/
+/.ebo/
+/collector/
+/workspaces/
+/run-bundles/
+/exports/
