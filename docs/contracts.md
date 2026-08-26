@@ -21,7 +21,7 @@ not contain an evaluation corpus or a fixed operating matrix.
   descendant tree. Wildcards are intentionally unsupported.
 - `verified-archive-literal-paths-no-links-v1` adds the required v1 link rule:
   enumerate every selected entry and selected directory descendant before copy,
-  then reject any symbolic link. Links are never copied or dereferenced. Every
+  then reject every non-file/non-directory entry. Links are never copied or dereferenced. Every
   selected member name must be a canonical root-relative logical path before
   joining either archive or workspace roots.
 - `restricted` contains only digest-addressed references to the reference
@@ -55,7 +55,9 @@ tool namespace.
 
 Every experiment configuration reference is a portable bundle-relative logical
 path, resolved from the experiment bundle root rather than the current working
-directory. URLs, absolute paths, traversal, and backslashes are invalid. A
+directory. The resolver checks each component without following symbolic links
+and rejects a path that leaves the real bundle root. URLs, absolute paths,
+traversal, aliases such as `./`, and backslashes are invalid. A
 `permuted` order also names a digest-pinned permutation-algorithm reference;
 that versioned artifact defines how the supplied seed orders matrix cells. Each
 resolved model, harness, native-limit, native-tool-policy, capture-profile, and

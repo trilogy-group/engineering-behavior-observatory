@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +15,7 @@ import {
   assertNoSelectedSymlinks,
   assertResolvedExperimentConfigurationDigests,
   declaredMatrixCells,
+  resolveBundleConfiguration,
   type ArtifactReference,
   type Digest,
   type ExperimentConfiguration,
@@ -173,6 +175,25 @@ test("literal archive selection rejects every symlink entry", () => {
     () => assertNoSelectedSymlinks([{ path: "src/../../restricted/verifier.json", kind: "file" }]),
     /unsafe/,
   );
+  assert.throws(() => assertNoSelectedSymlinks([{ path: "src/config", kind: "hardlink" }]), /unsafe/);
+  assert.throws(() => assertNoSelectedSymlinks([{ path: "src/./index.ts", kind: "file" }]), /unsafe/);
+  assert.throws(() => assertNoSelectedSymlinks([{ path: "src/.", kind: "directory" }]), /unsafe/);
+});
+
+test("configuration references stay inside the bundle without following links", () => {
+  const bundleRoot = mkdtempSync(join(tmpdir(), "ebo-contracts-"));
+  const configurationPath = join(bundleRoot, "models", "model-a.json");
+
+  try {
+    mkdirSync(join(bundleRoot, "models"));
+    writeFileSync(configurationPath, "{}");
+    assert.equal(resolveBundleConfiguration(bundleRoot, "models/model-a.json"), realpathSync(configurationPath));
+    symlinkSync("../../outside.json", join(bundleRoot, "models", "escaped.json"));
+    assert.throws(() => resolveBundleConfiguration(bundleRoot, "models/escaped.json"), /escapes/);
+    assert.throws(() => resolveBundleConfiguration(bundleRoot, "models/./model-a.json"), /unsafe/);
+  } finally {
+    rmSync(bundleRoot, { force: true, recursive: true });
+  }
 });
 
 test("experiment fixtures pin identity and preserve native harness limits", () => {
@@ -219,6 +240,20 @@ test("experiment fixtures pin identity and preserve native harness limits", () =
     () => assertResolvedExperimentConfigurationDigests(duplicateModel, resolvedConfigurationDigests(duplicateModel)),
     /Model "model-c" duplicates/,
   );
+
+  const declaredConfiguration: ExperimentConfiguration = {
+    taskSet: twentyFour.taskSet as TaskConditionSet,
+    modelSet: configurationExperiment.modelSet,
+    harnessSet: configurationExperiment.harnessSet,
+    trialCount: 2,
+    coordinatorBudget: { maxWallClockMs: 1 },
+    captureProfile: configurationExperiment.captureProfile,
+    ordering: { seed: "fixed", strategy: "declared", declaredOrder: twentyFour.ordering.declaredOrder },
+  };
+  assert.doesNotThrow(() => assertResolvedExperimentConfigurationDigests(
+    declaredConfiguration,
+    resolvedConfigurationDigests(declaredConfiguration),
+  ));
 });
 
 test("experiment validation rejects mutable references, duplicate-array conditions, and unsafe numbers", () => {

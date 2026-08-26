@@ -1,3 +1,6 @@
+import { lstatSync, realpathSync } from "node:fs";
+import { isAbsolute, posix, relative, resolve, sep } from "node:path";
+
 export type Digest = {
   algorithm: "sha256";
   value: string;
@@ -10,7 +13,7 @@ export type ArtifactReference = {
 
 export type ArchiveEntry = {
   path: string;
-  kind: "file" | "directory" | "symlink";
+  kind: string;
 };
 
 export type TaskCondition = {
@@ -44,17 +47,19 @@ export type DeclaredMatrixCell = {
 };
 
 export type ExperimentConfiguration = {
+  taskSet: TaskConditionSet;
   modelSet: Record<string, { configurationRef: ArtifactReference }>;
   harnessSet: Record<string, {
     configurationRef: ArtifactReference;
     nativeLimitsRef: ArtifactReference;
     nativeToolPolicyRef: ArtifactReference;
   }>;
+  trialCount: number;
+  coordinatorBudget: { maxWallClockMs: number };
   captureProfile: ArtifactReference;
-  ordering: {
-    strategy: "declared" | "permuted";
-    permutationAlgorithmRef?: ArtifactReference;
-  };
+  ordering:
+    | { seed: string; strategy: "declared"; declaredOrder: DeclaredOrder }
+    | { seed: string; strategy: "permuted"; permutationAlgorithmRef: ArtifactReference };
 };
 
 export function assertDeclaredOrder(
@@ -88,11 +93,36 @@ export function* declaredMatrixCells(
 }
 
 export function assertNoSelectedSymlinks(entries: readonly ArchiveEntry[]): void {
-  const invalid = entries.find((entry) => entry.kind === "symlink" || !isSafeArchiveMemberPath(entry.path));
+  const invalid = entries.find((entry) =>
+    !["file", "directory"].includes(entry.kind) || !isSafeArchiveMemberPath(entry.path),
+  );
 
   if (invalid !== undefined) {
     throw new Error(`Selected archive entry "${invalid.path}" is unsafe.`);
   }
+}
+
+export function resolveBundleConfiguration(bundleRoot: string, locator: string): string {
+  if (!isSafeArchiveMemberPath(locator)) {
+    throw new Error(`Configuration locator "${locator}" is unsafe.`);
+  }
+
+  const resolvedRoot = realpathSync(bundleRoot);
+  let selectedPath = resolvedRoot;
+
+  for (const segment of locator.split("/")) {
+    selectedPath = resolve(selectedPath, segment);
+    if (!isContained(resolvedRoot, selectedPath) || lstatSync(selectedPath).isSymbolicLink()) {
+      throw new Error(`Configuration locator "${locator}" escapes its bundle root.`);
+    }
+  }
+
+  const resolvedPath = realpathSync(selectedPath);
+  if (!isContained(resolvedRoot, resolvedPath)) {
+    throw new Error(`Configuration locator "${locator}" escapes its bundle root.`);
+  }
+
+  return resolvedPath;
 }
 
 export function assertControlledPerturbationDigest(
@@ -200,7 +230,18 @@ function digestIdentity(digest: Digest): string {
 }
 
 function isSafeArchiveMemberPath(path: string): boolean {
-  return /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(path);
+  return path === posix.normalize(path)
+    && /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(path);
+}
+
+function isContained(root: string, path: string): boolean {
+  const pathFromRoot = relative(root, path);
+
+  return pathFromRoot === "" || (
+    !isAbsolute(pathFromRoot)
+    && pathFromRoot !== ".."
+    && !pathFromRoot.startsWith(`..${sep}`)
+  );
 }
 
 function assertExactIds(
