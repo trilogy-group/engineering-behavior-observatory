@@ -73,8 +73,10 @@ or implement beyond the assigned issue.
 5. Run the documented checks after the final edit and include the fresh output
    in the PR description.
 
-Until TASK-001 establishes the Node project, do not invent build, lint, or test
-commands. Once added, keep the commands in this file and `README.md` current.
+The Node release is pinned in `.nvmrc` and `package.json`. The bootstrap checks
+are `npm ci`, `npm run build`, `npm run typecheck`, `npm test`, and
+`node dist/src/cli.js --help`. Keep this list and `README.md` current as the
+project gains only issue-backed commands.
 
 ## Review priorities
 

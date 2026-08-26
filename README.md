@@ -11,8 +11,8 @@ and the local Behavior Atlas build on capture-qualified bundles afterward.
 
 ## Status
 
-Implementation has not started. OpenSymphony repository integration is present,
-and the implementation backlog is maintained separately in:
+The TypeScript/Node bootstrap is present. The implementation backlog is
+maintained separately in:
 
 `/Users/magos/dev/trilogy/benchmarking/Anthropic-evals/plans`
 
@@ -48,9 +48,20 @@ universal broker.
 
 ## Development
 
-TASK-001 will establish the minimal ESM TypeScript/Node package and its verified
-build, type-check, test, and command workflows. Until that task lands, there are
-no product setup or execution commands to document.
+EBO uses Node.js 24.19.0; `.nvmrc` pins the release. The runtime has no
+dependencies. Install the TypeScript toolchain and run the bootstrap checks:
+
+```sh
+nvm use
+npm ci
+npm run build
+npm run typecheck
+npm test
+node dist/src/cli.js --help
+```
+
+`ebo` currently exposes only its help surface. Capture, runner, adapter,
+evaluation, and Atlas behavior are introduced by their separately scoped tasks.
 
 Start with [AGENTS.md](AGENTS.md) and the assigned Linear issue. `WORKFLOW.md`
 contains OpenSymphony orchestration configuration and should not be treated as
