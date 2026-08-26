@@ -29,25 +29,22 @@
           "additionalProperties": false,
           "required": ["source", "materializer"],
           "properties": {
-            "source": { "$ref": "#/$defs/sourceReference" },
+            "source": { "$ref": "#/$defs/safeSource" },
             "materializer": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["kind", "destination", "excludedSurfaces"],
+              "required": ["kind", "destination", "includePaths"],
               "properties": {
-                "kind": { "enum": ["checkout", "archive"] },
+                "kind": { "const": "verified-archive" },
                 "destination": { "const": "workspace" },
-                "excludedSurfaces": {
+                "includePaths": {
                   "type": "array",
+                  "minItems": 1,
                   "uniqueItems": true,
                   "items": {
-                    "enum": ["referenceSolution", "verifier", "reviewRecord"]
-                  },
-                  "allOf": [
-                    { "contains": { "const": "referenceSolution" } },
-                    { "contains": { "const": "verifier" } },
-                    { "contains": { "const": "reviewRecord" } }
-                  ]
+                    "type": "string",
+                    "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+                  }
                 }
               }
             }
@@ -85,25 +82,13 @@
         "classification": { "enum": ["open", "restricted", "internal"] }
       }
     },
-    "admission": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["status", "reviewedAt", "reviewedBy"],
-      "properties": {
-        "status": { "enum": ["proposed", "admitted", "rejected"] },
-        "reviewedAt": { "type": "string", "minLength": 1 },
-        "reviewedBy": { "type": "string", "minLength": 1 }
-      }
-    },
+    "admission": { "$ref": "#/$defs/admission" },
     "components": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["agentInput", "fixture", "verifier", "referenceSolution"],
+      "required": ["agentInput"],
       "properties": {
-        "agentInput": { "$ref": "#/$defs/digest" },
-        "fixture": { "$ref": "#/$defs/digest" },
-        "verifier": { "$ref": "#/$defs/digest" },
-        "referenceSolution": { "$ref": "#/$defs/digest" }
+        "agentInput": { "$ref": "#/$defs/digest" }
       }
     },
     "restricted": {
@@ -118,6 +103,36 @@
     }
   },
   "$defs": {
+    "admission": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "review"],
+          "properties": {
+            "status": { "const": "proposed" },
+            "review": { "const": null }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "review"],
+          "properties": {
+            "status": { "enum": ["admitted", "rejected"] },
+            "review": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["reviewedAt", "reviewedBy"],
+              "properties": {
+                "reviewedAt": { "type": "string", "format": "date-time" },
+                "reviewedBy": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      ]
+    },
     "digest": {
       "type": "object",
       "additionalProperties": false,
@@ -127,14 +142,14 @@
         "value": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
       }
     },
-    "sourceReference": {
+    "safeSource": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "locator", "revision"],
+      "required": ["kind", "locator", "digest"],
       "properties": {
-        "kind": { "enum": ["repository", "archive"] },
+        "kind": { "const": "sanitized-archive" },
         "locator": { "type": "string", "minLength": 1 },
-        "revision": { "type": "string", "minLength": 1 }
+        "digest": { "$ref": "#/$defs/digest" }
       }
     },
     "restrictedReference": {

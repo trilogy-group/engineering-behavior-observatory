@@ -1,22 +1,28 @@
 {
   "schemaVersion": "ebo.experiment/v1",
   "id": "generic-24-cell",
-  "taskSet": [
-    { "id": "task-a", "configurationRef": "packets/task-a.json" },
-    { "id": "task-b", "configurationRef": "packets/task-b.json" }
-  ],
-  "modelSet": [
-    { "id": "model-a", "configurationRef": "models/model-a.json" },
-    { "id": "model-b", "configurationRef": "models/model-b.json" },
-    { "id": "model-c", "configurationRef": "models/model-c.json" }
-  ],
-  "harnessSet": [
-    { "id": "harness-a", "configurationRef": "harnesses/harness-a.json" },
-    { "id": "harness-b", "configurationRef": "harnesses/harness-b.json" }
-  ],
+  "taskSet": {
+    "task-a": { "configurationRef": { "locator": "packets/task-a.json", "digest": { "algorithm": "sha256", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } } },
+    "task-b": { "configurationRef": { "locator": "packets/task-b.json", "digest": { "algorithm": "sha256", "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } } }
+  },
+  "modelSet": {
+    "model-a": { "configurationRef": { "locator": "models/model-a.json", "digest": { "algorithm": "sha256", "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" } } },
+    "model-b": { "configurationRef": { "locator": "models/model-b.json", "digest": { "algorithm": "sha256", "value": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" } } },
+    "model-c": { "configurationRef": { "locator": "models/model-c.json", "digest": { "algorithm": "sha256", "value": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" } } }
+  },
+  "harnessSet": {
+    "harness-a": {
+      "configurationRef": { "locator": "harnesses/harness-a.json", "digest": { "algorithm": "sha256", "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" } },
+      "nativeLimitsRef": { "locator": "harnesses/harness-a-limits.json", "digest": { "algorithm": "sha256", "value": "1111111111111111111111111111111111111111111111111111111111111111" } }
+    },
+    "harness-b": {
+      "configurationRef": { "locator": "harnesses/harness-b.json", "digest": { "algorithm": "sha256", "value": "2222222222222222222222222222222222222222222222222222222222222222" } },
+      "nativeLimitsRef": { "locator": "harnesses/harness-b-limits.json", "digest": { "algorithm": "sha256", "value": "3333333333333333333333333333333333333333333333333333333333333333" } }
+    }
+  },
   "trialCount": 2,
   "ordering": { "seed": "matrix-seed-2", "strategy": "declared" },
-  "budgets": { "maxTurns": 10, "maxDurationMs": 120000 },
+  "coordinatorBudget": { "maxWallClockMs": 120000 },
   "toolPolicy": { "mode": "denylist", "tools": ["network"] },
   "captureProfile": { "id": "native-minimum", "contentCapture": false }
 }

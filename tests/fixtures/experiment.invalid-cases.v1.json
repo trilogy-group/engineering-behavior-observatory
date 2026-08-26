@@ -1,0 +1,33 @@
+[
+  {
+    "field": "digest",
+    "operation": "remove",
+    "path": ["taskSet", "task-a", "configurationRef", "digest"]
+  },
+  {
+    "field": "taskSet",
+    "operation": "replace",
+    "path": ["taskSet"],
+    "value": [
+      { "id": "task-a", "configurationRef": "packets/task-a.json" },
+      { "id": "task-a", "configurationRef": "packets/task-a.json" }
+    ]
+  },
+  {
+    "field": "nativeLimitsRef",
+    "operation": "remove",
+    "path": ["harnessSet", "harness-a", "nativeLimitsRef"]
+  },
+  {
+    "field": "trialCount",
+    "operation": "replace",
+    "path": ["trialCount"],
+    "value": 9007199254740992
+  },
+  {
+    "field": "maxWallClockMs",
+    "operation": "replace",
+    "path": ["coordinatorBudget", "maxWallClockMs"],
+    "value": 9007199254740992
+  }
+]

@@ -5,14 +5,31 @@
     "path": ["provenance"]
   },
   {
-    "field": "status",
+    "field": "digest",
     "operation": "remove",
-    "path": ["admission", "status"]
+    "path": ["restricted", "referenceSolution", "digest"]
   },
   {
-    "field": "referenceSolution",
+    "field": "kind",
+    "operation": "replace",
+    "path": ["agentInput", "fixture", "source", "kind"],
+    "value": "repository"
+  },
+  {
+    "field": "includePaths",
     "operation": "remove",
-    "path": ["components", "referenceSolution"]
+    "path": ["agentInput", "fixture", "materializer", "includePaths"]
+  },
+  {
+    "field": "review",
+    "operation": "remove",
+    "path": ["admission", "review"]
+  },
+  {
+    "field": "date-time",
+    "operation": "replace",
+    "path": ["admission", "review", "reviewedAt"],
+    "value": "unknown"
   },
   {
     "field": "schemaVersion",

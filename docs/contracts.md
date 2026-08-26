@@ -9,23 +9,33 @@ not contain an evaluation corpus or a fixed operating matrix.
 `schemas/task-packet.v1.schema.json` divides a packet into two surfaces:
 
 - `agentInput` is the only surface a workspace materializer may use. It holds
-  the public prompt and fixture source/materializer instructions. Its required
-  exclusions make reference solutions, verifier internals, and review records
-  unavailable to the agent workspace.
+  the public prompt, a digest-verified sanitized archive, and an explicit
+  workspace-relative allowlist. A materializer verifies the archive digest and
+  copies only `includePaths`; it must not materialize a raw repository checkout.
 - `restricted` contains only digest-addressed references to those three
   protected components. It deliberately cannot embed their contents.
 
 The packet records repository provenance, a controlled perturbation, admission
 review status, sharing classification, and SHA-256 digests for every frozen
-component. A future admission tool owns resolving and freezing those references;
-the schema only makes their required evidence explicit.
+component. Every digest has one authority: the safe fixture source, controlled
+perturbation, and restricted component references carry their own; `components`
+records only the public input digest.
+
+`proposed` packets explicitly set `admission.review` to `null`. `admitted` and
+`rejected` packets require a reviewer and RFC 3339 `date-time` evidence.
 
 ## Experiments
 
 `schemas/experiment.v1.schema.json` treats task, model, and harness sets;
-trial count; ordering seed; budgets; tool policy; and capture profile as data.
+trial count; ordering seed; coordinator wall-clock budget; tool policy; and
+capture profile as data. Each condition set is an ID-keyed map, so one identity
+can expand to only one matrix condition. Every referenced configuration has a
+SHA-256 digest. Each harness condition separately names its source-specific
+native-limits configuration; EBO does not define a shared turn count.
+
 The fixtures include a generic 18-cell matrix and a differently shaped matrix
-to show that no study dimensions are built into the contract.
+to show that no study dimensions are built into the contract. Parsed numeric
+controls are limited to JavaScript safe integers.
 
 Unknown schema versions and sharing classifications are invalid. Consumers must
 validate a document before materializing a workspace or scheduling a run.

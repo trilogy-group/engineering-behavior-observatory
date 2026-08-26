@@ -12,29 +12,26 @@
     "harnessSet",
     "trialCount",
     "ordering",
-    "budgets",
+    "coordinatorBudget",
     "toolPolicy",
     "captureProfile"
   ],
   "properties": {
     "schemaVersion": { "const": "ebo.experiment/v1" },
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
-    "taskSet": {
-      "type": "array",
-      "minItems": 1,
-      "items": { "$ref": "#/$defs/condition" }
-    },
-    "modelSet": {
-      "type": "array",
-      "minItems": 1,
-      "items": { "$ref": "#/$defs/condition" }
-    },
+    "taskSet": { "$ref": "#/$defs/conditionSet" },
+    "modelSet": { "$ref": "#/$defs/conditionSet" },
     "harnessSet": {
-      "type": "array",
-      "minItems": 1,
-      "items": { "$ref": "#/$defs/condition" }
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
+      "additionalProperties": { "$ref": "#/$defs/harnessCondition" }
     },
-    "trialCount": { "type": "integer", "minimum": 1 },
+    "trialCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
     "ordering": {
       "type": "object",
       "additionalProperties": false,
@@ -44,13 +41,16 @@
         "strategy": { "enum": ["declared", "permuted"] }
       }
     },
-    "budgets": {
+    "coordinatorBudget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["maxTurns", "maxDurationMs"],
+      "required": ["maxWallClockMs"],
       "properties": {
-        "maxTurns": { "type": "integer", "minimum": 1 },
-        "maxDurationMs": { "type": "integer", "minimum": 1 }
+        "maxWallClockMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
       }
     },
     "toolPolicy": {
@@ -77,13 +77,45 @@
     }
   },
   "$defs": {
+    "digest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "value": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "configurationReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["locator", "digest"],
+      "properties": {
+        "locator": { "type": "string", "minLength": 1 },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    },
     "condition": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "configurationRef"],
+      "required": ["configurationRef"],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "configurationRef": { "type": "string", "minLength": 1 }
+        "configurationRef": { "$ref": "#/$defs/configurationReference" }
+      }
+    },
+    "conditionSet": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
+      "additionalProperties": { "$ref": "#/$defs/condition" }
+    },
+    "harnessCondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["configurationRef", "nativeLimitsRef"],
+      "properties": {
+        "configurationRef": { "$ref": "#/$defs/configurationReference" },
+        "nativeLimitsRef": { "$ref": "#/$defs/configurationReference" }
       }
     }
   }

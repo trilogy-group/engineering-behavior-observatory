@@ -1,21 +1,24 @@
 {
   "schemaVersion": "ebo.experiment/v1",
   "id": "generic-18-cell",
-  "taskSet": [
-    { "id": "task-a", "configurationRef": "packets/task-a.json" },
-    { "id": "task-b", "configurationRef": "packets/task-b.json" },
-    { "id": "task-c", "configurationRef": "packets/task-c.json" }
-  ],
-  "modelSet": [
-    { "id": "model-a", "configurationRef": "models/model-a.json" },
-    { "id": "model-b", "configurationRef": "models/model-b.json" }
-  ],
-  "harnessSet": [
-    { "id": "harness-a", "configurationRef": "harnesses/harness-a.json" }
-  ],
+  "taskSet": {
+    "task-a": { "configurationRef": { "locator": "packets/task-a.json", "digest": { "algorithm": "sha256", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } } },
+    "task-b": { "configurationRef": { "locator": "packets/task-b.json", "digest": { "algorithm": "sha256", "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } } },
+    "task-c": { "configurationRef": { "locator": "packets/task-c.json", "digest": { "algorithm": "sha256", "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" } } }
+  },
+  "modelSet": {
+    "model-a": { "configurationRef": { "locator": "models/model-a.json", "digest": { "algorithm": "sha256", "value": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" } } },
+    "model-b": { "configurationRef": { "locator": "models/model-b.json", "digest": { "algorithm": "sha256", "value": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" } } }
+  },
+  "harnessSet": {
+    "harness-a": {
+      "configurationRef": { "locator": "harnesses/harness-a.json", "digest": { "algorithm": "sha256", "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" } },
+      "nativeLimitsRef": { "locator": "harnesses/harness-a-limits.json", "digest": { "algorithm": "sha256", "value": "1111111111111111111111111111111111111111111111111111111111111111" } }
+    }
+  },
   "trialCount": 3,
   "ordering": { "seed": "matrix-seed-1", "strategy": "permuted" },
-  "budgets": { "maxTurns": 20, "maxDurationMs": 300000 },
+  "coordinatorBudget": { "maxWallClockMs": 300000 },
   "toolPolicy": { "mode": "allowlist", "tools": ["shell", "read"] },
   "captureProfile": { "id": "native-minimum", "contentCapture": false }
 }
