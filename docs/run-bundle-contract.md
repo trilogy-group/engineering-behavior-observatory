@@ -88,6 +88,7 @@ missing-evidence entry; optional-beta-unavailable affects timing-resource only.
 An available capability requires an indexed artifact with that authority. The
 embedded capture report must also name the containing bundle. An `incomplete`
 report remains a valid retained partial bundle but is not capture-qualified.
+Missing-evidence effects cannot contradict a capability reported as available.
 
 Verifier results cannot contradict their assertions: passed results have no
 failed assertion, while failed results retain at least one failed assertion.

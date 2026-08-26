@@ -40,6 +40,9 @@ function schemaErrors(reference: string, value: unknown): string[] {
 
 function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonObject>()): string[] {
   const errors = schemaErrors(schemaId, manifest);
+  if (errors.length > 0) {
+    return errors;
+  }
   const evidence = manifest.evidence;
 
   if (!Array.isArray(evidence)) {
@@ -96,7 +99,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   if (Array.isArray(runtime)) {
     const runtimeIds = runtime.map((component) => {
       const value = component as JsonObject;
-      return `${String(value.source)}\u0000${String(value.name)}\u0000${String(value.version)}`;
+      return JSON.stringify([value.source, value.name, value.version]);
     });
     if (new Set(runtimeIds).size !== runtimeIds.length) {
       errors.push("/run/runtime contains duplicate components");
@@ -133,6 +136,9 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     }
 
     const capabilities = report.capabilities as JsonObject;
+    const missingEffects = new Set(
+      (report.missingEvidence as JsonObject[]).flatMap((entry) => entry.affects as string[]),
+    );
     for (const [capability, authority] of Object.entries({
       semantic: "semantic",
       timingResource: "timing-resource",
@@ -141,6 +147,9 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
       if ((capabilities[capability] as JsonObject).status === "available" &&
           !(evidence as JsonObject[]).some((item) => item.authority === authority)) {
         errors.push(`/capture-report/${capability} is available without ${authority} evidence`);
+      }
+      if ((capabilities[capability] as JsonObject).status === "available" && missingEffects.has(authority)) {
+        errors.push(`/capture-report/${capability} is available but declared missing`);
       }
     }
   }
@@ -272,6 +281,8 @@ test("rejects contradictory and incomplete contract records", () => {
   invalidTerminal.terminal = { state: "completed", failureClass: "task", stopReason: "none" };
   assertContractInvalid(invalidTerminal);
 
+  assert.doesNotThrow(() => assertContractInvalid({ evidence: [] }));
+
   const invalidPath = structuredClone(complete);
   (invalidPath.evidence as JsonObject[])[0].relativePath = "../outside.json";
   assertContractInvalid(invalidPath);
@@ -333,6 +344,13 @@ test("rejects contradictory and incomplete contract records", () => {
     ...((duplicateRuntime.run as JsonObject).runtime as JsonObject[])[0],
   });
   assertContractInvalid(duplicateRuntime, completeArtifacts);
+
+  const distinctDelimiterRuntime = structuredClone(complete);
+  (distinctDelimiterRuntime.run as JsonObject).runtime = [
+    { source: "a\u0000b", name: "c", version: "d" },
+    { source: "a", name: "b\u0000c", version: "d" },
+  ];
+  assertContractValid(distinctDelimiterRuntime, completeArtifacts);
 
   const mismatchedCaptureReport = new Map(completeArtifacts);
   mismatchedCaptureReport.set("capture-report", {
@@ -397,6 +415,13 @@ test("rejects contradictory and incomplete contract records", () => {
   const qualifiedTelemetryGap = structuredClone(telemetryReport);
   qualifiedTelemetryGap.qualification = "qualified";
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, qualifiedTelemetryGap), []);
+
+  const declaredTimingGap = new Map(completeArtifacts);
+  declaredTimingGap.set("capture-report", {
+    ...completeCaptureReport,
+    missingEvidence: [{ kind: "telemetry", reason: "not-checked", affects: ["timing-resource"] }],
+  });
+  assertContractInvalid(complete, declaredTimingGap);
 
   const wrongOptionalBetaAuthority = structuredClone(telemetryReport);
   ((wrongOptionalBetaAuthority.missingEvidence as JsonObject[])[0].affects as string[]) = [
