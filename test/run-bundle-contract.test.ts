@@ -77,6 +77,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   const declaredTraceId = (((manifest.run as JsonObject).native as JsonObject | undefined)?.traceId);
   const sessionDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "session");
   const telemetryDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "telemetry");
+  const verifierStatuses: unknown[] = [];
 
   if (declaredSessionId !== undefined && sessionDescriptors.length > 0 &&
       !sessionDescriptors.some((descriptor) =>
@@ -127,6 +128,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
           (terminal.state === "failed" && terminal.failureClass === "task" && report.status !== "failed")) {
         errors.push(`/evidence/${String(descriptor.id)} contradicts the manifest terminal outcome`);
       }
+      verifierStatuses.push(report.status);
       continue;
     }
 
@@ -141,6 +143,12 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
         errors.push(`/capture-report/${capability} is available without ${authority} evidence`);
       }
     }
+  }
+
+  const terminal = manifest.terminal as JsonObject;
+  if ((terminal.state === "completed" && !verifierStatuses.includes("passed")) ||
+      (terminal.state === "failed" && terminal.failureClass === "task" && !verifierStatuses.includes("failed"))) {
+    errors.push("/terminal outcome requires a matching retained verifier result");
   }
 
   return errors;
@@ -253,6 +261,11 @@ test("rejects contradictory and incomplete contract records", () => {
     ["verifier", completeVerifier],
   ]);
   const telemetryReport = readJson(resolve(fixtureRoot, "telemetry-incomplete/capture-report.json"));
+  const taskFailed = readJson(resolve(fixtureRoot, "task-failed/manifest.json"));
+  const taskFailedArtifacts = new Map([
+    ["capture-report", readJson(resolve(fixtureRoot, "task-failed/capture-report.json"))],
+    ["verifier", readJson(resolve(fixtureRoot, "task-failed/verifier.json"))],
+  ]);
   const verifier = readJson(resolve(fixtureRoot, "complete/verifier.json"));
 
   const invalidTerminal = structuredClone(complete);
@@ -360,6 +373,18 @@ test("rejects contradictory and incomplete contract records", () => {
     (descriptor) => descriptor.kind === "capture-report",
   );
   assertContractInvalid(qualifiedWithoutEvidence, completeArtifacts);
+
+  const completedWithoutVerifier = structuredClone(complete);
+  completedWithoutVerifier.evidence = (completedWithoutVerifier.evidence as JsonObject[]).filter(
+    (descriptor) => descriptor.kind !== "verifier",
+  );
+  assertContractInvalid(completedWithoutVerifier, completeArtifacts);
+
+  const taskFailedWithoutVerifier = structuredClone(taskFailed);
+  taskFailedWithoutVerifier.evidence = (taskFailedWithoutVerifier.evidence as JsonObject[]).filter(
+    (descriptor) => descriptor.kind !== "verifier",
+  );
+  assertContractInvalid(taskFailedWithoutVerifier, taskFailedArtifacts);
 
   const mismatchedNativeSession = structuredClone(complete);
   ((mismatchedNativeSession.run as JsonObject).native as JsonObject).sessionId = "other-session";

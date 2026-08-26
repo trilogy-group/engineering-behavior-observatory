@@ -93,7 +93,8 @@ Verifier results cannot contradict their assertions: passed results have no
 failed assertion, while failed results retain at least one failed assertion.
 Assertion IDs are unique, and a retained verifier result names the containing
 bundle. Completed runs retain passed verifier results; task-failed runs retain
-failed verifier results.
+failed verifier results. Both outcomes require that retained verifier evidence;
+workspace evidence alone cannot establish task pass or task failure.
 
 ## Sharing boundary
 
