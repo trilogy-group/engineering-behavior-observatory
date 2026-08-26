@@ -1,0 +1,26 @@
+{
+  "name": "engineering-behavior-observatory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native engineering-agent evidence capture and observation.",
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "bin": {
+    "ebo": "./dist/src/cli.js"
+  },
+  "engines": {
+    "node": "24.19.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/cli.test.js",
+    "ebo": "node dist/src/cli.js"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "typescript": "^5.9.3"
+  }
+}
