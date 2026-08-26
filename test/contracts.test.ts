@@ -11,7 +11,12 @@ import {
   assertAdmittedTaskPackets,
   assertControlledPerturbationDigest,
   assertDeclaredOrder,
+  assertNoSelectedSymlinks,
+  assertResolvedExperimentConfigurationDigests,
+  declaredMatrixCells,
   type ArtifactReference,
+  type Digest,
+  type ExperimentConfiguration,
   type DeclaredOrder,
   type ResolvedTaskPacket,
   type TaskConditionSet,
@@ -83,6 +88,23 @@ function admittedResolutions(taskSet: TaskConditionSet): Record<string, Resolved
   );
 }
 
+function resolvedConfigurationDigests(experiment: ExperimentConfiguration): Record<string, Digest> {
+  const references = [
+    ...Object.values(experiment.modelSet).map((condition) => condition.configurationRef),
+    ...Object.values(experiment.harnessSet).flatMap((condition) => [
+      condition.configurationRef,
+      condition.nativeLimitsRef,
+      condition.nativeToolPolicyRef,
+    ]),
+    experiment.captureProfile,
+    ...(experiment.ordering.strategy === "permuted" && experiment.ordering.permutationAlgorithmRef !== undefined
+      ? [experiment.ordering.permutationAlgorithmRef]
+      : []),
+  ];
+
+  return Object.fromEntries(references.map((reference) => [reference.locator, reference.digest]));
+}
+
 test("task packets expose only a verified, allowlisted materialization surface", () => {
   const packet = fixture("task-packet.valid.v1.json") as {
     agentInput: {
@@ -97,7 +119,7 @@ test("task packets expose only a verified, allowlisted materialization surface",
 
   assert.equal(validate(packet), true, JSON.stringify(validate.errors));
   assert.equal(packet.agentInput.fixture.source.kind, "sanitized-archive");
-  assert.equal(packet.agentInput.fixture.materializer.kind, "verified-archive-literal-paths-v1");
+  assert.equal(packet.agentInput.fixture.materializer.kind, "verified-archive-literal-paths-no-links-v1");
   assert.deepEqual(packet.agentInput.fixture.materializer.includePaths, ["README.md", "package.json", "src"]);
   assert.doesNotMatch(JSON.stringify(packet.agentInput), /referenceSolution|reviewRecord|verifier/);
   assert.deepEqual(Object.keys(packet.restricted.referenceSolution).sort(), ["digest", "locator"]);
@@ -138,6 +160,17 @@ test("controlled perturbation references reject tampered digests", () => {
   );
 });
 
+test("literal archive selection rejects every symlink entry", () => {
+  assert.doesNotThrow(() => assertNoSelectedSymlinks([
+    { path: "src", kind: "directory" },
+    { path: "src/index.ts", kind: "file" },
+  ]));
+  assert.throws(
+    () => assertNoSelectedSymlinks([{ path: "src/config", kind: "symlink" }]),
+    /src\/config.*symlink/,
+  );
+});
+
 test("experiment fixtures pin identity and preserve native harness limits", () => {
   const validate = validator("experiment.v1.schema.json");
   const eighteen = fixture("experiment.18-cell.v1.json") as Parameters<typeof expandMatrix>[0];
@@ -156,6 +189,24 @@ test("experiment fixtures pin identity and preserve native harness limits", () =
   assert.deepEqual(Object.keys(twentyFour.taskSet), ["2", "10"]);
   assert.deepEqual(twentyFour.ordering.declaredOrder.taskIds, ["10", "2"]);
   assert.doesNotThrow(() => assertDeclaredOrder(twentyFour, twentyFour.ordering.declaredOrder));
+  assert.deepEqual(
+    declaredMatrixCells(twentyFour.ordering.declaredOrder, twentyFour.trialCount).slice(0, 4),
+    [
+      { taskId: "10", modelId: "model-a", harnessId: "harness-a", trialIndex: 1 },
+      { taskId: "10", modelId: "model-a", harnessId: "harness-a", trialIndex: 2 },
+      { taskId: "10", modelId: "model-a", harnessId: "harness-b", trialIndex: 1 },
+      { taskId: "10", modelId: "model-a", harnessId: "harness-b", trialIndex: 2 },
+    ],
+  );
+
+  const configurationExperiment = fixture("experiment.18-cell.v1.json") as ExperimentConfiguration;
+  const configurationDigests = resolvedConfigurationDigests(configurationExperiment);
+  assert.doesNotThrow(() => assertResolvedExperimentConfigurationDigests(configurationExperiment, configurationDigests));
+  configurationDigests["models/model-a.json"] = { algorithm: "sha256", value: "0".repeat(64) };
+  assert.throws(
+    () => assertResolvedExperimentConfigurationDigests(configurationExperiment, configurationDigests),
+    /model "model-a" digest/,
+  );
 });
 
 test("experiment validation rejects mutable references, duplicate-array conditions, and unsafe numbers", () => {
@@ -220,4 +271,21 @@ test("task resolution accepts only matching admitted packets", () => {
     admission: { status: "admitted" },
   };
   assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, resolutions), /task-a.*digest/);
+
+  const constructorTaskSet = Object.assign(Object.create(null), {
+    constructor: experiment.taskSet["task-a"],
+  }) as TaskConditionSet;
+  assert.throws(
+    () => assertAdmittedTaskPackets(constructorTaskSet, {}),
+    /constructor.*did not resolve/,
+  );
+
+  const duplicateTaskSet = {
+    ...experiment.taskSet,
+    "task-d": experiment.taskSet["task-a"],
+  } as TaskConditionSet;
+  assert.throws(
+    () => assertAdmittedTaskPackets(duplicateTaskSet, admittedResolutions(duplicateTaskSet)),
+    /task-d.*duplicates/,
+  );
 });

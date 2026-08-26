@@ -34,7 +34,7 @@
               "additionalProperties": false,
               "required": ["kind", "destination", "includePaths"],
               "properties": {
-                "kind": { "const": "verified-archive-literal-paths-v1" },
+                "kind": { "const": "verified-archive-literal-paths-no-links-v1" },
                 "destination": { "const": "workspace" },
                 "includePaths": {
                   "type": "array",

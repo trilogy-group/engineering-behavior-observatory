@@ -10,7 +10,7 @@
         "digest": { "algorithm": "sha256", "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }
       },
       "materializer": {
-        "kind": "verified-archive-literal-paths-v1",
+        "kind": "verified-archive-literal-paths-no-links-v1",
         "destination": "workspace",
         "includePaths": ["README.md", "package.json", "src"]
       }

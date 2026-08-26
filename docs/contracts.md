@@ -19,6 +19,9 @@ not contain an evaluation corpus or a fixed operating matrix.
 - `verified-archive-literal-paths-v1` resolves each literal from the sanitized
   archive root. A file includes that file; a directory includes its complete
   descendant tree. Wildcards are intentionally unsupported.
+- `verified-archive-literal-paths-no-links-v1` adds the required v1 link rule:
+  enumerate every selected entry and selected directory descendant before copy,
+  then reject any symbolic link. Links are never copied or dereferenced.
 - `restricted` contains only digest-addressed references to the reference
   solution and verifier. It deliberately cannot embed their contents.
 
@@ -52,7 +55,9 @@ Every experiment configuration reference is a portable bundle-relative logical
 path, resolved from the experiment bundle root rather than the current working
 directory. URLs, absolute paths, traversal, and backslashes are invalid. A
 `permuted` order also names a digest-pinned permutation-algorithm reference;
-that versioned artifact defines how the supplied seed orders matrix cells.
+that versioned artifact defines how the supplied seed orders matrix cells. Each
+resolved model, harness, native-limit, native-tool-policy, capture-profile, and
+permutation artifact must hash to its pinned digest before scheduling.
 
 `declared` ordering carries explicit task, model, and harness ID lists. Matrix
 compilers use those lists, never object-property enumeration, and reject a list
@@ -60,6 +65,10 @@ unless it is an exact permutation of its condition-set IDs. Before expansion, a
 compiler resolves every task packet, checks the reference digest, and requires
 `admission.status` to be `admitted`. Capture profiles use the same digest-pinned
 configuration-reference shape as other immutable experiment inputs.
+
+For declared matrices, traversal is task outermost, then model, then harness,
+with one-based trial replicas innermost. The compiler rejects duplicate task
+packet digests across task IDs before expansion.
 
 The fixtures include a generic 18-cell matrix and a differently shaped matrix
 to show that no study dimensions are built into the contract. Parsed numeric
