@@ -7,6 +7,7 @@ export {
   assertResolvedExperimentConfigurationDigests,
   declaredMatrixCells,
   resolveBundleConfiguration,
+  resolveTaskArchive,
 } from "./contracts.js";
 export type {
   ArtifactReference,

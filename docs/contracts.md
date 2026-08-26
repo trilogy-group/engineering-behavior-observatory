@@ -14,7 +14,8 @@ not contain an evaluation corpus or a fixed operating matrix.
   workspace-relative allowlist. A materializer verifies the archive digest and
   copies only `includePaths`; it must not materialize a raw repository checkout.
 - Its archive locator is a secret-free, bundle-relative logical path. URLs,
-  absolute local paths, credentials, and path traversal are invalid there.
+  absolute local paths, credentials, and path traversal are invalid there. Its
+  resolver rejects links and paths that leave the real task-bundle root.
   Include paths are canonical POSIX logical paths only; leading slashes, trailing
   slashes, backslashes,
   drive letters, UNC paths, and traversal forms are invalid.
@@ -47,8 +48,9 @@ content is either an external, digest-addressed artifact or an explicit
 taxonomy.
 
 Before scheduling, EBO requires an admitted packet's review time to be a valid
-RFC 3339 calendar timestamp and the resolved verifier bytes to match the
-verifier's pinned digest.
+RFC 3339 calendar timestamp and its review record, provided reference solution,
+and verifier bytes to match their pinned digests. Each declared materialization
+literal must select at least one verified archive file or directory tree.
 
 ## Experiments
 

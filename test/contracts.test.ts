@@ -16,6 +16,7 @@ import {
   assertResolvedExperimentConfigurationDigests,
   declaredMatrixCells,
   resolveBundleConfiguration,
+  resolveTaskArchive,
   type ArtifactReference,
   type Digest,
   type ExperimentConfiguration,
@@ -93,6 +94,10 @@ function admittedResolutions(taskSet: TaskConditionSet): Record<string, Resolved
       {
         digest: condition.packetRef.digest,
         reviewedDigest: condition.packetRef.digest,
+        reviewRecordDigest: condition.packetRef.digest,
+        resolvedReviewRecordDigest: condition.packetRef.digest,
+        referenceSolutionDigest: condition.packetRef.digest,
+        resolvedReferenceSolutionDigest: condition.packetRef.digest,
         verifierDigest: condition.packetRef.digest,
         resolvedVerifierDigest: condition.packetRef.digest,
         admission: { status: "admitted", reviewedAt: "2026-08-26T00:00:00Z" },
@@ -211,40 +216,49 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
   assert.doesNotThrow(() => assertNoSelectedSymlinks([
     { path: "src", kind: "directory" },
     { path: "src/index.ts", kind: "file" },
-  ]));
+  ], ["src"]));
   assert.throws(
-    () => assertNoSelectedSymlinks([{ path: "src/config", kind: "symlink" }]),
+    () => assertNoSelectedSymlinks([{ path: "src/config", kind: "symlink" }], ["src"]),
     /src\/config.*unsafe/,
   );
   assert.throws(
-    () => assertNoSelectedSymlinks([{ path: "src/../../restricted/verifier.json", kind: "file" }]),
+    () => assertNoSelectedSymlinks([{ path: "src/../../restricted/verifier.json", kind: "file" }], ["src"]),
     /unsafe/,
   );
-  assert.throws(() => assertNoSelectedSymlinks([{ path: "src/config", kind: "hardlink" }]), /unsafe/);
-  assert.throws(() => assertNoSelectedSymlinks([{ path: "src/./index.ts", kind: "file" }]), /unsafe/);
-  assert.throws(() => assertNoSelectedSymlinks([{ path: "src/.", kind: "directory" }]), /unsafe/);
-  assert.doesNotThrow(() => assertNoSelectedSymlinks([{ path: ".editorconfig", kind: "file" }]));
+  assert.throws(() => assertNoSelectedSymlinks([{ path: "src/config", kind: "hardlink" }], ["src"]), /unsafe/);
+  assert.throws(() => assertNoSelectedSymlinks([], ["src"]), /No archive entries/);
+  assert.throws(() => assertNoSelectedSymlinks([{ path: "src/./index.ts", kind: "file" }], ["src"]), /unsafe/);
+  assert.throws(() => assertNoSelectedSymlinks([{ path: "src/.", kind: "directory" }], ["src"]), /unsafe/);
+  assert.throws(() => assertNoSelectedSymlinks([{ path: "README.md/", kind: "file" }], ["README.md"]), /unsafe/);
+  assert.doesNotThrow(() => assertNoSelectedSymlinks([{ path: ".editorconfig", kind: "file" }], [".editorconfig"]));
   assert.throws(() => assertNoSelectedSymlinks([
     { path: "src", kind: "directory" },
     { path: "src/", kind: "directory" },
-  ]), /collides/);
+  ], ["src"]), /collides/);
   assert.throws(() => assertNoSelectedSymlinks([
     { path: "src", kind: "file" },
     { path: "src/index.ts", kind: "file" },
-  ]), /file destination/);
+  ], ["src"]), /file destination/);
+  assert.throws(() => assertNoSelectedSymlinks([{ path: "README.md", kind: "file" }], ["src"]), /selected no entries/);
 });
 
 test("configuration references stay inside the bundle without following links", () => {
   const bundleRoot = mkdtempSync(join(tmpdir(), "ebo-contracts-"));
   const configurationPath = join(bundleRoot, "models", "model-a.json");
+  const archivePath = join(bundleRoot, "fixtures", "task.tar.gz");
 
   try {
     mkdirSync(join(bundleRoot, "models"));
+    mkdirSync(join(bundleRoot, "fixtures"));
     writeFileSync(configurationPath, "{}");
+    writeFileSync(archivePath, "archive");
     assert.equal(resolveBundleConfiguration(bundleRoot, "models/model-a.json"), realpathSync(configurationPath));
+    assert.equal(resolveTaskArchive(bundleRoot, "fixtures/task.tar.gz"), realpathSync(archivePath));
     assert.equal(exportedResolveBundleConfiguration, resolveBundleConfiguration);
     symlinkSync("../../outside.json", join(bundleRoot, "models", "escaped.json"));
+    symlinkSync("../../outside.tar.gz", join(bundleRoot, "fixtures", "escaped.tar.gz"));
     assert.throws(() => resolveBundleConfiguration(bundleRoot, "models/escaped.json"), /escapes/);
+    assert.throws(() => resolveTaskArchive(bundleRoot, "fixtures/escaped.tar.gz"), /escapes/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, "models/./model-a.json"), /unsafe/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, "models"), /not a regular file/);
   } finally {
@@ -374,6 +388,10 @@ test("task resolution accepts only matching admitted packets", () => {
   resolutions["task-a"] = {
     digest: { algorithm: "sha256", value: "0".repeat(64) },
     reviewedDigest: { algorithm: "sha256", value: "0".repeat(64) },
+    reviewRecordDigest: experiment.taskSet["task-a"]!.packetRef.digest,
+    resolvedReviewRecordDigest: experiment.taskSet["task-a"]!.packetRef.digest,
+    referenceSolutionDigest: experiment.taskSet["task-a"]!.packetRef.digest,
+    resolvedReferenceSolutionDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     verifierDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     resolvedVerifierDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     admission: { status: "admitted", reviewedAt: "2026-08-26T00:00:00Z" },
@@ -391,6 +409,14 @@ test("task resolution accepts only matching admitted packets", () => {
   const tamperedVerifier = admittedResolutions(experiment.taskSet);
   tamperedVerifier["task-a"]!.resolvedVerifierDigest = { algorithm: "sha256", value: "0".repeat(64) };
   assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, tamperedVerifier), /verifier digest/);
+
+  const tamperedReviewRecord = admittedResolutions(experiment.taskSet);
+  tamperedReviewRecord["task-a"]!.resolvedReviewRecordDigest = { algorithm: "sha256", value: "0".repeat(64) };
+  assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, tamperedReviewRecord), /review record digest/);
+
+  const tamperedReferenceSolution = admittedResolutions(experiment.taskSet);
+  tamperedReferenceSolution["task-a"]!.resolvedReferenceSolutionDigest = { algorithm: "sha256", value: "0".repeat(64) };
+  assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, tamperedReferenceSolution), /reference solution digest/);
 
   const constructorTaskSet = Object.assign(Object.create(null), {
     constructor: experiment.taskSet["task-a"],

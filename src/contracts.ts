@@ -28,6 +28,10 @@ export type TaskConditionSet = Record<string, TaskCondition>;
 export type ResolvedTaskPacket = {
   digest: Digest;
   reviewedDigest: Digest | null;
+  reviewRecordDigest: Digest | null;
+  resolvedReviewRecordDigest: Digest | null;
+  referenceSolutionDigest: Digest | null;
+  resolvedReferenceSolutionDigest: Digest | null;
   verifierDigest: Digest;
   resolvedVerifierDigest: Digest;
   admission: {
@@ -97,13 +101,18 @@ export function* declaredMatrixCells(
 
 }
 
-export function assertNoSelectedSymlinks(entries: readonly ArchiveEntry[]): void {
+export function assertNoSelectedSymlinks(entries: readonly ArchiveEntry[], includePaths: readonly string[]): void {
   const destinations = new Map<string, string>();
+
+  if (entries.length === 0) {
+    throw new Error("No archive entries were selected.");
+  }
 
   for (const entry of entries) {
     const destination = canonicalArchiveMemberPath(entry.path);
 
-    if (!["file", "directory"].includes(entry.kind) || !isSafeArchiveMemberPath(entry.path)) {
+    if (!["file", "directory"].includes(entry.kind) || !isSafeArchiveMemberPath(entry.path)
+        || (entry.kind === "file" && entry.path.endsWith("/"))) {
       throw new Error(`Selected archive entry "${entry.path}" is unsafe.`);
     }
     if (destinations.has(destination)) {
@@ -117,11 +126,26 @@ export function assertNoSelectedSymlinks(entries: readonly ArchiveEntry[]): void
     }
     destinations.set(destination, entry.kind);
   }
+
+  for (const includePath of includePaths) {
+    if (!isSafeArchiveMemberPath(includePath)
+        || !entries.some((entry) => entry.path === includePath || entry.path.startsWith(`${includePath}/`))) {
+      throw new Error(`Archive include path "${includePath}" selected no entries.`);
+    }
+  }
 }
 
 export function resolveBundleConfiguration(bundleRoot: string, locator: string): string {
+  return resolveBundleRegularFile(bundleRoot, locator, "Configuration locator");
+}
+
+export function resolveTaskArchive(bundleRoot: string, locator: string): string {
+  return resolveBundleRegularFile(bundleRoot, locator, "Task archive locator");
+}
+
+function resolveBundleRegularFile(bundleRoot: string, locator: string, label: string): string {
   if (!isSafeArchiveMemberPath(locator)) {
-    throw new Error(`Configuration locator "${locator}" is unsafe.`);
+    throw new Error(`${label} "${locator}" is unsafe.`);
   }
 
   const resolvedRoot = realpathSync(bundleRoot);
@@ -132,16 +156,16 @@ export function resolveBundleConfiguration(bundleRoot: string, locator: string):
     selectedPath = resolve(selectedPath, segment);
     const entry = lstatSync(selectedPath);
     if (!isContained(resolvedRoot, selectedPath) || entry.isSymbolicLink()) {
-      throw new Error(`Configuration locator "${locator}" escapes its bundle root.`);
+      throw new Error(`${label} "${locator}" escapes its bundle root.`);
     }
     if (index === segments.length - 1 && !entry.isFile()) {
-      throw new Error(`Configuration locator "${locator}" is not a regular file.`);
+      throw new Error(`${label} "${locator}" is not a regular file.`);
     }
   }
 
   const resolvedPath = realpathSync(selectedPath);
   if (!isContained(resolvedRoot, resolvedPath)) {
-    throw new Error(`Configuration locator "${locator}" escapes its bundle root.`);
+    throw new Error(`${label} "${locator}" escapes its bundle root.`);
   }
 
   return resolvedPath;
@@ -218,6 +242,7 @@ export function assertAdmittedTaskPackets(
     }
     if (packet.admission.status === "admitted") {
       assertRfc3339Timestamp(packet.admission.reviewedAt);
+      assertEqualDigests(`Task packet "${taskId}" review record`, packet.reviewRecordDigest, packet.resolvedReviewRecordDigest);
     }
 
     if (
@@ -235,6 +260,20 @@ export function assertAdmittedTaskPackets(
     ) {
       throw new Error(`Task packet "${taskId}" verifier digest does not match its resolved bytes.`);
     }
+    if (packet.referenceSolutionDigest !== null || packet.resolvedReferenceSolutionDigest !== null) {
+      assertEqualDigests(
+        `Task packet "${taskId}" reference solution`,
+        packet.referenceSolutionDigest,
+        packet.resolvedReferenceSolutionDigest,
+      );
+    }
+  }
+}
+
+function assertEqualDigests(label: string, expected: Digest | null, resolved: Digest | null): void {
+  if (expected === null || resolved === null
+      || expected.algorithm !== resolved.algorithm || expected.value !== resolved.value) {
+    throw new Error(`${label} digest does not match its resolved bytes.`);
   }
 }
 
