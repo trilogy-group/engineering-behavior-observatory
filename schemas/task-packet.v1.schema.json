@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ebo.dev/schemas/task-packet.v1.schema.json",
+  "title": "EBO task packet v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "agentInput",
+    "provenance",
+    "controlledPerturbation",
+    "sharing",
+    "admission",
+    "components",
+    "restricted"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "ebo.task-packet/v1" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "agentInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prompt", "fixture"],
+      "properties": {
+        "prompt": { "type": "string", "minLength": 1 },
+        "fixture": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "materializer"],
+          "properties": {
+            "source": { "$ref": "#/$defs/sourceReference" },
+            "materializer": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "destination", "excludedSurfaces"],
+              "properties": {
+                "kind": { "enum": ["checkout", "archive"] },
+                "destination": { "const": "workspace" },
+                "excludedSurfaces": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": ["referenceSolution", "verifier", "reviewRecord"]
+                  },
+                  "allOf": [
+                    { "contains": { "const": "referenceSolution" } },
+                    { "contains": { "const": "verifier" } },
+                    { "contains": { "const": "reviewRecord" } }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositoryUrl", "revision", "license"],
+      "properties": {
+        "repositoryUrl": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "minLength": 1 },
+        "license": { "type": "string", "minLength": 1 }
+      }
+    },
+    "controlledPerturbation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "summary", "digest"],
+      "properties": {
+        "kind": {
+          "enum": ["contract-change", "seeded-defect", "long-horizon-constraint"]
+        },
+        "summary": { "type": "string", "minLength": 1 },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "sharing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification"],
+      "properties": {
+        "classification": { "enum": ["open", "restricted", "internal"] }
+      }
+    },
+    "admission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reviewedAt", "reviewedBy"],
+      "properties": {
+        "status": { "enum": ["proposed", "admitted", "rejected"] },
+        "reviewedAt": { "type": "string", "minLength": 1 },
+        "reviewedBy": { "type": "string", "minLength": 1 }
+      }
+    },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agentInput", "fixture", "verifier", "referenceSolution"],
+      "properties": {
+        "agentInput": { "$ref": "#/$defs/digest" },
+        "fixture": { "$ref": "#/$defs/digest" },
+        "verifier": { "$ref": "#/$defs/digest" },
+        "referenceSolution": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "restricted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["referenceSolution", "verifier", "reviewRecord"],
+      "properties": {
+        "referenceSolution": { "$ref": "#/$defs/restrictedReference" },
+        "verifier": { "$ref": "#/$defs/restrictedReference" },
+        "reviewRecord": { "$ref": "#/$defs/restrictedReference" }
+      }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "value": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "sourceReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "locator", "revision"],
+      "properties": {
+        "kind": { "enum": ["repository", "archive"] },
+        "locator": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "minLength": 1 }
+      }
+    },
+    "restrictedReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["locator", "digest"],
+      "properties": {
+        "locator": { "type": "string", "minLength": 1 },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    }
+  }
+}

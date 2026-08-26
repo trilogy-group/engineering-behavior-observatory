@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ebo.dev/schemas/experiment.v1.schema.json",
+  "title": "EBO experiment v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "taskSet",
+    "modelSet",
+    "harnessSet",
+    "trialCount",
+    "ordering",
+    "budgets",
+    "toolPolicy",
+    "captureProfile"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "ebo.experiment/v1" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "taskSet": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/condition" }
+    },
+    "modelSet": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/condition" }
+    },
+    "harnessSet": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/condition" }
+    },
+    "trialCount": { "type": "integer", "minimum": 1 },
+    "ordering": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seed", "strategy"],
+      "properties": {
+        "seed": { "type": "string", "minLength": 1 },
+        "strategy": { "enum": ["declared", "permuted"] }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxTurns", "maxDurationMs"],
+      "properties": {
+        "maxTurns": { "type": "integer", "minimum": 1 },
+        "maxDurationMs": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "toolPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "tools"],
+      "properties": {
+        "mode": { "enum": ["allowlist", "denylist"] },
+        "tools": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "captureProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "contentCapture"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "contentCapture": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "configurationRef"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "configurationRef": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

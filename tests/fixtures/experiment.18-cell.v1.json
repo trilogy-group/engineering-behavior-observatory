@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "ebo.experiment/v1",
+  "id": "generic-18-cell",
+  "taskSet": [
+    { "id": "task-a", "configurationRef": "packets/task-a.json" },
+    { "id": "task-b", "configurationRef": "packets/task-b.json" },
+    { "id": "task-c", "configurationRef": "packets/task-c.json" }
+  ],
+  "modelSet": [
+    { "id": "model-a", "configurationRef": "models/model-a.json" },
+    { "id": "model-b", "configurationRef": "models/model-b.json" }
+  ],
+  "harnessSet": [
+    { "id": "harness-a", "configurationRef": "harnesses/harness-a.json" }
+  ],
+  "trialCount": 3,
+  "ordering": { "seed": "matrix-seed-1", "strategy": "permuted" },
+  "budgets": { "maxTurns": 20, "maxDurationMs": 300000 },
+  "toolPolicy": { "mode": "allowlist", "tools": ["shell", "read"] },
+  "captureProfile": { "id": "native-minimum", "contentCapture": false }
+}

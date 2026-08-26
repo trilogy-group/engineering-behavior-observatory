@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "ebo.task-packet/v1",
+  "id": "example-contract-change",
+  "agentInput": {
+    "prompt": "Update the documented API contract and verify the fixture.",
+    "fixture": {
+      "source": {
+        "kind": "repository",
+        "locator": "https://example.test/open-repository.git",
+        "revision": "a1b2c3d4"
+      },
+      "materializer": {
+        "kind": "checkout",
+        "destination": "workspace",
+        "excludedSurfaces": ["referenceSolution", "verifier", "reviewRecord"]
+      }
+    }
+  },
+  "provenance": {
+    "repositoryUrl": "https://example.test/open-repository.git",
+    "revision": "a1b2c3d4",
+    "license": "MIT"
+  },
+  "controlledPerturbation": {
+    "kind": "contract-change",
+    "summary": "A public function changed its return shape.",
+    "digest": { "algorithm": "sha256", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  },
+  "sharing": { "classification": "open" },
+  "admission": {
+    "status": "admitted",
+    "reviewedAt": "2026-08-25T00:00:00Z",
+    "reviewedBy": "reviewer-1"
+  },
+  "components": {
+    "agentInput": { "algorithm": "sha256", "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    "fixture": { "algorithm": "sha256", "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+    "verifier": { "algorithm": "sha256", "value": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
+    "referenceSolution": { "algorithm": "sha256", "value": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }
+  },
+  "restricted": {
+    "referenceSolution": {
+      "locator": "restricted/reference-solution.json",
+      "digest": { "algorithm": "sha256", "value": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }
+    },
+    "verifier": {
+      "locator": "restricted/verifier.json",
+      "digest": { "algorithm": "sha256", "value": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" }
+    },
+    "reviewRecord": {
+      "locator": "restricted/review-record.json",
+      "digest": { "algorithm": "sha256", "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" }
+    }
+  }
+}

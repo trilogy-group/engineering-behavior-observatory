@@ -67,6 +67,9 @@ Start with [AGENTS.md](AGENTS.md) and the assigned Linear issue. `WORKFLOW.md`
 contains OpenSymphony orchestration configuration and should not be treated as
 the EBO product specification.
 
+The versioned task-packet and experiment contract surfaces are documented in
+[docs/contracts.md](docs/contracts.md).
+
 ## Design sources
 
 The canonical research and design corpus is maintained in:

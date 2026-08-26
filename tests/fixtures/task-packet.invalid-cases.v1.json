@@ -1,0 +1,29 @@
+[
+  {
+    "field": "provenance",
+    "operation": "remove",
+    "path": ["provenance"]
+  },
+  {
+    "field": "status",
+    "operation": "remove",
+    "path": ["admission", "status"]
+  },
+  {
+    "field": "referenceSolution",
+    "operation": "remove",
+    "path": ["components", "referenceSolution"]
+  },
+  {
+    "field": "schemaVersion",
+    "operation": "replace",
+    "path": ["schemaVersion"],
+    "value": "ebo.task-packet/v2"
+  },
+  {
+    "field": "classification",
+    "operation": "replace",
+    "path": ["sharing", "classification"],
+    "value": "unknown"
+  }
+]
