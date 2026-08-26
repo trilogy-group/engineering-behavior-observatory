@@ -82,10 +82,9 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   const telemetryDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "telemetry");
   const verifierStatuses: unknown[] = [];
 
-  if (declaredSessionId !== undefined && sessionDescriptors.length > 0 &&
-      !sessionDescriptors.some((descriptor) =>
+  if (declaredSessionId !== undefined && !sessionDescriptors.some((descriptor) =>
         ((descriptor.nativeReference as JsonObject | undefined)?.id) === declaredSessionId,
-      )) {
+  )) {
     errors.push("/run/native/sessionId does not match retained session evidence");
   }
   if (declaredTraceId !== undefined && telemetryDescriptors.length > 0 &&
@@ -415,6 +414,12 @@ test("rejects contradictory and incomplete contract records", () => {
   const mismatchedNativeSession = structuredClone(complete);
   ((mismatchedNativeSession.run as JsonObject).native as JsonObject).sessionId = "other-session";
   assertContractInvalid(mismatchedNativeSession, completeArtifacts);
+
+  const missingNativeSession = structuredClone(complete);
+  missingNativeSession.evidence = (missingNativeSession.evidence as JsonObject[]).filter(
+    (descriptor) => descriptor.kind !== "session",
+  );
+  assertContractInvalid(missingNativeSession, completeArtifacts);
 
   const missingSemanticReason = structuredClone(telemetryReport);
   ((missingSemanticReason.capabilities as JsonObject).semantic as JsonObject).status = "missing";
