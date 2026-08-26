@@ -28,7 +28,9 @@ retains exactly one capture-report descriptor.
 All paths are bundle-relative. The schema rejects absolute and parent-traversal
 paths; the shared artifact utilities will also resolve symlinks and verify
 digests before use. A path cannot be indexed under more than one sharing class:
-a sanitized partner or public artifact must have its own retained path.
+a sanitized partner or public artifact must have its own retained path. Reusing
+a path also requires the same evidence kind and authority, so source bytes
+cannot masquerade as another evidence class.
 
 ## Evidence authority
 
@@ -53,6 +55,8 @@ capture report is capture; and the export manifest is export.
 A run identifies the declared task/model/harness condition. An attempt is one
 execution of that run; retries get a new attempt ID and may point at `retryOf`.
 `retryOf` cannot name the attempt itself. No attempt replaces prior evidence.
+When a run declares a native session ID and retains session evidence, at least
+one retained session reference names that same native session.
 
 `runtime` is a non-empty list of source-specific components, each with source,
 name, and version. An Agent SDK run can record SDK and CLI components; an Agent
@@ -85,6 +89,8 @@ report remains a valid retained partial bundle but is not capture-qualified.
 
 Verifier results cannot contradict their assertions: passed results have no
 failed assertion, while failed results retain at least one failed assertion.
+Assertion IDs are unique, and a retained verifier result names the containing
+bundle.
 
 ## Sharing boundary
 
@@ -94,7 +100,8 @@ to have the export's exact sharing class. A public package therefore cannot
 bypass lookup or classification, and both partner and public packages need
 separately sanitized artifacts. The export pipeline performs the actual
 sanitization and readback; the v1 contract fixture makes the unsafe direct
-reference visibly blocked.
+reference visibly blocked. A ready or exported manifest also names its
+containing bundle before its artifact list is approved.
 
 The contract is intentionally only a declaration. Schema loading, safe path
 resolution, atomic persistence, and byte-level digest verification are shared
@@ -119,3 +126,5 @@ sharing-path and export boundaries, capture-report correlation, capability
 evidence, artifact references/digests, retry identity, and representative
 rejected records. The later shared artifact validator reuses these fixtures; it
 owns filesystem hardening and persistence rather than a second contract.
+The build script clears compiled output first, and its regression test proves a
+stale compiled test cannot survive into test discovery.

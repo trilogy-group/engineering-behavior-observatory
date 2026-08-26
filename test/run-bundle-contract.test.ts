@@ -52,17 +52,19 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     errors.push("/evidence contains duplicate artifact IDs");
   }
 
-  const sharingClassByPath = new Map<string, string>();
+  const descriptorByPath = new Map<string, JsonObject>();
 
   for (const descriptor of evidence as JsonObject[]) {
     const relativePath = String(descriptor.relativePath);
-    const sharingClass = String(descriptor.sharingClass);
-    const existingSharingClass = sharingClassByPath.get(relativePath);
+    const existingDescriptor = descriptorByPath.get(relativePath);
 
-    if (existingSharingClass !== undefined && existingSharingClass !== sharingClass) {
-      errors.push(`/evidence aliases ${relativePath} across sharing classes`);
+    if (existingDescriptor !== undefined &&
+        (existingDescriptor.sharingClass !== descriptor.sharingClass ||
+          existingDescriptor.kind !== descriptor.kind ||
+          existingDescriptor.authority !== descriptor.authority)) {
+      errors.push(`/evidence aliases ${relativePath} across sharing classes, kinds, or authorities`);
     }
-    sharingClassByPath.set(relativePath, sharingClass);
+    descriptorByPath.set(relativePath, descriptor);
   }
 
   const attempt = manifest.attempt as JsonObject;
@@ -71,8 +73,18 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     errors.push("/attempt/retryOf cannot reference the current attempt");
   }
 
+  const declaredSessionId = (((manifest.run as JsonObject).native as JsonObject | undefined)?.sessionId);
+  const sessionDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "session");
+
+  if (declaredSessionId !== undefined && sessionDescriptors.length > 0 &&
+      !sessionDescriptors.some((descriptor) =>
+        ((descriptor.nativeReference as JsonObject | undefined)?.id) === declaredSessionId,
+      )) {
+    errors.push("/run/native/sessionId does not match retained session evidence");
+  }
+
   for (const descriptor of evidence as JsonObject[]) {
-    if (descriptor.kind !== "capture-report") {
+    if (descriptor.kind !== "capture-report" && descriptor.kind !== "verifier") {
       continue;
     }
 
@@ -83,6 +95,15 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     }
     if (report.bundleId !== manifest.bundleId) {
       errors.push(`/evidence/${String(descriptor.id)} bundle ID does not match the manifest`);
+    }
+
+    if (descriptor.kind === "verifier") {
+      const assertionIds = (report.assertions as JsonObject[]).map((assertion) => assertion.id);
+
+      if (new Set(assertionIds).size !== assertionIds.length) {
+        errors.push(`/evidence/${String(descriptor.id)} contains duplicate verifier assertion IDs`);
+      }
+      continue;
     }
 
     const capabilities = report.capabilities as JsonObject;
@@ -113,6 +134,8 @@ function assertExportSafe(manifest: JsonObject, exportManifest: JsonObject): voi
   if (!["ready", "exported"].includes(String(exportManifest.status))) {
     return;
   }
+
+  assert.equal(exportManifest.bundleId, manifest.bundleId, "export manifest bundle ID must match the containing bundle");
 
   const evidenceById = new Map(
     (manifest.evidence as JsonObject[]).map((descriptor) => [descriptor.id, descriptor]),
@@ -146,7 +169,10 @@ test("validates retained run-bundle fixtures and their references", () => {
       assert.equal(descriptor.digest, `sha256:${createHash("sha256").update(artifact).digest("hex")}`);
 
       if (descriptor.kind === "verifier") {
-        assert.deepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, readJson(artifactPath)), []);
+        const verifierResult = readJson(artifactPath);
+
+        assert.deepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, verifierResult), []);
+        artifacts.set(String(descriptor.id), verifierResult);
       }
       if (descriptor.kind === "capture-report") {
         const captureReport = readJson(artifactPath);
@@ -194,7 +220,11 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
 test("rejects contradictory and incomplete contract records", () => {
   const complete = readJson(resolve(fixtureRoot, "complete/manifest.json"));
   const completeCaptureReport = readJson(resolve(fixtureRoot, "complete/capture-report.json"));
-  const completeArtifacts = new Map([["capture-report", completeCaptureReport]]);
+  const completeVerifier = readJson(resolve(fixtureRoot, "complete/verifier.json"));
+  const completeArtifacts = new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", completeVerifier],
+  ]);
   const telemetryReport = readJson(resolve(fixtureRoot, "telemetry-incomplete/capture-report.json"));
   const verifier = readJson(resolve(fixtureRoot, "complete/verifier.json"));
 
@@ -221,6 +251,15 @@ test("rejects contradictory and incomplete contract records", () => {
     sharingClass: "partner",
   });
   assertContractInvalid(sharingClassAlias, completeArtifacts);
+
+  const authorityAlias = structuredClone(complete);
+  (authorityAlias.evidence as JsonObject[]).push({
+    ...(authorityAlias.evidence as JsonObject[])[0],
+    id: "outcome-session-alias",
+    kind: "workspace",
+    authority: "outcome",
+  });
+  assertContractInvalid(authorityAlias, completeArtifacts);
 
   const missingCaptureReport = structuredClone(complete);
   missingCaptureReport.evidence = (missingCaptureReport.evidence as JsonObject[]).filter(
@@ -252,11 +291,30 @@ test("rejects contradictory and incomplete contract records", () => {
   });
   assertContractInvalid(complete, mismatchedCaptureReport);
 
+  const mismatchedVerifier = new Map(completeArtifacts);
+  mismatchedVerifier.set("verifier", { ...completeVerifier, bundleId: "other-bundle" });
+  assertContractInvalid(complete, mismatchedVerifier);
+
+  const duplicateVerifierAssertion = new Map(completeArtifacts);
+  duplicateVerifierAssertion.set("verifier", {
+    ...completeVerifier,
+    status: "failed",
+    assertions: [
+      ...completeVerifier.assertions as JsonObject[],
+      { id: "example-check", status: "failed" },
+    ],
+  });
+  assertContractInvalid(complete, duplicateVerifierAssertion);
+
   const qualifiedWithoutEvidence = structuredClone(complete);
   qualifiedWithoutEvidence.evidence = (qualifiedWithoutEvidence.evidence as JsonObject[]).filter(
     (descriptor) => descriptor.kind === "capture-report",
   );
   assertContractInvalid(qualifiedWithoutEvidence, completeArtifacts);
+
+  const mismatchedNativeSession = structuredClone(complete);
+  ((mismatchedNativeSession.run as JsonObject).native as JsonObject).sessionId = "other-session";
+  assertContractInvalid(mismatchedNativeSession, completeArtifacts);
 
   const missingSemanticReason = structuredClone(telemetryReport);
   ((missingSemanticReason.capabilities as JsonObject).semantic as JsonObject).status = "missing";
