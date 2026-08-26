@@ -39,6 +39,10 @@ function validator(schemaName: string): ValidateFunction {
   return ajv.compile(schema(schemaName));
 }
 
+function validatorWithoutFormatAssertion(schemaName: string): ValidateFunction {
+  return new Ajv2020({ allErrors: true, strict: false, validateFormats: false }).compile(schema(schemaName));
+}
+
 function expectInvalid(validate: ValidateFunction, document: unknown, field: string): void {
   assert.equal(validate(document), false);
   assert.match(JSON.stringify(validate.errors ?? []), new RegExp(field));
@@ -85,7 +89,13 @@ function admittedResolutions(taskSet: TaskConditionSet): Record<string, Resolved
   return Object.fromEntries(
     Object.entries(taskSet).map(([taskId, condition]) => [
       taskId,
-      { digest: condition.packetRef.digest, reviewedDigest: condition.packetRef.digest, admission: { status: "admitted" } },
+      {
+        digest: condition.packetRef.digest,
+        reviewedDigest: condition.packetRef.digest,
+        verifierDigest: condition.packetRef.digest,
+        resolvedVerifierDigest: condition.packetRef.digest,
+        admission: { status: "admitted", reviewedAt: "2026-08-26T00:00:00Z" },
+      },
     ]),
   );
 }
@@ -146,6 +156,10 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   (explicitPort.provenance as Document).repositoryUrl = "https://git.example.test:8443/org/repository.git";
   assert.equal(validate(explicitPort), true, JSON.stringify(validate.errors));
 
+  const malformedReviewTime = structuredClone(admitted) as Document;
+  ((malformedReviewTime.admission as Document).review as Document).reviewedAt = "unknown";
+  expectInvalid(validatorWithoutFormatAssertion("task-packet.v1.schema.json"), malformedReviewTime, "reviewedAt");
+
   for (const invalidCase of fixture("task-packet.invalid-cases.v1.json") as InvalidCase[]) {
     expectInvalid(validate, applyInvalidCase(admitted, invalidCase), invalidCase.field);
   }
@@ -162,7 +176,7 @@ test("controlled perturbation references reject tampered digests", () => {
   );
 });
 
-test("literal archive selection rejects every symlink entry", () => {
+test("literal archive selection rejects unsafe or colliding destinations", () => {
   assert.doesNotThrow(() => assertNoSelectedSymlinks([
     { path: "src", kind: "directory" },
     { path: "src/index.ts", kind: "file" },
@@ -178,6 +192,11 @@ test("literal archive selection rejects every symlink entry", () => {
   assert.throws(() => assertNoSelectedSymlinks([{ path: "src/config", kind: "hardlink" }]), /unsafe/);
   assert.throws(() => assertNoSelectedSymlinks([{ path: "src/./index.ts", kind: "file" }]), /unsafe/);
   assert.throws(() => assertNoSelectedSymlinks([{ path: "src/.", kind: "directory" }]), /unsafe/);
+  assert.doesNotThrow(() => assertNoSelectedSymlinks([{ path: ".editorconfig", kind: "file" }]));
+  assert.throws(() => assertNoSelectedSymlinks([
+    { path: "src", kind: "directory" },
+    { path: "src/", kind: "directory" },
+  ]), /collides/);
 });
 
 test("configuration references stay inside the bundle without following links", () => {
@@ -191,6 +210,7 @@ test("configuration references stay inside the bundle without following links", 
     symlinkSync("../../outside.json", join(bundleRoot, "models", "escaped.json"));
     assert.throws(() => resolveBundleConfiguration(bundleRoot, "models/escaped.json"), /escapes/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, "models/./model-a.json"), /unsafe/);
+    assert.throws(() => resolveBundleConfiguration(bundleRoot, "models"), /not a regular file/);
   } finally {
     rmSync(bundleRoot, { force: true, recursive: true });
   }
@@ -308,7 +328,7 @@ test("task resolution accepts only matching admitted packets", () => {
   for (const status of ["proposed", "rejected"] as const) {
     resolutions["task-a"] = {
       ...resolutions["task-a"],
-      admission: { status },
+      admission: { status, reviewedAt: null },
     };
     assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, resolutions), /task-a.*not admitted/);
   }
@@ -316,13 +336,23 @@ test("task resolution accepts only matching admitted packets", () => {
   resolutions["task-a"] = {
     digest: { algorithm: "sha256", value: "0".repeat(64) },
     reviewedDigest: { algorithm: "sha256", value: "0".repeat(64) },
-    admission: { status: "admitted" },
+    verifierDigest: experiment.taskSet["task-a"]!.packetRef.digest,
+    resolvedVerifierDigest: experiment.taskSet["task-a"]!.packetRef.digest,
+    admission: { status: "admitted", reviewedAt: "2026-08-26T00:00:00Z" },
   };
   assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, resolutions), /task-a.*digest/);
 
   const staleReview = admittedResolutions(experiment.taskSet);
   staleReview["task-a"] = { ...staleReview["task-a"], digest: { algorithm: "sha256", value: "0".repeat(64) } };
   assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, staleReview), /review does not match/);
+
+  const malformedReview = admittedResolutions(experiment.taskSet);
+  malformedReview["task-a"]!.admission.reviewedAt = "2025-02-29T00:00:00Z";
+  assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, malformedReview), /RFC 3339/);
+
+  const tamperedVerifier = admittedResolutions(experiment.taskSet);
+  tamperedVerifier["task-a"]!.resolvedVerifierDigest = { algorithm: "sha256", value: "0".repeat(64) };
+  assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, tamperedVerifier), /verifier digest/);
 
   const constructorTaskSet = Object.assign(Object.create(null), {
     constructor: experiment.taskSet["task-a"],

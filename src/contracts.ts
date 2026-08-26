@@ -28,8 +28,11 @@ export type TaskConditionSet = Record<string, TaskCondition>;
 export type ResolvedTaskPacket = {
   digest: Digest;
   reviewedDigest: Digest | null;
+  verifierDigest: Digest;
+  resolvedVerifierDigest: Digest;
   admission: {
     status: "proposed" | "admitted" | "rejected";
+    reviewedAt: string | null;
   };
 };
 
@@ -93,12 +96,18 @@ export function* declaredMatrixCells(
 }
 
 export function assertNoSelectedSymlinks(entries: readonly ArchiveEntry[]): void {
-  const invalid = entries.find((entry) =>
-    !["file", "directory"].includes(entry.kind) || !isSafeArchiveMemberPath(entry.path),
-  );
+  const destinations = new Set<string>();
 
-  if (invalid !== undefined) {
-    throw new Error(`Selected archive entry "${invalid.path}" is unsafe.`);
+  for (const entry of entries) {
+    const destination = canonicalArchiveMemberPath(entry.path);
+
+    if (!["file", "directory"].includes(entry.kind) || !isSafeArchiveMemberPath(entry.path)) {
+      throw new Error(`Selected archive entry "${entry.path}" is unsafe.`);
+    }
+    if (destinations.has(destination)) {
+      throw new Error(`Selected archive entry "${entry.path}" collides with another selected destination.`);
+    }
+    destinations.add(destination);
   }
 }
 
@@ -110,10 +119,15 @@ export function resolveBundleConfiguration(bundleRoot: string, locator: string):
   const resolvedRoot = realpathSync(bundleRoot);
   let selectedPath = resolvedRoot;
 
-  for (const segment of locator.split("/")) {
+  const segments = locator.split("/");
+  for (const [index, segment] of segments.entries()) {
     selectedPath = resolve(selectedPath, segment);
-    if (!isContained(resolvedRoot, selectedPath) || lstatSync(selectedPath).isSymbolicLink()) {
+    const entry = lstatSync(selectedPath);
+    if (!isContained(resolvedRoot, selectedPath) || entry.isSymbolicLink()) {
       throw new Error(`Configuration locator "${locator}" escapes its bundle root.`);
+    }
+    if (index === segments.length - 1 && !entry.isFile()) {
+      throw new Error(`Configuration locator "${locator}" is not a regular file.`);
     }
   }
 
@@ -194,6 +208,9 @@ export function assertAdmittedTaskPackets(
     )) {
       throw new Error(`Task packet "${taskId}" review does not match its digest.`);
     }
+    if (packet.admission.status === "admitted") {
+      assertRfc3339Timestamp(packet.admission.reviewedAt);
+    }
 
     if (
       packet.digest.algorithm !== condition.packetRef.digest.algorithm
@@ -203,6 +220,12 @@ export function assertAdmittedTaskPackets(
     }
     if (packet.admission.status !== "admitted") {
       throw new Error(`Task packet "${taskId}" is not admitted.`);
+    }
+    if (
+      packet.verifierDigest.algorithm !== packet.resolvedVerifierDigest.algorithm
+      || packet.verifierDigest.value !== packet.resolvedVerifierDigest.value
+    ) {
+      throw new Error(`Task packet "${taskId}" verifier digest does not match its resolved bytes.`);
     }
   }
 }
@@ -231,7 +254,36 @@ function digestIdentity(digest: Digest): string {
 
 function isSafeArchiveMemberPath(path: string): boolean {
   return path === posix.normalize(path)
-    && /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(path);
+    && /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[A-Za-z0-9.][A-Za-z0-9._\/-]*$/.test(path);
+}
+
+function canonicalArchiveMemberPath(path: string): string {
+  return posix.normalize(path).replace(/\/+$/, "");
+}
+
+function assertRfc3339Timestamp(value: string | null): void {
+  const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/);
+
+  if (match === null || match === undefined) {
+    throw new Error("Admitted task packet review must have an RFC 3339 timestamp.");
+  }
+
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, offsetHourText, offsetMinuteText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const offsetHour = offsetHourText === undefined ? 0 : Number(offsetHourText);
+  const offsetMinute = offsetMinuteText === undefined ? 0 : Number(offsetMinuteText);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1]!
+      || hour > 23 || minute > 59 || second > 59 || offsetHour > 23 || offsetMinute > 59) {
+    throw new Error("Admitted task packet review must have an RFC 3339 timestamp.");
+  }
 }
 
 function isContained(root: string, path: string): boolean {

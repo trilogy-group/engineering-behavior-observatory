@@ -43,6 +43,10 @@ object ID—not a branch or tag. A verifier is always required; `referenceSoluti
 content is an external, digest-addressed artifact; EBO does not prescribe a
 task-authoring taxonomy.
 
+Before scheduling, EBO requires an admitted packet's review time to be a valid
+RFC 3339 calendar timestamp and the resolved verifier bytes to match the
+verifier's pinned digest.
+
 ## Experiments
 
 `schemas/experiment.v1.schema.json` treats task, model, and harness sets;
