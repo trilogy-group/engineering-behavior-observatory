@@ -38,7 +38,7 @@ function schemaErrors(reference: string, value: unknown): string[] {
     );
 }
 
-function contractErrors(manifest: JsonObject): string[] {
+function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonObject>()): string[] {
   const errors = schemaErrors(schemaId, manifest);
   const evidence = manifest.evidence;
 
@@ -52,19 +52,65 @@ function contractErrors(manifest: JsonObject): string[] {
     errors.push("/evidence contains duplicate artifact IDs");
   }
 
+  const sharingClassByPath = new Map<string, string>();
+
+  for (const descriptor of evidence as JsonObject[]) {
+    const relativePath = String(descriptor.relativePath);
+    const sharingClass = String(descriptor.sharingClass);
+    const existingSharingClass = sharingClassByPath.get(relativePath);
+
+    if (existingSharingClass !== undefined && existingSharingClass !== sharingClass) {
+      errors.push(`/evidence aliases ${relativePath} across sharing classes`);
+    }
+    sharingClassByPath.set(relativePath, sharingClass);
+  }
+
+  const attempt = manifest.attempt as JsonObject;
+
+  if (attempt.retryOf === attempt.id) {
+    errors.push("/attempt/retryOf cannot reference the current attempt");
+  }
+
+  for (const descriptor of evidence as JsonObject[]) {
+    if (descriptor.kind !== "capture-report") {
+      continue;
+    }
+
+    const report = artifacts.get(String(descriptor.id));
+
+    if (report === undefined) {
+      continue;
+    }
+    if (report.bundleId !== manifest.bundleId) {
+      errors.push(`/evidence/${String(descriptor.id)} bundle ID does not match the manifest`);
+    }
+
+    const capabilities = report.capabilities as JsonObject;
+    for (const [capability, authority] of Object.entries({
+      semantic: "semantic",
+      timingResource: "timing-resource",
+      outcome: "outcome",
+    })) {
+      if ((capabilities[capability] as JsonObject).status === "available" &&
+          !(evidence as JsonObject[]).some((item) => item.authority === authority)) {
+        errors.push(`/capture-report/${capability} is available without ${authority} evidence`);
+      }
+    }
+  }
+
   return errors;
 }
 
-function assertContractValid(manifest: JsonObject): void {
-  assert.deepEqual(contractErrors(manifest), []);
+function assertContractValid(manifest: JsonObject, artifacts?: Map<string, JsonObject>): void {
+  assert.deepEqual(contractErrors(manifest, artifacts), []);
 }
 
-function assertContractInvalid(manifest: JsonObject): void {
-  assert.notDeepEqual(contractErrors(manifest), []);
+function assertContractInvalid(manifest: JsonObject, artifacts?: Map<string, JsonObject>): void {
+  assert.notDeepEqual(contractErrors(manifest, artifacts), []);
 }
 
-function assertPartnerExportSafe(manifest: JsonObject, exportManifest: JsonObject): void {
-  if (exportManifest.sharingClass !== "partner" || !["ready", "exported"].includes(String(exportManifest.status))) {
+function assertExportSafe(manifest: JsonObject, exportManifest: JsonObject): void {
+  if (!["ready", "exported"].includes(String(exportManifest.status))) {
     return;
   }
 
@@ -76,9 +122,10 @@ function assertPartnerExportSafe(manifest: JsonObject, exportManifest: JsonObjec
     const descriptor = evidenceById.get(artifactId);
 
     assert.ok(descriptor, `export references unknown artifact ${artifactId}`);
-    assert.ok(
-      ["partner", "public"].includes(String(descriptor.sharingClass)),
-      `partner export cannot include ${artifactId} with ${String(descriptor.sharingClass)} sharing class`,
+    assert.equal(
+      descriptor.sharingClass,
+      exportManifest.sharingClass,
+      `${String(exportManifest.sharingClass)} export cannot include ${artifactId} with ${String(descriptor.sharingClass)} sharing class`,
     );
   }
 }
@@ -87,8 +134,7 @@ test("validates retained run-bundle fixtures and their references", () => {
   for (const fixture of ["complete", "task-failed", "interrupted", "telemetry-incomplete"]) {
     const bundleRoot = resolve(fixtureRoot, fixture);
     const manifest = readJson(resolve(bundleRoot, "manifest.json"));
-
-    assertContractValid(manifest);
+    const artifacts = new Map<string, JsonObject>();
 
     for (const descriptor of manifest.evidence as JsonObject[]) {
       const artifactPath = resolve(bundleRoot, String(descriptor.relativePath));
@@ -103,15 +149,20 @@ test("validates retained run-bundle fixtures and their references", () => {
         assert.deepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, readJson(artifactPath)), []);
       }
       if (descriptor.kind === "capture-report") {
-        assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, readJson(artifactPath)), []);
+        const captureReport = readJson(artifactPath);
+
+        assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, captureReport), []);
+        artifacts.set(String(descriptor.id), captureReport);
       }
       if (descriptor.kind === "export-manifest") {
         const exportManifest = readJson(artifactPath);
 
         assert.deepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, exportManifest), []);
-        assertPartnerExportSafe(manifest, exportManifest);
+        assertExportSafe(manifest, exportManifest);
       }
     }
+
+    assertContractValid(manifest, artifacts);
   }
 });
 
@@ -123,11 +174,27 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
 
   assert.equal(exportManifest.status, "blocked");
   readyExport.status = "ready";
-  assert.throws(() => assertPartnerExportSafe(manifest, readyExport));
+  assert.throws(() => assertExportSafe(manifest, readyExport));
+
+  const publicUnknown = structuredClone(readyExport);
+  publicUnknown.sharingClass = "public";
+  publicUnknown.artifactIds = ["unknown-artifact"];
+  assert.throws(() => assertExportSafe(manifest, publicUnknown));
+
+  const publicRestricted = structuredClone(readyExport);
+  publicRestricted.sharingClass = "public";
+  publicRestricted.artifactIds = ["session"];
+  assert.throws(() => assertExportSafe(manifest, publicRestricted));
+
+  const publicManifest = structuredClone(manifest);
+  (publicManifest.evidence as JsonObject[])[0].sharingClass = "public";
+  assert.doesNotThrow(() => assertExportSafe(publicManifest, publicRestricted));
 });
 
 test("rejects contradictory and incomplete contract records", () => {
   const complete = readJson(resolve(fixtureRoot, "complete/manifest.json"));
+  const completeCaptureReport = readJson(resolve(fixtureRoot, "complete/capture-report.json"));
+  const completeArtifacts = new Map([["capture-report", completeCaptureReport]]);
   const telemetryReport = readJson(resolve(fixtureRoot, "telemetry-incomplete/capture-report.json"));
   const verifier = readJson(resolve(fixtureRoot, "complete/verifier.json"));
 
@@ -145,33 +212,61 @@ test("rejects contradictory and incomplete contract records", () => {
 
   const duplicateArtifact = structuredClone(complete);
   (duplicateArtifact.evidence as JsonObject[])[1].id = (duplicateArtifact.evidence as JsonObject[])[0].id;
-  assertContractInvalid(duplicateArtifact);
+  assertContractInvalid(duplicateArtifact, completeArtifacts);
+
+  const sharingClassAlias = structuredClone(complete);
+  (sharingClassAlias.evidence as JsonObject[]).push({
+    ...(sharingClassAlias.evidence as JsonObject[])[0],
+    id: "partner-session-alias",
+    sharingClass: "partner",
+  });
+  assertContractInvalid(sharingClassAlias, completeArtifacts);
 
   const missingCaptureReport = structuredClone(complete);
   missingCaptureReport.evidence = (missingCaptureReport.evidence as JsonObject[]).filter(
     (descriptor) => descriptor.kind !== "capture-report",
   );
-  assertContractInvalid(missingCaptureReport);
+  assertContractInvalid(missingCaptureReport, completeArtifacts);
 
   const duplicateCaptureReport = structuredClone(complete);
   const captureReport = (duplicateCaptureReport.evidence as JsonObject[]).find(
     (descriptor) => descriptor.kind === "capture-report",
   );
   (duplicateCaptureReport.evidence as JsonObject[]).push({ ...captureReport, id: "second-capture-report" });
-  assertContractInvalid(duplicateCaptureReport);
+  assertContractInvalid(duplicateCaptureReport, completeArtifacts);
 
   const serverRuntime = structuredClone(complete);
   (serverRuntime.run as JsonObject).runtime = [
     { source: "openhands-agent-server", name: "agent-server", version: "1.0.0" },
   ];
-  assertContractValid(serverRuntime);
+  assertContractValid(serverRuntime, completeArtifacts);
+
+  const selfRetry = structuredClone(complete);
+  (selfRetry.attempt as JsonObject).retryOf = (selfRetry.attempt as JsonObject).id;
+  assertContractInvalid(selfRetry, completeArtifacts);
+
+  const mismatchedCaptureReport = new Map(completeArtifacts);
+  mismatchedCaptureReport.set("capture-report", {
+    ...completeCaptureReport,
+    bundleId: "other-bundle",
+  });
+  assertContractInvalid(complete, mismatchedCaptureReport);
+
+  const qualifiedWithoutEvidence = structuredClone(complete);
+  qualifiedWithoutEvidence.evidence = (qualifiedWithoutEvidence.evidence as JsonObject[]).filter(
+    (descriptor) => descriptor.kind === "capture-report",
+  );
+  assertContractInvalid(qualifiedWithoutEvidence, completeArtifacts);
 
   const missingSemanticReason = structuredClone(telemetryReport);
   ((missingSemanticReason.capabilities as JsonObject).semantic as JsonObject).status = "missing";
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, missingSemanticReason), []);
 
   const wrongOptionalBetaAuthority = structuredClone(telemetryReport);
-  ((wrongOptionalBetaAuthority.missingEvidence as JsonObject[])[0].affects as string[]) = ["semantic"];
+  ((wrongOptionalBetaAuthority.missingEvidence as JsonObject[])[0].affects as string[]) = [
+    "timing-resource",
+    "semantic",
+  ];
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, wrongOptionalBetaAuthority), []);
 
   const passedWithFailure = structuredClone(verifier);

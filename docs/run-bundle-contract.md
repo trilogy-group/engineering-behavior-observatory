@@ -27,7 +27,8 @@ retains exactly one capture-report descriptor.
 
 All paths are bundle-relative. The schema rejects absolute and parent-traversal
 paths; the shared artifact utilities will also resolve symlinks and verify
-digests before use.
+digests before use. A path cannot be indexed under more than one sharing class:
+a sanitized partner or public artifact must have its own retained path.
 
 ## Evidence authority
 
@@ -51,7 +52,7 @@ capture report is capture; and the export manifest is export.
 
 A run identifies the declared task/model/harness condition. An attempt is one
 execution of that run; retries get a new attempt ID and may point at `retryOf`.
-No attempt replaces prior evidence.
+`retryOf` cannot name the attempt itself. No attempt replaces prior evidence.
 
 `runtime` is a non-empty list of source-specific components, each with source,
 name, and version. An Agent SDK run can record SDK and CLI components; an Agent
@@ -78,8 +79,9 @@ outcome evidence and cannot declare either authority missing. Missing optional b
 `optional-beta-unavailable` affecting `timing-resource`; they never assert that
 semantic evidence is missing. Every unavailable capability has an explicit
 missing-evidence entry; optional-beta-unavailable affects timing-resource only.
-An `incomplete` report remains a valid retained
-partial bundle but is not capture-qualified.
+An available capability requires an indexed artifact with that authority. The
+embedded capture report must also name the containing bundle. An `incomplete`
+report remains a valid retained partial bundle but is not capture-qualified.
 
 Verifier results cannot contradict their assertions: passed results have no
 failed assertion, while failed results retain at least one failed assertion.
@@ -87,8 +89,10 @@ failed assertion, while failed results retain at least one failed assertion.
 ## Sharing boundary
 
 A partner export that lists restricted native artifacts is `blocked`. A `ready`
-or `exported` partner package may list only separately sanitized artifacts with
-partner or public classification. The export pipeline performs the actual
+or `exported` package resolves every artifact ID and requires every descriptor
+to have the export's exact sharing class. A public package therefore cannot
+bypass lookup or classification, and both partner and public packages need
+separately sanitized artifacts. The export pipeline performs the actual
 sanitization and readback; the v1 contract fixture makes the unsafe direct
 reference visibly blocked.
 
@@ -111,6 +115,7 @@ contract boundary:
   optional beta telemetry is explicitly absent.
 
 The checked-in Node contract test runs the schema, cross-descriptor uniqueness,
-partner-export boundary, artifact references/digests, and representative
-rejected records. The later shared artifact validator reuses these fixtures;
-it owns filesystem hardening and persistence rather than a second contract.
+sharing-path and export boundaries, capture-report correlation, capability
+evidence, artifact references/digests, retry identity, and representative
+rejected records. The later shared artifact validator reuses these fixtures; it
+owns filesystem hardening and persistence rather than a second contract.
