@@ -12,7 +12,6 @@
     "controlledPerturbation",
     "sharing",
     "admission",
-    "components",
     "restricted"
   ],
   "properties": {
@@ -43,7 +42,7 @@
                   "uniqueItems": true,
                   "items": {
                     "type": "string",
-                    "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+                    "pattern": "^(?!.*//)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/*-]+$"
                   }
                 }
               }
@@ -57,7 +56,10 @@
       "additionalProperties": false,
       "required": ["repositoryUrl", "revision", "license"],
       "properties": {
-        "repositoryUrl": { "type": "string", "minLength": 1 },
+        "repositoryUrl": {
+          "type": "string",
+          "pattern": "^https://[A-Za-z0-9.-]+/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*(?:\\.git)?$"
+        },
         "revision": { "type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$" },
         "license": { "type": "string", "minLength": 1 }
       }
@@ -83,14 +85,6 @@
       }
     },
     "admission": { "$ref": "#/$defs/admission" },
-    "components": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["agentInput"],
-      "properties": {
-        "agentInput": { "$ref": "#/$defs/digest" }
-      }
-    },
     "restricted": {
       "type": "object",
       "additionalProperties": false,

@@ -14,19 +14,23 @@ not contain an evaluation corpus or a fixed operating matrix.
   copies only `includePaths`; it must not materialize a raw repository checkout.
 - Its archive locator is a secret-free, bundle-relative logical path. URLs,
   absolute local paths, credentials, and path traversal are invalid there.
+  Include paths are POSIX logical paths only; backslashes, drive letters, UNC
+  paths, and traversal forms are invalid.
 - `restricted` contains only digest-addressed references to the reference
   solution and verifier. It deliberately cannot embed their contents.
 
 The packet records repository provenance, a controlled perturbation, admission
 review status, sharing classification, and SHA-256 digests for every frozen
 component. Every digest has one authority: the safe fixture source, controlled
-perturbation, and restricted component references carry their own; `components`
-records only the public input digest.
+perturbation, and restricted component references carry their own. The schema
+does not claim a separate agent-input digest without defining its canonical
+bytes; admission-freeze tooling owns the whole-packet identity later.
 
 `proposed` packets explicitly set `admission.review` to `null`. `admitted` and
 `rejected` packets require a reviewer, RFC 3339 `date-time` evidence, and the
-restricted review-record reference. Repository provenance is pinned to a full
-immutable Git object ID, not a branch or tag.
+restricted review-record reference. Repository provenance is an HTTPS,
+credential-free repository URL plus a full immutable Git object ID, not a
+branch or tag.
 
 ## Experiments
 
@@ -39,9 +43,11 @@ native-tool-policy configurations; EBO does not define a shared turn count or
 tool namespace.
 
 `declared` ordering carries explicit task, model, and harness ID lists. Matrix
-compilers use those lists, never object-property enumeration. Before expansion,
-a compiler resolves every task packet, checks the reference digest, and requires
-`admission.status` to be `admitted`.
+compilers use those lists, never object-property enumeration, and reject a list
+unless it is an exact permutation of its condition-set IDs. Before expansion, a
+compiler resolves every task packet, checks the reference digest, and requires
+`admission.status` to be `admitted`. Capture profiles use the same digest-pinned
+configuration-reference shape as other immutable experiment inputs.
 
 The fixtures include a generic 18-cell matrix and a differently shaped matrix
 to show that no study dimensions are built into the contract. Parsed numeric

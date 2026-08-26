@@ -20,5 +20,8 @@
   "trialCount": 3,
   "ordering": { "seed": "matrix-seed-1", "strategy": "permuted" },
   "coordinatorBudget": { "maxWallClockMs": 300000 },
-  "captureProfile": { "id": "native-minimum", "contentCapture": false }
+  "captureProfile": {
+    "locator": "capture-profiles/native-minimum.json",
+    "digest": { "algorithm": "sha256", "value": "3333333333333333333333333333333333333333333333333333333333333333" }
+  }
 }

@@ -30,6 +30,12 @@
     "value": { "mode": "allowlist", "tools": ["shell"] }
   },
   {
+    "field": "captureProfile",
+    "operation": "replace",
+    "path": ["captureProfile"],
+    "value": { "id": "missing-profile", "contentCapture": false }
+  },
+  {
     "field": "trialCount",
     "operation": "replace",
     "path": ["trialCount"],

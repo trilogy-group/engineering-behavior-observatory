@@ -55,6 +55,42 @@
     "value": "main"
   },
   {
+    "field": "includePaths",
+    "operation": "replace",
+    "path": ["agentInput", "fixture", "materializer", "includePaths"],
+    "value": ["..\\restricted\\verifier.json"]
+  },
+  {
+    "field": "includePaths",
+    "operation": "replace",
+    "path": ["agentInput", "fixture", "materializer", "includePaths"],
+    "value": ["C:\\private\\fixture"]
+  },
+  {
+    "field": "includePaths",
+    "operation": "replace",
+    "path": ["agentInput", "fixture", "materializer", "includePaths"],
+    "value": ["\\\\server\\share\\fixture"]
+  },
+  {
+    "field": "repositoryUrl",
+    "operation": "replace",
+    "path": ["provenance", "repositoryUrl"],
+    "value": "not-a-url"
+  },
+  {
+    "field": "repositoryUrl",
+    "operation": "replace",
+    "path": ["provenance", "repositoryUrl"],
+    "value": "https://user:token@example.test/repository.git"
+  },
+  {
+    "field": "components",
+    "operation": "replace",
+    "path": ["components"],
+    "value": { "agentInput": { "algorithm": "sha256", "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } }
+  },
+  {
     "field": "schemaVersion",
     "operation": "replace",
     "path": ["schemaVersion"],

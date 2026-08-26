@@ -33,5 +33,8 @@
     }
   },
   "coordinatorBudget": { "maxWallClockMs": 120000 },
-  "captureProfile": { "id": "native-minimum", "contentCapture": false }
+  "captureProfile": {
+    "locator": "capture-profiles/native-minimum.json",
+    "digest": { "algorithm": "sha256", "value": "5555555555555555555555555555555555555555555555555555555555555555" }
+  }
 }

@@ -38,9 +38,6 @@
       }
     }
   },
-  "components": {
-    "agentInput": { "algorithm": "sha256", "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
-  },
   "restricted": {
     "referenceSolution": {
       "locator": "restricted/reference-solution.json",

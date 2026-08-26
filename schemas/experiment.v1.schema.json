@@ -44,15 +44,7 @@
         }
       }
     },
-    "captureProfile": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "contentCapture"],
-      "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "contentCapture": { "type": "boolean" }
-      }
-    }
+    "captureProfile": { "$ref": "#/$defs/configurationReference" }
   },
   "$defs": {
     "digest": {

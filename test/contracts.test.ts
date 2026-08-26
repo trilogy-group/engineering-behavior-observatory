@@ -9,6 +9,8 @@ import * as formats from "ajv-formats";
 
 import {
   assertAdmittedTaskPackets,
+  assertDeclaredOrder,
+  type DeclaredOrder,
   type ResolvedTaskPacket,
   type TaskConditionSet,
 } from "../src/contracts.js";
@@ -87,7 +89,6 @@ test("task packets expose only a verified, allowlisted materialization surface",
         materializer: { kind: string; includePaths: string[] };
       };
     };
-    components: object;
     restricted: { referenceSolution: object };
   };
   const validate = validator("task-packet.v1.schema.json");
@@ -97,7 +98,6 @@ test("task packets expose only a verified, allowlisted materialization surface",
   assert.equal(packet.agentInput.fixture.materializer.kind, "verified-archive");
   assert.deepEqual(packet.agentInput.fixture.materializer.includePaths, ["README.md", "package.json", "src/**"]);
   assert.doesNotMatch(JSON.stringify(packet.agentInput), /referenceSolution|reviewRecord|verifier/);
-  assert.deepEqual(Object.keys(packet.components), ["agentInput"]);
   assert.deepEqual(Object.keys(packet.restricted.referenceSolution).sort(), ["digest", "locator"]);
 });
 
@@ -108,6 +108,7 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
 
   assert.equal(validate(admitted), true, JSON.stringify(validate.errors));
   assert.equal(validate(proposed), true, JSON.stringify(validate.errors));
+  assert.equal("components" in admitted, false);
   assert.deepEqual((proposed.admission as Document).review, null);
   assert.deepEqual(Object.keys(proposed.restricted as Document).sort(), ["referenceSolution", "verifier"]);
 
@@ -120,7 +121,7 @@ test("experiment fixtures pin identity and preserve native harness limits", () =
   const validate = validator("experiment.v1.schema.json");
   const eighteen = fixture("experiment.18-cell.v1.json") as Parameters<typeof expandMatrix>[0];
   const twentyFour = fixture("experiment.24-cell.v1.json") as Parameters<typeof expandMatrix>[0] & {
-    ordering: { declaredOrder: { taskIds: string[] } };
+    ordering: { declaredOrder: DeclaredOrder };
   };
 
   assert.equal(validate(eighteen), true, JSON.stringify(validate.errors));
@@ -133,6 +134,7 @@ test("experiment fixtures pin identity and preserve native harness limits", () =
   assert.ok((eighteen.harnessSet["harness-a"] as Document).nativeToolPolicyRef);
   assert.deepEqual(Object.keys(twentyFour.taskSet), ["2", "10"]);
   assert.deepEqual(twentyFour.ordering.declaredOrder.taskIds, ["10", "2"]);
+  assert.doesNotThrow(() => assertDeclaredOrder(twentyFour, twentyFour.ordering.declaredOrder));
 });
 
 test("experiment validation rejects mutable references, duplicate-array conditions, and unsafe numbers", () => {
@@ -152,6 +154,25 @@ test("experiment validation rejects mutable references, duplicate-array conditio
       path: ["ordering", "declaredOrder"],
     }),
     "declaredOrder",
+  );
+
+  const declaredOrder = (fixture("experiment.24-cell.v1.json") as {
+    taskSet: Document;
+    modelSet: Document;
+    harnessSet: Document;
+    ordering: { declaredOrder: DeclaredOrder };
+  });
+  assert.throws(
+    () => assertDeclaredOrder(declaredOrder, { ...declaredOrder.ordering.declaredOrder, taskIds: ["10"] }),
+    /task/,
+  );
+  assert.throws(
+    () => assertDeclaredOrder(declaredOrder, { ...declaredOrder.ordering.declaredOrder, taskIds: ["10", "missing"] }),
+    /task/,
+  );
+  assert.throws(
+    () => assertDeclaredOrder(declaredOrder, { ...declaredOrder.ordering.declaredOrder, taskIds: ["10", "10"] }),
+    /task/,
   );
 });
 

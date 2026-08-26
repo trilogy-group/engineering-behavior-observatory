@@ -1,3 +1,3 @@
 export { main } from "./cli.js";
-export { assertAdmittedTaskPackets } from "./contracts.js";
-export type { Digest, ResolvedTaskPacket, TaskCondition, TaskConditionSet } from "./contracts.js";
+export { assertAdmittedTaskPackets, assertDeclaredOrder } from "./contracts.js";
+export type { DeclaredOrder, Digest, ResolvedTaskPacket, TaskCondition, TaskConditionSet } from "./contracts.js";
