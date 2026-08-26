@@ -61,11 +61,8 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     const relativePath = String(descriptor.relativePath);
     const existingDescriptor = descriptorByPath.get(relativePath);
 
-    if (existingDescriptor !== undefined &&
-        (existingDescriptor.sharingClass !== descriptor.sharingClass ||
-          existingDescriptor.kind !== descriptor.kind ||
-          existingDescriptor.authority !== descriptor.authority)) {
-      errors.push(`/evidence aliases ${relativePath} across sharing classes, kinds, or authorities`);
+    if (existingDescriptor !== undefined) {
+      errors.push(`/evidence reuses ${relativePath}`);
     }
     descriptorByPath.set(relativePath, descriptor);
   }
@@ -134,8 +131,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
         errors.push(`/evidence/${String(descriptor.id)} contains duplicate verifier assertion IDs`);
       }
       const terminal = manifest.terminal as JsonObject;
-      if ((terminal.state === "completed" && report.status !== "passed") ||
-          (terminal.state === "failed" && terminal.failureClass === "task" && report.status !== "failed")) {
+      if (terminal.state === "completed" && report.status !== "passed") {
         errors.push(`/evidence/${String(descriptor.id)} contradicts the manifest terminal outcome`);
       }
       verifierStatuses.push(report.status);
@@ -165,6 +161,15 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   if ((terminal.state === "completed" && !verifierStatuses.includes("passed")) ||
       (terminal.state === "failed" && terminal.failureClass === "task" && !verifierStatuses.includes("failed"))) {
     errors.push("/terminal outcome requires a matching retained verifier result");
+  }
+  const captureReport = [...artifacts.entries()]
+    .find(([artifactId]) => (evidence as JsonObject[]).some((descriptor) =>
+      descriptor.id === artifactId && descriptor.kind === "capture-report",
+    ))?.[1];
+  const outcomeStatus = (captureReport?.capabilities as JsonObject | undefined)?.outcome as JsonObject | undefined;
+  if (verifierStatuses.some((status) => status === "passed" || status === "failed")
+      && outcomeStatus?.status !== "available") {
+    errors.push("/capture-report/outcome must be available when retained verifier evidence has an outcome");
   }
 
   return errors;
@@ -319,6 +324,16 @@ test("rejects contradictory and incomplete contract records", () => {
   });
   assertContractInvalid(authorityAlias, completeArtifacts);
 
+  const nativeIdentityAlias = structuredClone(complete);
+  const sessionDescriptor = (nativeIdentityAlias.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "session")!;
+  (nativeIdentityAlias.evidence as JsonObject[]).push({
+    ...sessionDescriptor,
+    id: "session-native-alias",
+    nativeReference: { type: "session", id: "session-alias-1" },
+  });
+  ((nativeIdentityAlias.run as JsonObject).native as JsonObject).sessionId = "session-alias-1";
+  assertContractInvalid(nativeIdentityAlias, completeArtifacts);
+
   const missingCaptureReport = structuredClone(complete);
   missingCaptureReport.evidence = (missingCaptureReport.evidence as JsonObject[]).filter(
     (descriptor) => descriptor.kind !== "capture-report",
@@ -378,6 +393,22 @@ test("rejects contradictory and incomplete contract records", () => {
   });
   assertContractInvalid(complete, completedWithFailedVerifier);
 
+  const taskFailedWithPassingVerifier = structuredClone(taskFailed);
+  const failedVerifierDescriptor = (taskFailedWithPassingVerifier.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "verifier",
+  )!;
+  (taskFailedWithPassingVerifier.evidence as JsonObject[]).push({
+    ...failedVerifierDescriptor,
+    id: "passing-verifier",
+    relativePath: "passing-verifier.json",
+  });
+  const taskFailedWithPassingArtifacts = new Map(taskFailedArtifacts);
+  taskFailedWithPassingArtifacts.set("passing-verifier", {
+    ...completeVerifier,
+    bundleId: taskFailed.bundleId,
+  });
+  assertContractValid(taskFailedWithPassingVerifier, taskFailedWithPassingArtifacts);
+
   const blockedExportWithOtherBundle = readJson(resolve(fixtureRoot, "complete/export/manifest.json"));
   blockedExportWithOtherBundle.bundleId = "other-bundle";
   assert.throws(() => assertExportSafe(complete, blockedExportWithOtherBundle));
@@ -428,6 +459,30 @@ test("rejects contradictory and incomplete contract records", () => {
   const qualifiedTelemetryGap = structuredClone(telemetryReport);
   qualifiedTelemetryGap.qualification = "qualified";
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, qualifiedTelemetryGap), []);
+
+  const unsupportedReasonWithMissingStatus = structuredClone(telemetryReport);
+  (unsupportedReasonWithMissingStatus.missingEvidence as JsonObject[])[0].reason = "unsupported";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, unsupportedReasonWithMissingStatus), []);
+
+  const unsupportedStatusWithoutReason = structuredClone(telemetryReport);
+  ((unsupportedStatusWithoutReason.capabilities as JsonObject).timingResource as JsonObject).status = "unsupported";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, unsupportedStatusWithoutReason), []);
+
+  const nonJsonVerifierDescriptor = structuredClone(complete);
+  ((nonJsonVerifierDescriptor.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "verifier")!).mediaType = "text/plain";
+  assertContractInvalid(nonJsonVerifierDescriptor, completeArtifacts);
+
+  const missingOutcomeWithVerifier = new Map(completeArtifacts);
+  missingOutcomeWithVerifier.set("capture-report", {
+    ...completeCaptureReport,
+    qualification: "incomplete",
+    capabilities: {
+      ...completeCaptureReport.capabilities as JsonObject,
+      outcome: { status: "missing" },
+    },
+    missingEvidence: [{ kind: "outcome-verifier", reason: "not-collected", affects: ["outcome"] }],
+  });
+  assertContractInvalid(complete, missingOutcomeWithVerifier);
 
   const declaredTimingGap = new Map(completeArtifacts);
   declaredTimingGap.set("capture-report", {

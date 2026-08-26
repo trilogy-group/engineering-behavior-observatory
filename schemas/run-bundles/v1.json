@@ -102,6 +102,13 @@
             "required": ["kind"]
           },
           "then": { "properties": { "authority": { "const": "export" } } }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "enum": ["verifier", "capture-report", "export-manifest"] } },
+            "required": ["kind"]
+          },
+          "then": { "properties": { "mediaType": { "const": "application/json" } } }
         }
       ]
     },
@@ -528,8 +535,77 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "capabilities": {
+                "properties": { "semantic": { "properties": { "status": { "const": "unsupported" } } } },
+                "required": ["semantic"]
+              }
+            }
+          },
+          "then": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/unsupportedSemanticEvidence" } } } }
+        },
+        {
+          "if": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/unsupportedSemanticEvidence" } } } },
+          "then": { "properties": { "capabilities": { "properties": { "semantic": { "properties": { "status": { "const": "unsupported" } } } } } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "capabilities": {
+                "properties": { "timingResource": { "properties": { "status": { "const": "unsupported" } } } },
+                "required": ["timingResource"]
+              }
+            }
+          },
+          "then": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/unsupportedTimingEvidence" } } } }
+        },
+        {
+          "if": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/unsupportedTimingEvidence" } } } },
+          "then": { "properties": { "capabilities": { "properties": { "timingResource": { "properties": { "status": { "const": "unsupported" } } } } } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "capabilities": {
+                "properties": { "outcome": { "properties": { "status": { "const": "unsupported" } } } },
+                "required": ["outcome"]
+              }
+            }
+          },
+          "then": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/unsupportedOutcomeEvidence" } } } }
+        },
+        {
+          "if": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/unsupportedOutcomeEvidence" } } } },
+          "then": { "properties": { "capabilities": { "properties": { "outcome": { "properties": { "status": { "const": "unsupported" } } } } } } }
         }
       ]
+    },
+    "unsupportedSemanticEvidence": {
+      "type": "object",
+      "required": ["reason", "affects"],
+      "properties": {
+        "reason": { "const": "unsupported" },
+        "affects": { "type": "array", "contains": { "const": "semantic" } }
+      }
+    },
+    "unsupportedTimingEvidence": {
+      "type": "object",
+      "required": ["reason", "affects"],
+      "properties": {
+        "reason": { "const": "unsupported" },
+        "affects": { "type": "array", "contains": { "const": "timing-resource" } }
+      }
+    },
+    "unsupportedOutcomeEvidence": {
+      "type": "object",
+      "required": ["reason", "affects"],
+      "properties": {
+        "reason": { "const": "unsupported" },
+        "affects": { "type": "array", "contains": { "const": "outcome" } }
+      }
     },
     "exportManifest": {
       "type": "object",
