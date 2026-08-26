@@ -303,6 +303,7 @@
           "then": {
             "properties": {
               "assertions": {
+                "minItems": 1,
                 "items": {
                   "properties": { "status": { "const": "passed" } },
                   "required": ["status"]
@@ -319,6 +320,19 @@
               "assertions": {
                 "contains": {
                   "properties": { "status": { "const": "failed" } },
+                  "required": ["status"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "not-run" } }, "required": ["status"] },
+          "then": {
+            "properties": {
+              "assertions": {
+                "items": {
+                  "properties": { "status": { "const": "not-run" } },
                   "required": ["status"]
                 }
               }

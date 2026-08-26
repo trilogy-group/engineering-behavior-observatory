@@ -116,6 +116,14 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     if (report === undefined) {
       continue;
     }
+    const artifactSchema = descriptor.kind === "verifier"
+      ? `${schemaId}#/$defs/verifierResult`
+      : `${schemaId}#/$defs/captureReport`;
+    const artifactErrors = schemaErrors(artifactSchema, report);
+    if (artifactErrors.length > 0) {
+      errors.push(`/evidence/${String(descriptor.id)} does not satisfy its artifact schema`);
+      continue;
+    }
     if (report.bundleId !== manifest.bundleId) {
       errors.push(`/evidence/${String(descriptor.id)} bundle ID does not match the manifest`);
     }
@@ -446,7 +454,24 @@ test("rejects contradictory and incomplete contract records", () => {
   passedWithOnlyNotRun.assertions = [{ id: "example-check", status: "not-run" }];
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, passedWithOnlyNotRun), []);
 
+  const passedWithoutAssertions = structuredClone(verifier);
+  passedWithoutAssertions.assertions = [];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, passedWithoutAssertions), []);
+
+  const notRunWithPassedAssertion = structuredClone(verifier);
+  notRunWithPassedAssertion.status = "not-run";
+  notRunWithPassedAssertion.assertions = [{ id: "example-check", status: "passed" }];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, notRunWithPassedAssertion), []);
+
   const failedWithoutFailure = structuredClone(verifier);
   failedWithoutFailure.status = "failed";
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, failedWithoutFailure), []);
+
+  const malformedVerifier = new Map(completeArtifacts);
+  malformedVerifier.set("verifier", { ...completeVerifier, assertions: undefined });
+  assert.doesNotThrow(() => assertContractInvalid(complete, malformedVerifier));
+
+  const malformedCaptureReport = new Map(completeArtifacts);
+  malformedCaptureReport.set("capture-report", { ...completeCaptureReport, capabilities: undefined });
+  assert.doesNotThrow(() => assertContractInvalid(complete, malformedCaptureReport));
 });
