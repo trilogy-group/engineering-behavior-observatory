@@ -1,7 +1,7 @@
 {
   "schemaVersion": "export-manifest/v1",
   "bundleId": "bundle-complete",
-  "status": "ready",
+  "status": "blocked",
   "sharingClass": "partner",
   "policyDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
   "artifactIds": [

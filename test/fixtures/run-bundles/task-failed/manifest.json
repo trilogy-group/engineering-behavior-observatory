@@ -10,10 +10,10 @@
     },
     "model": { "provider": "example-provider", "id": "example-model" },
     "harness": { "id": "agent-sdk", "version": "1.0.0" },
-    "runtime": {
-      "sdk": { "name": "agent-sdk", "version": "1.0.0" },
-      "cli": { "name": "agent-cli", "version": "1.0.0" }
-    },
+    "runtime": [
+      { "source": "anthropic", "name": "agent-sdk", "version": "1.0.0" },
+      { "source": "anthropic", "name": "agent-cli", "version": "1.0.0" }
+    ],
     "native": { "sessionId": "session-task-failed-1" }
   },
   "attempt": { "id": "attempt-task-failed-1", "number": 1 },

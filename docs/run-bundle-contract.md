@@ -22,7 +22,8 @@ run-bundle/
 the portable index: each gives an artifact ID, source, authority, media type,
 SHA-256 digest, byte size, sharing class, bundle-relative path, and—when the
 source provides one—native type and identity. Native content stays in the
-referenced file.
+referenced file. Artifact IDs are unique within a bundle, and every bundle
+retains exactly one capture-report descriptor.
 
 All paths are bundle-relative. The schema rejects absolute and parent-traversal
 paths; the shared artifact utilities will also resolve symlinks and verify
@@ -42,11 +43,20 @@ The contract does not describe a uniform event ontology or attach semantic
 quality labels. Source-specific records remain authoritative until a later,
 capture-qualified normalization step.
 
+Evidence kind and authority are fixed pairs: sessions and hooks are semantic;
+telemetry is timing-resource; workspace and verifier records are outcome; the
+capture report is capture; and the export manifest is export.
+
 ## Attempt and terminal semantics
 
 A run identifies the declared task/model/harness condition. An attempt is one
 execution of that run; retries get a new attempt ID and may point at `retryOf`.
 No attempt replaces prior evidence.
+
+`runtime` is a non-empty list of source-specific components, each with source,
+name, and version. An Agent SDK run can record SDK and CLI components; an Agent
+Server run can record only its server component. No integration invents an
+absent SDK or CLI identity.
 
 `terminal` separates these conditions:
 
@@ -66,8 +76,21 @@ capture-report qualification with an explicit missing-evidence reason.
 capabilities separately. A `qualified` report requires available semantic and
 outcome evidence and cannot declare either authority missing. Missing optional beta spans are recorded as
 `optional-beta-unavailable` affecting `timing-resource`; they never assert that
-semantic evidence is missing. An `incomplete` report remains a valid retained
+semantic evidence is missing. Every unavailable capability has an explicit
+missing-evidence entry; optional-beta-unavailable affects timing-resource only.
+An `incomplete` report remains a valid retained
 partial bundle but is not capture-qualified.
+
+Verifier results cannot contradict their assertions: passed results have no
+failed assertion, while failed results retain at least one failed assertion.
+
+## Sharing boundary
+
+A partner export that lists restricted native artifacts is `blocked`. A `ready`
+or `exported` partner package may list only separately sanitized artifacts with
+partner or public classification. The export pipeline performs the actual
+sanitization and readback; the v1 contract fixture makes the unsafe direct
+reference visibly blocked.
 
 The contract is intentionally only a declaration. Schema loading, safe path
 resolution, atomic persistence, and byte-level digest verification are shared
@@ -86,3 +109,8 @@ contract boundary:
   no outcome evidence is invented.
 - `telemetry-incomplete`: semantic and outcome evidence remain available while
   optional beta telemetry is explicitly absent.
+
+The checked-in Node contract test runs the schema, cross-descriptor uniqueness,
+partner-export boundary, artifact references/digests, and representative
+rejected records. The later shared artifact validator reuses these fixtures;
+it owns filesystem hardening and persistence rather than a second contract.

@@ -66,7 +66,44 @@
         "sharingClass": { "$ref": "#/$defs/sharingClass" },
         "relativePath": { "$ref": "#/$defs/relativePath" },
         "nativeReference": { "$ref": "#/$defs/nativeReference" }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "kind": { "enum": ["session", "hook"] } },
+            "required": ["kind"]
+          },
+          "then": { "properties": { "authority": { "const": "semantic" } } }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "telemetry" } },
+            "required": ["kind"]
+          },
+          "then": { "properties": { "authority": { "const": "timing-resource" } } }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "enum": ["workspace", "verifier"] } },
+            "required": ["kind"]
+          },
+          "then": { "properties": { "authority": { "const": "outcome" } } }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "capture-report" } },
+            "required": ["kind"]
+          },
+          "then": { "properties": { "authority": { "const": "capture" } } }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "export-manifest" } },
+            "required": ["kind"]
+          },
+          "then": { "properties": { "authority": { "const": "export" } } }
+        }
+      ]
     },
     "terminal": {
       "type": "object",
@@ -179,13 +216,9 @@
               }
             },
             "runtime": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["sdk", "cli"],
-              "properties": {
-                "sdk": { "$ref": "#/$defs/runtimeComponent" },
-                "cli": { "$ref": "#/$defs/runtimeComponent" }
-              }
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/runtimeComponent" }
             },
             "native": {
               "type": "object",
@@ -220,15 +253,23 @@
         "terminal": { "$ref": "#/$defs/terminal" },
         "evidence": {
           "type": "array",
-          "items": { "$ref": "#/$defs/evidenceDescriptor" }
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/evidenceDescriptor" },
+          "contains": {
+            "properties": { "kind": { "const": "capture-report" } },
+            "required": ["kind"]
+          },
+          "minContains": 1,
+          "maxContains": 1
         }
       }
     },
     "runtimeComponent": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "version"],
+      "required": ["source", "name", "version"],
       "properties": {
+        "source": { "$ref": "#/$defs/identifier" },
         "name": { "$ref": "#/$defs/identifier" },
         "version": { "$ref": "#/$defs/identifier" }
       }
@@ -254,7 +295,37 @@
             }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "passed" } }, "required": ["status"] },
+          "then": {
+            "properties": {
+              "assertions": {
+                "not": {
+                  "contains": {
+                    "properties": { "status": { "const": "failed" } },
+                    "required": ["status"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "failed" } }, "required": ["status"] },
+          "then": {
+            "properties": {
+              "assertions": {
+                "contains": {
+                  "properties": { "status": { "const": "failed" } },
+                  "required": ["status"]
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "captureReport": {
       "type": "object",
@@ -299,7 +370,24 @@
                 "items": { "enum": ["semantic", "timing-resource", "outcome"] }
               }
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": { "reason": { "const": "optional-beta-unavailable" } },
+                "required": ["reason"]
+              },
+              "then": {
+                "properties": {
+                  "affects": {
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "contains": { "const": "timing-resource" }
+                  }
+                }
+              }
+            }
+          ]
         }
       },
       "allOf": [
@@ -335,6 +423,96 @@
               "missingEvidence": { "minItems": 1 }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "capabilities": {
+                "properties": {
+                  "semantic": {
+                    "properties": {
+                      "status": { "enum": ["missing", "unsupported", "not-checked"] }
+                    },
+                    "required": ["status"]
+                  }
+                },
+                "required": ["semantic"]
+              }
+            },
+            "required": ["capabilities"]
+          },
+          "then": {
+            "properties": {
+              "missingEvidence": {
+                "contains": {
+                  "properties": {
+                    "affects": { "contains": { "const": "semantic" } }
+                  },
+                  "required": ["affects"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "capabilities": {
+                "properties": {
+                  "timingResource": {
+                    "properties": {
+                      "status": { "enum": ["missing", "unsupported", "not-checked"] }
+                    },
+                    "required": ["status"]
+                  }
+                },
+                "required": ["timingResource"]
+              }
+            },
+            "required": ["capabilities"]
+          },
+          "then": {
+            "properties": {
+              "missingEvidence": {
+                "contains": {
+                  "properties": {
+                    "affects": { "contains": { "const": "timing-resource" } }
+                  },
+                  "required": ["affects"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "capabilities": {
+                "properties": {
+                  "outcome": {
+                    "properties": {
+                      "status": { "enum": ["missing", "unsupported", "not-checked"] }
+                    },
+                    "required": ["status"]
+                  }
+                },
+                "required": ["outcome"]
+              }
+            },
+            "required": ["capabilities"]
+          },
+          "then": {
+            "properties": {
+              "missingEvidence": {
+                "contains": {
+                  "properties": {
+                    "affects": { "contains": { "const": "outcome" } }
+                  },
+                  "required": ["affects"]
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -350,6 +528,7 @@
         "policyDigest": { "$ref": "#/$defs/digest" },
         "artifactIds": {
           "type": "array",
+          "uniqueItems": true,
           "items": { "$ref": "#/$defs/identifier" }
         }
       }
