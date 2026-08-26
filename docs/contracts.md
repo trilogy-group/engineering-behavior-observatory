@@ -12,8 +12,10 @@ not contain an evaluation corpus or a fixed operating matrix.
   the public prompt, a digest-verified sanitized archive, and an explicit
   workspace-relative allowlist. A materializer verifies the archive digest and
   copies only `includePaths`; it must not materialize a raw repository checkout.
-- `restricted` contains only digest-addressed references to those three
-  protected components. It deliberately cannot embed their contents.
+- Its archive locator is a secret-free, bundle-relative logical path. URLs,
+  absolute local paths, credentials, and path traversal are invalid there.
+- `restricted` contains only digest-addressed references to the reference
+  solution and verifier. It deliberately cannot embed their contents.
 
 The packet records repository provenance, a controlled perturbation, admission
 review status, sharing classification, and SHA-256 digests for every frozen
@@ -22,16 +24,24 @@ perturbation, and restricted component references carry their own; `components`
 records only the public input digest.
 
 `proposed` packets explicitly set `admission.review` to `null`. `admitted` and
-`rejected` packets require a reviewer and RFC 3339 `date-time` evidence.
+`rejected` packets require a reviewer, RFC 3339 `date-time` evidence, and the
+restricted review-record reference. Repository provenance is pinned to a full
+immutable Git object ID, not a branch or tag.
 
 ## Experiments
 
 `schemas/experiment.v1.schema.json` treats task, model, and harness sets;
-trial count; ordering seed; coordinator wall-clock budget; tool policy; and
-capture profile as data. Each condition set is an ID-keyed map, so one identity
-can expand to only one matrix condition. Every referenced configuration has a
-SHA-256 digest. Each harness condition separately names its source-specific
-native-limits configuration; EBO does not define a shared turn count.
+trial count; ordering seed; coordinator wall-clock budget; and capture profile
+as data. Each condition set is an ID-keyed map, so one identity can expand to
+only one matrix condition. Every referenced configuration has a SHA-256 digest.
+Each harness condition separately names source-specific native-limits and
+native-tool-policy configurations; EBO does not define a shared turn count or
+tool namespace.
+
+`declared` ordering carries explicit task, model, and harness ID lists. Matrix
+compilers use those lists, never object-property enumeration. Before expansion,
+a compiler resolves every task packet, checks the reference digest, and requires
+`admission.status` to be `admitted`.
 
 The fixtures include a generic 18-cell matrix and a differently shaped matrix
 to show that no study dimensions are built into the contract. Parsed numeric

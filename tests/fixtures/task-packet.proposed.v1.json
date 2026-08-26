@@ -18,7 +18,7 @@
   },
   "provenance": {
     "repositoryUrl": "https://example.test/open-repository.git",
-    "revision": "a1b2c3d4",
+    "revision": "0123456789abcdef0123456789abcdef01234567",
     "license": "MIT"
   },
   "controlledPerturbation": {
@@ -39,10 +39,6 @@
     "verifier": {
       "locator": "restricted/verifier.json",
       "digest": { "algorithm": "sha256", "value": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" }
-    },
-    "reviewRecord": {
-      "locator": "restricted/review-record.json",
-      "digest": { "algorithm": "sha256", "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" }
     }
   }
 }

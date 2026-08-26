@@ -7,6 +7,12 @@ import { fileURLToPath } from "node:url";
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
 import * as formats from "ajv-formats";
 
+import {
+  assertAdmittedTaskPackets,
+  type ResolvedTaskPacket,
+  type TaskConditionSet,
+} from "../src/contracts.js";
+
 const addFormats = formats.default as unknown as (instance: Ajv2020) => void;
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -64,6 +70,15 @@ function expandMatrix(experiment: {
     * experiment.trialCount;
 }
 
+function admittedResolutions(taskSet: TaskConditionSet): Record<string, ResolvedTaskPacket> {
+  return Object.fromEntries(
+    Object.entries(taskSet).map(([taskId, condition]) => [
+      taskId,
+      { digest: condition.packetRef.digest, admission: { status: "admitted" } },
+    ]),
+  );
+}
+
 test("task packets expose only a verified, allowlisted materialization surface", () => {
   const packet = fixture("task-packet.valid.v1.json") as {
     agentInput: {
@@ -93,6 +108,8 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
 
   assert.equal(validate(admitted), true, JSON.stringify(validate.errors));
   assert.equal(validate(proposed), true, JSON.stringify(validate.errors));
+  assert.deepEqual((proposed.admission as Document).review, null);
+  assert.deepEqual(Object.keys(proposed.restricted as Document).sort(), ["referenceSolution", "verifier"]);
 
   for (const invalidCase of fixture("task-packet.invalid-cases.v1.json") as InvalidCase[]) {
     expectInvalid(validate, applyInvalidCase(admitted, invalidCase), invalidCase.field);
@@ -102,7 +119,9 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
 test("experiment fixtures pin identity and preserve native harness limits", () => {
   const validate = validator("experiment.v1.schema.json");
   const eighteen = fixture("experiment.18-cell.v1.json") as Parameters<typeof expandMatrix>[0];
-  const twentyFour = fixture("experiment.24-cell.v1.json") as Parameters<typeof expandMatrix>[0];
+  const twentyFour = fixture("experiment.24-cell.v1.json") as Parameters<typeof expandMatrix>[0] & {
+    ordering: { declaredOrder: { taskIds: string[] } };
+  };
 
   assert.equal(validate(eighteen), true, JSON.stringify(validate.errors));
   assert.equal(validate(twentyFour), true, JSON.stringify(validate.errors));
@@ -111,6 +130,9 @@ test("experiment fixtures pin identity and preserve native harness limits", () =
   assert.equal(new Set(Object.keys(eighteen.taskSet)).size, Object.keys(eighteen.taskSet).length);
   assert.equal("budgets" in eighteen, false);
   assert.ok((eighteen.harnessSet["harness-a"] as Document).nativeLimitsRef);
+  assert.ok((eighteen.harnessSet["harness-a"] as Document).nativeToolPolicyRef);
+  assert.deepEqual(Object.keys(twentyFour.taskSet), ["2", "10"]);
+  assert.deepEqual(twentyFour.ordering.declaredOrder.taskIds, ["10", "2"]);
 });
 
 test("experiment validation rejects mutable references, duplicate-array conditions, and unsafe numbers", () => {
@@ -120,4 +142,40 @@ test("experiment validation rejects mutable references, duplicate-array conditio
   for (const invalidCase of fixture("experiment.invalid-cases.v1.json") as InvalidCase[]) {
     expectInvalid(validate, applyInvalidCase(experiment, invalidCase), invalidCase.field);
   }
+
+  const declared = fixture("experiment.24-cell.v1.json") as Document;
+  expectInvalid(
+    validate,
+    applyInvalidCase(declared, {
+      field: "declaredOrder",
+      operation: "remove",
+      path: ["ordering", "declaredOrder"],
+    }),
+    "declaredOrder",
+  );
+});
+
+test("task resolution accepts only matching admitted packets", () => {
+  const experiment = fixture("experiment.18-cell.v1.json") as { taskSet: TaskConditionSet };
+  const resolutions = admittedResolutions(experiment.taskSet);
+
+  assert.doesNotThrow(() => assertAdmittedTaskPackets(experiment.taskSet, resolutions));
+
+  const unresolved = { ...resolutions };
+  delete unresolved["task-a"];
+  assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, unresolved), /task-a.*did not resolve/);
+
+  for (const status of ["proposed", "rejected"] as const) {
+    resolutions["task-a"] = {
+      ...resolutions["task-a"],
+      admission: { status },
+    };
+    assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, resolutions), /task-a.*not admitted/);
+  }
+
+  resolutions["task-a"] = {
+    digest: { algorithm: "sha256", value: "0".repeat(64) },
+    admission: { status: "admitted" },
+  };
+  assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, resolutions), /task-a.*digest/);
 });

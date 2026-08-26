@@ -58,7 +58,7 @@
       "required": ["repositoryUrl", "revision", "license"],
       "properties": {
         "repositoryUrl": { "type": "string", "minLength": 1 },
-        "revision": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$" },
         "license": { "type": "string", "minLength": 1 }
       }
     },
@@ -94,11 +94,10 @@
     "restricted": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["referenceSolution", "verifier", "reviewRecord"],
+      "required": ["referenceSolution", "verifier"],
       "properties": {
         "referenceSolution": { "$ref": "#/$defs/restrictedReference" },
-        "verifier": { "$ref": "#/$defs/restrictedReference" },
-        "reviewRecord": { "$ref": "#/$defs/restrictedReference" }
+        "verifier": { "$ref": "#/$defs/restrictedReference" }
       }
     }
   },
@@ -123,10 +122,11 @@
             "review": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["reviewedAt", "reviewedBy"],
+              "required": ["reviewedAt", "reviewedBy", "reviewRecord"],
               "properties": {
                 "reviewedAt": { "type": "string", "format": "date-time" },
-                "reviewedBy": { "type": "string", "minLength": 1 }
+                "reviewedBy": { "type": "string", "minLength": 1 },
+                "reviewRecord": { "$ref": "#/$defs/restrictedReference" }
               }
             }
           }
@@ -148,7 +148,10 @@
       "required": ["kind", "locator", "digest"],
       "properties": {
         "kind": { "const": "sanitized-archive" },
-        "locator": { "type": "string", "minLength": 1 },
+        "locator": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*://)(?!.*@)[A-Za-z0-9][A-Za-z0-9._/-]*$"
+        },
         "digest": { "$ref": "#/$defs/digest" }
       }
     },

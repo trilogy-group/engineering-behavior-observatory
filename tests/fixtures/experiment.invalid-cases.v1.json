@@ -2,7 +2,7 @@
   {
     "field": "digest",
     "operation": "remove",
-    "path": ["taskSet", "task-a", "configurationRef", "digest"]
+    "path": ["taskSet", "task-a", "packetRef", "digest"]
   },
   {
     "field": "taskSet",
@@ -17,6 +17,17 @@
     "field": "nativeLimitsRef",
     "operation": "remove",
     "path": ["harnessSet", "harness-a", "nativeLimitsRef"]
+  },
+  {
+    "field": "nativeToolPolicyRef",
+    "operation": "remove",
+    "path": ["harnessSet", "harness-a", "nativeToolPolicyRef"]
+  },
+  {
+    "field": "toolPolicy",
+    "operation": "replace",
+    "path": ["toolPolicy"],
+    "value": { "mode": "allowlist", "tools": ["shell"] }
   },
   {
     "field": "trialCount",

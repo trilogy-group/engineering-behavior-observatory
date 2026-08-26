@@ -2,9 +2,9 @@
   "schemaVersion": "ebo.experiment/v1",
   "id": "generic-18-cell",
   "taskSet": {
-    "task-a": { "configurationRef": { "locator": "packets/task-a.json", "digest": { "algorithm": "sha256", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } } },
-    "task-b": { "configurationRef": { "locator": "packets/task-b.json", "digest": { "algorithm": "sha256", "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } } },
-    "task-c": { "configurationRef": { "locator": "packets/task-c.json", "digest": { "algorithm": "sha256", "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" } } }
+    "task-a": { "packetRef": { "locator": "packets/task-a.json", "digest": { "algorithm": "sha256", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } } },
+    "task-b": { "packetRef": { "locator": "packets/task-b.json", "digest": { "algorithm": "sha256", "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } } },
+    "task-c": { "packetRef": { "locator": "packets/task-c.json", "digest": { "algorithm": "sha256", "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" } } }
   },
   "modelSet": {
     "model-a": { "configurationRef": { "locator": "models/model-a.json", "digest": { "algorithm": "sha256", "value": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" } } },
@@ -13,12 +13,12 @@
   "harnessSet": {
     "harness-a": {
       "configurationRef": { "locator": "harnesses/harness-a.json", "digest": { "algorithm": "sha256", "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" } },
-      "nativeLimitsRef": { "locator": "harnesses/harness-a-limits.json", "digest": { "algorithm": "sha256", "value": "1111111111111111111111111111111111111111111111111111111111111111" } }
+      "nativeLimitsRef": { "locator": "harnesses/harness-a-limits.json", "digest": { "algorithm": "sha256", "value": "1111111111111111111111111111111111111111111111111111111111111111" } },
+      "nativeToolPolicyRef": { "locator": "harnesses/harness-a-tools.json", "digest": { "algorithm": "sha256", "value": "2222222222222222222222222222222222222222222222222222222222222222" } }
     }
   },
   "trialCount": 3,
   "ordering": { "seed": "matrix-seed-1", "strategy": "permuted" },
   "coordinatorBudget": { "maxWallClockMs": 300000 },
-  "toolPolicy": { "mode": "allowlist", "tools": ["shell", "read"] },
   "captureProfile": { "id": "native-minimum", "contentCapture": false }
 }

@@ -32,6 +32,29 @@
     "value": "unknown"
   },
   {
+    "field": "reviewRecord",
+    "operation": "remove",
+    "path": ["admission", "review", "reviewRecord"]
+  },
+  {
+    "field": "locator",
+    "operation": "replace",
+    "path": ["agentInput", "fixture", "source", "locator"],
+    "value": "https://user:token@example.test/archive.tar.gz"
+  },
+  {
+    "field": "locator",
+    "operation": "replace",
+    "path": ["agentInput", "fixture", "source", "locator"],
+    "value": "/home/alice/archive.tar.gz"
+  },
+  {
+    "field": "revision",
+    "operation": "replace",
+    "path": ["provenance", "revision"],
+    "value": "main"
+  },
+  {
     "field": "schemaVersion",
     "operation": "replace",
     "path": ["schemaVersion"],

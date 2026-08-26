@@ -13,13 +13,12 @@
     "trialCount",
     "ordering",
     "coordinatorBudget",
-    "toolPolicy",
     "captureProfile"
   ],
   "properties": {
     "schemaVersion": { "const": "ebo.experiment/v1" },
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
-    "taskSet": { "$ref": "#/$defs/conditionSet" },
+    "taskSet": { "$ref": "#/$defs/taskConditionSet" },
     "modelSet": { "$ref": "#/$defs/conditionSet" },
     "harnessSet": {
       "type": "object",
@@ -32,15 +31,7 @@
       "minimum": 1,
       "maximum": 9007199254740991
     },
-    "ordering": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["seed", "strategy"],
-      "properties": {
-        "seed": { "type": "string", "minLength": 1 },
-        "strategy": { "enum": ["declared", "permuted"] }
-      }
-    },
+    "ordering": { "$ref": "#/$defs/ordering" },
     "coordinatorBudget": {
       "type": "object",
       "additionalProperties": false,
@@ -50,19 +41,6 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 9007199254740991
-        }
-      }
-    },
-    "toolPolicy": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["mode", "tools"],
-      "properties": {
-        "mode": { "enum": ["allowlist", "denylist"] },
-        "tools": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true
         }
       }
     },
@@ -95,6 +73,14 @@
         "digest": { "$ref": "#/$defs/digest" }
       }
     },
+    "taskCondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["packetRef"],
+      "properties": {
+        "packetRef": { "$ref": "#/$defs/configurationReference" }
+      }
+    },
     "condition": {
       "type": "object",
       "additionalProperties": false,
@@ -109,13 +95,58 @@
       "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
       "additionalProperties": { "$ref": "#/$defs/condition" }
     },
+    "taskConditionSet": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
+      "additionalProperties": { "$ref": "#/$defs/taskCondition" }
+    },
+    "conditionIdList": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" }
+    },
+    "ordering": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["seed", "strategy"],
+          "properties": {
+            "seed": { "type": "string", "minLength": 1 },
+            "strategy": { "const": "permuted" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["seed", "strategy", "declaredOrder"],
+          "properties": {
+            "seed": { "type": "string", "minLength": 1 },
+            "strategy": { "const": "declared" },
+            "declaredOrder": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["taskIds", "modelIds", "harnessIds"],
+              "properties": {
+                "taskIds": { "$ref": "#/$defs/conditionIdList" },
+                "modelIds": { "$ref": "#/$defs/conditionIdList" },
+                "harnessIds": { "$ref": "#/$defs/conditionIdList" }
+              }
+            }
+          }
+        }
+      ]
+    },
     "harnessCondition": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["configurationRef", "nativeLimitsRef"],
+      "required": ["configurationRef", "nativeLimitsRef", "nativeToolPolicyRef"],
       "properties": {
         "configurationRef": { "$ref": "#/$defs/configurationReference" },
-        "nativeLimitsRef": { "$ref": "#/$defs/configurationReference" }
+        "nativeLimitsRef": { "$ref": "#/$defs/configurationReference" },
+        "nativeToolPolicyRef": { "$ref": "#/$defs/configurationReference" }
       }
     }
   }
