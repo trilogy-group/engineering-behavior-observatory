@@ -84,10 +84,9 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   )) {
     errors.push("/run/native/sessionId does not match retained session evidence");
   }
-  if (declaredTraceId !== undefined && telemetryDescriptors.length > 0 &&
-      !telemetryDescriptors.some((descriptor) =>
+  if (declaredTraceId !== undefined && !telemetryDescriptors.some((descriptor) =>
         ((descriptor.nativeReference as JsonObject | undefined)?.id) === declaredTraceId,
-      )) {
+  )) {
     errors.push("/run/native/traceId does not match retained telemetry evidence");
   }
 
@@ -396,6 +395,10 @@ test("rejects contradictory and incomplete contract records", () => {
   ((mismatchedNativeTrace.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "telemetry")!.nativeReference as JsonObject).id = "other-trace";
   assertContractInvalid(mismatchedNativeTrace, completeArtifacts);
 
+  const missingNativeTrace = structuredClone(taskFailed);
+  ((missingNativeTrace.run as JsonObject).native as JsonObject).traceId = "trace-task-failed-1";
+  assertContractInvalid(missingNativeTrace, taskFailedArtifacts);
+
   const duplicateRuntime = structuredClone(complete);
   ((duplicateRuntime.run as JsonObject).runtime as JsonObject[]).push({
     ...((duplicateRuntime.run as JsonObject).runtime as JsonObject[])[0],
@@ -488,6 +491,10 @@ test("rejects contradictory and incomplete contract records", () => {
   );
   assertContractInvalid(missingNativeSession, completeArtifacts);
 
+  const trailingPeriodPath = structuredClone(complete);
+  (trailingPeriodPath.evidence as JsonObject[])[0].relativePath = "session.jsonl.";
+  assertContractInvalid(trailingPeriodPath, completeArtifacts);
+
   const missingWorkspace = structuredClone(complete);
   missingWorkspace.evidence = (missingWorkspace.evidence as JsonObject[]).filter(
     (descriptor) => descriptor.kind !== "workspace",
@@ -547,6 +554,18 @@ test("rejects contradictory and incomplete contract records", () => {
     "semantic",
   ];
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, wrongOptionalBetaAuthority), []);
+
+  const duplicateCapabilityEffects = structuredClone(telemetryReport);
+  (duplicateCapabilityEffects.missingEvidence as JsonObject[])[0].affects = ["timing-resource", "timing-resource"];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, duplicateCapabilityEffects), []);
+
+  const budgetStopped = structuredClone(complete);
+  budgetStopped.terminal = { state: "stopped", failureClass: "none", stopReason: "budget" };
+  assertContractValid(budgetStopped, completeArtifacts);
+
+  const invalidStopped = structuredClone(budgetStopped);
+  invalidStopped.terminal = { state: "stopped", failureClass: "infrastructure", stopReason: "budget" };
+  assertContractInvalid(invalidStopped, completeArtifacts);
 
   const passedWithFailure = structuredClone(verifier);
   (passedWithFailure.assertions as JsonObject[])[0].status = "failed";
