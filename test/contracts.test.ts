@@ -18,6 +18,7 @@ import {
   resolveBundleConfiguration,
   resolveTaskArchive,
   type ArtifactReference,
+  type ArchiveEntry,
   type Digest,
   type ExperimentConfiguration,
   type DeclaredOrder,
@@ -188,6 +189,21 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
     expectInvalid(validate, trailingSlash, "includePaths");
   }
 
+  for (const includePath of ["./README.md", "src/./index.ts"]) {
+    const dotSegment = structuredClone(admitted) as Document;
+    ((dotSegment.agentInput as Document).fixture as Document).materializer = {
+      ...((dotSegment.agentInput as Document).fixture as Document).materializer as Document,
+      includePaths: [includePath],
+    };
+    expectInvalid(validate, dotSegment, "includePaths");
+  }
+
+  for (const locator of ["fixtures/./task.tar.gz", "fixtures//task.tar.gz", "fixtures/task.tar.gz/"]) {
+    const nonCanonicalSource = structuredClone(admitted) as Document;
+    (((nonCanonicalSource.agentInput as Document).fixture as Document).source as Document).locator = locator;
+    expectInvalid(validate, nonCanonicalSource, "locator");
+  }
+
   const archiveBomb = structuredClone(admitted) as Document;
   ((((archiveBomb.agentInput as Document).fixture as Document).source as Document).limits as Document).maxMembers = 100001;
   expectInvalid(validate, archiveBomb, "maxMembers");
@@ -240,6 +256,16 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     { path: "src/index.ts", kind: "file" },
   ], ["src"]), /file destination/);
   assert.throws(() => assertNoSelectedSymlinks([{ path: "README.md", kind: "file" }], ["src"]), /selected no entries/);
+  assert.throws(() => assertNoSelectedSymlinks([
+    { path: "src/index.ts", kind: "file" },
+    { path: "restricted/verifier.json", kind: "file" },
+  ], ["src"]), /outside the declared allowlist/);
+
+  const boundaryEntries = Array.from(
+    { length: 100000 },
+    (_, index): ArchiveEntry => ({ path: `src/file-${index}.ts`, kind: "file" }),
+  );
+  assert.doesNotThrow(() => assertNoSelectedSymlinks(boundaryEntries, ["src"]));
 });
 
 test("configuration references stay inside the bundle without following links", () => {
@@ -346,6 +372,13 @@ test("experiment validation rejects mutable references, duplicate-array conditio
     }),
     "declaredOrder",
   );
+
+  const trailingConfigurationLocator = structuredClone(experiment);
+  ((trailingConfigurationLocator.modelSet as Document)["model-a"] as Document).configurationRef = {
+    ...(((trailingConfigurationLocator.modelSet as Document)["model-a"] as Document).configurationRef as Document),
+    locator: "models/model-a.json/",
+  };
+  expectInvalid(validate, trailingConfigurationLocator, "locator");
 
   const declaredOrder = (fixture("experiment.24-cell.v1.json") as {
     taskSet: Document;

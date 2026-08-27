@@ -118,19 +118,24 @@ export function assertNoSelectedSymlinks(entries: readonly ArchiveEntry[], inclu
     if (destinations.has(destination)) {
       throw new Error(`Selected archive entry "${entry.path}" collides with another selected destination.`);
     }
-    for (const [selectedPath, selectedKind] of destinations) {
-      if ((selectedKind === "file" && destination.startsWith(`${selectedPath}/`))
-          || (entry.kind === "file" && selectedPath.startsWith(`${destination}/`))) {
-        throw new Error(`Selected archive entry "${entry.path}" collides with a file destination.`);
-      }
-    }
     destinations.set(destination, entry.kind);
   }
 
+  const selectedPaths = [...destinations.keys()].sort();
+  const includePathSet = new Set(includePaths);
+
   for (const includePath of includePaths) {
-    if (!isSafeArchiveMemberPath(includePath)
-        || !entries.some((entry) => entry.path === includePath || entry.path.startsWith(`${includePath}/`))) {
+    if (!isSafeArchiveMemberPath(includePath) || !hasPathOrDescendant(selectedPaths, includePath)) {
       throw new Error(`Archive include path "${includePath}" selected no entries.`);
+    }
+  }
+
+  for (const [path, kind] of destinations) {
+    if (!isWithinAllowlist(path, includePathSet)) {
+      throw new Error(`Selected archive entry "${path}" is outside the declared allowlist.`);
+    }
+    if (kind === "file" && hasFileAncestor(path, destinations)) {
+      throw new Error(`Selected archive entry "${path}" collides with a file destination.`);
     }
   }
 }
@@ -306,6 +311,37 @@ function isSafeArchiveMemberPath(path: string): boolean {
 
 function canonicalArchiveMemberPath(path: string): string {
   return posix.normalize(path).replace(/\/+$/, "");
+}
+
+function isWithinAllowlist(path: string, includePaths: ReadonlySet<string>): boolean {
+  for (let boundary = path.length; boundary >= 0; boundary = path.lastIndexOf("/", boundary - 1)) {
+    if (includePaths.has(path.slice(0, boundary))) return true;
+    if (boundary === 0) return false;
+  }
+
+  return false;
+}
+
+function hasFileAncestor(path: string, destinations: ReadonlyMap<string, string>): boolean {
+  for (let boundary = path.lastIndexOf("/"); boundary > 0; boundary = path.lastIndexOf("/", boundary - 1)) {
+    if (destinations.get(path.slice(0, boundary)) === "file") return true;
+  }
+
+  return false;
+}
+
+function hasPathOrDescendant(paths: readonly string[], path: string): boolean {
+  let low = 0;
+  let high = paths.length;
+
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (paths[middle]! < path) low = middle + 1;
+    else high = middle;
+  }
+
+  const candidate = paths[low];
+  return candidate === path || candidate?.startsWith(`${path}/`) === true;
 }
 
 function assertRfc3339Timestamp(value: string | null): void {

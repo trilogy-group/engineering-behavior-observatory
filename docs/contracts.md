@@ -12,7 +12,8 @@ not contain an evaluation corpus or a fixed operating matrix.
   the public prompt, a digest-verified sanitized TAR+gzip v1 archive with
   compressed-byte, expanded-byte, and member-count limits, and an explicit
   workspace-relative allowlist. A materializer verifies the archive digest and
-  copies only `includePaths`; it must not materialize a raw repository checkout.
+  copies only entries selected by `includePaths`; it must not materialize a raw
+  repository checkout or an entry outside that allowlist.
 - Its archive locator is a secret-free, bundle-relative logical path. URLs,
   absolute local paths, credentials, and path traversal are invalid there. Its
   resolver rejects links and paths that leave the real task-bundle root.
