@@ -15,10 +15,10 @@
     },
     "relativePath": {
       "type": "string",
-      "pattern": "^(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9_-])(?:/(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9_-]))*$"
+      "pattern": "^(?!.*(?:^|/)(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.|/|$))(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9_-])(?:/(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9_-]))*$"
     },
     "sharingClass": {
-      "enum": ["restricted", "internal", "partner", "public"]
+      "enum": ["unknown", "restricted", "internal", "partner", "public"]
     },
     "nativeReference": {
       "type": "object",
@@ -246,7 +246,13 @@
             "id": { "$ref": "#/$defs/identifier" },
             "number": { "type": "integer", "minimum": 1 },
             "retryOf": { "$ref": "#/$defs/identifier" }
-          }
+          },
+          "allOf": [
+            {
+              "if": { "required": ["retryOf"] },
+              "then": { "properties": { "number": { "minimum": 2 } } }
+            }
+          ]
         },
         "configuration": {
           "type": "object",
@@ -368,6 +374,7 @@
         },
         "missingEvidence": {
           "type": "array",
+          "uniqueItems": true,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -443,7 +450,14 @@
           "if": { "properties": { "qualification": { "const": "incomplete" } }, "required": ["qualification"] },
           "then": {
             "properties": {
-              "missingEvidence": { "minItems": 1 }
+              "missingEvidence": { "minItems": 1 },
+              "capabilities": {
+                "anyOf": [
+                  { "properties": { "semantic": { "properties": { "status": { "enum": ["missing", "not-checked"] } } } } },
+                  { "properties": { "timingResource": { "properties": { "status": { "enum": ["missing", "not-checked"] } } } } },
+                  { "properties": { "outcome": { "properties": { "status": { "enum": ["missing", "not-checked"] } } } } }
+                ]
+              }
             }
           }
         },
@@ -664,7 +678,7 @@
         "schemaVersion": { "const": "export-manifest/v1" },
         "bundleId": { "$ref": "#/$defs/identifier" },
         "status": { "enum": ["not-requested", "blocked", "ready", "exported"] },
-        "sharingClass": { "$ref": "#/$defs/sharingClass" },
+        "sharingClass": { "enum": ["restricted", "internal", "partner", "public"] },
         "policyDigest": { "$ref": "#/$defs/digest" },
         "artifactIds": {
           "type": "array",

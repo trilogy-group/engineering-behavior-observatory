@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -208,6 +210,7 @@ function assertExportSafe(manifest: JsonObject, exportManifest: JsonObject): voi
     const descriptor = evidenceById.get(artifactId);
 
     assert.ok(descriptor, `export references unknown artifact ${artifactId}`);
+    assert.notEqual(descriptor.sharingClass, "unknown", "ready or exported manifests cannot include unknown artifacts");
     assert.equal(
       descriptor.sharingClass,
       exportManifest.sharingClass,
@@ -251,6 +254,17 @@ test("validates retained run-bundle fixtures and their references", () => {
         assert.deepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, exportManifest), []);
         assertExportSafe(manifest, exportManifest);
       }
+      if (descriptor.kind === "workspace") {
+        const workspaceRoot = mkdtempSync(join(tmpdir(), "ebo-workspace-patch-"));
+
+        try {
+          const result = spawnSync("git", ["apply", "--check", artifactPath], { cwd: workspaceRoot, encoding: "utf8" });
+
+          assert.equal(result.status, 0, result.stderr);
+        } finally {
+          rmSync(workspaceRoot, { force: true, recursive: true });
+        }
+      }
     }
 
     assertContractValid(manifest, artifacts);
@@ -285,6 +299,13 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
   emptyReadyExport.artifactIds = [];
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, emptyReadyExport), []);
 
+  const unknownArtifactManifest = structuredClone(manifest);
+  (unknownArtifactManifest.evidence as JsonObject[])[0].sharingClass = "unknown";
+  const unknownArtifactExport = structuredClone(readyExport);
+  unknownArtifactExport.sharingClass = "restricted";
+  unknownArtifactExport.artifactIds = ["session"];
+  assert.throws(() => assertExportSafe(unknownArtifactManifest, unknownArtifactExport), /unknown artifacts/);
+
   const selfReferentialExport = structuredClone(readyExport);
   selfReferentialExport.sharingClass = "internal";
   selfReferentialExport.artifactIds = ["export-manifest"];
@@ -311,6 +332,10 @@ test("rejects contradictory and incomplete contract records", () => {
   const invalidTerminal = structuredClone(complete);
   invalidTerminal.terminal = { state: "completed", failureClass: "task", stopReason: "none" };
   assertContractInvalid(invalidTerminal);
+
+  const firstAttemptRetry = structuredClone(complete);
+  (firstAttemptRetry.attempt as JsonObject).retryOf = "prior-attempt";
+  assertContractInvalid(firstAttemptRetry, completeArtifacts);
 
   assert.doesNotThrow(() => assertContractInvalid({ evidence: [] }));
 
@@ -495,6 +520,10 @@ test("rejects contradictory and incomplete contract records", () => {
   (trailingPeriodPath.evidence as JsonObject[])[0].relativePath = "session.jsonl.";
   assertContractInvalid(trailingPeriodPath, completeArtifacts);
 
+  const deviceNamePath = structuredClone(complete);
+  (deviceNamePath.evidence as JsonObject[])[0].relativePath = "NUL.json";
+  assertContractInvalid(deviceNamePath, completeArtifacts);
+
   const missingWorkspace = structuredClone(complete);
   missingWorkspace.evidence = (missingWorkspace.evidence as JsonObject[]).filter(
     (descriptor) => descriptor.kind !== "workspace",
@@ -508,6 +537,10 @@ test("rejects contradictory and incomplete contract records", () => {
   const qualifiedTelemetryGap = structuredClone(telemetryReport);
   qualifiedTelemetryGap.qualification = "qualified";
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, qualifiedTelemetryGap), []);
+
+  const incompleteFullyQualified = structuredClone(taskFailedArtifacts.get("capture-report")!);
+  incompleteFullyQualified.qualification = "incomplete";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, incompleteFullyQualified), []);
 
   const unsupportedReasonWithMissingStatus = structuredClone(telemetryReport);
   (unsupportedReasonWithMissingStatus.missingEvidence as JsonObject[])[0].reason = "unsupported";
@@ -558,6 +591,12 @@ test("rejects contradictory and incomplete contract records", () => {
   const duplicateCapabilityEffects = structuredClone(telemetryReport);
   (duplicateCapabilityEffects.missingEvidence as JsonObject[])[0].affects = ["timing-resource", "timing-resource"];
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, duplicateCapabilityEffects), []);
+
+  const duplicateMissingEvidence = structuredClone(telemetryReport);
+  (duplicateMissingEvidence.missingEvidence as JsonObject[]).push(
+    structuredClone((duplicateMissingEvidence.missingEvidence as JsonObject[])[0]),
+  );
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, duplicateMissingEvidence), []);
 
   const budgetStopped = structuredClone(complete);
   budgetStopped.terminal = { state: "stopped", failureClass: "none", stopReason: "budget" };

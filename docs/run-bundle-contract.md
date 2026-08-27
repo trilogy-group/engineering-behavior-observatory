@@ -93,6 +93,10 @@ Missing-evidence effects cannot contradict a capability reported as available.
 `unsupported` and `not-checked` reasons each match their corresponding
 capability status.
 
+An artifact may retain `sharingClass: unknown` when capture cannot classify it.
+Exports fail closed: unknown artifacts and unknown export classes are never
+ready or exported.
+
 Verifier results cannot contradict their assertions: passed results have no
 failed assertion, while failed results retain at least one failed assertion.
 Assertion IDs are unique, and a retained verifier result names the containing

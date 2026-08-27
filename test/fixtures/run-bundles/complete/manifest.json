@@ -66,8 +66,8 @@
       "kind": "workspace",
       "authority": "outcome",
       "mediaType": "text/x-diff",
-      "digest": "sha256:2285959bc79fa2f43c3d7a873994051b91e25d47a01a2cb71b1ccfb1c4d54dfa",
-      "sizeBytes": 39,
+      "digest": "sha256:d4fba6dd51027bab3b34ce73155475b5d462bbbab29119c1bb41fb7c29f5c557",
+      "sizeBytes": 143,
       "sharingClass": "restricted",
       "relativePath": "workspace.patch"
     },
