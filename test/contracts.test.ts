@@ -12,7 +12,8 @@ import {
   assertAdmittedTaskPackets,
   assertControlledPerturbationDigest,
   assertDeclaredOrder,
-  assertNoSelectedSymlinks,
+  assertNoSelectedSymlinks as validateArchiveSelection,
+  assertArchiveMeasurements,
   assertResolvedExperimentConfigurationDigests,
   declaredMatrixCells,
   resolveBundleConfiguration,
@@ -59,6 +60,14 @@ type InvalidCase = {
   value?: unknown;
 };
 
+function assertNoSelectedSymlinks(
+  entries: readonly ArchiveEntry[],
+  includePaths: readonly string[],
+  archiveEntries: readonly ArchiveEntry[] = entries,
+): void {
+  validateArchiveSelection(entries, includePaths, archiveEntries);
+}
+
 function applyInvalidCase(source: Document, invalidCase: InvalidCase): unknown {
   const document = structuredClone(source) as Document;
   const parent = invalidCase.path.slice(0, -1).reduce<Document>(
@@ -97,6 +106,7 @@ function admittedResolutions(taskSet: TaskConditionSet): Record<string, Resolved
         reviewedDigest: condition.packetRef.digest,
         reviewRecordDigest: condition.packetRef.digest,
         resolvedReviewRecordDigest: condition.packetRef.digest,
+        reviewRecordReviewedDigest: condition.packetRef.digest,
         referenceSolutionDigest: condition.packetRef.digest,
         resolvedReferenceSolutionDigest: condition.packetRef.digest,
         verifierDigest: condition.packetRef.digest,
@@ -212,6 +222,10 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   ((malformedReviewTime.admission as Document).review as Document).reviewedAt = "unknown";
   expectInvalid(validatorWithoutFormatAssertion("task-packet.v1.schema.json"), malformedReviewTime, "reviewedAt");
 
+  const lowercaseReviewTime = structuredClone(admitted) as Document;
+  ((lowercaseReviewTime.admission as Document).review as Document).reviewedAt = "2026-08-26t00:00:00z";
+  assert.equal(validate(lowercaseReviewTime), true, JSON.stringify(validate.errors));
+
   for (const invalidCase of fixture("task-packet.invalid-cases.v1.json") as InvalidCase[]) {
     expectInvalid(validate, applyInvalidCase(admitted, invalidCase), invalidCase.field);
   }
@@ -255,17 +269,38 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     { path: "src", kind: "file" },
     { path: "src/index.ts", kind: "file" },
   ], ["src"]), /file destination/);
+  assert.throws(() => assertNoSelectedSymlinks([
+    { path: "src", kind: "file" },
+    { path: "src/subdir", kind: "directory" },
+  ], ["src"]), /file destination/);
+  assert.throws(() => assertNoSelectedSymlinks([
+    { path: "src/Config.ts", kind: "file" },
+    { path: "src/config.ts", kind: "file" },
+  ], ["src"]), /collides/);
   assert.throws(() => assertNoSelectedSymlinks([{ path: "README.md", kind: "file" }], ["src"]), /selected no entries/);
   assert.throws(() => assertNoSelectedSymlinks([
     { path: "src/index.ts", kind: "file" },
     { path: "restricted/verifier.json", kind: "file" },
   ], ["src"]), /outside the declared allowlist/);
+  assert.throws(() => assertNoSelectedSymlinks(
+    [{ path: "src/a.ts", kind: "file" }],
+    ["src"],
+    [{ path: "src/a.ts", kind: "file" }, { path: "src/b.ts", kind: "file" }],
+  ), /omitted a selected entry/);
 
   const boundaryEntries = Array.from(
     { length: 100000 },
     (_, index): ArchiveEntry => ({ path: `src/file-${index}.ts`, kind: "file" }),
   );
   assert.doesNotThrow(() => assertNoSelectedSymlinks(boundaryEntries, ["src"]));
+  assert.doesNotThrow(() => assertArchiveMeasurements(
+    { maxCompressedBytes: 10, maxExpandedBytes: 20, maxMembers: 2 },
+    { compressedBytes: 10, expandedBytes: 20, memberCount: 2 },
+  ));
+  assert.throws(() => assertArchiveMeasurements(
+    { maxCompressedBytes: 10, maxExpandedBytes: 20, maxMembers: 1 },
+    { compressedBytes: 10, expandedBytes: 20, memberCount: 2 },
+  ), /materialization limits/);
 });
 
 test("configuration references stay inside the bundle without following links", () => {
@@ -423,6 +458,7 @@ test("task resolution accepts only matching admitted packets", () => {
     reviewedDigest: { algorithm: "sha256", value: "0".repeat(64) },
     reviewRecordDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     resolvedReviewRecordDigest: experiment.taskSet["task-a"]!.packetRef.digest,
+    reviewRecordReviewedDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     referenceSolutionDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     resolvedReferenceSolutionDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     verifierDigest: experiment.taskSet["task-a"]!.packetRef.digest,
@@ -439,6 +475,10 @@ test("task resolution accepts only matching admitted packets", () => {
   malformedReview["task-a"]!.admission.reviewedAt = "2025-02-29T00:00:00Z";
   assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, malformedReview), /RFC 3339/);
 
+  const lowercaseReview = admittedResolutions(experiment.taskSet);
+  lowercaseReview["task-a"]!.admission.reviewedAt = "2026-08-26t00:00:00z";
+  assert.doesNotThrow(() => assertAdmittedTaskPackets(experiment.taskSet, lowercaseReview));
+
   const tamperedVerifier = admittedResolutions(experiment.taskSet);
   tamperedVerifier["task-a"]!.resolvedVerifierDigest = { algorithm: "sha256", value: "0".repeat(64) };
   assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, tamperedVerifier), /verifier digest/);
@@ -446,6 +486,10 @@ test("task resolution accepts only matching admitted packets", () => {
   const tamperedReviewRecord = admittedResolutions(experiment.taskSet);
   tamperedReviewRecord["task-a"]!.resolvedReviewRecordDigest = { algorithm: "sha256", value: "0".repeat(64) };
   assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, tamperedReviewRecord), /review record digest/);
+
+  const unboundReviewRecord = admittedResolutions(experiment.taskSet);
+  unboundReviewRecord["task-a"]!.reviewRecordReviewedDigest = { algorithm: "sha256", value: "0".repeat(64) };
+  assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, unboundReviewRecord), /reviewed packet digest/);
 
   const tamperedReferenceSolution = admittedResolutions(experiment.taskSet);
   tamperedReferenceSolution["task-a"]!.resolvedReferenceSolutionDigest = { algorithm: "sha256", value: "0".repeat(64) };

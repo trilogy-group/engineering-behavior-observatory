@@ -16,6 +16,18 @@ export type ArchiveEntry = {
   kind: string;
 };
 
+export type ArchiveLimits = {
+  maxCompressedBytes: number;
+  maxExpandedBytes: number;
+  maxMembers: number;
+};
+
+export type ArchiveMeasurements = {
+  compressedBytes: number;
+  expandedBytes: number;
+  memberCount: number;
+};
+
 export type TaskCondition = {
   packetRef: {
     locator: string;
@@ -30,6 +42,7 @@ export type ResolvedTaskPacket = {
   reviewedDigest: Digest | null;
   reviewRecordDigest: Digest | null;
   resolvedReviewRecordDigest: Digest | null;
+  reviewRecordReviewedDigest: Digest | null;
   referenceSolutionDigest: Digest | null;
   resolvedReferenceSolutionDigest: Digest | null;
   verifierDigest: Digest;
@@ -101,7 +114,11 @@ export function* declaredMatrixCells(
 
 }
 
-export function assertNoSelectedSymlinks(entries: readonly ArchiveEntry[], includePaths: readonly string[]): void {
+export function assertNoSelectedSymlinks(
+  entries: readonly ArchiveEntry[],
+  includePaths: readonly string[],
+  archiveEntries: readonly ArchiveEntry[],
+): void {
   const destinations = new Map<string, string>();
 
   if (entries.length === 0) {
@@ -109,7 +126,7 @@ export function assertNoSelectedSymlinks(entries: readonly ArchiveEntry[], inclu
   }
 
   for (const entry of entries) {
-    const destination = canonicalArchiveMemberPath(entry.path);
+    const destination = canonicalArchiveMemberPath(entry.path).toLowerCase();
 
     if (!["file", "directory"].includes(entry.kind) || !isSafeArchiveMemberPath(entry.path)
         || (entry.kind === "file" && entry.path.endsWith("/"))) {
@@ -122,11 +139,19 @@ export function assertNoSelectedSymlinks(entries: readonly ArchiveEntry[], inclu
   }
 
   const selectedPaths = [...destinations.keys()].sort();
-  const includePathSet = new Set(includePaths);
+  const includePathSet = new Set(includePaths.map((path) => path.toLowerCase()));
 
   for (const includePath of includePaths) {
-    if (!isSafeArchiveMemberPath(includePath) || !hasPathOrDescendant(selectedPaths, includePath)) {
+    const canonicalIncludePath = includePath.toLowerCase();
+    if (!isSafeArchiveMemberPath(includePath) || !hasPathOrDescendant(selectedPaths, canonicalIncludePath)) {
       throw new Error(`Archive include path "${includePath}" selected no entries.`);
+    }
+    for (const archiveEntry of archiveEntries) {
+      const archivePath = canonicalArchiveMemberPath(archiveEntry.path).toLowerCase();
+      if ((archivePath === canonicalIncludePath || archivePath.startsWith(`${canonicalIncludePath}/`))
+          && !destinations.has(archivePath)) {
+        throw new Error(`Archive include path "${includePath}" omitted a selected entry.`);
+      }
     }
   }
 
@@ -134,9 +159,17 @@ export function assertNoSelectedSymlinks(entries: readonly ArchiveEntry[], inclu
     if (!isWithinAllowlist(path, includePathSet)) {
       throw new Error(`Selected archive entry "${path}" is outside the declared allowlist.`);
     }
-    if (kind === "file" && hasFileAncestor(path, destinations)) {
+    if (hasFileAncestor(path, destinations)) {
       throw new Error(`Selected archive entry "${path}" collides with a file destination.`);
     }
+  }
+}
+
+export function assertArchiveMeasurements(limits: ArchiveLimits, measurements: ArchiveMeasurements): void {
+  if (measurements.compressedBytes > limits.maxCompressedBytes
+      || measurements.expandedBytes > limits.maxExpandedBytes
+      || measurements.memberCount > limits.maxMembers) {
+    throw new Error("Sanitized archive exceeds its declared materialization limits.");
   }
 }
 
@@ -248,6 +281,7 @@ export function assertAdmittedTaskPackets(
     if (packet.admission.status === "admitted") {
       assertRfc3339Timestamp(packet.admission.reviewedAt);
       assertEqualDigests(`Task packet "${taskId}" review record`, packet.reviewRecordDigest, packet.resolvedReviewRecordDigest);
+      assertEqualDigests(`Task packet "${taskId}" reviewed packet`, packet.reviewedDigest, packet.reviewRecordReviewedDigest);
     }
 
     if (
@@ -345,7 +379,7 @@ function hasPathOrDescendant(paths: readonly string[], path: string): boolean {
 }
 
 function assertRfc3339Timestamp(value: string | null): void {
-  const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/);
+  const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|[+-](\d{2}):(\d{2}))$/);
 
   if (match === null || match === undefined) {
     throw new Error("Admitted task packet review must have an RFC 3339 timestamp.");

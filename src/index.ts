@@ -1,6 +1,7 @@
 export { main } from "./cli.js";
 export {
   assertAdmittedTaskPackets,
+  assertArchiveMeasurements,
   assertControlledPerturbationDigest,
   assertDeclaredOrder,
   assertNoSelectedSymlinks,
@@ -12,6 +13,8 @@ export {
 export type {
   ArtifactReference,
   ArchiveEntry,
+  ArchiveLimits,
+  ArchiveMeasurements,
   DeclaredOrder,
   DeclaredMatrixCell,
   Digest,
