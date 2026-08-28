@@ -181,6 +181,14 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   (verifierOnly.restricted as Document).referenceSolution = { status: "not-provided" };
   assert.equal(validate(verifierOnly), true, JSON.stringify(validate.errors));
 
+  const blankPrompt = structuredClone(admitted) as Document;
+  (blankPrompt.agentInput as Document).prompt = " ";
+  expectInvalid(validate, blankPrompt, "prompt");
+
+  const blankRestrictedLocator = structuredClone(admitted) as Document;
+  ((blankRestrictedLocator.restricted as Document).verifier as Document).locator = " ";
+  expectInvalid(validate, blankRestrictedLocator, "locator");
+
   const explicitPort = structuredClone(admitted) as Document;
   (explicitPort.provenance as Document).repositoryUrl = "https://git.example.test:8443/org/repository.git";
   assert.equal(validate(explicitPort), true, JSON.stringify(validate.errors));
@@ -512,6 +520,9 @@ test("experiment fixtures pin identity and preserve native harness limits", () =
   );
   const huge = declaredMatrixCells(twentyFour.ordering.declaredOrder, 2147483647);
   assert.deepEqual(huge.next().value, { taskId: "10", modelId: "model-a", harnessId: "harness-a", trialIndex: 1 });
+  for (const invalidTrialCount of [0, Number.NaN, 1.5, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => declaredMatrixCells(twentyFour.ordering.declaredOrder, invalidTrialCount).next(), /Trial count/);
+  }
 
   const configurationExperiment = fixture("experiment.18-cell.v1.json") as ExperimentConfiguration;
   const configurationDigests = resolvedConfigurationDigests(configurationExperiment);

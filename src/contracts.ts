@@ -119,6 +119,7 @@ export function* declaredMatrixCells(
   declaredOrder: DeclaredOrder,
   trialCount: number,
 ): Generator<DeclaredMatrixCell> {
+  assertPositiveSafeInteger(trialCount, "Trial count");
 
   for (const taskId of declaredOrder.taskIds) {
     for (const modelId of declaredOrder.modelIds) {

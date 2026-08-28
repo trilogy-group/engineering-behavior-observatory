@@ -22,7 +22,7 @@
       "additionalProperties": false,
       "required": ["prompt", "fixture"],
       "properties": {
-        "prompt": { "type": "string", "minLength": 1 },
+        "prompt": { "type": "string", "pattern": ".*\\S.*" },
         "fixture": {
           "type": "object",
           "additionalProperties": false,
@@ -206,7 +206,7 @@
       "additionalProperties": false,
       "required": ["locator", "digest"],
       "properties": {
-        "locator": { "type": "string", "minLength": 1 },
+        "locator": { "type": "string", "pattern": ".*\\S.*" },
         "digest": { "$ref": "#/$defs/digest" }
       }
     }
