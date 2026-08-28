@@ -283,7 +283,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
           errors.push(`/evidence/${String(descriptor.id)} does not preserve source capture capabilities`);
         }
         const missingEvidenceFacts = (capture: JsonObject) => JSON.stringify((capture.missingEvidence as JsonObject[])
-          .map((entry) => [entry.reason, [...(entry.affects as string[])].sort()])
+          .map((entry) => [entry.kind, entry.reason, [...(entry.affects as string[])].sort()])
           .sort());
         if (missingEvidenceFacts(sourceReport) !== missingEvidenceFacts(report)) {
           errors.push(`/evidence/${String(descriptor.id)} does not preserve source missing-evidence facts`);
@@ -354,7 +354,9 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     && JSON.stringify(workspace.digest) === JSON.stringify(binding.workspace.digest);
   const bindingMatchesWorkspace = (binding: { workspace: JsonObject; source: boolean; descriptor: JsonObject }) => {
     const workspace = retainedWorkspaceDescriptors.find((descriptor) =>
-      binding.source === (descriptor.sanitizedFrom === undefined) && bindingMatches(binding, descriptor),
+      binding.source === (descriptor.sanitizedFrom === undefined)
+        && (binding.source || descriptor.sharingClass === binding.descriptor.sharingClass)
+        && bindingMatches(binding, descriptor),
     );
     if (workspace === undefined || binding.source) return workspace !== undefined;
 
@@ -836,6 +838,16 @@ test("rejects contradictory and incomplete contract records", () => {
     ["sanitized-verifier", sanitizedVerifier],
   ]));
 
+  const sharedVerifierWithWrongSharingClass = structuredClone(sharedVerifierWithSanitizedWorkspace);
+  (sharedVerifierWithWrongSharingClass.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-verifier",
+  )!.sharingClass = "public";
+  assertContractInvalid(sharedVerifierWithWrongSharingClass, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", completeVerifier],
+    ["sanitized-verifier", sanitizedVerifier],
+  ]));
+
   const sharedVerifierWithMismatchedWorkspace = structuredClone(sharedVerifierWithSanitizedWorkspace);
   const otherSourceWorkspace = (sharedVerifierWithMismatchedWorkspace.evidence as JsonObject[]).find(
     (descriptor) => descriptor.id === "workspace",
@@ -936,6 +948,16 @@ test("rejects contradictory and incomplete contract records", () => {
     ["capture-report", incompleteCaptureReport],
     ["verifier", completeVerifier],
     ["sanitized-capture-report", changedCaptureFacts],
+  ]));
+
+  const incompleteCaptureWithChangedKind = structuredClone(incompleteCaptureWithQualifiedDerivative);
+  const changedCaptureKind = structuredClone(incompleteCaptureReport);
+  changedCaptureKind.missingEvidence = [{ kind: "hooks", reason: "not-checked", affects: ["semantic"] }];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, changedCaptureKind), []);
+  assertContractInvalid(incompleteCaptureWithChangedKind, new Map([
+    ["capture-report", incompleteCaptureReport],
+    ["verifier", completeVerifier],
+    ["sanitized-capture-report", changedCaptureKind],
   ]));
 
   const sharedVerifierWithChangedAssertions = structuredClone(sharedFailedVerifierWithChangedStatus);
