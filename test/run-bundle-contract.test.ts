@@ -24,7 +24,7 @@ function readJson(path: string): JsonObject {
 }
 
 function assertJsonMedia(mediaType: unknown, artifact: Buffer): number {
-  const content = artifact.toString("utf8");
+  const content = new TextDecoder("utf-8", { fatal: true }).decode(artifact);
 
   if (mediaType === "application/json") {
     JSON.parse(content);
@@ -173,6 +173,18 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     }
 
     const capabilities = report.capabilities as JsonObject;
+    const missingEvidenceIdentities = new Set<string>();
+    for (const missingEvidence of report.missingEvidence as JsonObject[]) {
+      const identity = JSON.stringify([
+        missingEvidence.kind,
+        missingEvidence.reason,
+        [...(missingEvidence.affects as string[])].sort(),
+      ]);
+      if (missingEvidenceIdentities.has(identity)) {
+        errors.push("/capture-report/missingEvidence contains equivalent records");
+      }
+      missingEvidenceIdentities.add(identity);
+    }
     const missingEffects = new Set(
       (report.missingEvidence as JsonObject[]).flatMap((entry) => entry.affects as string[]),
     );
@@ -205,6 +217,12 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
       descriptor.id === artifactId && descriptor.kind === "capture-report",
     ))?.[1];
   const outcomeStatus = (captureReport?.capabilities as JsonObject | undefined)?.outcome as JsonObject | undefined;
+  if (outcomeStatus?.status === "available" && (
+    !(evidence as JsonObject[]).some((descriptor) => descriptor.kind === "workspace")
+    || !verifierStatuses.some((status) => status === "passed" || status === "failed")
+  )) {
+    errors.push("/capture-report/outcome requires retained workspace and an executed verifier");
+  }
   if (verifierStatuses.some((status) => status === "passed" || status === "failed")
       && outcomeStatus?.status !== "available") {
     errors.push("/capture-report/outcome must be available when retained verifier evidence has an outcome");
@@ -368,6 +386,7 @@ test("native JSON media is structurally inspectable", () => {
   assert.doesNotThrow(() => assertJsonMedia("application/x-ndjson", Buffer.from('{"event":"tool"}\n')));
   assert.throws(() => assertJsonMedia("application/json", Buffer.from("not json")));
   assert.throws(() => assertJsonMedia("application/x-ndjson", Buffer.from('{"event":"tool"}\nnot json\n')));
+  assert.throws(() => assertJsonMedia("application/json", Buffer.from([0x22, 0xff, 0x22])));
   assert.throws(() => assertNativeSessionRecords("session", assertJsonMedia("application/x-ndjson", Buffer.from(" \n"))));
 });
 
@@ -380,7 +399,9 @@ test("rejects contradictory and incomplete contract records", () => {
     ["verifier", completeVerifier],
   ]);
   const telemetryReport = readJson(resolve(fixtureRoot, "telemetry-incomplete/capture-report.json"));
+  const interrupted = readJson(resolve(fixtureRoot, "interrupted/manifest.json"));
   const interruptedReport = readJson(resolve(fixtureRoot, "interrupted/capture-report.json"));
+  const interruptedArtifacts = new Map([["capture-report", interruptedReport]]);
   const taskFailed = readJson(resolve(fixtureRoot, "task-failed/manifest.json"));
   const taskFailedArtifacts = new Map([
     ["capture-report", readJson(resolve(fixtureRoot, "task-failed/capture-report.json"))],
@@ -392,6 +413,14 @@ test("rejects contradictory and incomplete contract records", () => {
   invalidTerminal.terminal = { state: "completed", failureClass: "task", stopReason: "none" };
   assertContractInvalid(invalidTerminal);
 
+  const infrastructureFailed = structuredClone(interrupted);
+  infrastructureFailed.terminal = { state: "failed", failureClass: "infrastructure", stopReason: "none" };
+  assertContractValid(infrastructureFailed, interruptedArtifacts);
+
+  const contradictoryInfrastructureFailure = structuredClone(infrastructureFailed);
+  contradictoryInfrastructureFailure.terminal = { state: "failed", failureClass: "task", stopReason: "none" };
+  assertContractInvalid(contradictoryInfrastructureFailure, interruptedArtifacts);
+
   const firstAttemptRetry = structuredClone(complete);
   (firstAttemptRetry.attempt as JsonObject).retryOf = "prior-attempt";
   assertContractInvalid(firstAttemptRetry, completeArtifacts);
@@ -399,6 +428,15 @@ test("rejects contradictory and incomplete contract records", () => {
   const unlinkedRetry = structuredClone(complete);
   (unlinkedRetry.attempt as JsonObject).number = 2;
   assertContractInvalid(unlinkedRetry, completeArtifacts);
+
+  const reorderedMissingEvidence = structuredClone(interruptedReport);
+  (reorderedMissingEvidence.capabilities as JsonObject).outcome = { status: "not-checked" };
+  reorderedMissingEvidence.missingEvidence = [
+    { kind: "outcome-and-timing", reason: "not-checked", affects: ["timing-resource", "outcome"] },
+    { kind: "outcome-and-timing", reason: "not-checked", affects: ["outcome", "timing-resource"] },
+  ];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, reorderedMissingEvidence), []);
+  assertContractInvalid(interrupted, new Map([["capture-report", reorderedMissingEvidence]]));
 
   assert.doesNotThrow(() => assertContractInvalid({ evidence: [] }));
 
@@ -468,6 +506,18 @@ test("rejects contradictory and incomplete contract records", () => {
     { source: "openhands-agent-server", name: "agent-server", version: "1.0.0" },
   ];
   assertContractValid(serverRuntime, completeArtifacts);
+
+  const stoppedWithUnexecutedVerifier = structuredClone(complete);
+  stoppedWithUnexecutedVerifier.terminal = { state: "stopped", failureClass: "none", stopReason: "budget" };
+  const unexecutedVerifier = structuredClone(completeVerifier);
+  unexecutedVerifier.status = "not-run";
+  unexecutedVerifier.assertions = [{ id: "example-check", status: "not-run" }];
+  delete unexecutedVerifier.exitCode;
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, unexecutedVerifier), []);
+  assertContractInvalid(stoppedWithUnexecutedVerifier, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", unexecutedVerifier],
+  ]));
 
   const mismatchedHarnessRuntime = structuredClone(complete);
   (mismatchedHarnessRuntime.run as JsonObject).runtime = [
