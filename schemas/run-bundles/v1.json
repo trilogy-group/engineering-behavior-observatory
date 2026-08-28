@@ -507,7 +507,9 @@
                 "not": {
                   "contains": {
                     "properties": {
-                      "reason": { "const": "not-checked" },
+                      "reason": {
+                        "not": { "enum": ["unsupported", "optional-beta-unavailable"] }
+                      },
                       "affects": { "contains": { "const": "timing-resource" } }
                     },
                     "required": ["reason", "affects"]

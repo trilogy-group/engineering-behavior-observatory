@@ -37,8 +37,8 @@ function assertJsonMedia(mediaType: unknown, artifact: Buffer): number {
 
     for (const line of content.split(/\r?\n/)) {
       if (line.trim() !== "") {
-        JSON.parse(line);
-        records += 1;
+        const record = JSON.parse(line);
+        if (typeof record === "object" && record !== null && !Array.isArray(record)) records += 1;
       }
     }
     return records;
@@ -517,6 +517,7 @@ test("native JSON media is structurally inspectable", () => {
   assert.throws(() => assertNativeEvidenceRecords("session", assertJsonMedia("application/json", Buffer.from("[]"))));
   for (const placeholder of ["null", "false", "0", "[null]"]) {
     assert.throws(() => assertNativeEvidenceRecords("session", assertJsonMedia("application/json", Buffer.from(placeholder))));
+    assert.throws(() => assertNativeEvidenceRecords("session", assertJsonMedia("application/x-ndjson", Buffer.from(`${placeholder}\n`))));
   }
   assert.throws(() => assertJsonMedia("application/json", Buffer.from("not json")));
   assert.throws(() => assertJsonMedia("application/x-ndjson", Buffer.from('{"event":"tool"}\nnot json\n')));
@@ -969,6 +970,24 @@ test("rejects contradictory and incomplete contract records", () => {
     { kind: "telemetry-receipt", reason: "not-checked", affects: ["timing-resource"] },
   ];
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, qualifiedUncheckedTiming), []);
+
+  for (const reason of ["not-collected", "process-interrupted"]) {
+    const qualifiedLostTiming = structuredClone(completeCaptureReport);
+    (qualifiedLostTiming.capabilities as JsonObject).timingResource = { status: "unsupported" };
+    qualifiedLostTiming.missingEvidence = [
+      { kind: "telemetry", reason: "unsupported", affects: ["timing-resource"] },
+      { kind: "telemetry-receipt", reason, affects: ["timing-resource"] },
+    ];
+    assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, qualifiedLostTiming), []);
+  }
+
+  const qualifiedOptionalBetaTiming = structuredClone(completeCaptureReport);
+  (qualifiedOptionalBetaTiming.capabilities as JsonObject).timingResource = { status: "unsupported" };
+  qualifiedOptionalBetaTiming.missingEvidence = [
+    { kind: "telemetry", reason: "unsupported", affects: ["timing-resource"] },
+    { kind: "hook-span", reason: "optional-beta-unavailable", affects: ["timing-resource"] },
+  ];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, qualifiedOptionalBetaTiming), []);
 
   const unsupportedReasonWithMissingStatus = structuredClone(telemetryReport);
   (unsupportedReasonWithMissingStatus.missingEvidence as JsonObject[])[0].reason = "unsupported";
