@@ -45,8 +45,10 @@ function assertJsonMedia(mediaType: unknown, artifact: Buffer): number {
   return 0;
 }
 
-function assertNativeSessionRecords(kind: unknown, records: number): void {
-  if (kind === "session") assert.ok(records > 0, "retained native session evidence must contain a record");
+function assertNativeSemanticRecords(kind: unknown, records: number): void {
+  if (kind === "session" || kind === "hook") {
+    assert.ok(records > 0, "retained native semantic evidence must contain a record");
+  }
 }
 
 function validator(reference: string) {
@@ -261,18 +263,34 @@ function assertExportSafe(manifest: JsonObject, exportManifest: JsonObject): voi
       `${String(exportManifest.sharingClass)} export cannot include ${artifactId} with ${String(descriptor.sharingClass)} sharing class`,
     );
     if (["partner", "public"].includes(String(exportManifest.sharingClass))) {
-      const sanitizedFrom = descriptor.sanitizedFrom as JsonObject | undefined;
-
-      assert.ok(sanitizedFrom, `${String(exportManifest.sharingClass)} export requires sanitized artifact provenance`);
-      const sourceDescriptor = evidenceById.get(String(sanitizedFrom.artifactId));
-      assert.ok(sourceDescriptor, "sanitized artifact must reference retained source evidence");
-      assert.notEqual(sourceDescriptor.id, descriptor.id, "sanitized artifact cannot reference itself");
-      assert.deepEqual(sourceDescriptor.digest, sanitizedFrom.digest, "sanitized provenance must bind the source digest");
-      assert.notEqual(sourceDescriptor.relativePath, descriptor.relativePath, "sanitized artifact must have a distinct retained path");
+      assertSanitizedProvenance(descriptor, evidenceById, String(exportManifest.sharingClass));
     }
     hasNonExportArtifact ||= descriptor.kind !== "export-manifest";
   }
   assert.ok(hasNonExportArtifact, "ready or exported manifests must include non-export evidence");
+}
+
+function assertSanitizedProvenance(
+  descriptor: JsonObject,
+  evidenceById: ReadonlyMap<unknown, JsonObject>,
+  sharingClass: string,
+): void {
+  const seen = new Set([String(descriptor.id)]);
+  let current = descriptor;
+
+  while (true) {
+    const sanitizedFrom = current.sanitizedFrom as JsonObject | undefined;
+    assert.ok(sanitizedFrom, `${sharingClass} export requires sanitized artifact provenance`);
+    const sourceId = String(sanitizedFrom.artifactId);
+    assert.ok(!seen.has(sourceId), "sanitized artifact provenance cannot contain a cycle");
+    const sourceDescriptor = evidenceById.get(sourceId);
+    assert.ok(sourceDescriptor, "sanitized artifact must reference retained source evidence");
+    assert.deepEqual(sourceDescriptor.digest, sanitizedFrom.digest, "sanitized provenance must bind the source digest");
+    assert.notEqual(sourceDescriptor.relativePath, current.relativePath, "sanitized artifact must have a distinct retained path");
+    seen.add(sourceId);
+    if (sourceDescriptor.sanitizedFrom === undefined) return;
+    current = sourceDescriptor;
+  }
 }
 
 test("validates retained run-bundle fixtures and their references", () => {
@@ -289,7 +307,7 @@ test("validates retained run-bundle fixtures and their references", () => {
       assert.equal(statSync(artifactPath).isFile(), true);
       assert.equal(descriptor.sizeBytes, artifact.length);
       assert.equal(descriptor.digest, `sha256:${createHash("sha256").update(artifact).digest("hex")}`);
-      assertNativeSessionRecords(descriptor.kind, assertJsonMedia(descriptor.mediaType, artifact));
+      assertNativeSemanticRecords(descriptor.kind, assertJsonMedia(descriptor.mediaType, artifact));
 
       if (descriptor.kind === "verifier") {
         const verifierResult = readJson(artifactPath);
@@ -365,6 +383,30 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
   assert.deepEqual(schemaErrors(schemaId, sanitizedPublicManifest), []);
   assert.doesNotThrow(() => assertExportSafe(sanitizedPublicManifest, sanitizedPublicExport));
 
+  const cyclicPublicManifest = structuredClone(manifest);
+  const cyclicSource = (cyclicPublicManifest.evidence as JsonObject[])[0]!;
+  (cyclicPublicManifest.evidence as JsonObject[]).push(
+    {
+      ...cyclicSource,
+      id: "sanitized-a",
+      source: "ebo-sanitizer",
+      sharingClass: "public",
+      relativePath: "sanitized/a.jsonl",
+      sanitizedFrom: { artifactId: "sanitized-b", digest: cyclicSource.digest },
+    },
+    {
+      ...cyclicSource,
+      id: "sanitized-b",
+      source: "ebo-sanitizer",
+      sharingClass: "public",
+      relativePath: "sanitized/b.jsonl",
+      sanitizedFrom: { artifactId: "sanitized-a", digest: cyclicSource.digest },
+    },
+  );
+  const cyclicPublicExport = structuredClone(publicRestricted);
+  cyclicPublicExport.artifactIds = ["sanitized-a"];
+  assert.throws(() => assertExportSafe(cyclicPublicManifest, cyclicPublicExport), /provenance cannot contain a cycle/);
+
   const emptyReadyExport = structuredClone(readyExport);
   emptyReadyExport.artifactIds = [];
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, emptyReadyExport), []);
@@ -387,7 +429,8 @@ test("native JSON media is structurally inspectable", () => {
   assert.throws(() => assertJsonMedia("application/json", Buffer.from("not json")));
   assert.throws(() => assertJsonMedia("application/x-ndjson", Buffer.from('{"event":"tool"}\nnot json\n')));
   assert.throws(() => assertJsonMedia("application/json", Buffer.from([0x22, 0xff, 0x22])));
-  assert.throws(() => assertNativeSessionRecords("session", assertJsonMedia("application/x-ndjson", Buffer.from(" \n"))));
+  assert.throws(() => assertNativeSemanticRecords("session", assertJsonMedia("application/x-ndjson", Buffer.from(" \n"))));
+  assert.throws(() => assertNativeSemanticRecords("hook", assertJsonMedia("application/x-ndjson", Buffer.from(" \n"))));
 });
 
 test("rejects contradictory and incomplete contract records", () => {
