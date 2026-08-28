@@ -274,7 +274,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
       if (sourceReport?.qualification === "incomplete" && report.qualification === "qualified") {
         errors.push(`/evidence/${String(descriptor.id)} cannot escalate incomplete source capture qualification`);
       }
-      if (sourceReport !== undefined) {
+      if (sourceReport !== undefined && schemaErrors(artifactSchema, sourceReport).length === 0) {
         const sourceCapabilities = sourceReport.capabilities as JsonObject;
         const capabilities = report.capabilities as JsonObject;
         if (["semantic", "timingResource", "outcome"].some((capability) =>
@@ -359,6 +359,16 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
         && bindingMatches(binding, descriptor),
     );
     if (workspace === undefined || binding.source) return workspace !== undefined;
+
+    const immediateVerifier = evidenceById.get(String((binding.descriptor.sanitizedFrom as JsonObject).artifactId));
+    const immediateResult = immediateVerifier === undefined ? undefined : artifacts.get(String(immediateVerifier.id));
+    const immediateWorkspace = workspace.sanitizedFrom === undefined
+      ? undefined
+      : evidenceById.get(String((workspace.sanitizedFrom as JsonObject).artifactId));
+    if (immediateResult?.workspace === undefined || immediateWorkspace === undefined ||
+        !bindingMatches({ workspace: immediateResult.workspace as JsonObject }, immediateWorkspace)) {
+      return false;
+    }
 
     const sourceVerifier = sourceDescriptor(binding.descriptor, evidenceById);
     const sourceResult = sourceVerifier === undefined ? undefined : artifacts.get(String(sourceVerifier.id));
@@ -942,6 +952,14 @@ test("rejects contradictory and incomplete contract records", () => {
     ["sanitized-capture-report", completeCaptureReport],
   ]));
 
+  const malformedSourceCaptureReport = structuredClone(incompleteCaptureReport);
+  delete malformedSourceCaptureReport.capabilities;
+  assert.doesNotThrow(() => assertContractInvalid(incompleteCaptureWithQualifiedDerivative, new Map([
+    ["capture-report", malformedSourceCaptureReport],
+    ["verifier", completeVerifier],
+    ["sanitized-capture-report", completeCaptureReport],
+  ])));
+
   const incompleteCaptureWithChangedFacts = structuredClone(incompleteCaptureWithQualifiedDerivative);
   const changedCaptureFacts = structuredClone(incompleteCaptureReport);
   changedCaptureFacts.capabilities = {
@@ -1059,6 +1077,20 @@ test("rejects contradictory and incomplete contract records", () => {
     ["sanitized-verifier", redactedPartnerVerifier],
     ["public-verifier", restoredPublicVerifier],
   ]));
+
+  const sourceErrorVerifier = structuredClone(taskFailedArtifacts.get("verifier")!);
+  sourceErrorVerifier.status = "error";
+  sourceErrorVerifier.assertions = [];
+  const redactedPartnerWorkspace = structuredClone(sourceErrorVerifier);
+  delete redactedPartnerWorkspace.workspace;
+  const restoredPublicWorkspace = structuredClone(sourceErrorVerifier);
+  restoredPublicWorkspace.workspace = { artifactId: publicWorkspace.id, digest: publicWorkspace.digest };
+  assert.match(contractErrors(multiHopSharedVerifier, new Map([
+    ["capture-report", taskFailedArtifacts.get("capture-report")!],
+    ["verifier", sourceErrorVerifier],
+    ["sanitized-verifier", redactedPartnerWorkspace],
+    ["public-verifier", restoredPublicWorkspace],
+  ])).join("\n"), /verifier workspace binding/);
 
   const sharedDerivativeWithOtherSourceBytes = structuredClone(complete);
   const firstSession = (sharedDerivativeWithOtherSourceBytes.evidence as JsonObject[]).find(
