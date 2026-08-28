@@ -365,7 +365,8 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     const immediateWorkspace = workspace.sanitizedFrom === undefined
       ? undefined
       : evidenceById.get(String((workspace.sanitizedFrom as JsonObject).artifactId));
-    if (immediateResult?.workspace === undefined || immediateWorkspace === undefined ||
+    if (immediateResult === undefined || schemaErrors(`${schemaId}#/$defs/verifierResult`, immediateResult).length > 0 ||
+        immediateResult.workspace === undefined || immediateWorkspace === undefined ||
         !bindingMatches({ workspace: immediateResult.workspace as JsonObject }, immediateWorkspace)) {
       return false;
     }
@@ -1091,6 +1092,15 @@ test("rejects contradictory and incomplete contract records", () => {
     ["sanitized-verifier", redactedPartnerWorkspace],
     ["public-verifier", restoredPublicWorkspace],
   ])).join("\n"), /verifier workspace binding/);
+
+  const malformedImmediateWorkspace = structuredClone(sourceErrorVerifier);
+  malformedImmediateWorkspace.workspace = null;
+  assert.doesNotThrow(() => assertContractInvalid(multiHopSharedVerifier, new Map([
+    ["capture-report", taskFailedArtifacts.get("capture-report")!],
+    ["verifier", sourceErrorVerifier],
+    ["sanitized-verifier", malformedImmediateWorkspace],
+    ["public-verifier", restoredPublicWorkspace],
+  ])));
 
   const sharedDerivativeWithOtherSourceBytes = structuredClone(complete);
   const firstSession = (sharedDerivativeWithOtherSourceBytes.evidence as JsonObject[]).find(
