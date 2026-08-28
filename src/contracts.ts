@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { isAbsolute, posix, relative, resolve, sep } from "node:path";
 
 export type Digest = {
@@ -281,36 +281,17 @@ function openBundleRegularFile(bundleRoot: string, locator: string, label: strin
   }
 
   const resolvedRoot = realpathSync(bundleRoot);
-  let selectedPath = resolvedRoot;
-
-  const segments = locator.split("/");
-  for (const [index, segment] of segments.entries()) {
-    selectedPath = resolve(selectedPath, segment);
-    const entry = lstatSync(selectedPath);
-    if (!isContained(resolvedRoot, selectedPath) || entry.isSymbolicLink()) {
-      throw new Error(`${label} "${locator}" escapes its bundle root.`);
-    }
-    if (index === segments.length - 1 && !entry.isFile()) {
-      throw new Error(`${label} "${locator}" is not an isolated regular file.`);
-    }
-  }
-
-  const resolvedPath = realpathSync(selectedPath);
-  if (!isContained(resolvedRoot, resolvedPath)) {
-    throw new Error(`${label} "${locator}" escapes its bundle root.`);
-  }
+  const selectedPath = assertBundlePathWithoutLinks(resolvedRoot, locator, label);
 
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(resolvedPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    descriptor = openSync(selectedPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const opened = fstatSync(descriptor);
     if (!opened.isFile() || opened.nlink > 1) {
       throw new Error(`${label} "${locator}" is not an isolated regular file.`);
     }
-    const currentPath = realpathSync(selectedPath);
-    const current = statSync(currentPath);
-    if (!isContained(resolvedRoot, currentPath)
-        || opened.dev !== current.dev || opened.ino !== current.ino) {
+    const current = lstatSync(assertBundlePathWithoutLinks(resolvedRoot, locator, label));
+    if (opened.dev !== current.dev || opened.ino !== current.ino) {
       throw new Error(`${label} "${locator}" changed after bundle-root verification.`);
     }
     return descriptor;
@@ -318,6 +299,24 @@ function openBundleRegularFile(bundleRoot: string, locator: string, label: strin
     if (descriptor !== undefined) closeSync(descriptor);
     throw error;
   }
+}
+
+function assertBundlePathWithoutLinks(bundleRoot: string, locator: string, label: string): string {
+  let selectedPath = bundleRoot;
+  const segments = locator.split("/");
+
+  for (const [index, segment] of segments.entries()) {
+    selectedPath = resolve(selectedPath, segment);
+    const entry = lstatSync(selectedPath);
+    if (!isContained(bundleRoot, selectedPath) || entry.isSymbolicLink()) {
+      throw new Error(`${label} "${locator}" escapes its bundle root.`);
+    }
+    if (index === segments.length - 1 && !entry.isFile()) {
+      throw new Error(`${label} "${locator}" is not an isolated regular file.`);
+    }
+  }
+
+  return selectedPath;
 }
 
 export function assertControlledPerturbationDigest(

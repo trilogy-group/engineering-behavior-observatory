@@ -490,8 +490,10 @@ test("configuration references stay inside the bundle without following links", 
     );
     symlinkSync("../../outside.json", join(bundleRoot, "models", "escaped.json"));
     symlinkSync("../../outside.tar.gz", join(bundleRoot, "fixtures", "escaped.tar.gz"));
+    symlinkSync("model-a.json", join(bundleRoot, "models", "aliased.json"));
     assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models/escaped.json" }), /escapes/);
     assert.throws(() => resolveTaskArchive(bundleRoot, { ...archiveReference, locator: "fixtures/escaped.tar.gz" }, 7), /escapes/);
+    assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models/aliased.json" }), /escapes/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models/./model-a.json" }), /unsafe/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models/NUL.json" }), /unsafe/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models/hardlink.json" }), /isolated regular file/);
