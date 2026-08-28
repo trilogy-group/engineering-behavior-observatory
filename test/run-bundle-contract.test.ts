@@ -234,6 +234,18 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
         if (sourceResult === undefined || sourceResult.status !== report.status) {
           errors.push(`/evidence/${String(descriptor.id)} does not preserve its source verifier outcome`);
         }
+        if (sourceResult !== undefined) {
+          const sourceAssertions = new Map((sourceResult.assertions as JsonObject[]).map((assertion) => [assertion.id, assertion]));
+          if ((report.assertions as JsonObject[]).some((assertion) => {
+            const sourceAssertion = sourceAssertions.get(assertion.id);
+            return sourceAssertion !== undefined && sourceAssertion.status !== assertion.status;
+          })) {
+            errors.push(`/evidence/${String(descriptor.id)} does not preserve source verifier assertion outcomes`);
+          }
+          if (sourceResult.exitCode !== undefined && report.exitCode !== undefined && sourceResult.exitCode !== report.exitCode) {
+            errors.push(`/evidence/${String(descriptor.id)} does not preserve its source verifier exit code`);
+          }
+        }
       }
       const assertionIds = (report.assertions as JsonObject[]).map((assertion) => assertion.id);
 
@@ -261,6 +273,21 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
       const sourceReport = sourceCapture === undefined ? undefined : artifacts.get(String(sourceCapture.id));
       if (sourceReport?.qualification === "incomplete" && report.qualification === "qualified") {
         errors.push(`/evidence/${String(descriptor.id)} cannot escalate incomplete source capture qualification`);
+      }
+      if (sourceReport !== undefined) {
+        const sourceCapabilities = sourceReport.capabilities as JsonObject;
+        const capabilities = report.capabilities as JsonObject;
+        if (["semantic", "timingResource", "outcome"].some((capability) =>
+          (sourceCapabilities[capability] as JsonObject).status !== (capabilities[capability] as JsonObject).status,
+        )) {
+          errors.push(`/evidence/${String(descriptor.id)} does not preserve source capture capabilities`);
+        }
+        const missingEvidenceFacts = (capture: JsonObject) => JSON.stringify((capture.missingEvidence as JsonObject[])
+          .map((entry) => [entry.reason, [...(entry.affects as string[])].sort()])
+          .sort());
+        if (missingEvidenceFacts(sourceReport) !== missingEvidenceFacts(report)) {
+          errors.push(`/evidence/${String(descriptor.id)} does not preserve source missing-evidence facts`);
+        }
       }
     }
     const capabilities = report.capabilities as JsonObject;
@@ -408,7 +435,8 @@ function assertSanitizedProvenance(
   const seen = new Set([String(descriptor.id)]);
   let current = descriptor;
 
-  while (true) {
+  assert.ok(current.sanitizedFrom, `${sharingClass} export requires sanitized artifact provenance`);
+  while (current.sanitizedFrom !== undefined) {
     const sanitizedFrom = current.sanitizedFrom as JsonObject | undefined;
     assert.ok(sanitizedFrom, `${sharingClass} export requires sanitized artifact provenance`);
     const sourceId = String(sanitizedFrom.artifactId);
@@ -427,8 +455,14 @@ function assertSanitizedProvenance(
     assert.notDeepEqual(sourceDescriptor.digest, descriptor.digest, "sanitized provenance cannot restore an ancestor's bytes");
     assert.notEqual(sourceDescriptor.relativePath, current.relativePath, "sanitized artifact must have a distinct retained path");
     seen.add(sourceId);
-    if (sourceDescriptor.sanitizedFrom === undefined) return;
     current = sourceDescriptor;
+  }
+  if (["partner", "public"].includes(String(descriptor.sharingClass))) {
+    for (const candidate of evidenceById.values()) {
+      if (!seen.has(String(candidate.id))) {
+        assert.notDeepEqual(candidate.digest, descriptor.digest, "sanitized shared evidence cannot reuse unrelated retained bytes");
+      }
+    }
   }
 }
 
@@ -888,6 +922,67 @@ test("rejects contradictory and incomplete contract records", () => {
     ["verifier", completeVerifier],
     ["sanitized-capture-report", completeCaptureReport],
   ]));
+
+  const incompleteCaptureWithChangedFacts = structuredClone(incompleteCaptureWithQualifiedDerivative);
+  const changedCaptureFacts = structuredClone(incompleteCaptureReport);
+  changedCaptureFacts.capabilities = {
+    semantic: { status: "available" },
+    timingResource: { status: "not-checked" },
+    outcome: { status: "available" },
+  };
+  changedCaptureFacts.missingEvidence = [{ kind: "telemetry", reason: "not-checked", affects: ["timing-resource"] }];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, changedCaptureFacts), []);
+  assertContractInvalid(incompleteCaptureWithChangedFacts, new Map([
+    ["capture-report", incompleteCaptureReport],
+    ["verifier", completeVerifier],
+    ["sanitized-capture-report", changedCaptureFacts],
+  ]));
+
+  const sharedVerifierWithChangedAssertions = structuredClone(sharedFailedVerifierWithChangedStatus);
+  const sourceVerifierWithTwoAssertions = structuredClone(taskFailedArtifacts.get("verifier")!);
+  sourceVerifierWithTwoAssertions.assertions = [
+    { id: "source-failed", status: "failed" },
+    { id: "source-passed", status: "passed" },
+  ];
+  const changedAssertionVerifier = structuredClone(sourceVerifierWithTwoAssertions);
+  changedAssertionVerifier.exitCode = 2;
+  changedAssertionVerifier.assertions = [
+    { id: "source-failed", status: "passed" },
+    { id: "source-passed", status: "failed" },
+  ];
+  const changedAssertionWorkspace = (sharedVerifierWithChangedAssertions.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-workspace",
+  )!;
+  changedAssertionVerifier.workspace = {
+    artifactId: changedAssertionWorkspace.id,
+    digest: changedAssertionWorkspace.digest,
+  };
+  const changedAssertionArtifacts = new Map(taskFailedArtifacts);
+  changedAssertionArtifacts.set("verifier", sourceVerifierWithTwoAssertions);
+  changedAssertionArtifacts.set("sanitized-verifier", changedAssertionVerifier);
+  assertContractInvalid(sharedVerifierWithChangedAssertions, changedAssertionArtifacts);
+
+  const sharedDerivativeWithOtherSourceBytes = structuredClone(complete);
+  const firstSession = (sharedDerivativeWithOtherSourceBytes.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "session",
+  )!;
+  const otherSession = {
+    ...firstSession,
+    id: "other-session",
+    relativePath: "other-session.jsonl",
+    digest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  };
+  const derivativeWithOtherSourceBytes: JsonObject = {
+    ...firstSession,
+    id: "sanitized-other-session",
+    source: "ebo-sanitizer",
+    sharingClass: "partner",
+    relativePath: "sanitized/other-session.jsonl",
+    sanitizedFrom: { artifactId: otherSession.id, digest: otherSession.digest },
+  };
+  delete derivativeWithOtherSourceBytes.nativeReference;
+  (sharedDerivativeWithOtherSourceBytes.evidence as JsonObject[]).push(otherSession, derivativeWithOtherSourceBytes);
+  assertContractInvalid(sharedDerivativeWithOtherSourceBytes, completeArtifacts);
 
   const completedWithIndependentNotRun = structuredClone(completedWithIndependentError);
   const notRunVerifierDescriptor = (complete.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "verifier")!;
