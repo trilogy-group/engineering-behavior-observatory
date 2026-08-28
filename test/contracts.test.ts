@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -110,8 +110,14 @@ function admittedResolutions(taskSet: TaskConditionSet): Record<string, Resolved
         reviewRecordDigest: condition.packetRef.digest,
         resolvedReviewRecordDigest: condition.packetRef.digest,
         reviewRecordPreAdmissionDigest: preAdmissionDigest,
-        controlledPerturbation: { status: "referenced", digest: condition.packetRef.digest, resolvedDigest: condition.packetRef.digest },
-        referenceSolution: { status: "referenced", digest: condition.packetRef.digest, resolvedDigest: condition.packetRef.digest },
+        controlledPerturbation: {
+          declaration: { status: "referenced", digest: condition.packetRef.digest },
+          resolvedDigest: condition.packetRef.digest,
+        },
+        referenceSolution: {
+          declaration: { status: "referenced", digest: condition.packetRef.digest },
+          resolvedDigest: condition.packetRef.digest,
+        },
         verifierDigest: condition.packetRef.digest,
         resolvedVerifierDigest: condition.packetRef.digest,
         admission: { status: "admitted", reviewedAt: "2026-08-26T00:00:00Z" },
@@ -231,6 +237,11 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   (((trailingWindowsAlias.agentInput as Document).fixture as Document).materializer as Document).includePaths = ["src/foo."];
   expectInvalid(validate, trailingWindowsAlias, "includePaths");
 
+  const tooLongComponent = "a".repeat(256);
+  const tooLongInclude = structuredClone(admitted) as Document;
+  (((tooLongInclude.agentInput as Document).fixture as Document).materializer as Document).includePaths = [`src/${tooLongComponent}`];
+  expectInvalid(validate, tooLongInclude, "includePaths");
+
   const archiveBomb = structuredClone(admitted) as Document;
   ((((archiveBomb.agentInput as Document).fixture as Document).source as Document).limits as Document).maxMembers = 100001;
   expectInvalid(validate, archiveBomb, "maxMembers");
@@ -330,6 +341,11 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     ["src", "SRC"],
   ), /case-inconsistent ancestor/);
   assert.throws(() => assertNoSelectedSymlinks(
+    [{ path: "src/a.ts", kind: "file" }, { path: "SRC/b.ts", kind: "file" }],
+    ["src", "SRC"],
+  ), /case-inconsistent ancestor/);
+  assert.throws(() => assertNoSelectedSymlinks([{ path: `src/${"a".repeat(256)}`, kind: "file" }], ["src"]), /unsafe/);
+  assert.throws(() => assertNoSelectedSymlinks(
     [{ path: "src/config.ts", kind: "file" }],
     ["src/config.ts"],
     [{ path: "src/Config.ts", kind: "file" }],
@@ -373,13 +389,21 @@ test("configuration references stay inside the bundle without following links", 
     locator: "fixtures/task.tar.gz",
     digest: { algorithm: "sha256" as const, value: createHash("sha256").update("archive").digest("hex") },
   };
+  const configurationReference = {
+    locator: "models/model-a.json",
+    digest: { algorithm: "sha256" as const, value: createHash("sha256").update("{}").digest("hex") },
+  };
 
   try {
     mkdirSync(join(bundleRoot, "models"));
     mkdirSync(join(bundleRoot, "fixtures"));
     writeFileSync(configurationPath, "{}");
     writeFileSync(archivePath, "archive");
-    assert.equal(resolveBundleConfiguration(bundleRoot, "models/model-a.json"), realpathSync(configurationPath));
+    const verifiedConfiguration = resolveBundleConfiguration(bundleRoot, configurationReference);
+    assert.deepEqual(verifiedConfiguration, Buffer.from("{}"));
+    writeFileSync(configurationPath, "changed");
+    assert.deepEqual(verifiedConfiguration, Buffer.from("{}"));
+    writeFileSync(configurationPath, "{}");
     const verifiedArchive = resolveTaskArchive(bundleRoot, archiveReference, 7);
     assert.deepEqual(verifiedArchive, Buffer.from("archive"));
     writeFileSync(archivePath, "changed");
@@ -393,11 +417,11 @@ test("configuration references stay inside the bundle without following links", 
     );
     symlinkSync("../../outside.json", join(bundleRoot, "models", "escaped.json"));
     symlinkSync("../../outside.tar.gz", join(bundleRoot, "fixtures", "escaped.tar.gz"));
-    assert.throws(() => resolveBundleConfiguration(bundleRoot, "models/escaped.json"), /escapes/);
+    assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models/escaped.json" }), /escapes/);
     assert.throws(() => resolveTaskArchive(bundleRoot, { ...archiveReference, locator: "fixtures/escaped.tar.gz" }, 7), /escapes/);
-    assert.throws(() => resolveBundleConfiguration(bundleRoot, "models/./model-a.json"), /unsafe/);
-    assert.throws(() => resolveBundleConfiguration(bundleRoot, "models/NUL.json"), /unsafe/);
-    assert.throws(() => resolveBundleConfiguration(bundleRoot, "models"), /not a regular file/);
+    assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models/./model-a.json" }), /unsafe/);
+    assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models/NUL.json" }), /unsafe/);
+    assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models" }), /not a regular file/);
   } finally {
     rmSync(bundleRoot, { force: true, recursive: true });
   }
@@ -498,6 +522,13 @@ test("experiment validation rejects mutable references, duplicate-array conditio
   };
   expectInvalid(validate, windowsDeviceConfigurationLocator, "locator");
 
+  const tooLongConfigurationLocator = structuredClone(experiment);
+  ((tooLongConfigurationLocator.modelSet as Document)["model-a"] as Document).configurationRef = {
+    ...(((tooLongConfigurationLocator.modelSet as Document)["model-a"] as Document).configurationRef as Document),
+    locator: `models/${"a".repeat(256)}.json`,
+  };
+  expectInvalid(validate, tooLongConfigurationLocator, "locator");
+
   const declaredOrder = (fixture("experiment.24-cell.v1.json") as {
     taskSet: Document;
     modelSet: Document;
@@ -542,8 +573,14 @@ test("task resolution accepts only matching admitted packets", () => {
     reviewRecordDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     resolvedReviewRecordDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     reviewRecordPreAdmissionDigest: { algorithm: "sha256", value: "0".repeat(64) },
-    controlledPerturbation: { status: "referenced", digest: experiment.taskSet["task-a"]!.packetRef.digest, resolvedDigest: experiment.taskSet["task-a"]!.packetRef.digest },
-    referenceSolution: { status: "referenced", digest: experiment.taskSet["task-a"]!.packetRef.digest, resolvedDigest: experiment.taskSet["task-a"]!.packetRef.digest },
+    controlledPerturbation: {
+      declaration: { status: "referenced", digest: experiment.taskSet["task-a"]!.packetRef.digest },
+      resolvedDigest: experiment.taskSet["task-a"]!.packetRef.digest,
+    },
+    referenceSolution: {
+      declaration: { status: "referenced", digest: experiment.taskSet["task-a"]!.packetRef.digest },
+      resolvedDigest: experiment.taskSet["task-a"]!.packetRef.digest,
+    },
     verifierDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     resolvedVerifierDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     admission: { status: "admitted", reviewedAt: "2026-08-26T00:00:00Z" },
@@ -583,11 +620,17 @@ test("task resolution accepts only matching admitted packets", () => {
 
   const tamperedPerturbation = admittedResolutions(experiment.taskSet);
   tamperedPerturbation["task-a"]!.controlledPerturbation = {
-    status: "referenced",
-    digest: experiment.taskSet["task-a"]!.packetRef.digest,
+    declaration: { status: "referenced", digest: experiment.taskSet["task-a"]!.packetRef.digest },
     resolvedDigest: { algorithm: "sha256", value: "0".repeat(64) },
   };
   assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, tamperedPerturbation), /controlled perturbation digest/);
+
+  const unresolvedReferencedPerturbation = admittedResolutions(experiment.taskSet);
+  unresolvedReferencedPerturbation["task-a"]!.controlledPerturbation = {
+    declaration: { status: "referenced", digest: experiment.taskSet["task-a"]!.packetRef.digest },
+    resolvedDigest: null,
+  };
+  assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, unresolvedReferencedPerturbation), /controlled perturbation digest/);
 
   const tamperedReviewRecord = admittedResolutions(experiment.taskSet);
   tamperedReviewRecord["task-a"]!.resolvedReviewRecordDigest = { algorithm: "sha256", value: "0".repeat(64) };
@@ -599,15 +642,20 @@ test("task resolution accepts only matching admitted packets", () => {
 
   const tamperedReferenceSolution = admittedResolutions(experiment.taskSet);
   tamperedReferenceSolution["task-a"]!.referenceSolution = {
-    status: "referenced",
-    digest: experiment.taskSet["task-a"]!.packetRef.digest,
+    declaration: { status: "referenced", digest: experiment.taskSet["task-a"]!.packetRef.digest },
     resolvedDigest: { algorithm: "sha256", value: "0".repeat(64) },
   };
   assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, tamperedReferenceSolution), /reference solution digest/);
 
   const unavailableOptionalArtifacts = admittedResolutions(experiment.taskSet);
-  unavailableOptionalArtifacts["task-a"]!.controlledPerturbation = { status: "not-applied" };
-  unavailableOptionalArtifacts["task-a"]!.referenceSolution = { status: "not-provided" };
+  unavailableOptionalArtifacts["task-a"]!.controlledPerturbation = {
+    declaration: { status: "not-applied" },
+    resolvedDigest: null,
+  };
+  unavailableOptionalArtifacts["task-a"]!.referenceSolution = {
+    declaration: { status: "not-provided" },
+    resolvedDigest: null,
+  };
   assert.doesNotThrow(() => assertAdmittedTaskPackets(experiment.taskSet, unavailableOptionalArtifacts));
 
   const constructorTaskSet = Object.assign(Object.create(null), {

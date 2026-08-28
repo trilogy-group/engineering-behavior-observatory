@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { isAbsolute, posix, relative, resolve, sep } from "node:path";
 
 export type Digest = {
@@ -38,18 +38,28 @@ export type TaskCondition = {
 
 export type TaskConditionSet = Record<string, TaskCondition>;
 
+export type ControlledPerturbationDeclaration =
+  | { status: "referenced"; digest: Digest }
+  | { status: "not-applied" | "unsupported" };
+
+export type ReferenceSolutionDeclaration =
+  | { status: "referenced"; digest: Digest }
+  | { status: "not-provided" | "unsupported" };
+
 export type ResolvedTaskPacket = {
   digest: Digest;
   preAdmissionDigest: Digest | null;
   reviewRecordDigest: Digest | null;
   resolvedReviewRecordDigest: Digest | null;
   reviewRecordPreAdmissionDigest: Digest | null;
-  controlledPerturbation:
-    | { status: "referenced"; digest: Digest; resolvedDigest: Digest }
-    | { status: "not-applied" | "unsupported" };
-  referenceSolution:
-    | { status: "referenced"; digest: Digest; resolvedDigest: Digest }
-    | { status: "not-provided" | "unsupported" };
+  controlledPerturbation: {
+    declaration: ControlledPerturbationDeclaration;
+    resolvedDigest: Digest | null;
+  };
+  referenceSolution: {
+    declaration: ReferenceSolutionDeclaration;
+    resolvedDigest: Digest | null;
+  };
   verifierDigest: Digest;
   resolvedVerifierDigest: Digest;
   admission: {
@@ -128,7 +138,7 @@ export function assertNoSelectedSymlinks(
   const archiveCollisionPaths = new Set<string>();
   const destinations = new Map<string, string>();
   const destinationCollisionPaths = new Map<string, string>();
-  const destinationExactPaths = new Map<string, string>();
+  const directoryPrefixes = new Map<string, string>();
 
   if (entries.length === 0) {
     throw new Error("No archive entries were selected.");
@@ -163,7 +173,7 @@ export function assertNoSelectedSymlinks(
     }
     destinations.set(destination, entry.kind);
     destinationCollisionPaths.set(collisionPath, entry.kind);
-    destinationExactPaths.set(collisionPath, destination);
+    assertCaseConsistentDirectoryPrefixes(destination, entry.kind, directoryPrefixes);
   }
 
   const archivePaths = [...archiveByPath.keys()].sort();
@@ -190,9 +200,6 @@ export function assertNoSelectedSymlinks(
     if (hasFileAncestor(path.toLowerCase(), destinationCollisionPaths)) {
       throw new Error(`Selected archive entry "${path}" collides with a file destination.`);
     }
-    if (hasCaseInconsistentAncestor(path, destinationExactPaths)) {
-      throw new Error(`Selected archive entry "${path}" has a case-inconsistent ancestor.`);
-    }
   }
 }
 
@@ -207,8 +214,12 @@ export function assertArchiveMeasurements(limits: ArchiveLimits, measurements: A
   }
 }
 
-export function resolveBundleConfiguration(bundleRoot: string, locator: string): string {
-  return resolveBundleRegularFile(bundleRoot, locator, "Configuration locator");
+export function resolveBundleConfiguration(bundleRoot: string, reference: ArtifactReference): Buffer {
+  return readVerifiedBundleFile(
+    resolveBundleRegularFile(bundleRoot, reference.locator, "Configuration locator"),
+    reference,
+    "Configuration",
+  );
 }
 
 export function resolveTaskArchive(bundleRoot: string, source: ArtifactReference, maxCompressedBytes: number): Buffer {
@@ -216,20 +227,41 @@ export function resolveTaskArchive(bundleRoot: string, source: ArtifactReference
   if (!Number.isSafeInteger(maxCompressedBytes) || maxCompressedBytes < 1) {
     throw new Error("Task archive maximum compressed bytes must be a positive integer.");
   }
-  if (statSync(archivePath).size > maxCompressedBytes) {
-    throw new Error("Task archive exceeds its maximum compressed bytes.");
-  }
-  const archiveBytes = readFileSync(archivePath);
-  const resolvedDigest: Digest = {
-    algorithm: "sha256",
-    value: createHash("sha256").update(archiveBytes).digest("hex"),
-  };
+  return readVerifiedBundleFile(archivePath, source, "Task archive", maxCompressedBytes);
+}
 
-  if (source.digest.algorithm !== resolvedDigest.algorithm || source.digest.value !== resolvedDigest.value) {
-    throw new Error("Task archive digest does not match its source reference.");
-  }
+function readVerifiedBundleFile(
+  path: string,
+  reference: ArtifactReference,
+  label: string,
+  maxBytes?: number,
+): Buffer {
+  const descriptor = openSync(path, "r");
 
-  return archiveBytes;
+  try {
+    const size = fstatSync(descriptor).size;
+    if (!Number.isSafeInteger(size) || size < 0 || (maxBytes !== undefined && size > maxBytes)) {
+      throw new Error(`${label} exceeds its maximum compressed bytes.`);
+    }
+    const bytes = Buffer.alloc(size);
+    for (let offset = 0; offset < size;) {
+      const read = readSync(descriptor, bytes, offset, size - offset, offset);
+      if (read === 0) throw new Error(`${label} changed while it was being read.`);
+      offset += read;
+    }
+    const resolvedDigest: Digest = {
+      algorithm: "sha256",
+      value: createHash("sha256").update(bytes).digest("hex"),
+    };
+
+    if (reference.digest.algorithm !== resolvedDigest.algorithm || reference.digest.value !== resolvedDigest.value) {
+      throw new Error(`${label} digest does not match its source reference.`);
+    }
+
+    return bytes;
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function resolveBundleRegularFile(bundleRoot: string, locator: string, label: string): string {
@@ -352,19 +384,23 @@ export function assertAdmittedTaskPackets(
     ) {
       throw new Error(`Task packet "${taskId}" verifier digest does not match its resolved bytes.`);
     }
-    if (packet.controlledPerturbation.status === "referenced") {
+    if (packet.controlledPerturbation.declaration.status === "referenced") {
       assertEqualDigests(
         `Task packet "${taskId}" controlled perturbation`,
-        packet.controlledPerturbation.digest,
+        packet.controlledPerturbation.declaration.digest,
         packet.controlledPerturbation.resolvedDigest,
       );
+    } else if (packet.controlledPerturbation.resolvedDigest !== null) {
+      throw new Error(`Task packet "${taskId}" has resolved an unavailable controlled perturbation.`);
     }
-    if (packet.referenceSolution.status === "referenced") {
+    if (packet.referenceSolution.declaration.status === "referenced") {
       assertEqualDigests(
         `Task packet "${taskId}" reference solution`,
-        packet.referenceSolution.digest,
+        packet.referenceSolution.declaration.digest,
         packet.referenceSolution.resolvedDigest,
       );
+    } else if (packet.referenceSolution.resolvedDigest !== null) {
+      throw new Error(`Task packet "${taskId}" has resolved an unavailable reference solution.`);
     }
   }
 }
@@ -401,7 +437,7 @@ function digestIdentity(digest: Digest): string {
 function isSafeArchiveMemberPath(path: string): boolean {
   return path === posix.normalize(path)
     && /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[A-Za-z0-9._-][A-Za-z0-9._\/-]*$/.test(path)
-    && !path.split("/").some((segment) => segment.endsWith(".")
+    && !path.split("/").some((segment) => segment.length > 255 || segment.endsWith(".")
       || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(segment));
 }
 
@@ -426,14 +462,20 @@ function hasFileAncestor(path: string, destinations: ReadonlyMap<string, string>
   return false;
 }
 
-function hasCaseInconsistentAncestor(path: string, destinations: ReadonlyMap<string, string>): boolean {
-  for (let boundary = path.lastIndexOf("/"); boundary > 0; boundary = path.lastIndexOf("/", boundary - 1)) {
-    const ancestor = path.slice(0, boundary);
-    const selectedAncestor = destinations.get(ancestor.toLowerCase());
-    if (selectedAncestor !== undefined && selectedAncestor !== ancestor) return true;
-  }
+function assertCaseConsistentDirectoryPrefixes(path: string, kind: string, prefixes: Map<string, string>): void {
+  const segments = path.split("/");
+  const directoryCount = kind === "directory" ? segments.length : segments.length - 1;
+  let prefix = "";
 
-  return false;
+  for (let index = 0; index < directoryCount; index += 1) {
+    prefix = index === 0 ? segments[index]! : `${prefix}/${segments[index]!}`;
+    const key = prefix.toLowerCase();
+    const existing = prefixes.get(key);
+    if (existing !== undefined && existing !== prefix) {
+      throw new Error(`Selected archive entry "${path}" has a case-inconsistent ancestor.`);
+    }
+    prefixes.set(key, prefix);
+  }
 }
 
 function hasPathOrDescendant(paths: readonly string[], path: string): boolean {
