@@ -445,6 +445,7 @@ function assertSanitizedProvenance(
     assert.ok(!seen.has(sourceId), "sanitized artifact provenance cannot contain a cycle");
     const sourceDescriptor = evidenceById.get(sourceId);
     assert.ok(sourceDescriptor, "sanitized artifact must reference retained source evidence");
+    assert.equal(sourceDescriptor.source, current.source, "sanitized provenance must preserve evidence source");
     assert.equal(sourceDescriptor.kind, current.kind, "sanitized provenance must preserve evidence kind");
     assert.equal(sourceDescriptor.authority, current.authority, "sanitized provenance must preserve evidence authority");
     if (["partner", "public"].includes(String(current.sharingClass))) {
@@ -548,7 +549,6 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
   const sanitizedSession: JsonObject = {
     ...sourceSession,
     id: "sanitized-session",
-    source: "ebo-sanitizer",
     sharingClass: "public",
     relativePath: "sanitized/session.jsonl",
     digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
@@ -561,6 +561,12 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
   sanitizedPublicExport.artifactIds = ["sanitized-session"];
   assert.deepEqual(schemaErrors(schemaId, sanitizedPublicManifest), []);
   assert.doesNotThrow(() => assertExportSafe(sanitizedPublicManifest, sanitizedPublicExport));
+
+  const rewrittenSourceManifest = structuredClone(sanitizedPublicManifest);
+  (rewrittenSourceManifest.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-session",
+  )!.source = "other-harness";
+  assert.throws(() => assertExportSafe(rewrittenSourceManifest, sanitizedPublicExport), /preserve evidence source/);
 
   const leakedNativeReferenceManifest = structuredClone(sanitizedPublicManifest);
   const leakedNativeReferenceSession = (leakedNativeReferenceManifest.evidence as JsonObject[]).find(
@@ -577,7 +583,6 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
   (sanitizedCaptureManifest.evidence as JsonObject[]).push({
     ...sourceCapture,
     id: "sanitized-capture-report",
-    source: "ebo-sanitizer",
     sharingClass: "public",
     relativePath: "sanitized/capture-report.json",
     digest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
@@ -596,6 +601,7 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
   const workspaceSource = (reclassifiedPublicManifest.evidence as JsonObject[]).find(
     (descriptor) => descriptor.kind === "workspace",
   )!;
+  reclassifiedSession.source = workspaceSource.source;
   reclassifiedSession.sanitizedFrom = { artifactId: workspaceSource.id, digest: workspaceSource.digest };
   assert.throws(() => assertExportSafe(reclassifiedPublicManifest, sanitizedPublicExport), /preserve evidence kind/);
 
@@ -614,7 +620,6 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
     {
       ...restrictedSession,
       id: "sanitized-intermediate-session",
-      source: "ebo-sanitizer",
       sharingClass: "partner",
       relativePath: "sanitized/intermediate-session.jsonl",
       digest: intermediateDigest,
@@ -624,7 +629,6 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
     {
       ...restrictedSession,
       id: "restored-public-session",
-      source: "ebo-sanitizer",
       sharingClass: "public",
       relativePath: "sanitized/restored-session.jsonl",
       sanitizedFrom: { artifactId: "sanitized-intermediate-session", digest: intermediateDigest },
@@ -641,7 +645,6 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
     {
       ...cyclicSource,
       id: "sanitized-a",
-      source: "ebo-sanitizer",
       sharingClass: "public",
       relativePath: "sanitized/a.jsonl",
       digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
@@ -650,7 +653,6 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
     {
       ...cyclicSource,
       id: "sanitized-b",
-      source: "ebo-sanitizer",
       sharingClass: "public",
       relativePath: "sanitized/b.jsonl",
       digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
@@ -810,7 +812,6 @@ test("rejects contradictory and incomplete contract records", () => {
   const sanitizedWorkspace = {
     ...sourceWorkspace,
     id: "sanitized-workspace",
-    source: "ebo-sanitizer",
     sharingClass: "partner",
     relativePath: "sanitized/workspace.patch",
     digest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
@@ -822,7 +823,6 @@ test("rejects contradictory and incomplete contract records", () => {
     {
       ...sourceVerifier,
       id: "sanitized-verifier",
-      source: "ebo-sanitizer",
       sharingClass: "partner",
       relativePath: "sanitized/verifier.json",
       digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
@@ -878,7 +878,6 @@ test("rejects contradictory and incomplete contract records", () => {
   const taskFailedSanitizedWorkspace = {
     ...taskFailedSourceWorkspace,
     id: "sanitized-workspace",
-    source: "ebo-sanitizer",
     sharingClass: "partner",
     relativePath: "sanitized/workspace.patch",
     digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -890,7 +889,6 @@ test("rejects contradictory and incomplete contract records", () => {
     {
       ...taskFailedSourceVerifier,
       id: "sanitized-verifier",
-      source: "ebo-sanitizer",
       sharingClass: "partner",
       relativePath: "sanitized/verifier.json",
       digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
@@ -917,7 +915,6 @@ test("rejects contradictory and incomplete contract records", () => {
   (incompleteCaptureWithQualifiedDerivative.evidence as JsonObject[]).push({
     ...sourceCaptureDescriptor,
     id: "sanitized-capture-report",
-    source: "ebo-sanitizer",
     sharingClass: "partner",
     relativePath: "sanitized/capture-report.json",
     digest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
@@ -1066,7 +1063,6 @@ test("rejects contradictory and incomplete contract records", () => {
   const derivativeWithOtherSourceBytes: JsonObject = {
     ...firstSession,
     id: "sanitized-other-session",
-    source: "ebo-sanitizer",
     sharingClass: "partner",
     relativePath: "sanitized/other-session.jsonl",
     sanitizedFrom: { artifactId: otherSession.id, digest: otherSession.digest },
@@ -1249,7 +1245,6 @@ test("rejects contradictory and incomplete contract records", () => {
   const unreferencedSanitizedSession: JsonObject = {
     ...sourceSession,
     id: "unreferenced-sanitized-session",
-    source: "ebo-sanitizer",
     sharingClass: "partner",
     relativePath: "sanitized/unreferenced-session.jsonl",
     digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
