@@ -332,7 +332,7 @@
         "schemaVersion": { "const": "verifier-result/v1" },
         "bundleId": { "$ref": "#/$defs/identifier" },
         "status": { "enum": ["passed", "failed", "error", "not-run"] },
-        "exitCode": { "type": "integer", "maximum": 9007199254740991 },
+        "exitCode": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
         "workspace": {
           "type": "object",
           "additionalProperties": false,

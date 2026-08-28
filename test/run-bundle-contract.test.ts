@@ -1331,11 +1331,13 @@ test("rejects contradictory and incomplete contract records", () => {
   (unsafeAttemptNumber.attempt as JsonObject).retryOf = "prior-attempt";
   assertContractInvalid(unsafeAttemptNumber, completeArtifacts);
 
-  const unsafeVerifierExitCode = structuredClone(verifier);
-  unsafeVerifierExitCode.status = "failed";
-  unsafeVerifierExitCode.exitCode = Number.MAX_SAFE_INTEGER + 1;
-  unsafeVerifierExitCode.assertions = [{ id: "example-check", status: "failed" }];
-  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, unsafeVerifierExitCode), []);
+  for (const exitCode of [Number.MIN_SAFE_INTEGER - 1, Number.MAX_SAFE_INTEGER + 1]) {
+    const unsafeVerifierExitCode = structuredClone(verifier);
+    unsafeVerifierExitCode.status = "failed";
+    unsafeVerifierExitCode.exitCode = exitCode;
+    unsafeVerifierExitCode.assertions = [{ id: "example-check", status: "failed" }];
+    assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, unsafeVerifierExitCode), []);
+  }
 
   const mismatchedNativeTrace = structuredClone(complete);
   ((mismatchedNativeTrace.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "telemetry")!.nativeReference as JsonObject).id = "other-trace";
