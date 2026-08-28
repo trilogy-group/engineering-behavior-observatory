@@ -28,6 +28,8 @@ not contain an evaluation corpus or a fixed operating matrix.
   then reject every non-file/non-directory entry. Links are never copied or dereferenced. Every
   selected member name must be a canonical root-relative logical path before
   joining either archive or workspace roots.
+- Archive membership and allowlist selection use exact canonical POSIX names.
+  Case folding is used only to reject destination collisions across filesystems.
 - `restricted` contains only digest-addressed references to the reference
   solution and verifier. It deliberately cannot embed their contents.
 

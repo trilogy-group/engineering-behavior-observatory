@@ -217,6 +217,12 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
     expectInvalid(validate, nonCanonicalSource, "locator");
   }
 
+  for (const locator of ["perturbations/./change.json", "perturbations/change.json/"]) {
+    const nonCanonicalPerturbation = structuredClone(admitted) as Document;
+    ((nonCanonicalPerturbation.controlledPerturbation as Document).reference as Document).locator = locator;
+    expectInvalid(validate, nonCanonicalPerturbation, "locator");
+  }
+
   const archiveBomb = structuredClone(admitted) as Document;
   ((((archiveBomb.agentInput as Document).fixture as Document).source as Document).limits as Document).maxMembers = 100001;
   expectInvalid(validate, archiveBomb, "maxMembers");
@@ -228,6 +234,10 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   const lowercaseReviewTime = structuredClone(admitted) as Document;
   ((lowercaseReviewTime.admission as Document).review as Document).reviewedAt = "2026-08-26t00:00:00z";
   assert.equal(validate(lowercaseReviewTime), true, JSON.stringify(validate.errors));
+
+  const leapSecondReviewTime = structuredClone(admitted) as Document;
+  ((leapSecondReviewTime.admission as Document).review as Document).reviewedAt = "2016-12-31T23:59:60Z";
+  assert.equal(validate(leapSecondReviewTime), true, JSON.stringify(validate.errors));
 
   for (const invalidCase of fixture("task-packet.invalid-cases.v1.json") as InvalidCase[]) {
     expectInvalid(validate, applyInvalidCase(admitted, invalidCase), invalidCase.field);
@@ -295,6 +305,13 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     ["src"],
     [{ path: "src/config", kind: "symlink" }],
   ), /does not match its archive member kind/);
+  assert.throws(() => assertNoSelectedSymlinks(
+    [{ path: "src/config.ts", kind: "file" }],
+    ["src/config.ts"],
+    [{ path: "src/Config.ts", kind: "file" }],
+  ), /does not match its archive member kind/);
+  assert.doesNotThrow(() => assertNoSelectedSymlinks([{ path: "_config.yml", kind: "file" }], ["_config.yml"]));
+  assert.doesNotThrow(() => assertNoSelectedSymlinks([{ path: "-generated", kind: "file" }], ["-generated"]));
 
   const boundaryEntries = Array.from(
     { length: 100000 },
@@ -502,6 +519,10 @@ test("task resolution accepts only matching admitted packets", () => {
   const lowercaseReview = admittedResolutions(experiment.taskSet);
   lowercaseReview["task-a"]!.admission.reviewedAt = "2026-08-26t00:00:00z";
   assert.doesNotThrow(() => assertAdmittedTaskPackets(experiment.taskSet, lowercaseReview));
+
+  const leapSecondReview = admittedResolutions(experiment.taskSet);
+  leapSecondReview["task-a"]!.admission.reviewedAt = "2016-12-31T23:59:60Z";
+  assert.doesNotThrow(() => assertAdmittedTaskPackets(experiment.taskSet, leapSecondReview));
 
   const tamperedVerifier = admittedResolutions(experiment.taskSet);
   tamperedVerifier["task-a"]!.resolvedVerifierDigest = { algorithm: "sha256", value: "0".repeat(64) };

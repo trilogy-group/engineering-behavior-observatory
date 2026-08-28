@@ -121,42 +121,48 @@ export function assertNoSelectedSymlinks(
   archiveEntries: readonly ArchiveEntry[],
 ): void {
   const archiveByPath = new Map<string, string>();
+  const archiveCollisionPaths = new Set<string>();
   const destinations = new Map<string, string>();
+  const destinationCollisionPaths = new Map<string, string>();
 
   if (entries.length === 0) {
     throw new Error("No archive entries were selected.");
   }
 
   for (const archiveEntry of archiveEntries) {
-    const archivePath = canonicalArchiveMemberPath(archiveEntry.path).toLowerCase();
+    const archivePath = canonicalArchiveMemberPath(archiveEntry.path);
+    const collisionPath = archivePath.toLowerCase();
 
-    if (!isSafeArchiveMemberPath(archiveEntry.path) || archiveByPath.has(archivePath)) {
+    if (!isSafeArchiveMemberPath(archiveEntry.path) || archiveCollisionPaths.has(collisionPath)) {
       throw new Error(`Archive entry "${archiveEntry.path}" is unsafe or collides with another archive member.`);
     }
     archiveByPath.set(archivePath, archiveEntry.kind);
+    archiveCollisionPaths.add(collisionPath);
   }
 
   for (const entry of entries) {
-    const destination = canonicalArchiveMemberPath(entry.path).toLowerCase();
+    const destination = canonicalArchiveMemberPath(entry.path);
+    const collisionPath = destination.toLowerCase();
 
     if (!["file", "directory"].includes(entry.kind) || !isSafeArchiveMemberPath(entry.path)
         || (entry.kind === "file" && entry.path.endsWith("/"))) {
       throw new Error(`Selected archive entry "${entry.path}" is unsafe.`);
     }
-    if (destinations.has(destination)) {
+    if (destinationCollisionPaths.has(collisionPath)) {
       throw new Error(`Selected archive entry "${entry.path}" collides with another selected destination.`);
     }
     if (archiveByPath.get(destination) !== entry.kind) {
       throw new Error(`Selected archive entry "${entry.path}" does not match its archive member kind.`);
     }
     destinations.set(destination, entry.kind);
+    destinationCollisionPaths.set(collisionPath, entry.kind);
   }
 
   const archivePaths = [...archiveByPath.keys()].sort();
   const includePathSet = new Set<string>();
 
   for (const includePath of includePaths) {
-    const canonicalIncludePath = canonicalArchiveMemberPath(includePath).toLowerCase();
+    const canonicalIncludePath = canonicalArchiveMemberPath(includePath);
     if (!isSafeArchiveMemberPath(includePath) || !hasPathOrDescendant(archivePaths, canonicalIncludePath)) {
       throw new Error(`Archive include path "${includePath}" selected no entries.`);
     }
@@ -173,7 +179,7 @@ export function assertNoSelectedSymlinks(
     if (!isWithinAllowlist(path, includePathSet)) {
       throw new Error(`Selected archive entry "${path}" is outside the declared allowlist.`);
     }
-    if (hasFileAncestor(path, destinations)) {
+    if (hasFileAncestor(path.toLowerCase(), destinationCollisionPaths)) {
       throw new Error(`Selected archive entry "${path}" collides with a file destination.`);
     }
   }
@@ -366,7 +372,7 @@ function digestIdentity(digest: Digest): string {
 
 function isSafeArchiveMemberPath(path: string): boolean {
   return path === posix.normalize(path)
-    && /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[A-Za-z0-9.][A-Za-z0-9._\/-]*$/.test(path);
+    && /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[A-Za-z0-9._-][A-Za-z0-9._\/-]*$/.test(path);
 }
 
 function canonicalArchiveMemberPath(path: string): string {
@@ -424,7 +430,7 @@ function assertRfc3339Timestamp(value: string | null): void {
   const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
   if (month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1]!
-      || hour > 23 || minute > 59 || second > 59 || offsetHour > 23 || offsetMinute > 59) {
+      || hour > 23 || minute > 59 || second > 60 || offsetHour > 23 || offsetMinute > 59) {
     throw new Error("Admitted task packet review must have an RFC 3339 timestamp.");
   }
 }
