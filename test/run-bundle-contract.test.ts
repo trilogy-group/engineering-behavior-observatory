@@ -98,6 +98,18 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     errors.push("/evidence contains duplicate artifact IDs");
   }
 
+  const evidenceById = new Map(
+    (evidence as JsonObject[]).map((descriptor) => [descriptor.id, descriptor]),
+  );
+  for (const descriptor of evidence as JsonObject[]) {
+    if (descriptor.sanitizedFrom === undefined) continue;
+    try {
+      assertSanitizedProvenance(descriptor, evidenceById, "retained evidence");
+    } catch (error) {
+      errors.push(`/evidence/${String(descriptor.id)}/sanitizedFrom ${error instanceof Error ? error.message : "is invalid"}`);
+    }
+  }
+
   const descriptorByPath = new Map<string, JsonObject>();
 
   for (const descriptor of evidence as JsonObject[]) {
@@ -799,6 +811,24 @@ test("rejects contradictory and incomplete contract records", () => {
     descriptor.sanitizedFrom = { artifactId: `missing-${kind}`, digest: descriptor.digest };
     assertContractInvalid(derivativeOnly, completeArtifacts);
   }
+
+  const unreferencedDerivative = structuredClone(complete);
+  const sourceSession = (unreferencedDerivative.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "session")!;
+  (unreferencedDerivative.evidence as JsonObject[]).push({
+    ...sourceSession,
+    id: "unreferenced-sanitized-session",
+    source: "ebo-sanitizer",
+    sharingClass: "partner",
+    relativePath: "sanitized/unreferenced-session.jsonl",
+    digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    sizeBytes: sourceSession.sizeBytes as number + 1,
+    sanitizedFrom: { artifactId: "missing-session", digest: sourceSession.digest },
+  });
+  assertContractInvalid(unreferencedDerivative, completeArtifacts);
+
+  const unsafeArtifactSize = structuredClone(complete);
+  (unsafeArtifactSize.evidence as JsonObject[])[0]!.sizeBytes = Number.MAX_SAFE_INTEGER + 1;
+  assertContractInvalid(unsafeArtifactSize, completeArtifacts);
 
   const caseFoldedAlias = structuredClone(complete);
   (caseFoldedAlias.evidence as JsonObject[]).push({
