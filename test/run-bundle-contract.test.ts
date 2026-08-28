@@ -256,6 +256,13 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
       continue;
     }
 
+    if (descriptor.sanitizedFrom !== undefined) {
+      const sourceCapture = sourceDescriptor(descriptor, evidenceById);
+      const sourceReport = sourceCapture === undefined ? undefined : artifacts.get(String(sourceCapture.id));
+      if (sourceReport?.qualification === "incomplete" && report.qualification === "qualified") {
+        errors.push(`/evidence/${String(descriptor.id)} cannot escalate incomplete source capture qualification`);
+      }
+    }
     const capabilities = report.capabilities as JsonObject;
     const missingEvidenceIdentities = new Set<string>();
     for (const missingEvidence of report.missingEvidence as JsonObject[]) {
@@ -856,6 +863,31 @@ test("rejects contradictory and incomplete contract records", () => {
   const changedStatusArtifacts = new Map(taskFailedArtifacts);
   changedStatusArtifacts.set("sanitized-verifier", changedStatusVerifier);
   assertContractInvalid(sharedFailedVerifierWithChangedStatus, changedStatusArtifacts);
+
+  const incompleteCaptureWithQualifiedDerivative = structuredClone(complete);
+  const sourceCaptureDescriptor = (incompleteCaptureWithQualifiedDerivative.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "capture-report",
+  )!;
+  (incompleteCaptureWithQualifiedDerivative.evidence as JsonObject[]).push({
+    ...sourceCaptureDescriptor,
+    id: "sanitized-capture-report",
+    source: "ebo-sanitizer",
+    sharingClass: "partner",
+    relativePath: "sanitized/capture-report.json",
+    digest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    sizeBytes: sourceCaptureDescriptor.sizeBytes as number + 1,
+    sanitizedFrom: { artifactId: sourceCaptureDescriptor.id, digest: sourceCaptureDescriptor.digest },
+  });
+  const incompleteCaptureReport = structuredClone(completeCaptureReport);
+  incompleteCaptureReport.qualification = "incomplete";
+  (incompleteCaptureReport.capabilities as JsonObject).semantic = { status: "not-checked" };
+  incompleteCaptureReport.missingEvidence = [{ kind: "session", reason: "not-checked", affects: ["semantic"] }];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, incompleteCaptureReport), []);
+  assertContractInvalid(incompleteCaptureWithQualifiedDerivative, new Map([
+    ["capture-report", incompleteCaptureReport],
+    ["verifier", completeVerifier],
+    ["sanitized-capture-report", completeCaptureReport],
+  ]));
 
   const completedWithIndependentNotRun = structuredClone(completedWithIndependentError);
   const notRunVerifierDescriptor = (complete.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "verifier")!;
