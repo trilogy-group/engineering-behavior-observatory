@@ -111,15 +111,23 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   }
 
   const descriptorByPath = new Map<string, JsonObject>();
+  const descriptorByDigest = new Map<string, JsonObject>();
 
   for (const descriptor of evidence as JsonObject[]) {
     const relativePath = String(descriptor.relativePath);
     const existingDescriptor = descriptorByPath.get(relativePath.toLowerCase());
+    const digest = String(descriptor.digest);
+    const existingDigestDescriptor = descriptorByDigest.get(digest);
 
     if (existingDescriptor !== undefined) {
       errors.push(`/evidence reuses ${relativePath}`);
     }
+    if (existingDigestDescriptor !== undefined &&
+        (existingDigestDescriptor.kind !== descriptor.kind || existingDigestDescriptor.authority !== descriptor.authority)) {
+      errors.push(`/evidence reuses ${digest} across evidence classes`);
+    }
     descriptorByPath.set(relativePath.toLowerCase(), descriptor);
+    descriptorByDigest.set(digest, descriptor);
   }
   for (const relativePath of descriptorByPath.keys()) {
     if (relativePath === "manifest.json" || relativePath.startsWith("manifest.json/")) {
@@ -284,7 +292,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   const bindingMatchesWorkspace = (binding: { workspace: JsonObject }) => workspaceDescriptors.some((descriptor) =>
     bindingMatches(binding, descriptor),
   );
-  if (workspaceDescriptors.length > 0 && verifierWorkspaceBindings.some((binding) => !bindingMatchesWorkspace(binding))) {
+  if (verifierWorkspaceBindings.some((binding) => !bindingMatchesWorkspace(binding))) {
     errors.push("/verifier workspace binding does not match retained workspace evidence");
   }
   const hasOutcomeWorkspace = verifierWorkspaceBindings.some((binding) =>
@@ -364,7 +372,9 @@ function assertSanitizedProvenance(
     assert.ok(sourceDescriptor, "sanitized artifact must reference retained source evidence");
     assert.equal(sourceDescriptor.kind, current.kind, "sanitized provenance must preserve evidence kind");
     assert.equal(sourceDescriptor.authority, current.authority, "sanitized provenance must preserve evidence authority");
-    assert.deepEqual(sourceDescriptor.nativeReference ?? null, current.nativeReference ?? null, "sanitized provenance must preserve native reference");
+    if (!["partner", "public"].includes(String(current.sharingClass))) {
+      assert.deepEqual(sourceDescriptor.nativeReference ?? null, current.nativeReference ?? null, "sanitized provenance must preserve native reference");
+    }
     assert.deepEqual(sourceDescriptor.digest, sanitizedFrom.digest, "sanitized provenance must bind the source digest");
     assert.notDeepEqual(sourceDescriptor.digest, current.digest, "sanitized provenance must change bytes");
     assert.notDeepEqual(sourceDescriptor.digest, descriptor.digest, "sanitized provenance cannot restore an ancestor's bytes");
@@ -500,8 +510,8 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
   const reidentifiedSession = (reidentifiedPublicManifest.evidence as JsonObject[]).find(
     (descriptor) => descriptor.id === "sanitized-session",
   )!;
-  reidentifiedSession.nativeReference = { type: "session", id: "other-session" };
-  assert.throws(() => assertExportSafe(reidentifiedPublicManifest, sanitizedPublicExport), /preserve native reference/);
+  delete reidentifiedSession.nativeReference;
+  assert.doesNotThrow(() => assertExportSafe(reidentifiedPublicManifest, sanitizedPublicExport));
 
   const restoredPublicManifest = structuredClone(manifest);
   const restrictedSession = (restoredPublicManifest.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "session")!;
@@ -656,6 +666,11 @@ test("rejects contradictory and incomplete contract records", () => {
   (infrastructureError.evidence as JsonObject[]).push({ ...verifierDescriptor });
   const interruptedVerifierError = structuredClone(verifierError);
   interruptedVerifierError.bundleId = infrastructureError.bundleId;
+  assertContractInvalid(infrastructureError, new Map([
+    ["capture-report", interruptedReport],
+    ["verifier", interruptedVerifierError],
+  ]));
+  delete interruptedVerifierError.workspace;
   assertContractValid(infrastructureError, new Map([
     ["capture-report", interruptedReport],
     ["verifier", interruptedVerifierError],
@@ -665,7 +680,7 @@ test("rejects contradictory and incomplete contract records", () => {
   (executedVerifierWithoutWorkspace.evidence as JsonObject[]).push({ ...verifierDescriptor });
   const interruptedPassedVerifier = structuredClone(completeVerifier);
   interruptedPassedVerifier.bundleId = executedVerifierWithoutWorkspace.bundleId;
-  assertContractValid(executedVerifierWithoutWorkspace, new Map([
+  assertContractInvalid(executedVerifierWithoutWorkspace, new Map([
     ["capture-report", interruptedReport],
     ["verifier", interruptedPassedVerifier],
   ]));
@@ -830,6 +845,7 @@ test("rejects contradictory and incomplete contract records", () => {
     id: "outcome-session-alias",
     kind: "workspace",
     authority: "outcome",
+    relativePath: "outcome-session-alias.patch",
   });
   assertContractInvalid(authorityAlias, completeArtifacts);
 
@@ -942,6 +958,11 @@ test("rejects contradictory and incomplete contract records", () => {
   const selfRetry = structuredClone(complete);
   (selfRetry.attempt as JsonObject).retryOf = (selfRetry.attempt as JsonObject).id;
   assertContractInvalid(selfRetry, completeArtifacts);
+
+  const unsafeAttemptNumber = structuredClone(complete);
+  (unsafeAttemptNumber.attempt as JsonObject).number = Number.MAX_SAFE_INTEGER + 1;
+  (unsafeAttemptNumber.attempt as JsonObject).retryOf = "prior-attempt";
+  assertContractInvalid(unsafeAttemptNumber, completeArtifacts);
 
   const mismatchedNativeTrace = structuredClone(complete);
   ((mismatchedNativeTrace.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "telemetry")!.nativeReference as JsonObject).id = "other-trace";

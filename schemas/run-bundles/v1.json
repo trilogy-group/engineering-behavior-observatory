@@ -270,7 +270,7 @@
           "required": ["id", "number"],
           "properties": {
             "id": { "$ref": "#/$defs/identifier" },
-            "number": { "type": "integer", "minimum": 1 },
+            "number": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
             "retryOf": { "$ref": "#/$defs/identifier" }
           },
           "allOf": [
