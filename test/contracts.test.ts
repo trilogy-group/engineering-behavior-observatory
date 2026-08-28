@@ -32,6 +32,7 @@ import { resolveBundleConfiguration as exportedResolveBundleConfiguration } from
 const addFormats = formats.default as unknown as (instance: Ajv2020) => void;
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
+const longRelativePath = Array.from({ length: 513 }, () => "a").join("/");
 const fixture = (name: string): unknown =>
   JSON.parse(readFileSync(join(repositoryRoot, "tests", "fixtures", name), "utf8"));
 const schema = (name: string): object =>
@@ -242,6 +243,10 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   (((tooLongInclude.agentInput as Document).fixture as Document).materializer as Document).includePaths = [`src/${tooLongComponent}`];
   expectInvalid(validate, tooLongInclude, "includePaths");
 
+  const tooLongAggregateInclude = structuredClone(admitted) as Document;
+  (((tooLongAggregateInclude.agentInput as Document).fixture as Document).materializer as Document).includePaths = [longRelativePath];
+  expectInvalid(validate, tooLongAggregateInclude, "includePaths");
+
   const archiveBomb = structuredClone(admitted) as Document;
   ((((archiveBomb.agentInput as Document).fixture as Document).source as Document).limits as Document).maxMembers = 100001;
   expectInvalid(validate, archiveBomb, "maxMembers");
@@ -345,6 +350,7 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     ["src", "SRC"],
   ), /case-inconsistent ancestor/);
   assert.throws(() => assertNoSelectedSymlinks([{ path: `src/${"a".repeat(256)}`, kind: "file" }], ["src"]), /unsafe/);
+  assert.throws(() => assertNoSelectedSymlinks([{ path: longRelativePath, kind: "file" }], [longRelativePath]), /unsafe/);
   assert.throws(() => assertNoSelectedSymlinks(
     [{ path: "src/config.ts", kind: "file" }],
     ["src/config.ts"],
@@ -404,12 +410,13 @@ test("configuration references stay inside the bundle without following links", 
     writeFileSync(configurationPath, "changed");
     assert.deepEqual(verifiedConfiguration, Buffer.from("{}"));
     writeFileSync(configurationPath, "{}");
+    assert.throws(() => resolveBundleConfiguration(bundleRoot, configurationReference, 1), /maximum bytes/);
     const verifiedArchive = resolveTaskArchive(bundleRoot, archiveReference, 7);
     assert.deepEqual(verifiedArchive, Buffer.from("archive"));
     writeFileSync(archivePath, "changed");
     assert.deepEqual(verifiedArchive, Buffer.from("archive"));
     writeFileSync(archivePath, "archive");
-    assert.throws(() => resolveTaskArchive(bundleRoot, archiveReference, 6), /maximum compressed bytes/);
+    assert.throws(() => resolveTaskArchive(bundleRoot, archiveReference, 6), /maximum bytes/);
     assert.equal(exportedResolveBundleConfiguration, resolveBundleConfiguration);
     assert.throws(
       () => resolveTaskArchive(bundleRoot, { ...archiveReference, digest: { algorithm: "sha256", value: "0".repeat(64) } }, 7),
@@ -528,6 +535,13 @@ test("experiment validation rejects mutable references, duplicate-array conditio
     locator: `models/${"a".repeat(256)}.json`,
   };
   expectInvalid(validate, tooLongConfigurationLocator, "locator");
+
+  const tooLongAggregateConfigurationLocator = structuredClone(experiment);
+  ((tooLongAggregateConfigurationLocator.modelSet as Document)["model-a"] as Document).configurationRef = {
+    ...(((tooLongAggregateConfigurationLocator.modelSet as Document)["model-a"] as Document).configurationRef as Document),
+    locator: longRelativePath,
+  };
+  expectInvalid(validate, tooLongAggregateConfigurationLocator, "locator");
 
   const declaredOrder = (fixture("experiment.24-cell.v1.json") as {
     taskSet: Document;

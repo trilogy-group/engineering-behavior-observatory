@@ -7,6 +7,7 @@ export {
   assertNoSelectedSymlinks,
   assertResolvedExperimentConfigurationDigests,
   declaredMatrixCells,
+  MAX_CONFIGURATION_BYTES,
   resolveBundleConfiguration,
   resolveTaskArchive,
 } from "./contracts.js";

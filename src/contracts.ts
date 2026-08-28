@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, posix, relative, resolve, sep } from "node:path";
 
 export type Digest = {
@@ -28,6 +28,8 @@ export type ArchiveMeasurements = {
   expandedBytes: number;
   memberCount: number;
 };
+
+export const MAX_CONFIGURATION_BYTES = 1_048_576;
 
 export type TaskCondition = {
   packetRef: {
@@ -214,34 +216,41 @@ export function assertArchiveMeasurements(limits: ArchiveLimits, measurements: A
   }
 }
 
-export function resolveBundleConfiguration(bundleRoot: string, reference: ArtifactReference): Buffer {
+export function resolveBundleConfiguration(
+  bundleRoot: string,
+  reference: ArtifactReference,
+  maxBytes = MAX_CONFIGURATION_BYTES,
+): Buffer {
   return readVerifiedBundleFile(
-    resolveBundleRegularFile(bundleRoot, reference.locator, "Configuration locator"),
+    openBundleRegularFile(bundleRoot, reference.locator, "Configuration locator"),
     reference,
     "Configuration",
+    maxBytes,
   );
 }
 
 export function resolveTaskArchive(bundleRoot: string, source: ArtifactReference, maxCompressedBytes: number): Buffer {
-  const archivePath = resolveBundleRegularFile(bundleRoot, source.locator, "Task archive locator");
   if (!Number.isSafeInteger(maxCompressedBytes) || maxCompressedBytes < 1) {
     throw new Error("Task archive maximum compressed bytes must be a positive integer.");
   }
-  return readVerifiedBundleFile(archivePath, source, "Task archive", maxCompressedBytes);
+  return readVerifiedBundleFile(
+    openBundleRegularFile(bundleRoot, source.locator, "Task archive locator"),
+    source,
+    "Task archive",
+    maxCompressedBytes,
+  );
 }
 
 function readVerifiedBundleFile(
-  path: string,
+  descriptor: number,
   reference: ArtifactReference,
   label: string,
   maxBytes?: number,
 ): Buffer {
-  const descriptor = openSync(path, "r");
-
   try {
     const size = fstatSync(descriptor).size;
     if (!Number.isSafeInteger(size) || size < 0 || (maxBytes !== undefined && size > maxBytes)) {
-      throw new Error(`${label} exceeds its maximum compressed bytes.`);
+      throw new Error(`${label} exceeds its maximum bytes.`);
     }
     const bytes = Buffer.alloc(size);
     for (let offset = 0; offset < size;) {
@@ -264,7 +273,7 @@ function readVerifiedBundleFile(
   }
 }
 
-function resolveBundleRegularFile(bundleRoot: string, locator: string, label: string): string {
+function openBundleRegularFile(bundleRoot: string, locator: string, label: string): number {
   if (!isSafeArchiveMemberPath(locator)) {
     throw new Error(`${label} "${locator}" is unsafe.`);
   }
@@ -289,7 +298,24 @@ function resolveBundleRegularFile(bundleRoot: string, locator: string, label: st
     throw new Error(`${label} "${locator}" escapes its bundle root.`);
   }
 
-  return resolvedPath;
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(resolvedPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile()) {
+      throw new Error(`${label} "${locator}" is not a regular file.`);
+    }
+    const currentPath = realpathSync(selectedPath);
+    const current = statSync(currentPath);
+    if (!isContained(resolvedRoot, currentPath)
+        || opened.dev !== current.dev || opened.ino !== current.ino) {
+      throw new Error(`${label} "${locator}" changed after bundle-root verification.`);
+    }
+    return descriptor;
+  } catch (error) {
+    if (descriptor !== undefined) closeSync(descriptor);
+    throw error;
+  }
 }
 
 export function assertControlledPerturbationDigest(
@@ -436,6 +462,7 @@ function digestIdentity(digest: Digest): string {
 
 function isSafeArchiveMemberPath(path: string): boolean {
   return path === posix.normalize(path)
+    && path.length <= 1024
     && /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[A-Za-z0-9._-][A-Za-z0-9._\/-]*$/.test(path)
     && !path.split("/").some((segment) => segment.length > 255 || segment.endsWith(".")
       || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(segment));
