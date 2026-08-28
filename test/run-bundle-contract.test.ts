@@ -372,7 +372,9 @@ function assertSanitizedProvenance(
     assert.ok(sourceDescriptor, "sanitized artifact must reference retained source evidence");
     assert.equal(sourceDescriptor.kind, current.kind, "sanitized provenance must preserve evidence kind");
     assert.equal(sourceDescriptor.authority, current.authority, "sanitized provenance must preserve evidence authority");
-    if (!["partner", "public"].includes(String(current.sharingClass))) {
+    if (["partner", "public"].includes(String(current.sharingClass))) {
+      assert.equal(current.nativeReference, undefined, "sanitized partner/public evidence must omit native reference");
+    } else {
       assert.deepEqual(sourceDescriptor.nativeReference ?? null, current.nativeReference ?? null, "sanitized provenance must preserve native reference");
     }
     assert.deepEqual(sourceDescriptor.digest, sanitizedFrom.digest, "sanitized provenance must bind the source digest");
@@ -462,7 +464,7 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
 
   const sanitizedPublicManifest = structuredClone(manifest);
   const sourceSession = (sanitizedPublicManifest.evidence as JsonObject[])[0]!;
-  (sanitizedPublicManifest.evidence as JsonObject[]).push({
+  const sanitizedSession: JsonObject = {
     ...sourceSession,
     id: "sanitized-session",
     source: "ebo-sanitizer",
@@ -471,11 +473,21 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
     digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     sizeBytes: sourceSession.sizeBytes as number + 1,
     sanitizedFrom: { artifactId: sourceSession.id, digest: sourceSession.digest },
-  });
+  };
+  delete sanitizedSession.nativeReference;
+  (sanitizedPublicManifest.evidence as JsonObject[]).push(sanitizedSession);
   const sanitizedPublicExport = structuredClone(publicRestricted);
   sanitizedPublicExport.artifactIds = ["sanitized-session"];
   assert.deepEqual(schemaErrors(schemaId, sanitizedPublicManifest), []);
   assert.doesNotThrow(() => assertExportSafe(sanitizedPublicManifest, sanitizedPublicExport));
+
+  const leakedNativeReferenceManifest = structuredClone(sanitizedPublicManifest);
+  const leakedNativeReferenceSession = (leakedNativeReferenceManifest.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-session",
+  )!;
+  leakedNativeReferenceSession.nativeReference = sourceSession.nativeReference;
+  assert.notDeepEqual(schemaErrors(schemaId, leakedNativeReferenceManifest), []);
+  assert.throws(() => assertExportSafe(leakedNativeReferenceManifest, sanitizedPublicExport), /must omit native reference/);
 
   const sanitizedCaptureManifest = structuredClone(manifest);
   const sourceCapture = (sanitizedCaptureManifest.evidence as JsonObject[]).find(
@@ -515,6 +527,7 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
 
   const restoredPublicManifest = structuredClone(manifest);
   const restrictedSession = (restoredPublicManifest.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "session")!;
+  delete restrictedSession.nativeReference;
   const intermediateDigest = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
   (restoredPublicManifest.evidence as JsonObject[]).push(
     {
@@ -542,6 +555,7 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
 
   const cyclicPublicManifest = structuredClone(manifest);
   const cyclicSource = (cyclicPublicManifest.evidence as JsonObject[])[0]!;
+  delete cyclicSource.nativeReference;
   (cyclicPublicManifest.evidence as JsonObject[]).push(
     {
       ...cyclicSource,
@@ -876,7 +890,7 @@ test("rejects contradictory and incomplete contract records", () => {
 
   const unreferencedDerivative = structuredClone(complete);
   const sourceSession = (unreferencedDerivative.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "session")!;
-  (unreferencedDerivative.evidence as JsonObject[]).push({
+  const unreferencedSanitizedSession: JsonObject = {
     ...sourceSession,
     id: "unreferenced-sanitized-session",
     source: "ebo-sanitizer",
@@ -885,7 +899,9 @@ test("rejects contradictory and incomplete contract records", () => {
     digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     sizeBytes: sourceSession.sizeBytes as number + 1,
     sanitizedFrom: { artifactId: "missing-session", digest: sourceSession.digest },
-  });
+  };
+  delete unreferencedSanitizedSession.nativeReference;
+  (unreferencedDerivative.evidence as JsonObject[]).push(unreferencedSanitizedSession);
   assertContractInvalid(unreferencedDerivative, completeArtifacts);
 
   const unsafeArtifactSize = structuredClone(complete);

@@ -83,7 +83,10 @@
             "properties": { "sharingClass": { "enum": ["partner", "public"] } },
             "required": ["sharingClass"]
           },
-          "then": { "required": ["sanitizedFrom"] }
+          "then": {
+            "required": ["sanitizedFrom"],
+            "not": { "required": ["nativeReference"] }
+          }
         },
         {
           "if": {
