@@ -45,9 +45,9 @@ function assertJsonMedia(mediaType: unknown, artifact: Buffer): number {
   return 0;
 }
 
-function assertNativeSemanticRecords(kind: unknown, records: number): void {
-  if (kind === "session" || kind === "hook") {
-    assert.ok(records > 0, "retained native semantic evidence must contain a record");
+function assertNativeEvidenceRecords(kind: unknown, records: number): void {
+  if (kind === "session" || kind === "hook" || kind === "telemetry") {
+    assert.ok(records > 0, "retained native evidence must contain a record");
   }
 }
 
@@ -285,6 +285,8 @@ function assertSanitizedProvenance(
     assert.ok(!seen.has(sourceId), "sanitized artifact provenance cannot contain a cycle");
     const sourceDescriptor = evidenceById.get(sourceId);
     assert.ok(sourceDescriptor, "sanitized artifact must reference retained source evidence");
+    assert.equal(sourceDescriptor.kind, current.kind, "sanitized provenance must preserve evidence kind");
+    assert.equal(sourceDescriptor.authority, current.authority, "sanitized provenance must preserve evidence authority");
     assert.deepEqual(sourceDescriptor.digest, sanitizedFrom.digest, "sanitized provenance must bind the source digest");
     assert.notEqual(sourceDescriptor.relativePath, current.relativePath, "sanitized artifact must have a distinct retained path");
     seen.add(sourceId);
@@ -307,7 +309,7 @@ test("validates retained run-bundle fixtures and their references", () => {
       assert.equal(statSync(artifactPath).isFile(), true);
       assert.equal(descriptor.sizeBytes, artifact.length);
       assert.equal(descriptor.digest, `sha256:${createHash("sha256").update(artifact).digest("hex")}`);
-      assertNativeSemanticRecords(descriptor.kind, assertJsonMedia(descriptor.mediaType, artifact));
+      assertNativeEvidenceRecords(descriptor.kind, assertJsonMedia(descriptor.mediaType, artifact));
 
       if (descriptor.kind === "verifier") {
         const verifierResult = readJson(artifactPath);
@@ -383,6 +385,16 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
   assert.deepEqual(schemaErrors(schemaId, sanitizedPublicManifest), []);
   assert.doesNotThrow(() => assertExportSafe(sanitizedPublicManifest, sanitizedPublicExport));
 
+  const reclassifiedPublicManifest = structuredClone(sanitizedPublicManifest);
+  const reclassifiedSession = (reclassifiedPublicManifest.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-session",
+  )!;
+  const workspaceSource = (reclassifiedPublicManifest.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "workspace",
+  )!;
+  reclassifiedSession.sanitizedFrom = { artifactId: workspaceSource.id, digest: workspaceSource.digest };
+  assert.throws(() => assertExportSafe(reclassifiedPublicManifest, sanitizedPublicExport), /preserve evidence kind/);
+
   const cyclicPublicManifest = structuredClone(manifest);
   const cyclicSource = (cyclicPublicManifest.evidence as JsonObject[])[0]!;
   (cyclicPublicManifest.evidence as JsonObject[]).push(
@@ -429,8 +441,9 @@ test("native JSON media is structurally inspectable", () => {
   assert.throws(() => assertJsonMedia("application/json", Buffer.from("not json")));
   assert.throws(() => assertJsonMedia("application/x-ndjson", Buffer.from('{"event":"tool"}\nnot json\n')));
   assert.throws(() => assertJsonMedia("application/json", Buffer.from([0x22, 0xff, 0x22])));
-  assert.throws(() => assertNativeSemanticRecords("session", assertJsonMedia("application/x-ndjson", Buffer.from(" \n"))));
-  assert.throws(() => assertNativeSemanticRecords("hook", assertJsonMedia("application/x-ndjson", Buffer.from(" \n"))));
+  assert.throws(() => assertNativeEvidenceRecords("session", assertJsonMedia("application/x-ndjson", Buffer.from(" \n"))));
+  assert.throws(() => assertNativeEvidenceRecords("hook", assertJsonMedia("application/x-ndjson", Buffer.from(" \n"))));
+  assert.throws(() => assertNativeEvidenceRecords("telemetry", assertJsonMedia("application/x-ndjson", Buffer.from(" \n"))));
 });
 
 test("rejects contradictory and incomplete contract records", () => {
@@ -463,6 +476,28 @@ test("rejects contradictory and incomplete contract records", () => {
   const contradictoryInfrastructureFailure = structuredClone(infrastructureFailed);
   contradictoryInfrastructureFailure.terminal = { state: "failed", failureClass: "task", stopReason: "none" };
   assertContractInvalid(contradictoryInfrastructureFailure, interruptedArtifacts);
+
+  const verifierError = structuredClone(completeVerifier);
+  verifierError.status = "error";
+  verifierError.assertions = [];
+  delete verifierError.exitCode;
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, verifierError), []);
+  const infrastructureError = structuredClone(infrastructureFailed);
+  const verifierDescriptor = (complete.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "verifier")!;
+  (infrastructureError.evidence as JsonObject[]).push({ ...verifierDescriptor });
+  const interruptedVerifierError = structuredClone(verifierError);
+  interruptedVerifierError.bundleId = infrastructureError.bundleId;
+  assertContractValid(infrastructureError, new Map([
+    ["capture-report", interruptedReport],
+    ["verifier", interruptedVerifierError],
+  ]));
+
+  const errorAsOutcome = structuredClone(complete);
+  errorAsOutcome.terminal = { state: "failed", failureClass: "infrastructure", stopReason: "none" };
+  assertContractInvalid(errorAsOutcome, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", verifierError],
+  ]));
 
   const firstAttemptRetry = structuredClone(complete);
   (firstAttemptRetry.attempt as JsonObject).retryOf = "prior-attempt";
