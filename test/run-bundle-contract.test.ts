@@ -96,6 +96,16 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     }
     descriptorByPath.set(relativePath.toLowerCase(), descriptor);
   }
+  for (const relativePath of descriptorByPath.keys()) {
+    if (relativePath === "manifest.json") {
+      errors.push("/evidence cannot reuse the containing manifest path");
+    }
+    for (let boundary = relativePath.lastIndexOf("/"); boundary > 0; boundary = relativePath.lastIndexOf("/", boundary - 1)) {
+      if (descriptorByPath.has(relativePath.slice(0, boundary))) {
+        errors.push(`/evidence path ${relativePath} collides with an artifact ancestor`);
+      }
+    }
+  }
 
   const attempt = manifest.attempt as JsonObject;
 
@@ -226,6 +236,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     errors.push("/capture-report/outcome requires retained workspace and an executed verifier");
   }
   if (verifierStatuses.some((status) => status === "passed" || status === "failed")
+      && (evidence as JsonObject[]).some((descriptor) => descriptor.kind === "workspace")
       && outcomeStatus?.status !== "available") {
     errors.push("/capture-report/outcome must be available when retained verifier evidence has an outcome");
   }
@@ -287,6 +298,7 @@ function assertSanitizedProvenance(
     assert.ok(sourceDescriptor, "sanitized artifact must reference retained source evidence");
     assert.equal(sourceDescriptor.kind, current.kind, "sanitized provenance must preserve evidence kind");
     assert.equal(sourceDescriptor.authority, current.authority, "sanitized provenance must preserve evidence authority");
+    assert.deepEqual(sourceDescriptor.nativeReference ?? null, current.nativeReference ?? null, "sanitized provenance must preserve native reference");
     assert.deepEqual(sourceDescriptor.digest, sanitizedFrom.digest, "sanitized provenance must bind the source digest");
     assert.notEqual(sourceDescriptor.relativePath, current.relativePath, "sanitized artifact must have a distinct retained path");
     seen.add(sourceId);
@@ -395,6 +407,13 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
   reclassifiedSession.sanitizedFrom = { artifactId: workspaceSource.id, digest: workspaceSource.digest };
   assert.throws(() => assertExportSafe(reclassifiedPublicManifest, sanitizedPublicExport), /preserve evidence kind/);
 
+  const reidentifiedPublicManifest = structuredClone(sanitizedPublicManifest);
+  const reidentifiedSession = (reidentifiedPublicManifest.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-session",
+  )!;
+  reidentifiedSession.nativeReference = { type: "session", id: "other-session" };
+  assert.throws(() => assertExportSafe(reidentifiedPublicManifest, sanitizedPublicExport), /preserve native reference/);
+
   const cyclicPublicManifest = structuredClone(manifest);
   const cyclicSource = (cyclicPublicManifest.evidence as JsonObject[])[0]!;
   (cyclicPublicManifest.evidence as JsonObject[]).push(
@@ -492,6 +511,15 @@ test("rejects contradictory and incomplete contract records", () => {
     ["verifier", interruptedVerifierError],
   ]));
 
+  const executedVerifierWithoutWorkspace = structuredClone(infrastructureFailed);
+  (executedVerifierWithoutWorkspace.evidence as JsonObject[]).push({ ...verifierDescriptor });
+  const interruptedPassedVerifier = structuredClone(completeVerifier);
+  interruptedPassedVerifier.bundleId = executedVerifierWithoutWorkspace.bundleId;
+  assertContractValid(executedVerifierWithoutWorkspace, new Map([
+    ["capture-report", interruptedReport],
+    ["verifier", interruptedPassedVerifier],
+  ]));
+
   const errorAsOutcome = structuredClone(complete);
   errorAsOutcome.terminal = { state: "failed", failureClass: "infrastructure", stopReason: "none" };
   assertContractInvalid(errorAsOutcome, new Map([
@@ -521,6 +549,15 @@ test("rejects contradictory and incomplete contract records", () => {
   const invalidPath = structuredClone(complete);
   (invalidPath.evidence as JsonObject[])[0].relativePath = "../outside.json";
   assertContractInvalid(invalidPath);
+
+  const manifestPathAlias = structuredClone(complete);
+  (manifestPathAlias.evidence as JsonObject[])[0].relativePath = "manifest.json";
+  assertContractInvalid(manifestPathAlias, completeArtifacts);
+
+  const ancestorPathAlias = structuredClone(complete);
+  (ancestorPathAlias.evidence as JsonObject[])[0].relativePath = "logs";
+  (ancestorPathAlias.evidence as JsonObject[])[1].relativePath = "logs/session.jsonl";
+  assertContractInvalid(ancestorPathAlias, completeArtifacts);
 
   const invalidAuthority = structuredClone(complete);
   (invalidAuthority.evidence as JsonObject[])[0].authority = "outcome";
