@@ -500,6 +500,24 @@
           }
         },
         {
+          "if": { "properties": { "qualification": { "const": "qualified" } }, "required": ["qualification"] },
+          "then": {
+            "properties": {
+              "missingEvidence": {
+                "not": {
+                  "contains": {
+                    "properties": {
+                      "reason": { "const": "not-checked" },
+                      "affects": { "contains": { "const": "timing-resource" } }
+                    },
+                    "required": ["reason", "affects"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
           "if": {
             "properties": {
               "capabilities": {

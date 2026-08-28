@@ -28,7 +28,9 @@ function assertJsonMedia(mediaType: unknown, artifact: Buffer): number {
 
   if (mediaType === "application/json") {
     const value = JSON.parse(content);
-    return Array.isArray(value) ? value.length : 1;
+    return Array.isArray(value)
+      ? value.filter((record) => typeof record === "object" && record !== null && !Array.isArray(record)).length
+      : typeof value === "object" && value !== null ? 1 : 0;
   }
   if (mediaType === "application/x-ndjson") {
     let records = 0;
@@ -121,12 +123,14 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   const verifierWorkspaceBindings: Array<{ status: unknown; workspace: JsonObject }> = [];
 
   if (declaredSessionId !== undefined && !sessionDescriptors.some((descriptor) =>
-        ((descriptor.nativeReference as JsonObject | undefined)?.id) === declaredSessionId,
+        ((descriptor.nativeReference as JsonObject | undefined)?.type) === "session"
+          && ((descriptor.nativeReference as JsonObject | undefined)?.id) === declaredSessionId,
   )) {
     errors.push("/run/native/sessionId does not match retained session evidence");
   }
   if (declaredTraceId !== undefined && !telemetryDescriptors.some((descriptor) =>
-        ((descriptor.nativeReference as JsonObject | undefined)?.id) === declaredTraceId,
+        ((descriptor.nativeReference as JsonObject | undefined)?.type) === "trace"
+          && ((descriptor.nativeReference as JsonObject | undefined)?.id) === declaredTraceId,
   )) {
     errors.push("/run/native/traceId does not match retained telemetry evidence");
   }
@@ -178,7 +182,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
         errors.push(`/evidence/${String(descriptor.id)} contains duplicate verifier assertion IDs`);
       }
       const terminal = manifest.terminal as JsonObject;
-      if (terminal.state === "completed" && report.status !== "passed" && report.status !== "error") {
+      if (terminal.state === "completed" && !["passed", "error", "not-run"].includes(String(report.status))) {
         errors.push(`/evidence/${String(descriptor.id)} contradicts the manifest terminal outcome`);
       }
       verifierStatuses.push(report.status);
@@ -238,8 +242,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   const terminalWorkspace = typeof terminal.workspaceArtifactId === "string"
     ? workspaceDescriptors.find((descriptor) => descriptor.id === terminal.workspaceArtifactId)
     : undefined;
-  if ((terminal.state === "completed" || (terminal.state === "failed" && terminal.failureClass === "task"))
-      && terminalWorkspace === undefined) {
+  if (terminal.workspaceArtifactId !== undefined && terminalWorkspace === undefined) {
     errors.push("/terminal/workspaceArtifactId must reference retained workspace evidence");
   }
   const bindingMatches = (binding: { workspace: JsonObject }, workspace: JsonObject | undefined) => workspace !== undefined
@@ -512,6 +515,9 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
 test("native JSON media is structurally inspectable", () => {
   assert.doesNotThrow(() => assertJsonMedia("application/x-ndjson", Buffer.from('{"event":"tool"}\n')));
   assert.throws(() => assertNativeEvidenceRecords("session", assertJsonMedia("application/json", Buffer.from("[]"))));
+  for (const placeholder of ["null", "false", "0", "[null]"]) {
+    assert.throws(() => assertNativeEvidenceRecords("session", assertJsonMedia("application/json", Buffer.from(placeholder))));
+  }
   assert.throws(() => assertJsonMedia("application/json", Buffer.from("not json")));
   assert.throws(() => assertJsonMedia("application/x-ndjson", Buffer.from('{"event":"tool"}\nnot json\n')));
   assert.throws(() => assertJsonMedia("application/json", Buffer.from([0x22, 0xff, 0x22])));
@@ -550,6 +556,10 @@ test("rejects contradictory and incomplete contract records", () => {
   const contradictoryInfrastructureFailure = structuredClone(infrastructureFailed);
   contradictoryInfrastructureFailure.terminal = { state: "failed", failureClass: "task", stopReason: "none" };
   assertContractInvalid(contradictoryInfrastructureFailure, interruptedArtifacts);
+
+  const unresolvedPartialWorkspace = structuredClone(infrastructureFailed);
+  (unresolvedPartialWorkspace.terminal as JsonObject).workspaceArtifactId = "missing-workspace";
+  assertContractInvalid(unresolvedPartialWorkspace, interruptedArtifacts);
 
   const verifierError = structuredClone(completeVerifier);
   verifierError.status = "error";
@@ -593,6 +603,25 @@ test("rejects contradictory and incomplete contract records", () => {
     ["capture-report", completeCaptureReport],
     ["verifier", completeVerifier],
     ["error-verifier", verifierError],
+  ]));
+
+  const completedWithIndependentNotRun = structuredClone(completedWithIndependentError);
+  const notRunVerifierDescriptor = (complete.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "verifier")!;
+  (completedWithIndependentNotRun.evidence as JsonObject[]).push({
+    ...notRunVerifierDescriptor,
+    id: "not-run-verifier",
+    relativePath: "not-run-verifier.json",
+  });
+  const independentNotRun = structuredClone(completeVerifier);
+  independentNotRun.status = "not-run";
+  independentNotRun.assertions = [{ id: "example-check", status: "not-run" }];
+  delete independentNotRun.exitCode;
+  delete independentNotRun.workspace;
+  assertContractValid(completedWithIndependentNotRun, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", completeVerifier],
+    ["error-verifier", verifierError],
+    ["not-run-verifier", independentNotRun],
   ]));
 
   const completedWithMismatchedError = structuredClone(completedWithIndependentError);
@@ -786,6 +815,14 @@ test("rejects contradictory and incomplete contract records", () => {
   ((mismatchedNativeTrace.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "telemetry")!.nativeReference as JsonObject).id = "other-trace";
   assertContractInvalid(mismatchedNativeTrace, completeArtifacts);
 
+  const mismatchedNativeSessionType = structuredClone(complete);
+  ((mismatchedNativeSessionType.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "session")!.nativeReference as JsonObject).type = "trace";
+  assertContractInvalid(mismatchedNativeSessionType, completeArtifacts);
+
+  const mismatchedNativeTraceType = structuredClone(complete);
+  ((mismatchedNativeTraceType.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "telemetry")!.nativeReference as JsonObject).type = "session";
+  assertContractInvalid(mismatchedNativeTraceType, completeArtifacts);
+
   const missingNativeTrace = structuredClone(taskFailed);
   ((missingNativeTrace.run as JsonObject).native as JsonObject).traceId = "trace-task-failed-1";
   assertContractInvalid(missingNativeTrace, taskFailedArtifacts);
@@ -924,6 +961,14 @@ test("rejects contradictory and incomplete contract records", () => {
   (qualifiedUnsupportedTiming.capabilities as JsonObject).timingResource = { status: "unsupported" };
   qualifiedUnsupportedTiming.missingEvidence = [{ kind: "telemetry", reason: "unsupported", affects: ["timing-resource"] }];
   assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, qualifiedUnsupportedTiming), []);
+
+  const qualifiedUncheckedTiming = structuredClone(completeCaptureReport);
+  (qualifiedUncheckedTiming.capabilities as JsonObject).timingResource = { status: "unsupported" };
+  qualifiedUncheckedTiming.missingEvidence = [
+    { kind: "telemetry", reason: "unsupported", affects: ["timing-resource"] },
+    { kind: "telemetry-receipt", reason: "not-checked", affects: ["timing-resource"] },
+  ];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, qualifiedUncheckedTiming), []);
 
   const unsupportedReasonWithMissingStatus = structuredClone(telemetryReport);
   (unsupportedReasonWithMissingStatus.missingEvidence as JsonObject[])[0].reason = "unsupported";
