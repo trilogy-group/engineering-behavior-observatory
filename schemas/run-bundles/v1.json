@@ -15,7 +15,8 @@
     },
     "relativePath": {
       "type": "string",
-      "pattern": "^(?!.*(?:^|/)(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.|/|$))(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9_-])(?:/(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9_-]))*$"
+      "maxLength": 1024,
+      "pattern": "^(?!(?:[^/]+/){64})(?!.*(?:^|/)[^/]{256})(?!.*(?:^|/)(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.|/|$))(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9_-])(?:/(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9_-]))*$"
     },
     "sharingClass": {
       "enum": ["unknown", "restricted", "internal", "partner", "public"]
@@ -366,7 +367,7 @@
         {
           "if": { "properties": { "status": { "const": "not-run" } }, "required": ["status"] },
           "then": {
-            "not": { "required": ["exitCode"] },
+            "not": { "anyOf": [{ "required": ["exitCode"] }, { "required": ["workspace"] }] },
             "properties": {
               "assertions": {
                 "items": {

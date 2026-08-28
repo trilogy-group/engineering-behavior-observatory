@@ -178,7 +178,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
         errors.push(`/evidence/${String(descriptor.id)} contains duplicate verifier assertion IDs`);
       }
       const terminal = manifest.terminal as JsonObject;
-      if (terminal.state === "completed" && report.status !== "passed") {
+      if (terminal.state === "completed" && report.status !== "passed" && report.status !== "error") {
         errors.push(`/evidence/${String(descriptor.id)} contradicts the manifest terminal outcome`);
       }
       verifierStatuses.push(report.status);
@@ -307,6 +307,7 @@ function assertSanitizedProvenance(
     assert.equal(sourceDescriptor.authority, current.authority, "sanitized provenance must preserve evidence authority");
     assert.deepEqual(sourceDescriptor.nativeReference ?? null, current.nativeReference ?? null, "sanitized provenance must preserve native reference");
     assert.deepEqual(sourceDescriptor.digest, sanitizedFrom.digest, "sanitized provenance must bind the source digest");
+    assert.notDeepEqual(sourceDescriptor.digest, current.digest, "sanitized provenance must change bytes");
     assert.notEqual(sourceDescriptor.relativePath, current.relativePath, "sanitized artifact must have a distinct retained path");
     seen.add(sourceId);
     if (sourceDescriptor.sanitizedFrom === undefined) return;
@@ -397,6 +398,8 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
     source: "ebo-sanitizer",
     sharingClass: "public",
     relativePath: "sanitized/session.jsonl",
+    digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    sizeBytes: sourceSession.sizeBytes as number + 1,
     sanitizedFrom: { artifactId: sourceSession.id, digest: sourceSession.digest },
   });
   const sanitizedPublicExport = structuredClone(publicRestricted);
@@ -430,7 +433,8 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
       source: "ebo-sanitizer",
       sharingClass: "public",
       relativePath: "sanitized/a.jsonl",
-      sanitizedFrom: { artifactId: "sanitized-b", digest: cyclicSource.digest },
+      digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      sanitizedFrom: { artifactId: "sanitized-b", digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222" },
     },
     {
       ...cyclicSource,
@@ -438,7 +442,8 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
       source: "ebo-sanitizer",
       sharingClass: "public",
       relativePath: "sanitized/b.jsonl",
-      sanitizedFrom: { artifactId: "sanitized-a", digest: cyclicSource.digest },
+      digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      sanitizedFrom: { artifactId: "sanitized-a", digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111" },
     },
   );
   const cyclicPublicExport = structuredClone(publicRestricted);
@@ -535,6 +540,19 @@ test("rejects contradictory and incomplete contract records", () => {
     ["verifier", verifierError],
   ]));
 
+  const completedWithIndependentError = structuredClone(complete);
+  const errorVerifierDescriptor = (complete.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "verifier")!;
+  (completedWithIndependentError.evidence as JsonObject[]).push({
+    ...errorVerifierDescriptor,
+    id: "error-verifier",
+    relativePath: "error-verifier.json",
+  });
+  assertContractValid(completedWithIndependentError, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", completeVerifier],
+    ["error-verifier", verifierError],
+  ]));
+
   const verifierWithOtherWorkspace = structuredClone(completeVerifier);
   (verifierWithOtherWorkspace.workspace as JsonObject).digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
   assertContractInvalid(complete, new Map([
@@ -583,6 +601,10 @@ test("rejects contradictory and incomplete contract records", () => {
   const invalidPath = structuredClone(complete);
   (invalidPath.evidence as JsonObject[])[0].relativePath = "../outside.json";
   assertContractInvalid(invalidPath);
+
+  const tooLongRelativePath = structuredClone(complete);
+  (tooLongRelativePath.evidence as JsonObject[])[0].relativePath = "a".repeat(256);
+  assertContractInvalid(tooLongRelativePath, completeArtifacts);
 
   const manifestPathAlias = structuredClone(complete);
   (manifestPathAlias.evidence as JsonObject[])[0].relativePath = "manifest.json";
@@ -666,11 +688,18 @@ test("rejects contradictory and incomplete contract records", () => {
   unexecutedVerifier.status = "not-run";
   unexecutedVerifier.assertions = [{ id: "example-check", status: "not-run" }];
   delete unexecutedVerifier.exitCode;
+  delete unexecutedVerifier.workspace;
   assert.deepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, unexecutedVerifier), []);
   assertContractInvalid(stoppedWithUnexecutedVerifier, new Map([
     ["capture-report", completeCaptureReport],
     ["verifier", unexecutedVerifier],
   ]));
+
+  const notRunWithWorkspace = structuredClone(completeVerifier);
+  notRunWithWorkspace.status = "not-run";
+  notRunWithWorkspace.assertions = [{ id: "example-check", status: "not-run" }];
+  delete notRunWithWorkspace.exitCode;
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, notRunWithWorkspace), []);
 
   const mismatchedHarnessRuntime = structuredClone(complete);
   (mismatchedHarnessRuntime.run as JsonObject).runtime = [
