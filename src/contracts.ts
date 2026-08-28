@@ -204,6 +204,9 @@ export function assertNoSelectedSymlinks(
 }
 
 export function assertArchiveMeasurements(limits: ArchiveLimits, measurements: ArchiveMeasurements): void {
+  if (!Object.values(limits).every((value) => Number.isSafeInteger(value) && value >= 1)) {
+    throw new Error("Sanitized archive limits must be positive safe integers.");
+  }
   if (!Object.values(measurements).every((value) => Number.isSafeInteger(value) && value >= 0)) {
     throw new Error("Sanitized archive measurements must be nonnegative safe integers.");
   }
@@ -297,7 +300,7 @@ function openBundleRegularFile(bundleRoot: string, locator: string, label: strin
 
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(resolvedPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    descriptor = openSync(resolvedPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const opened = fstatSync(descriptor);
     if (!opened.isFile()) {
       throw new Error(`${label} "${locator}" is not a regular file.`);
@@ -464,7 +467,7 @@ function isSafeArchiveMemberPath(path: string): boolean {
     && path.length <= 1024
     && /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[A-Za-z0-9._-][A-Za-z0-9._\/-]*$/.test(path)
     && segments.length <= MAX_ARCHIVE_PATH_COMPONENTS
-    && !segments.some((segment) => segment.length > 255 || segment.endsWith(".")
+    && !segments.some((segment) => segment.length > 255 || segment.endsWith(".") || segment.toLowerCase() === ".git"
       || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(segment));
 }
 

@@ -260,6 +260,10 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   ((malformedReviewTime.admission as Document).review as Document).reviewedAt = "unknown";
   expectInvalid(validatorWithoutFormatAssertion("task-packet.v1.schema.json"), malformedReviewTime, "reviewedAt");
 
+  const blankReviewer = structuredClone(admitted) as Document;
+  ((blankReviewer.admission as Document).review as Document).reviewedBy = " ";
+  expectInvalid(validate, blankReviewer, "reviewedBy");
+
   const lowercaseReviewTime = structuredClone(admitted) as Document;
   ((lowercaseReviewTime.admission as Document).review as Document).reviewedAt = "2026-08-26t00:00:00z";
   assert.equal(validate(lowercaseReviewTime), true, JSON.stringify(validate.errors));
@@ -335,6 +339,7 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     [{ path: "src/config", kind: "symlink" }],
   ), /does not match its archive member kind/);
   assert.throws(() => assertNoSelectedSymlinks([{ path: "src/NUL.txt", kind: "file" }], ["src/NUL.txt"]), /unsafe/);
+  assert.throws(() => assertNoSelectedSymlinks([{ path: ".git/config", kind: "file" }], [".git"]), /unsafe/);
   assert.throws(() => assertNoSelectedSymlinks([{ path: "src/foo.", kind: "file" }], ["src/foo."]), /unsafe/);
   assert.throws(() => assertNoSelectedSymlinks(
     [{ path: "README.md", kind: "file" }],
@@ -402,6 +407,14 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     { maxCompressedBytes: 10, maxExpandedBytes: 20, maxMembers: 2 },
     { compressedBytes: Number.NaN, expandedBytes: 20, memberCount: 2 },
   ), /measurements/);
+  assert.throws(() => assertArchiveMeasurements(
+    { maxCompressedBytes: Number.NaN, maxExpandedBytes: 20, maxMembers: 2 },
+    { compressedBytes: 10, expandedBytes: 20, memberCount: 2 },
+  ), /limits/);
+  assert.throws(() => assertArchiveMeasurements(
+    { maxCompressedBytes: 10, maxExpandedBytes: -1, maxMembers: 2 },
+    { compressedBytes: 10, expandedBytes: 20, memberCount: 2 },
+  ), /limits/);
   assert.throws(() => assertArchiveMeasurements(
     { maxCompressedBytes: 10, maxExpandedBytes: 20, maxMembers: 2 },
     { compressedBytes: -1, expandedBytes: 20, memberCount: 2 },
