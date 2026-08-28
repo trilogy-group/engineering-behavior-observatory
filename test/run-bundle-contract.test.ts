@@ -27,8 +27,8 @@ function assertJsonMedia(mediaType: unknown, artifact: Buffer): number {
   const content = new TextDecoder("utf-8", { fatal: true }).decode(artifact);
 
   if (mediaType === "application/json") {
-    JSON.parse(content);
-    return 1;
+    const value = JSON.parse(content);
+    return Array.isArray(value) ? value.length : 1;
   }
   if (mediaType === "application/x-ndjson") {
     let records = 0;
@@ -118,7 +118,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   const sessionDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "session");
   const telemetryDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "telemetry");
   const verifierStatuses: unknown[] = [];
-  const verifierWorkspaceBindings: JsonObject[] = [];
+  const verifierWorkspaceBindings: Array<{ status: unknown; workspace: JsonObject }> = [];
 
   if (declaredSessionId !== undefined && !sessionDescriptors.some((descriptor) =>
         ((descriptor.nativeReference as JsonObject | undefined)?.id) === declaredSessionId,
@@ -183,7 +183,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
       }
       verifierStatuses.push(report.status);
       if (report.status === "passed" || report.status === "failed") {
-        verifierWorkspaceBindings.push(report.workspace as JsonObject);
+        verifierWorkspaceBindings.push({ status: report.status, workspace: report.workspace as JsonObject });
       }
       continue;
     }
@@ -234,9 +234,13 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     ))?.[1];
   const outcomeStatus = (captureReport?.capabilities as JsonObject | undefined)?.outcome as JsonObject | undefined;
   const workspaceDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "workspace");
-  const hasOutcomeWorkspace = verifierWorkspaceBindings.some((binding) => workspaceDescriptors.some((descriptor) =>
-    descriptor.id === binding.artifactId && JSON.stringify(descriptor.digest) === JSON.stringify(binding.digest),
-  ));
+  const bindingMatchesWorkspace = (binding: { workspace: JsonObject }) => workspaceDescriptors.some((descriptor) =>
+    descriptor.id === binding.workspace.artifactId && JSON.stringify(descriptor.digest) === JSON.stringify(binding.workspace.digest),
+  );
+  if (workspaceDescriptors.length > 0 && verifierWorkspaceBindings.some((binding) => !bindingMatchesWorkspace(binding))) {
+    errors.push("/verifier workspace binding does not match retained workspace evidence");
+  }
+  const hasOutcomeWorkspace = verifierWorkspaceBindings.some(bindingMatchesWorkspace);
   if (outcomeStatus?.status === "available" && !hasOutcomeWorkspace) {
     errors.push("/capture-report/outcome requires retained workspace and an executed verifier");
   }
@@ -460,6 +464,7 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
 
 test("native JSON media is structurally inspectable", () => {
   assert.doesNotThrow(() => assertJsonMedia("application/x-ndjson", Buffer.from('{"event":"tool"}\n')));
+  assert.throws(() => assertNativeEvidenceRecords("session", assertJsonMedia("application/json", Buffer.from("[]"))));
   assert.throws(() => assertJsonMedia("application/json", Buffer.from("not json")));
   assert.throws(() => assertJsonMedia("application/x-ndjson", Buffer.from('{"event":"tool"}\nnot json\n')));
   assert.throws(() => assertJsonMedia("application/json", Buffer.from([0x22, 0xff, 0x22])));
@@ -535,6 +540,25 @@ test("rejects contradictory and incomplete contract records", () => {
   assertContractInvalid(complete, new Map([
     ["capture-report", completeCaptureReport],
     ["verifier", verifierWithOtherWorkspace],
+  ]));
+
+  const taskFailureWithMismatchedVerifier = structuredClone(complete);
+  taskFailureWithMismatchedVerifier.terminal = { state: "failed", failureClass: "task", stopReason: "none" };
+  const mismatchedFailedVerifier = structuredClone(completeVerifier);
+  mismatchedFailedVerifier.status = "failed";
+  mismatchedFailedVerifier.exitCode = 1;
+  mismatchedFailedVerifier.assertions = [{ id: "example-check", status: "failed" }];
+  (mismatchedFailedVerifier.workspace as JsonObject).digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+  const mismatchedFailedVerifierDescriptor = (complete.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "verifier")!;
+  (taskFailureWithMismatchedVerifier.evidence as JsonObject[]).push({
+    ...mismatchedFailedVerifierDescriptor,
+    id: "failed-verifier",
+    relativePath: "failed-verifier.json",
+  });
+  assertContractInvalid(taskFailureWithMismatchedVerifier, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", completeVerifier],
+    ["failed-verifier", mismatchedFailedVerifier],
   ]));
 
   const firstAttemptRetry = structuredClone(complete);
