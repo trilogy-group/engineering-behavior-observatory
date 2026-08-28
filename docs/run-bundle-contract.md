@@ -116,8 +116,8 @@ separately sanitized artifacts. The export pipeline performs the actual
 sanitization and readback; the v1 contract fixture makes the unsafe direct
 reference visibly blocked. A ready or exported manifest also names its
 containing bundle before its artifact list is approved. Ready and exported
-manifests contain at least one artifact; blocked and unrequested records may be
-empty but still name their containing bundle.
+manifests contain at least one non-export evidence artifact; blocked and
+unrequested records may be empty but still name their containing bundle.
 
 The contract is intentionally only a declaration. Schema loading, safe path
 resolution, atomic persistence, and byte-level digest verification are shared

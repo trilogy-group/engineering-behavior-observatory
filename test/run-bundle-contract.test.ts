@@ -23,6 +23,19 @@ function readJson(path: string): JsonObject {
   return JSON.parse(readFileSync(path, "utf8")) as JsonObject;
 }
 
+function assertJsonMedia(mediaType: unknown, artifact: Buffer): void {
+  const content = artifact.toString("utf8");
+
+  if (mediaType === "application/json") {
+    JSON.parse(content);
+  }
+  if (mediaType === "application/x-ndjson") {
+    for (const line of content.split(/\r?\n/)) {
+      if (line.trim() !== "") JSON.parse(line);
+    }
+  }
+}
+
 function validator(reference: string) {
   const validate = ajv.getSchema(reference);
 
@@ -235,6 +248,7 @@ test("validates retained run-bundle fixtures and their references", () => {
       assert.equal(statSync(artifactPath).isFile(), true);
       assert.equal(descriptor.sizeBytes, artifact.length);
       assert.equal(descriptor.digest, `sha256:${createHash("sha256").update(artifact).digest("hex")}`);
+      assertJsonMedia(descriptor.mediaType, artifact);
 
       if (descriptor.kind === "verifier") {
         const verifierResult = readJson(artifactPath);
@@ -310,6 +324,12 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
   selfReferentialExport.sharingClass = "internal";
   selfReferentialExport.artifactIds = ["export-manifest"];
   assert.throws(() => assertExportSafe(manifest, selfReferentialExport));
+});
+
+test("native JSON media is structurally inspectable", () => {
+  assert.doesNotThrow(() => assertJsonMedia("application/x-ndjson", Buffer.from('{"event":"tool"}\n')));
+  assert.throws(() => assertJsonMedia("application/json", Buffer.from("not json")));
+  assert.throws(() => assertJsonMedia("application/x-ndjson", Buffer.from('{"event":"tool"}\nnot json\n')));
 });
 
 test("rejects contradictory and incomplete contract records", () => {
@@ -542,6 +562,23 @@ test("rejects contradictory and incomplete contract records", () => {
   incompleteFullyQualified.qualification = "incomplete";
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, incompleteFullyQualified), []);
 
+  const incompleteUnsupportedSemantic = structuredClone(completeCaptureReport);
+  incompleteUnsupportedSemantic.qualification = "incomplete";
+  (incompleteUnsupportedSemantic.capabilities as JsonObject).semantic = { status: "unsupported" };
+  incompleteUnsupportedSemantic.missingEvidence = [{ kind: "semantic-events", reason: "unsupported", affects: ["semantic"] }];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, incompleteUnsupportedSemantic), []);
+
+  const incompleteUnsupportedOutcome = structuredClone(completeCaptureReport);
+  incompleteUnsupportedOutcome.qualification = "incomplete";
+  (incompleteUnsupportedOutcome.capabilities as JsonObject).outcome = { status: "unsupported" };
+  incompleteUnsupportedOutcome.missingEvidence = [{ kind: "outcome-verifier", reason: "unsupported", affects: ["outcome"] }];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, incompleteUnsupportedOutcome), []);
+
+  const qualifiedUnsupportedTiming = structuredClone(completeCaptureReport);
+  (qualifiedUnsupportedTiming.capabilities as JsonObject).timingResource = { status: "unsupported" };
+  qualifiedUnsupportedTiming.missingEvidence = [{ kind: "telemetry", reason: "unsupported", affects: ["timing-resource"] }];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, qualifiedUnsupportedTiming), []);
+
   const unsupportedReasonWithMissingStatus = structuredClone(telemetryReport);
   (unsupportedReasonWithMissingStatus.missingEvidence as JsonObject[])[0].reason = "unsupported";
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, unsupportedReasonWithMissingStatus), []);
@@ -630,6 +667,12 @@ test("rejects contradictory and incomplete contract records", () => {
   notRunWithPassedAssertion.status = "not-run";
   notRunWithPassedAssertion.assertions = [{ id: "example-check", status: "passed" }];
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, notRunWithPassedAssertion), []);
+
+  const notRunWithExitCode = structuredClone(verifier);
+  notRunWithExitCode.status = "not-run";
+  notRunWithExitCode.assertions = [{ id: "example-check", status: "not-run" }];
+  notRunWithExitCode.exitCode = 0;
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, notRunWithExitCode), []);
 
   const failedWithoutFailure = structuredClone(verifier);
   failedWithoutFailure.status = "failed";

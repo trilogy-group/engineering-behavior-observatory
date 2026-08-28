@@ -342,6 +342,7 @@
         {
           "if": { "properties": { "status": { "const": "not-run" } }, "required": ["status"] },
           "then": {
+            "not": { "required": ["exitCode"] },
             "properties": {
               "assertions": {
                 "items": {
@@ -453,9 +454,9 @@
               "missingEvidence": { "minItems": 1 },
               "capabilities": {
                 "anyOf": [
-                  { "properties": { "semantic": { "properties": { "status": { "enum": ["missing", "not-checked"] } } } } },
+                  { "properties": { "semantic": { "properties": { "status": { "enum": ["missing", "unsupported", "not-checked"] } } } } },
                   { "properties": { "timingResource": { "properties": { "status": { "enum": ["missing", "not-checked"] } } } } },
-                  { "properties": { "outcome": { "properties": { "status": { "enum": ["missing", "not-checked"] } } } } }
+                  { "properties": { "outcome": { "properties": { "status": { "enum": ["missing", "unsupported", "not-checked"] } } } } }
                 ]
               }
             }
