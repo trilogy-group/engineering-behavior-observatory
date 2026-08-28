@@ -80,6 +80,13 @@
       "allOf": [
         {
           "if": {
+            "properties": { "sharingClass": { "enum": ["partner", "public"] } },
+            "required": ["sharingClass"]
+          },
+          "then": { "required": ["sanitizedFrom"] }
+        },
+        {
+          "if": {
             "properties": { "kind": { "enum": ["session", "hook"] } },
             "required": ["kind"]
           },
@@ -736,7 +743,7 @@
         "schemaVersion": { "const": "export-manifest/v1" },
         "bundleId": { "$ref": "#/$defs/identifier" },
         "status": { "enum": ["not-requested", "blocked", "ready", "exported"] },
-        "sharingClass": { "enum": ["restricted", "internal", "partner", "public"] },
+        "sharingClass": { "$ref": "#/$defs/sharingClass" },
         "policyDigest": { "$ref": "#/$defs/digest" },
         "artifactIds": {
           "type": "array",
@@ -747,7 +754,12 @@
       "allOf": [
         {
           "if": { "properties": { "status": { "enum": ["ready", "exported"] } }, "required": ["status"] },
-          "then": { "properties": { "artifactIds": { "minItems": 1 } } }
+          "then": {
+            "properties": {
+              "artifactIds": { "minItems": 1 },
+              "sharingClass": { "not": { "const": "unknown" } }
+            }
+          }
         }
       ]
     }

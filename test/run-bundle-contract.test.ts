@@ -560,6 +560,20 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
   emptyReadyExport.artifactIds = [];
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, emptyReadyExport), []);
 
+  const unknownBlockedExport = structuredClone(exportManifest);
+  unknownBlockedExport.sharingClass = "unknown";
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, unknownBlockedExport), []);
+  const unknownNotRequestedExport = structuredClone(unknownBlockedExport);
+  unknownNotRequestedExport.status = "not-requested";
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, unknownNotRequestedExport), []);
+  const unknownReadyExport = structuredClone(unknownBlockedExport);
+  unknownReadyExport.status = "ready";
+  unknownReadyExport.artifactIds = ["session"];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, unknownReadyExport), []);
+  const unknownExportedExport = structuredClone(unknownReadyExport);
+  unknownExportedExport.status = "exported";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, unknownExportedExport), []);
+
   const unknownArtifactManifest = structuredClone(manifest);
   (unknownArtifactManifest.evidence as JsonObject[])[0].sharingClass = "unknown";
   const unknownArtifactExport = structuredClone(readyExport);
@@ -793,6 +807,10 @@ test("rejects contradictory and incomplete contract records", () => {
   const invalidAuthority = structuredClone(complete);
   (invalidAuthority.evidence as JsonObject[])[0].authority = "outcome";
   assertContractInvalid(invalidAuthority);
+
+  const unprovenancedPublicEvidence = structuredClone(complete);
+  (unprovenancedPublicEvidence.evidence as JsonObject[])[0]!.sharingClass = "public";
+  assertContractInvalid(unprovenancedPublicEvidence, completeArtifacts);
 
   const duplicateArtifact = structuredClone(complete);
   (duplicateArtifact.evidence as JsonObject[])[1].id = (duplicateArtifact.evidence as JsonObject[])[0].id;
