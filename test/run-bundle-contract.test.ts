@@ -52,7 +52,10 @@ function assertJsonMedia(mediaType: unknown, artifact: Buffer): number {
 }
 
 function assertJsonRecord(record: unknown): asserts record is JsonObject {
-  assert.ok(typeof record === "object" && record !== null && !Array.isArray(record), "retained JSON evidence records must be non-null objects");
+  assert.ok(
+    typeof record === "object" && record !== null && !Array.isArray(record) && Object.keys(record).length > 0,
+    "retained JSON evidence records must be non-empty objects",
+  );
 }
 
 function assertNativeEvidenceRecords(kind: unknown, records: number): void {
@@ -540,8 +543,11 @@ test("native JSON media is structurally inspectable", () => {
   for (const [mediaType, content] of [
     ["application/json", '[{"event":"tool"},false]'],
     ["application/x-ndjson", '{"event":"tool"}\nfalse\n'],
+    ["application/json", "{}"],
+    ["application/json", "[{}]"],
+    ["application/x-ndjson", "{}\n"],
   ]) {
-    assert.throws(() => assertJsonMedia(mediaType, Buffer.from(content)), /non-null objects/);
+    assert.throws(() => assertJsonMedia(mediaType, Buffer.from(content)), /non-empty objects/);
   }
   assert.throws(() => assertJsonMedia("application/json", Buffer.from("not json")));
   assert.throws(() => assertJsonMedia("application/x-ndjson", Buffer.from('{"event":"tool"}\nnot json\n')));
