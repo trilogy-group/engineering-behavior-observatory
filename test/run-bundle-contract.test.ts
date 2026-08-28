@@ -238,11 +238,11 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
           const sourceAssertions = new Map((sourceResult.assertions as JsonObject[]).map((assertion) => [assertion.id, assertion]));
           if ((report.assertions as JsonObject[]).some((assertion) => {
             const sourceAssertion = sourceAssertions.get(assertion.id);
-            return sourceAssertion !== undefined && sourceAssertion.status !== assertion.status;
+            return sourceAssertion === undefined || sourceAssertion.status !== assertion.status;
           })) {
             errors.push(`/evidence/${String(descriptor.id)} does not preserve source verifier assertion outcomes`);
           }
-          if (sourceResult.exitCode !== undefined && report.exitCode !== undefined && sourceResult.exitCode !== report.exitCode) {
+          if (report.exitCode !== undefined && sourceResult.exitCode !== report.exitCode) {
             errors.push(`/evidence/${String(descriptor.id)} does not preserve its source verifier exit code`);
           }
         }
@@ -961,6 +961,31 @@ test("rejects contradictory and incomplete contract records", () => {
   changedAssertionArtifacts.set("verifier", sourceVerifierWithTwoAssertions);
   changedAssertionArtifacts.set("sanitized-verifier", changedAssertionVerifier);
   assertContractInvalid(sharedVerifierWithChangedAssertions, changedAssertionArtifacts);
+
+  const sharedVerifierWithInventedAssertion = structuredClone(sharedFailedVerifierWithChangedStatus);
+  const inventedAssertionVerifier = structuredClone(taskFailedArtifacts.get("verifier")!);
+  inventedAssertionVerifier.assertions = [{ id: "invented-check", status: "failed" }];
+  inventedAssertionVerifier.workspace = {
+    artifactId: changedAssertionWorkspace.id,
+    digest: changedAssertionWorkspace.digest,
+  };
+  const inventedAssertionArtifacts = new Map(taskFailedArtifacts);
+  inventedAssertionArtifacts.set("sanitized-verifier", inventedAssertionVerifier);
+  assertContractInvalid(sharedVerifierWithInventedAssertion, inventedAssertionArtifacts);
+
+  const sharedVerifierWithInventedExitCode = structuredClone(sharedFailedVerifierWithChangedStatus);
+  const sourceVerifierWithoutExitCode = structuredClone(taskFailedArtifacts.get("verifier")!);
+  delete sourceVerifierWithoutExitCode.exitCode;
+  const inventedExitCodeVerifier = structuredClone(sourceVerifierWithoutExitCode);
+  inventedExitCodeVerifier.exitCode = 2;
+  inventedExitCodeVerifier.workspace = {
+    artifactId: changedAssertionWorkspace.id,
+    digest: changedAssertionWorkspace.digest,
+  };
+  const inventedExitCodeArtifacts = new Map(taskFailedArtifacts);
+  inventedExitCodeArtifacts.set("verifier", sourceVerifierWithoutExitCode);
+  inventedExitCodeArtifacts.set("sanitized-verifier", inventedExitCodeVerifier);
+  assertContractInvalid(sharedVerifierWithInventedExitCode, inventedExitCodeArtifacts);
 
   const sharedDerivativeWithOtherSourceBytes = structuredClone(complete);
   const firstSession = (sharedDerivativeWithOtherSourceBytes.evidence as JsonObject[]).find(
