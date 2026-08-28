@@ -137,8 +137,19 @@ export function* declaredMatrixCells(
 export function assertNoSelectedSymlinks(
   entries: readonly ArchiveEntry[],
   includePaths: readonly string[],
-  archiveEntries: readonly ArchiveEntry[] = entries,
+  archiveEntries?: readonly ArchiveEntry[],
 ): void {
+  if (archiveEntries === undefined && includePaths.some((includePath) => {
+    const canonicalIncludePath = canonicalArchiveMemberPath(includePath);
+    return entries.some((entry) => {
+      const archivePath = canonicalArchiveMemberPath(entry.path);
+      return entry.kind === "directory" && (archivePath === canonicalIncludePath || archivePath.startsWith(`${canonicalIncludePath}/`));
+    });
+  })) {
+    throw new Error("Directory includes require an authoritative archive enumeration.");
+  }
+
+  const authoritativeEntries = archiveEntries ?? entries;
   const archiveByPath = new Map<string, string>();
   const destinations = new Map<string, string>();
   const destinationCollisionPaths = new Map<string, string>();
@@ -148,7 +159,7 @@ export function assertNoSelectedSymlinks(
     throw new Error("No archive entries were selected.");
   }
 
-  for (const archiveEntry of archiveEntries) {
+  for (const archiveEntry of authoritativeEntries) {
     const archivePath = canonicalArchiveMemberPath(archiveEntry.path);
 
     if (!isSafeArchiveMemberPath(archiveEntry.path)
@@ -206,10 +217,12 @@ export function assertNoSelectedSymlinks(
 }
 
 export function assertArchiveMeasurements(limits: ArchiveLimits, measurements: ArchiveMeasurements): void {
-  if (!Object.values(limits).every((value) => Number.isSafeInteger(value) && value >= 1)) {
+  if (![limits.maxCompressedBytes, limits.maxExpandedBytes, limits.maxMembers]
+    .every((value) => Number.isSafeInteger(value) && value >= 1)) {
     throw new Error("Sanitized archive limits must be positive safe integers.");
   }
-  if (!Object.values(measurements).every((value) => Number.isSafeInteger(value) && value >= 0)) {
+  if (![measurements.compressedBytes, measurements.expandedBytes, measurements.memberCount]
+    .every((value) => Number.isSafeInteger(value) && value >= 0)) {
     throw new Error("Sanitized archive measurements must be nonnegative safe integers.");
   }
   if (measurements.compressedBytes > limits.maxCompressedBytes

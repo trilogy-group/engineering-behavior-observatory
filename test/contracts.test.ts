@@ -21,6 +21,8 @@ import {
   resolveTaskArchive,
   type ArtifactReference,
   type ArchiveEntry,
+  type ArchiveLimits,
+  type ArchiveMeasurements,
   type Digest,
   type ExperimentConfiguration,
   type DeclaredOrder,
@@ -318,10 +320,11 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     { path: "src", kind: "directory" },
     { path: "src/index.ts", kind: "file" },
   ], ["src"]));
-  assert.doesNotThrow(() => validateArchiveSelection([
-    { path: "src", kind: "directory" },
-    { path: "src/index.ts", kind: "file" },
-  ], ["src"]));
+  assert.doesNotThrow(() => validateArchiveSelection([{ path: "src/index.ts", kind: "file" }], ["src/index.ts"]));
+  assert.throws(
+    () => validateArchiveSelection([{ path: "src", kind: "directory" }, { path: "src/index.ts", kind: "file" }], ["src"]),
+    /authoritative archive enumeration/,
+  );
   assert.throws(
     () => assertNoSelectedSymlinks([{ path: "src/config", kind: "symlink" }], ["src"]),
     /src\/config.*unsafe/,
@@ -429,6 +432,15 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     { maxCompressedBytes: 10, maxExpandedBytes: 20, maxMembers: 2 },
     { compressedBytes: 10, expandedBytes: 20, memberCount: 2 },
   ));
+  assert.throws(() => assertArchiveMeasurements({} as ArchiveLimits, { compressedBytes: 10, expandedBytes: 20, memberCount: 2 }), /limits/);
+  assert.throws(() => assertArchiveMeasurements(
+    { maxCompressedBytes: 10, maxExpandedBytes: 20 } as ArchiveLimits,
+    { compressedBytes: 10, expandedBytes: 20, memberCount: 2 },
+  ), /limits/);
+  assert.throws(() => assertArchiveMeasurements(
+    { maxCompressedBytes: 10, maxExpandedBytes: 20, maxMembers: 2 },
+    {} as ArchiveMeasurements,
+  ), /measurements/);
   assert.throws(() => assertArchiveMeasurements(
     { maxCompressedBytes: 10, maxExpandedBytes: 20, maxMembers: 1 },
     { compressedBytes: 10, expandedBytes: 20, memberCount: 2 },
