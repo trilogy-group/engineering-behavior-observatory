@@ -31,6 +31,7 @@ export type ArchiveMeasurements = {
 
 export const MAX_CONFIGURATION_BYTES = 1_048_576;
 const MAX_ARCHIVE_PATH_COMPONENTS = 64;
+const MAX_ARCHIVE_PATH_LENGTH = 960;
 
 export type TaskCondition = {
   packetRef: {
@@ -289,8 +290,8 @@ function openBundleRegularFile(bundleRoot: string, locator: string, label: strin
     if (!isContained(resolvedRoot, selectedPath) || entry.isSymbolicLink()) {
       throw new Error(`${label} "${locator}" escapes its bundle root.`);
     }
-    if (index === segments.length - 1 && !entry.isFile()) {
-      throw new Error(`${label} "${locator}" is not a regular file.`);
+    if (index === segments.length - 1 && (!entry.isFile() || entry.nlink > 1)) {
+      throw new Error(`${label} "${locator}" is not an isolated regular file.`);
     }
   }
 
@@ -495,7 +496,7 @@ function isSafeArchiveMemberPath(path: string): boolean {
   const segments = path.split("/");
 
   return path === posix.normalize(path)
-    && path.length <= 1024
+    && path.length <= MAX_ARCHIVE_PATH_LENGTH
     && /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[A-Za-z0-9._-][A-Za-z0-9._\/-]*$/.test(path)
     && segments.length <= MAX_ARCHIVE_PATH_COMPONENTS
     && !segments.some((segment) => segment.length > 255 || segment.endsWith(".") || segment.toLowerCase() === ".git"

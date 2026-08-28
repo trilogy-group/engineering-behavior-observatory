@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -33,6 +33,7 @@ const addFormats = formats.default as unknown as (instance: Ajv2020) => void;
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const longRelativePath = Array.from({ length: 513 }, () => "a").join("/");
+const rootReservedPath = "a".repeat(961);
 const tooDeepRelativePath = Array.from({ length: 65 }, () => "a").join("/");
 const fixture = (name: string): unknown =>
   JSON.parse(readFileSync(join(repositoryRoot, "tests", "fixtures", name), "utf8"));
@@ -268,6 +269,10 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   (((tooLongAggregateInclude.agentInput as Document).fixture as Document).materializer as Document).includePaths = [longRelativePath];
   expectInvalid(validate, tooLongAggregateInclude, "includePaths");
 
+  const rootReservedInclude = structuredClone(admitted) as Document;
+  (((rootReservedInclude.agentInput as Document).fixture as Document).materializer as Document).includePaths = [rootReservedPath];
+  expectInvalid(validate, rootReservedInclude, "includePaths");
+
   const tooDeepInclude = structuredClone(admitted) as Document;
   (((tooDeepInclude.agentInput as Document).fixture as Document).materializer as Document).includePaths = [tooDeepRelativePath];
   expectInvalid(validate, tooDeepInclude, "includePaths");
@@ -390,6 +395,7 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
   ), /case-inconsistent ancestor/);
   assert.throws(() => assertNoSelectedSymlinks([{ path: `src/${"a".repeat(256)}`, kind: "file" }], ["src"]), /unsafe/);
   assert.throws(() => assertNoSelectedSymlinks([{ path: longRelativePath, kind: "file" }], [longRelativePath]), /unsafe/);
+  assert.throws(() => assertNoSelectedSymlinks([{ path: rootReservedPath, kind: "file" }], [rootReservedPath]), /unsafe/);
   assert.throws(() => assertNoSelectedSymlinks([{ path: tooDeepRelativePath, kind: "file" }], [tooDeepRelativePath]), /unsafe/);
   assert.throws(() => assertNoSelectedSymlinks(
     [{ path: "src/config.ts", kind: "file" }],
@@ -443,6 +449,7 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
 
 test("configuration references stay inside the bundle without following links", () => {
   const bundleRoot = mkdtempSync(join(tmpdir(), "ebo-contracts-"));
+  const outsideRoot = mkdtempSync(join(tmpdir(), "ebo-contracts-outside-"));
   const configurationPath = join(bundleRoot, "models", "model-a.json");
   const archivePath = join(bundleRoot, "fixtures", "task.tar.gz");
   const archiveReference = {
@@ -459,6 +466,9 @@ test("configuration references stay inside the bundle without following links", 
     mkdirSync(join(bundleRoot, "fixtures"));
     writeFileSync(configurationPath, "{}");
     writeFileSync(archivePath, "archive");
+    const outsideConfiguration = join(outsideRoot, "configuration.json");
+    writeFileSync(outsideConfiguration, "{}");
+    linkSync(outsideConfiguration, join(bundleRoot, "models", "hardlink.json"));
     const verifiedConfiguration = resolveBundleConfiguration(bundleRoot, configurationReference);
     assert.deepEqual(verifiedConfiguration, Buffer.from("{}"));
     writeFileSync(configurationPath, "changed");
@@ -484,10 +494,12 @@ test("configuration references stay inside the bundle without following links", 
     assert.throws(() => resolveTaskArchive(bundleRoot, { ...archiveReference, locator: "fixtures/escaped.tar.gz" }, 7), /escapes/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models/./model-a.json" }), /unsafe/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models/NUL.json" }), /unsafe/);
+    assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models/hardlink.json" }), /isolated regular file/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models/.git/model.json" }), /unsafe/);
-    assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models" }), /not a regular file/);
+    assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models" }), /not an isolated regular file/);
   } finally {
     rmSync(bundleRoot, { force: true, recursive: true });
+    rmSync(outsideRoot, { force: true, recursive: true });
   }
 });
 
