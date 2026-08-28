@@ -22,7 +22,7 @@
     "budgetDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
     "toolPolicyDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
   },
-  "terminal": { "state": "completed", "failureClass": "none", "stopReason": "none" },
+  "terminal": { "state": "completed", "failureClass": "none", "stopReason": "none", "workspaceArtifactId": "workspace" },
   "evidence": [
     {
       "id": "session",

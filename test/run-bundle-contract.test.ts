@@ -182,7 +182,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
         errors.push(`/evidence/${String(descriptor.id)} contradicts the manifest terminal outcome`);
       }
       verifierStatuses.push(report.status);
-      if (report.status === "passed" || report.status === "failed") {
+      if (report.workspace !== undefined) {
         verifierWorkspaceBindings.push({ status: report.status, workspace: report.workspace as JsonObject });
       }
       continue;
@@ -230,17 +230,40 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   }
   const captureReport = [...artifacts.entries()]
     .find(([artifactId]) => (evidence as JsonObject[]).some((descriptor) =>
-      descriptor.id === artifactId && descriptor.kind === "capture-report",
+      descriptor.id === artifactId && descriptor.kind === "capture-report"
+        && !["partner", "public"].includes(String(descriptor.sharingClass)),
     ))?.[1];
   const outcomeStatus = (captureReport?.capabilities as JsonObject | undefined)?.outcome as JsonObject | undefined;
   const workspaceDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "workspace");
+  const terminalWorkspace = typeof terminal.workspaceArtifactId === "string"
+    ? workspaceDescriptors.find((descriptor) => descriptor.id === terminal.workspaceArtifactId)
+    : undefined;
+  if ((terminal.state === "completed" || (terminal.state === "failed" && terminal.failureClass === "task"))
+      && terminalWorkspace === undefined) {
+    errors.push("/terminal/workspaceArtifactId must reference retained workspace evidence");
+  }
+  const bindingMatches = (binding: { workspace: JsonObject }, workspace: JsonObject | undefined) => workspace !== undefined
+    && workspace.id === binding.workspace.artifactId
+    && JSON.stringify(workspace.digest) === JSON.stringify(binding.workspace.digest);
   const bindingMatchesWorkspace = (binding: { workspace: JsonObject }) => workspaceDescriptors.some((descriptor) =>
-    descriptor.id === binding.workspace.artifactId && JSON.stringify(descriptor.digest) === JSON.stringify(binding.workspace.digest),
+    bindingMatches(binding, descriptor),
   );
   if (workspaceDescriptors.length > 0 && verifierWorkspaceBindings.some((binding) => !bindingMatchesWorkspace(binding))) {
     errors.push("/verifier workspace binding does not match retained workspace evidence");
   }
-  const hasOutcomeWorkspace = verifierWorkspaceBindings.some(bindingMatchesWorkspace);
+  const hasOutcomeWorkspace = verifierWorkspaceBindings.some((binding) =>
+    (binding.status === "passed" || binding.status === "failed") && bindingMatches(binding, terminalWorkspace),
+  );
+  if (terminal.state === "completed" && !verifierWorkspaceBindings.some((binding) =>
+    binding.status === "passed" && bindingMatches(binding, terminalWorkspace),
+  )) {
+    errors.push("/terminal outcome requires a passed verifier bound to the terminal workspace");
+  }
+  if (terminal.state === "failed" && terminal.failureClass === "task" && !verifierWorkspaceBindings.some((binding) =>
+    binding.status === "failed" && bindingMatches(binding, terminalWorkspace),
+  )) {
+    errors.push("/terminal outcome requires a failed verifier bound to the terminal workspace");
+  }
   if (outcomeStatus?.status === "available" && !hasOutcomeWorkspace) {
     errors.push("/capture-report/outcome requires retained workspace and an executed verifier");
   }
@@ -407,6 +430,25 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
   assert.deepEqual(schemaErrors(schemaId, sanitizedPublicManifest), []);
   assert.doesNotThrow(() => assertExportSafe(sanitizedPublicManifest, sanitizedPublicExport));
 
+  const sanitizedCaptureManifest = structuredClone(manifest);
+  const sourceCapture = (sanitizedCaptureManifest.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "capture-report",
+  )!;
+  (sanitizedCaptureManifest.evidence as JsonObject[]).push({
+    ...sourceCapture,
+    id: "sanitized-capture-report",
+    source: "ebo-sanitizer",
+    sharingClass: "public",
+    relativePath: "sanitized/capture-report.json",
+    digest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    sizeBytes: sourceCapture.sizeBytes as number + 1,
+    sanitizedFrom: { artifactId: sourceCapture.id, digest: sourceCapture.digest },
+  });
+  const sanitizedCaptureExport = structuredClone(publicRestricted);
+  sanitizedCaptureExport.artifactIds = ["sanitized-capture-report"];
+  assert.deepEqual(schemaErrors(schemaId, sanitizedCaptureManifest), []);
+  assert.doesNotThrow(() => assertExportSafe(sanitizedCaptureManifest, sanitizedCaptureExport));
+
   const reclassifiedPublicManifest = structuredClone(sanitizedPublicManifest);
   const reclassifiedSession = (reclassifiedPublicManifest.evidence as JsonObject[]).find(
     (descriptor) => descriptor.id === "sanitized-session",
@@ -553,12 +595,31 @@ test("rejects contradictory and incomplete contract records", () => {
     ["error-verifier", verifierError],
   ]));
 
+  const completedWithMismatchedError = structuredClone(completedWithIndependentError);
+  const mismatchedErrorVerifier = structuredClone(verifierError);
+  (mismatchedErrorVerifier.workspace as JsonObject).digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+  assertContractInvalid(completedWithMismatchedError, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", completeVerifier],
+    ["error-verifier", mismatchedErrorVerifier],
+  ]));
+
   const verifierWithOtherWorkspace = structuredClone(completeVerifier);
   (verifierWithOtherWorkspace.workspace as JsonObject).digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
   assertContractInvalid(complete, new Map([
     ["capture-report", completeCaptureReport],
     ["verifier", verifierWithOtherWorkspace],
   ]));
+
+  const terminalWorkspaceMismatch = structuredClone(complete);
+  (terminalWorkspaceMismatch.evidence as JsonObject[]).push({
+    ...((terminalWorkspaceMismatch.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "workspace")!),
+    id: "workspace-later",
+    relativePath: "workspace-later.patch",
+    digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  });
+  (terminalWorkspaceMismatch.terminal as JsonObject).workspaceArtifactId = "workspace-later";
+  assertContractInvalid(terminalWorkspaceMismatch, completeArtifacts);
 
   const taskFailureWithMismatchedVerifier = structuredClone(complete);
   taskFailureWithMismatchedVerifier.terminal = { state: "failed", failureClass: "task", stopReason: "none" };
@@ -595,6 +656,16 @@ test("rejects contradictory and incomplete contract records", () => {
   ];
   assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, reorderedMissingEvidence), []);
   assertContractInvalid(interrupted, new Map([["capture-report", reorderedMissingEvidence]]));
+
+  const mixedSemanticReasons = structuredClone(interruptedReport);
+  (mixedSemanticReasons.capabilities as JsonObject).semantic = { status: "missing" };
+  mixedSemanticReasons.missingEvidence = [
+    { kind: "hooks", reason: "unsupported", affects: ["semantic"] },
+    { kind: "session", reason: "not-checked", affects: ["semantic"] },
+    { kind: "telemetry", reason: "not-checked", affects: ["timing-resource"] },
+    { kind: "workspace-and-verifier", reason: "process-interrupted", affects: ["outcome"] },
+  ];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, mixedSemanticReasons), []);
 
   assert.doesNotThrow(() => assertContractInvalid({ evidence: [] }));
 
@@ -856,7 +927,7 @@ test("rejects contradictory and incomplete contract records", () => {
 
   const unsupportedReasonWithMissingStatus = structuredClone(telemetryReport);
   (unsupportedReasonWithMissingStatus.missingEvidence as JsonObject[])[0].reason = "unsupported";
-  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, unsupportedReasonWithMissingStatus), []);
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, unsupportedReasonWithMissingStatus), []);
 
   const unsupportedStatusWithoutReason = structuredClone(telemetryReport);
   ((unsupportedStatusWithoutReason.capabilities as JsonObject).timingResource as JsonObject).status = "unsupported";
@@ -868,7 +939,7 @@ test("rejects contradictory and incomplete contract records", () => {
 
   const notCheckedStatusWithoutReason = structuredClone(interruptedReport);
   ((notCheckedStatusWithoutReason.capabilities as JsonObject).timingResource as JsonObject).status = "missing";
-  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, notCheckedStatusWithoutReason), []);
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, notCheckedStatusWithoutReason), []);
 
   const nonJsonVerifierDescriptor = structuredClone(complete);
   ((nonJsonVerifierDescriptor.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "verifier")!).mediaType = "text/plain";
@@ -911,7 +982,7 @@ test("rejects contradictory and incomplete contract records", () => {
   assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, duplicateMissingEvidence), []);
 
   const budgetStopped = structuredClone(complete);
-  budgetStopped.terminal = { state: "stopped", failureClass: "none", stopReason: "budget" };
+  budgetStopped.terminal = { state: "stopped", failureClass: "none", stopReason: "budget", workspaceArtifactId: "workspace" };
   assertContractValid(budgetStopped, completeArtifacts);
 
   const invalidStopped = structuredClone(budgetStopped);
