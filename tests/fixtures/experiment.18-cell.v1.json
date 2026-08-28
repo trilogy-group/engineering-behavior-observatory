@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "ebo.experiment/v1",
+  "id": "generic-18-cell",
+  "taskSet": {
+    "task-a": { "packetRef": { "locator": "packets/task-a.json", "digest": { "algorithm": "sha256", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } } },
+    "task-b": { "packetRef": { "locator": "packets/task-b.json", "digest": { "algorithm": "sha256", "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } } },
+    "task-c": { "packetRef": { "locator": "packets/task-c.json", "digest": { "algorithm": "sha256", "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" } } }
+  },
+  "modelSet": {
+    "model-a": { "configurationRef": { "locator": "models/model-a.json", "digest": { "algorithm": "sha256", "value": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" } } },
+    "model-b": { "configurationRef": { "locator": "models/model-b.json", "digest": { "algorithm": "sha256", "value": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" } } }
+  },
+  "harnessSet": {
+    "harness-a": {
+      "configurationRef": { "locator": "harnesses/harness-a.json", "digest": { "algorithm": "sha256", "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" } },
+      "nativeLimitsRef": { "locator": "harnesses/harness-a-limits.json", "digest": { "algorithm": "sha256", "value": "1111111111111111111111111111111111111111111111111111111111111111" } },
+      "nativeToolPolicyRef": { "locator": "harnesses/harness-a-tools.json", "digest": { "algorithm": "sha256", "value": "2222222222222222222222222222222222222222222222222222222222222222" } }
+    }
+  },
+  "trialCount": 3,
+  "ordering": {
+    "seed": "matrix-seed-1",
+    "strategy": "permuted",
+    "permutationAlgorithmRef": {
+      "locator": "algorithms/ebo-permutation-fisher-yates-v1.json",
+      "digest": { "algorithm": "sha256", "value": "4444444444444444444444444444444444444444444444444444444444444444" }
+    }
+  },
+  "coordinatorBudget": { "maxWallClockMs": 300000 },
+  "captureProfile": {
+    "locator": "capture-profiles/native-minimum.json",
+    "digest": { "algorithm": "sha256", "value": "3333333333333333333333333333333333333333333333333333333333333333" }
+  }
+}

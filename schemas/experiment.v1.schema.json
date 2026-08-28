@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ebo.dev/schemas/experiment.v1.schema.json",
+  "title": "EBO experiment v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "taskSet",
+    "modelSet",
+    "harnessSet",
+    "trialCount",
+    "ordering",
+    "coordinatorBudget",
+    "captureProfile"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "ebo.experiment/v1" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "taskSet": { "$ref": "#/$defs/taskConditionSet" },
+    "modelSet": { "$ref": "#/$defs/conditionSet" },
+    "harnessSet": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
+      "additionalProperties": { "$ref": "#/$defs/harnessCondition" }
+    },
+    "trialCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "ordering": { "$ref": "#/$defs/ordering" },
+    "coordinatorBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxWallClockMs"],
+      "properties": {
+        "maxWallClockMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        }
+      }
+    },
+    "captureProfile": { "$ref": "#/$defs/configurationReference" }
+  },
+  "$defs": {
+    "digest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "value": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "configurationReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["locator", "digest"],
+      "properties": {
+        "locator": {
+          "type": "string",
+          "maxLength": 960,
+          "pattern": "^(?!(?:[^/]+/){64})(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*(?:^|/)\\.[Gg][Ii][Tt](?:/|$))(?!.*(?:^|/)[^/]{256})(?!.*(?:^|/)[^/]*\\.(?:/|$))(?!.*(?:^|/)(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.[^/]*)?(?:/|$))(?!.*/$)[A-Za-z0-9][A-Za-z0-9._/-]*$"
+        },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "taskCondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["packetRef"],
+      "properties": {
+        "packetRef": { "$ref": "#/$defs/configurationReference" }
+      }
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["configurationRef"],
+      "properties": {
+        "configurationRef": { "$ref": "#/$defs/configurationReference" }
+      }
+    },
+    "conditionSet": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
+      "additionalProperties": { "$ref": "#/$defs/condition" }
+    },
+    "taskConditionSet": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
+      "additionalProperties": { "$ref": "#/$defs/taskCondition" }
+    },
+    "conditionIdList": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" }
+    },
+    "ordering": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["seed", "strategy", "permutationAlgorithmRef"],
+          "properties": {
+            "seed": { "type": "string", "minLength": 1 },
+            "strategy": { "const": "permuted" },
+            "permutationAlgorithmRef": { "$ref": "#/$defs/configurationReference" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["seed", "strategy", "declaredOrder"],
+          "properties": {
+            "seed": { "type": "string", "minLength": 1 },
+            "strategy": { "const": "declared" },
+            "declaredOrder": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["taskIds", "modelIds", "harnessIds"],
+              "properties": {
+                "taskIds": { "$ref": "#/$defs/conditionIdList" },
+                "modelIds": { "$ref": "#/$defs/conditionIdList" },
+                "harnessIds": { "$ref": "#/$defs/conditionIdList" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "harnessCondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["configurationRef", "nativeLimitsRef", "nativeToolPolicyRef"],
+      "properties": {
+        "configurationRef": { "$ref": "#/$defs/configurationReference" },
+        "nativeLimitsRef": { "$ref": "#/$defs/configurationReference" },
+        "nativeToolPolicyRef": { "$ref": "#/$defs/configurationReference" }
+      }
+    }
+  }
+}

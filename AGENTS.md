@@ -48,7 +48,6 @@ or implement beyond the assigned issue.
   universal JSON-RPC broker, dynamic plugin host, trained classifier, hosted
   Atlas, Python/TypeScript capture shim, or Rust component without a later issue
   backed by measured need.
-- Do not introduce Codex as a candidate harness or roadmap item.
 
 ## Implementation defaults
 
@@ -86,5 +85,4 @@ Treat behavior changes without a runnable check as incomplete. Keep the durable
 review guide in `.agents/skills/custom-codereview-guide.md` aligned with these
 priorities.
 
-Do not create branches with the `codex/` prefix. Use semantic prefixes such as
-`feat/`, `fix/`, `docs/`, `chore/`, `refactor/`, or `test/`.
+Use semantic branch prefixes such as `feat/`, `fix/`, `docs/`, `chore/`, `refactor/`, or `test/`.
