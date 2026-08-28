@@ -1,0 +1,67 @@
+[
+  {
+    "field": "digest",
+    "operation": "remove",
+    "path": ["taskSet", "task-a", "packetRef", "digest"]
+  },
+  {
+    "field": "taskSet",
+    "operation": "replace",
+    "path": ["taskSet"],
+    "value": [
+      { "id": "task-a", "configurationRef": "packets/task-a.json" },
+      { "id": "task-a", "configurationRef": "packets/task-a.json" }
+    ]
+  },
+  {
+    "field": "nativeLimitsRef",
+    "operation": "remove",
+    "path": ["harnessSet", "harness-a", "nativeLimitsRef"]
+  },
+  {
+    "field": "nativeToolPolicyRef",
+    "operation": "remove",
+    "path": ["harnessSet", "harness-a", "nativeToolPolicyRef"]
+  },
+  {
+    "field": "toolPolicy",
+    "operation": "replace",
+    "path": ["toolPolicy"],
+    "value": { "mode": "allowlist", "tools": ["shell"] }
+  },
+  {
+    "field": "captureProfile",
+    "operation": "replace",
+    "path": ["captureProfile"],
+    "value": { "id": "missing-profile", "contentCapture": false }
+  },
+  {
+    "field": "permutationAlgorithmRef",
+    "operation": "remove",
+    "path": ["ordering", "permutationAlgorithmRef"]
+  },
+  {
+    "field": "locator",
+    "operation": "replace",
+    "path": ["captureProfile", "locator"],
+    "value": "/private/capture-profile.json"
+  },
+  {
+    "field": "locator",
+    "operation": "replace",
+    "path": ["modelSet", "model-a", "configurationRef", "locator"],
+    "value": "https://example.test/model.json"
+  },
+  {
+    "field": "trialCount",
+    "operation": "replace",
+    "path": ["trialCount"],
+    "value": 9007199254740992
+  },
+  {
+    "field": "maxWallClockMs",
+    "operation": "replace",
+    "path": ["coordinatorBudget", "maxWallClockMs"],
+    "value": 9007199254740992
+  }
+]

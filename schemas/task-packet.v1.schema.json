@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ebo.dev/schemas/task-packet.v1.schema.json",
+  "title": "EBO task packet v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "agentInput",
+    "provenance",
+    "controlledPerturbation",
+    "sharing",
+    "admission",
+    "restricted"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "ebo.task-packet/v1" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "agentInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prompt", "fixture"],
+      "properties": {
+        "prompt": { "type": "string", "pattern": ".*\\S.*" },
+        "fixture": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "materializer"],
+          "properties": {
+            "source": { "$ref": "#/$defs/safeSource" },
+            "materializer": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "destination", "includePaths"],
+              "properties": {
+                "kind": { "const": "verified-archive-literal-paths-no-links-v1" },
+                "destination": { "const": "workspace" },
+                "includePaths": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "maxLength": 960,
+                    "pattern": "^(?!/)(?!(?:[^/]+/){64})(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*(?:^|/)\\.[Gg][Ii][Tt](?:/|$))(?!.*(?:^|/)[^/]{256})(?!.*(?:^|/)[^/]*\\.(?:/|$))(?!.*(?:^|/)(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.[^/]*)?(?:/|$))(?!.*/$)[A-Za-z0-9._/-]+$"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositoryUrl", "revision", "license"],
+      "properties": {
+        "repositoryUrl": {
+          "type": "string",
+          "format": "uri",
+"pattern": "^https://(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*|\\[(?:(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}|(?:[0-9A-Fa-f]{1,4}:){1,7}:|(?:[0-9A-Fa-f]{1,4}:){1,6}:[0-9A-Fa-f]{1,4}|(?:[0-9A-Fa-f]{1,4}:){1,5}(?::[0-9A-Fa-f]{1,4}){1,2}|(?:[0-9A-Fa-f]{1,4}:){1,4}(?::[0-9A-Fa-f]{1,4}){1,3}|(?:[0-9A-Fa-f]{1,4}:){1,3}(?::[0-9A-Fa-f]{1,4}){1,4}|(?:[0-9A-Fa-f]{1,4}:){1,2}(?::[0-9A-Fa-f]{1,4}){1,5}|[0-9A-Fa-f]{1,4}:(?:(?::[0-9A-Fa-f]{1,4}){1,6})|:(?:(?::[0-9A-Fa-f]{1,4}){1,7}|:)|(?:(?:[0-9A-Fa-f]{1,4}:){6}|::(?:[0-9A-Fa-f]{1,4}:){0,4}|(?:[0-9A-Fa-f]{1,4}:){1,5}:)(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9]))\\])(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*(?:\\.git)?$",
+          "not": { "pattern": "/\\.\\.?(?:/|$)" }
+        },
+        "revision": { "type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$" },
+        "license": { "type": "string", "pattern": ".*\\S.*" }
+      }
+    },
+    "controlledPerturbation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reference"],
+          "properties": {
+            "reference": { "$ref": "#/$defs/artifactReference" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": { "enum": ["not-applied", "unsupported"] }
+          }
+        }
+      ]
+    },
+    "sharing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification"],
+      "properties": {
+        "classification": { "enum": ["open", "restricted", "internal"] }
+      }
+    },
+    "admission": { "$ref": "#/$defs/admission" },
+    "restricted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["referenceSolution", "verifier"],
+      "properties": {
+        "referenceSolution": {
+          "oneOf": [
+            { "$ref": "#/$defs/restrictedReference" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status"],
+              "properties": {
+                "status": { "enum": ["not-provided", "unsupported"] }
+              }
+            }
+          ]
+        },
+        "verifier": { "$ref": "#/$defs/restrictedReference" }
+      }
+    }
+  },
+  "$defs": {
+    "admission": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "review"],
+          "properties": {
+            "status": { "const": "proposed" },
+            "review": { "const": null }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "review"],
+          "properties": {
+            "status": { "enum": ["admitted", "rejected"] },
+            "review": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["reviewedAt", "reviewedBy", "reviewRecord"],
+              "properties": {
+                "reviewedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])[Tt](?:[01][0-9]|2[0-3]):[0-5][0-9]:(?:[0-5][0-9]|60)(?:\\.[0-9]+)?(?:[Zz]|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$"
+                },
+                "reviewedBy": { "type": "string", "pattern": ".*\\S.*" },
+                "reviewRecord": { "$ref": "#/$defs/restrictedReference" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "digest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "value": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "safeSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "format", "limits", "locator", "digest"],
+      "properties": {
+        "kind": { "const": "sanitized-archive" },
+        "format": { "const": "tar-gzip-v1" },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxCompressedBytes", "maxExpandedBytes", "maxMembers"],
+          "properties": {
+            "maxCompressedBytes": { "type": "integer", "minimum": 1, "maximum": 104857600 },
+            "maxExpandedBytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
+            "maxMembers": { "type": "integer", "minimum": 1, "maximum": 100000 }
+          }
+        },
+        "locator": {
+          "type": "string",
+          "maxLength": 960,
+          "pattern": "^(?!/)(?!(?:[^/]+/){64})(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*(?:^|/)\\.[Gg][Ii][Tt](?:/|$))(?!.*(?:^|/)[^/]{256})(?!.*(?:^|/)[^/]*\\.(?:/|$))(?!.*(?:^|/)(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.[^/]*)?(?:/|$))(?!.*://)(?!.*@)(?!.*/$)[A-Za-z0-9][A-Za-z0-9._/-]*$"
+        },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "artifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["locator", "digest"],
+      "properties": {
+        "locator": {
+          "type": "string",
+          "maxLength": 960,
+          "pattern": "^(?!(?:[^/]+/){64})(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*(?:^|/)\\.[Gg][Ii][Tt](?:/|$))(?!.*(?:^|/)[^/]{256})(?!.*(?:^|/)[^/]*\\.(?:/|$))(?!.*(?:^|/)(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.[^/]*)?(?:/|$))(?!.*/$)[A-Za-z0-9][A-Za-z0-9._/-]*$"
+        },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "restrictedReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["locator", "digest"],
+      "properties": {
+        "locator": { "type": "string", "pattern": ".*\\S.*" },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    }
+  }
+}
