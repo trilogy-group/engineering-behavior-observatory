@@ -137,7 +137,7 @@ export function* declaredMatrixCells(
 export function assertNoSelectedSymlinks(
   entries: readonly ArchiveEntry[],
   includePaths: readonly string[],
-  archiveEntries: readonly ArchiveEntry[],
+  archiveEntries: readonly ArchiveEntry[] = entries,
 ): void {
   const archiveByPath = new Map<string, string>();
   const destinations = new Map<string, string>();

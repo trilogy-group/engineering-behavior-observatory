@@ -318,6 +318,10 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     { path: "src", kind: "directory" },
     { path: "src/index.ts", kind: "file" },
   ], ["src"]));
+  assert.doesNotThrow(() => validateArchiveSelection([
+    { path: "src", kind: "directory" },
+    { path: "src/index.ts", kind: "file" },
+  ], ["src"]));
   assert.throws(
     () => assertNoSelectedSymlinks([{ path: "src/config", kind: "symlink" }], ["src"]),
     /src\/config.*unsafe/,
