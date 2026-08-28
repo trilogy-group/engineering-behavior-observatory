@@ -367,6 +367,7 @@ function assertSanitizedProvenance(
     assert.deepEqual(sourceDescriptor.nativeReference ?? null, current.nativeReference ?? null, "sanitized provenance must preserve native reference");
     assert.deepEqual(sourceDescriptor.digest, sanitizedFrom.digest, "sanitized provenance must bind the source digest");
     assert.notDeepEqual(sourceDescriptor.digest, current.digest, "sanitized provenance must change bytes");
+    assert.notDeepEqual(sourceDescriptor.digest, descriptor.digest, "sanitized provenance cannot restore an ancestor's bytes");
     assert.notEqual(sourceDescriptor.relativePath, current.relativePath, "sanitized artifact must have a distinct retained path");
     seen.add(sourceId);
     if (sourceDescriptor.sanitizedFrom === undefined) return;
@@ -501,6 +502,33 @@ test("blocks a ready partner export that lists restricted source artifacts", () 
   )!;
   reidentifiedSession.nativeReference = { type: "session", id: "other-session" };
   assert.throws(() => assertExportSafe(reidentifiedPublicManifest, sanitizedPublicExport), /preserve native reference/);
+
+  const restoredPublicManifest = structuredClone(manifest);
+  const restrictedSession = (restoredPublicManifest.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "session")!;
+  const intermediateDigest = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+  (restoredPublicManifest.evidence as JsonObject[]).push(
+    {
+      ...restrictedSession,
+      id: "sanitized-intermediate-session",
+      source: "ebo-sanitizer",
+      sharingClass: "partner",
+      relativePath: "sanitized/intermediate-session.jsonl",
+      digest: intermediateDigest,
+      sizeBytes: restrictedSession.sizeBytes as number + 1,
+      sanitizedFrom: { artifactId: restrictedSession.id, digest: restrictedSession.digest },
+    },
+    {
+      ...restrictedSession,
+      id: "restored-public-session",
+      source: "ebo-sanitizer",
+      sharingClass: "public",
+      relativePath: "sanitized/restored-session.jsonl",
+      sanitizedFrom: { artifactId: "sanitized-intermediate-session", digest: intermediateDigest },
+    },
+  );
+  const restoredPublicExport = structuredClone(publicRestricted);
+  restoredPublicExport.artifactIds = ["restored-public-session"];
+  assert.throws(() => assertExportSafe(restoredPublicManifest, restoredPublicExport), /restore an ancestor/);
 
   const cyclicPublicManifest = structuredClone(manifest);
   const cyclicSource = (cyclicPublicManifest.evidence as JsonObject[])[0]!;
