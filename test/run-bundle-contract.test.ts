@@ -81,6 +81,25 @@ function schemaErrors(reference: string, value: unknown): string[] {
     );
 }
 
+function sourceDescriptor(
+  descriptor: JsonObject,
+  evidenceById: ReadonlyMap<unknown, JsonObject>,
+): JsonObject | undefined {
+  const seen = new Set([String(descriptor.id)]);
+  let current = descriptor;
+
+  while (current.sanitizedFrom !== undefined) {
+    const sourceId = String((current.sanitizedFrom as JsonObject).artifactId);
+    if (seen.has(sourceId)) return undefined;
+    const source = evidenceById.get(sourceId);
+    if (source === undefined) return undefined;
+    seen.add(sourceId);
+    current = source;
+  }
+
+  return current;
+}
+
 function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonObject>()): string[] {
   const errors = schemaErrors(schemaId, manifest);
   if (errors.length > 0) {
@@ -152,7 +171,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   const sessionDescriptors = sourceEvidence.filter((descriptor) => descriptor.kind === "session");
   const telemetryDescriptors = sourceEvidence.filter((descriptor) => descriptor.kind === "telemetry");
   const verifierStatuses: unknown[] = [];
-  const verifierWorkspaceBindings: Array<{ status: unknown; workspace: JsonObject; source: boolean }> = [];
+  const verifierWorkspaceBindings: Array<{ status: unknown; workspace: JsonObject; source: boolean; descriptor: JsonObject }> = [];
 
   if (declaredSessionId !== undefined && !sessionDescriptors.some((descriptor) =>
         ((descriptor.nativeReference as JsonObject | undefined)?.type) === "session"
@@ -208,6 +227,14 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     }
 
     if (descriptor.kind === "verifier") {
+      if (descriptor.sanitizedFrom !== undefined) {
+        const sourceVerifier = sourceDescriptor(descriptor, evidenceById);
+        const sourceResult = sourceVerifier === undefined ? undefined : artifacts.get(String(sourceVerifier.id));
+
+        if (sourceResult === undefined || sourceResult.status !== report.status) {
+          errors.push(`/evidence/${String(descriptor.id)} does not preserve its source verifier outcome`);
+        }
+      }
       const assertionIds = (report.assertions as JsonObject[]).map((assertion) => assertion.id);
 
       if (new Set(assertionIds).size !== assertionIds.length) {
@@ -223,6 +250,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
           status: report.status,
           workspace: report.workspace as JsonObject,
           source: descriptor.sanitizedFrom === undefined,
+          descriptor,
         });
       }
       continue;
@@ -290,9 +318,18 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   const bindingMatches = (binding: { workspace: JsonObject }, workspace: JsonObject | undefined) => workspace !== undefined
     && workspace.id === binding.workspace.artifactId
     && JSON.stringify(workspace.digest) === JSON.stringify(binding.workspace.digest);
-  const bindingMatchesWorkspace = (binding: { workspace: JsonObject; source: boolean }) => retainedWorkspaceDescriptors.some((descriptor) =>
-    binding.source === (descriptor.sanitizedFrom === undefined) && bindingMatches(binding, descriptor),
-  );
+  const bindingMatchesWorkspace = (binding: { workspace: JsonObject; source: boolean; descriptor: JsonObject }) => {
+    const workspace = retainedWorkspaceDescriptors.find((descriptor) =>
+      binding.source === (descriptor.sanitizedFrom === undefined) && bindingMatches(binding, descriptor),
+    );
+    if (workspace === undefined || binding.source) return workspace !== undefined;
+
+    const sourceVerifier = sourceDescriptor(binding.descriptor, evidenceById);
+    const sourceResult = sourceVerifier === undefined ? undefined : artifacts.get(String(sourceVerifier.id));
+    const sourceWorkspace = sourceDescriptor(workspace, evidenceById);
+    return sourceResult?.workspace !== undefined && sourceWorkspace !== undefined
+      && bindingMatches({ workspace: sourceResult.workspace as JsonObject }, sourceWorkspace);
+  };
   if (verifierWorkspaceBindings.some((binding) => !bindingMatchesWorkspace(binding))) {
     errors.push("/verifier workspace binding does not match retained workspace evidence");
   }
@@ -757,6 +794,68 @@ test("rejects contradictory and incomplete contract records", () => {
     ["verifier", completeVerifier],
     ["sanitized-verifier", sanitizedVerifier],
   ]));
+
+  const sharedVerifierWithMismatchedWorkspace = structuredClone(sharedVerifierWithSanitizedWorkspace);
+  const otherSourceWorkspace = (sharedVerifierWithMismatchedWorkspace.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "workspace",
+  )!;
+  (sharedVerifierWithMismatchedWorkspace.evidence as JsonObject[]).push({
+    ...otherSourceWorkspace,
+    id: "other-workspace",
+    relativePath: "other-workspace.patch",
+    digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  });
+  const mismatchedSanitizedWorkspace = (sharedVerifierWithMismatchedWorkspace.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-workspace",
+  )!;
+  mismatchedSanitizedWorkspace.sanitizedFrom = { artifactId: "other-workspace", digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" };
+  assertContractInvalid(sharedVerifierWithMismatchedWorkspace, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", completeVerifier],
+    ["sanitized-verifier", sanitizedVerifier],
+  ]));
+
+  const sharedFailedVerifierWithChangedStatus = structuredClone(taskFailed);
+  const taskFailedSourceWorkspace = (sharedFailedVerifierWithChangedStatus.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "workspace",
+  )!;
+  const taskFailedSourceVerifier = (sharedFailedVerifierWithChangedStatus.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "verifier",
+  )!;
+  const taskFailedSanitizedWorkspace = {
+    ...taskFailedSourceWorkspace,
+    id: "sanitized-workspace",
+    source: "ebo-sanitizer",
+    sharingClass: "partner",
+    relativePath: "sanitized/workspace.patch",
+    digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    sizeBytes: taskFailedSourceWorkspace.sizeBytes as number + 1,
+    sanitizedFrom: { artifactId: taskFailedSourceWorkspace.id, digest: taskFailedSourceWorkspace.digest },
+  };
+  (sharedFailedVerifierWithChangedStatus.evidence as JsonObject[]).push(
+    taskFailedSanitizedWorkspace,
+    {
+      ...taskFailedSourceVerifier,
+      id: "sanitized-verifier",
+      source: "ebo-sanitizer",
+      sharingClass: "partner",
+      relativePath: "sanitized/verifier.json",
+      digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      sizeBytes: taskFailedSourceVerifier.sizeBytes as number + 1,
+      sanitizedFrom: { artifactId: taskFailedSourceVerifier.id, digest: taskFailedSourceVerifier.digest },
+    },
+  );
+  const changedStatusVerifier = structuredClone(taskFailedArtifacts.get("verifier")!);
+  changedStatusVerifier.status = "passed";
+  changedStatusVerifier.exitCode = 0;
+  changedStatusVerifier.assertions = [{ id: "example-check", status: "passed" }];
+  changedStatusVerifier.workspace = {
+    artifactId: taskFailedSanitizedWorkspace.id,
+    digest: taskFailedSanitizedWorkspace.digest,
+  };
+  const changedStatusArtifacts = new Map(taskFailedArtifacts);
+  changedStatusArtifacts.set("sanitized-verifier", changedStatusVerifier);
+  assertContractInvalid(sharedFailedVerifierWithChangedStatus, changedStatusArtifacts);
 
   const completedWithIndependentNotRun = structuredClone(completedWithIndependentError);
   const notRunVerifierDescriptor = (complete.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "verifier")!;
