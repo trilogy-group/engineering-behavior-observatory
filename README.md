@@ -70,12 +70,3 @@ the EBO product specification.
 The versioned task-packet and experiment contract surfaces are documented in
 [docs/contracts.md](docs/contracts.md).
 
-## Design sources
-
-The canonical research and design corpus is maintained in:
-
-`/Users/magos/dev/trilogy/benchmarking/Anthropic-evals/docs`
-
-The internal implementation plan is intentionally separate from partner-facing
-artifacts. Repository decisions should preserve that separation and the
-capture-before-evaluation sequence.
