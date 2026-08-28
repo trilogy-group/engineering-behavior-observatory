@@ -231,10 +231,10 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
         const sourceVerifier = evidenceById.get(String((descriptor.sanitizedFrom as JsonObject).artifactId));
         const sourceResult = sourceVerifier === undefined ? undefined : artifacts.get(String(sourceVerifier.id));
 
-        if (sourceResult === undefined || sourceResult.status !== report.status) {
+        if (sourceResult === undefined || schemaErrors(artifactSchema, sourceResult).length > 0 || sourceResult.status !== report.status) {
           errors.push(`/evidence/${String(descriptor.id)} does not preserve its source verifier outcome`);
         }
-        if (sourceResult !== undefined) {
+        if (sourceResult !== undefined && schemaErrors(artifactSchema, sourceResult).length === 0) {
           const sourceAssertions = new Map((sourceResult.assertions as JsonObject[]).map((assertion) => [assertion.id, assertion]));
           if ((report.assertions as JsonObject[]).some((assertion) => {
             const sourceAssertion = sourceAssertions.get(assertion.id);
@@ -907,6 +907,16 @@ test("rejects contradictory and incomplete contract records", () => {
   const changedStatusArtifacts = new Map(taskFailedArtifacts);
   changedStatusArtifacts.set("sanitized-verifier", changedStatusVerifier);
   assertContractInvalid(sharedFailedVerifierWithChangedStatus, changedStatusArtifacts);
+
+  const malformedSourceVerifier = structuredClone(taskFailedArtifacts.get("verifier")!);
+  delete malformedSourceVerifier.assertions;
+  const malformedSourceArtifacts = new Map(taskFailedArtifacts);
+  malformedSourceArtifacts.set("verifier", malformedSourceVerifier);
+  malformedSourceArtifacts.set("sanitized-verifier", {
+    ...taskFailedArtifacts.get("verifier")!,
+    workspace: { artifactId: taskFailedSanitizedWorkspace.id, digest: taskFailedSanitizedWorkspace.digest },
+  });
+  assert.doesNotThrow(() => assertContractInvalid(sharedFailedVerifierWithChangedStatus, malformedSourceArtifacts));
 
   const incompleteCaptureWithQualifiedDerivative = structuredClone(complete);
   const sourceCaptureDescriptor = (incompleteCaptureWithQualifiedDerivative.evidence as JsonObject[]).find(
