@@ -28,9 +28,12 @@ function assertJsonMedia(mediaType: unknown, artifact: Buffer): number {
 
   if (mediaType === "application/json") {
     const value = JSON.parse(content);
-    return Array.isArray(value)
-      ? value.filter((record) => typeof record === "object" && record !== null && !Array.isArray(record)).length
-      : typeof value === "object" && value !== null ? 1 : 0;
+    if (Array.isArray(value)) {
+      for (const record of value) assertJsonRecord(record);
+      return value.length;
+    }
+    assertJsonRecord(value);
+    return 1;
   }
   if (mediaType === "application/x-ndjson") {
     let records = 0;
@@ -38,13 +41,18 @@ function assertJsonMedia(mediaType: unknown, artifact: Buffer): number {
     for (const line of content.split(/\r?\n/)) {
       if (line.trim() !== "") {
         const record = JSON.parse(line);
-        if (typeof record === "object" && record !== null && !Array.isArray(record)) records += 1;
+        assertJsonRecord(record);
+        records += 1;
       }
     }
     return records;
   }
 
   return 0;
+}
+
+function assertJsonRecord(record: unknown): asserts record is JsonObject {
+  assert.ok(typeof record === "object" && record !== null && !Array.isArray(record), "retained JSON evidence records must be non-null objects");
 }
 
 function assertNativeEvidenceRecords(kind: unknown, records: number): void {
@@ -518,6 +526,12 @@ test("native JSON media is structurally inspectable", () => {
   for (const placeholder of ["null", "false", "0", "[null]"]) {
     assert.throws(() => assertNativeEvidenceRecords("session", assertJsonMedia("application/json", Buffer.from(placeholder))));
     assert.throws(() => assertNativeEvidenceRecords("session", assertJsonMedia("application/x-ndjson", Buffer.from(`${placeholder}\n`))));
+  }
+  for (const [mediaType, content] of [
+    ["application/json", '[{"event":"tool"},false]'],
+    ["application/x-ndjson", '{"event":"tool"}\nfalse\n'],
+  ]) {
+    assert.throws(() => assertJsonMedia(mediaType, Buffer.from(content)), /non-null objects/);
   }
   assert.throws(() => assertJsonMedia("application/json", Buffer.from("not json")));
   assert.throws(() => assertJsonMedia("application/x-ndjson", Buffer.from('{"event":"tool"}\nnot json\n')));
