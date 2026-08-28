@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -98,15 +99,17 @@ function expandMatrix(experiment: {
 }
 
 function admittedResolutions(taskSet: TaskConditionSet): Record<string, ResolvedTaskPacket> {
+  const preAdmissionDigest: Digest = { algorithm: "sha256", value: "1".repeat(64) };
+
   return Object.fromEntries(
     Object.entries(taskSet).map(([taskId, condition]) => [
       taskId,
       {
         digest: condition.packetRef.digest,
-        reviewedDigest: condition.packetRef.digest,
+        preAdmissionDigest,
         reviewRecordDigest: condition.packetRef.digest,
         resolvedReviewRecordDigest: condition.packetRef.digest,
-        reviewRecordReviewedDigest: condition.packetRef.digest,
+        reviewRecordPreAdmissionDigest: preAdmissionDigest,
         referenceSolutionDigest: condition.packetRef.digest,
         resolvedReferenceSolutionDigest: condition.packetRef.digest,
         verifierDigest: condition.packetRef.digest,
@@ -286,13 +289,23 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     [{ path: "src/a.ts", kind: "file" }],
     ["src"],
     [{ path: "src/a.ts", kind: "file" }, { path: "src/b.ts", kind: "file" }],
-  ), /omitted a selected entry/);
+  ), /omitted selected entry/);
+  assert.throws(() => assertNoSelectedSymlinks(
+    [{ path: "src/config", kind: "file" }],
+    ["src"],
+    [{ path: "src/config", kind: "symlink" }],
+  ), /does not match its archive member kind/);
 
   const boundaryEntries = Array.from(
     { length: 100000 },
     (_, index): ArchiveEntry => ({ path: `src/file-${index}.ts`, kind: "file" }),
   );
   assert.doesNotThrow(() => assertNoSelectedSymlinks(boundaryEntries, ["src"]));
+  assert.doesNotThrow(() => assertNoSelectedSymlinks(
+    boundaryEntries,
+    boundaryEntries.map((entry) => entry.path),
+    boundaryEntries,
+  ));
   assert.doesNotThrow(() => assertArchiveMeasurements(
     { maxCompressedBytes: 10, maxExpandedBytes: 20, maxMembers: 2 },
     { compressedBytes: 10, expandedBytes: 20, memberCount: 2 },
@@ -307,6 +320,10 @@ test("configuration references stay inside the bundle without following links", 
   const bundleRoot = mkdtempSync(join(tmpdir(), "ebo-contracts-"));
   const configurationPath = join(bundleRoot, "models", "model-a.json");
   const archivePath = join(bundleRoot, "fixtures", "task.tar.gz");
+  const archiveReference = {
+    locator: "fixtures/task.tar.gz",
+    digest: { algorithm: "sha256" as const, value: createHash("sha256").update("archive").digest("hex") },
+  };
 
   try {
     mkdirSync(join(bundleRoot, "models"));
@@ -314,12 +331,16 @@ test("configuration references stay inside the bundle without following links", 
     writeFileSync(configurationPath, "{}");
     writeFileSync(archivePath, "archive");
     assert.equal(resolveBundleConfiguration(bundleRoot, "models/model-a.json"), realpathSync(configurationPath));
-    assert.equal(resolveTaskArchive(bundleRoot, "fixtures/task.tar.gz"), realpathSync(archivePath));
+    assert.equal(resolveTaskArchive(bundleRoot, archiveReference), realpathSync(archivePath));
     assert.equal(exportedResolveBundleConfiguration, resolveBundleConfiguration);
+    assert.throws(
+      () => resolveTaskArchive(bundleRoot, { ...archiveReference, digest: { algorithm: "sha256", value: "0".repeat(64) } }),
+      /digest does not match/,
+    );
     symlinkSync("../../outside.json", join(bundleRoot, "models", "escaped.json"));
     symlinkSync("../../outside.tar.gz", join(bundleRoot, "fixtures", "escaped.tar.gz"));
     assert.throws(() => resolveBundleConfiguration(bundleRoot, "models/escaped.json"), /escapes/);
-    assert.throws(() => resolveTaskArchive(bundleRoot, "fixtures/escaped.tar.gz"), /escapes/);
+    assert.throws(() => resolveTaskArchive(bundleRoot, { ...archiveReference, locator: "fixtures/escaped.tar.gz" }), /escapes/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, "models/./model-a.json"), /unsafe/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, "models"), /not a regular file/);
   } finally {
@@ -455,10 +476,10 @@ test("task resolution accepts only matching admitted packets", () => {
 
   resolutions["task-a"] = {
     digest: { algorithm: "sha256", value: "0".repeat(64) },
-    reviewedDigest: { algorithm: "sha256", value: "0".repeat(64) },
+    preAdmissionDigest: { algorithm: "sha256", value: "0".repeat(64) },
     reviewRecordDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     resolvedReviewRecordDigest: experiment.taskSet["task-a"]!.packetRef.digest,
-    reviewRecordReviewedDigest: experiment.taskSet["task-a"]!.packetRef.digest,
+    reviewRecordPreAdmissionDigest: { algorithm: "sha256", value: "0".repeat(64) },
     referenceSolutionDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     resolvedReferenceSolutionDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     verifierDigest: experiment.taskSet["task-a"]!.packetRef.digest,
@@ -468,8 +489,11 @@ test("task resolution accepts only matching admitted packets", () => {
   assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, resolutions), /task-a.*digest/);
 
   const staleReview = admittedResolutions(experiment.taskSet);
-  staleReview["task-a"] = { ...staleReview["task-a"], digest: { algorithm: "sha256", value: "0".repeat(64) } };
-  assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, staleReview), /review does not match/);
+  staleReview["task-a"] = {
+    ...staleReview["task-a"],
+    preAdmissionDigest: { algorithm: "sha256", value: "0".repeat(64) },
+  };
+  assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, staleReview), /reviewed pre-admission packet digest/);
 
   const malformedReview = admittedResolutions(experiment.taskSet);
   malformedReview["task-a"]!.admission.reviewedAt = "2025-02-29T00:00:00Z";
@@ -488,8 +512,8 @@ test("task resolution accepts only matching admitted packets", () => {
   assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, tamperedReviewRecord), /review record digest/);
 
   const unboundReviewRecord = admittedResolutions(experiment.taskSet);
-  unboundReviewRecord["task-a"]!.reviewRecordReviewedDigest = { algorithm: "sha256", value: "0".repeat(64) };
-  assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, unboundReviewRecord), /reviewed packet digest/);
+  unboundReviewRecord["task-a"]!.reviewRecordPreAdmissionDigest = { algorithm: "sha256", value: "0".repeat(64) };
+  assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, unboundReviewRecord), /reviewed pre-admission packet digest/);
 
   const tamperedReferenceSolution = admittedResolutions(experiment.taskSet);
   tamperedReferenceSolution["task-a"]!.resolvedReferenceSolutionDigest = { algorithm: "sha256", value: "0".repeat(64) };

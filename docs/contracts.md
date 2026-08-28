@@ -50,8 +50,11 @@ taxonomy.
 
 Before scheduling, EBO requires an admitted packet's review time to be a valid
 RFC 3339 calendar timestamp and its review record, provided reference solution,
-and verifier bytes to match their pinned digests. Each declared materialization
-literal must select at least one verified archive file or directory tree.
+and verifier bytes to match their pinned digests. The review record binds the
+canonical pre-admission packet digest; the admitted packet can then hash its
+review-record reference without requiring a circular digest. Each declared
+materialization literal must select at least one verified archive file or
+directory tree.
 
 ## Experiments
 

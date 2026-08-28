@@ -1,4 +1,5 @@
-import { lstatSync, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, posix, relative, resolve, sep } from "node:path";
 
 export type Digest = {
@@ -39,10 +40,10 @@ export type TaskConditionSet = Record<string, TaskCondition>;
 
 export type ResolvedTaskPacket = {
   digest: Digest;
-  reviewedDigest: Digest | null;
+  preAdmissionDigest: Digest | null;
   reviewRecordDigest: Digest | null;
   resolvedReviewRecordDigest: Digest | null;
-  reviewRecordReviewedDigest: Digest | null;
+  reviewRecordPreAdmissionDigest: Digest | null;
   referenceSolutionDigest: Digest | null;
   resolvedReferenceSolutionDigest: Digest | null;
   verifierDigest: Digest;
@@ -119,10 +120,20 @@ export function assertNoSelectedSymlinks(
   includePaths: readonly string[],
   archiveEntries: readonly ArchiveEntry[],
 ): void {
+  const archiveByPath = new Map<string, string>();
   const destinations = new Map<string, string>();
 
   if (entries.length === 0) {
     throw new Error("No archive entries were selected.");
+  }
+
+  for (const archiveEntry of archiveEntries) {
+    const archivePath = canonicalArchiveMemberPath(archiveEntry.path).toLowerCase();
+
+    if (!isSafeArchiveMemberPath(archiveEntry.path) || archiveByPath.has(archivePath)) {
+      throw new Error(`Archive entry "${archiveEntry.path}" is unsafe or collides with another archive member.`);
+    }
+    archiveByPath.set(archivePath, archiveEntry.kind);
   }
 
   for (const entry of entries) {
@@ -135,23 +146,26 @@ export function assertNoSelectedSymlinks(
     if (destinations.has(destination)) {
       throw new Error(`Selected archive entry "${entry.path}" collides with another selected destination.`);
     }
+    if (archiveByPath.get(destination) !== entry.kind) {
+      throw new Error(`Selected archive entry "${entry.path}" does not match its archive member kind.`);
+    }
     destinations.set(destination, entry.kind);
   }
 
-  const selectedPaths = [...destinations.keys()].sort();
-  const includePathSet = new Set(includePaths.map((path) => path.toLowerCase()));
+  const archivePaths = [...archiveByPath.keys()].sort();
+  const includePathSet = new Set<string>();
 
   for (const includePath of includePaths) {
-    const canonicalIncludePath = includePath.toLowerCase();
-    if (!isSafeArchiveMemberPath(includePath) || !hasPathOrDescendant(selectedPaths, canonicalIncludePath)) {
+    const canonicalIncludePath = canonicalArchiveMemberPath(includePath).toLowerCase();
+    if (!isSafeArchiveMemberPath(includePath) || !hasPathOrDescendant(archivePaths, canonicalIncludePath)) {
       throw new Error(`Archive include path "${includePath}" selected no entries.`);
     }
-    for (const archiveEntry of archiveEntries) {
-      const archivePath = canonicalArchiveMemberPath(archiveEntry.path).toLowerCase();
-      if ((archivePath === canonicalIncludePath || archivePath.startsWith(`${canonicalIncludePath}/`))
-          && !destinations.has(archivePath)) {
-        throw new Error(`Archive include path "${includePath}" omitted a selected entry.`);
-      }
+    includePathSet.add(canonicalIncludePath);
+  }
+
+  for (const archivePath of archivePaths) {
+    if (isWithinAllowlist(archivePath, includePathSet) && !destinations.has(archivePath)) {
+      throw new Error(`Archive include path omitted selected entry "${archivePath}".`);
     }
   }
 
@@ -177,8 +191,18 @@ export function resolveBundleConfiguration(bundleRoot: string, locator: string):
   return resolveBundleRegularFile(bundleRoot, locator, "Configuration locator");
 }
 
-export function resolveTaskArchive(bundleRoot: string, locator: string): string {
-  return resolveBundleRegularFile(bundleRoot, locator, "Task archive locator");
+export function resolveTaskArchive(bundleRoot: string, source: ArtifactReference): string {
+  const archivePath = resolveBundleRegularFile(bundleRoot, source.locator, "Task archive locator");
+  const resolvedDigest: Digest = {
+    algorithm: "sha256",
+    value: createHash("sha256").update(readFileSync(archivePath)).digest("hex"),
+  };
+
+  if (source.digest.algorithm !== resolvedDigest.algorithm || source.digest.value !== resolvedDigest.value) {
+    throw new Error("Task archive digest does not match its source reference.");
+  }
+
+  return archivePath;
 }
 
 function resolveBundleRegularFile(bundleRoot: string, locator: string, label: string): string {
@@ -272,16 +296,18 @@ export function assertAdmittedTaskPackets(
     const packet = resolvedPackets[taskId]!;
 
     if (packet.admission.status === "admitted" && (
-      packet.reviewedDigest === null
-      || packet.reviewedDigest.algorithm !== packet.digest.algorithm
-      || packet.reviewedDigest.value !== packet.digest.value
+      packet.preAdmissionDigest === null
     )) {
-      throw new Error(`Task packet "${taskId}" review does not match its digest.`);
+      throw new Error(`Task packet "${taskId}" review is missing its pre-admission digest.`);
     }
     if (packet.admission.status === "admitted") {
       assertRfc3339Timestamp(packet.admission.reviewedAt);
       assertEqualDigests(`Task packet "${taskId}" review record`, packet.reviewRecordDigest, packet.resolvedReviewRecordDigest);
-      assertEqualDigests(`Task packet "${taskId}" reviewed packet`, packet.reviewedDigest, packet.reviewRecordReviewedDigest);
+      assertEqualDigests(
+        `Task packet "${taskId}" reviewed pre-admission packet`,
+        packet.preAdmissionDigest,
+        packet.reviewRecordPreAdmissionDigest,
+      );
     }
 
     if (
