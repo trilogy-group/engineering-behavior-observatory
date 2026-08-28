@@ -125,8 +125,9 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
 
   const declaredSessionId = (((manifest.run as JsonObject).native as JsonObject | undefined)?.sessionId);
   const declaredTraceId = (((manifest.run as JsonObject).native as JsonObject | undefined)?.traceId);
-  const sessionDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "session");
-  const telemetryDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "telemetry");
+  const sourceEvidence = (evidence as JsonObject[]).filter((descriptor) => descriptor.sanitizedFrom === undefined);
+  const sessionDescriptors = sourceEvidence.filter((descriptor) => descriptor.kind === "session");
+  const telemetryDescriptors = sourceEvidence.filter((descriptor) => descriptor.kind === "telemetry");
   const verifierStatuses: unknown[] = [];
   const verifierWorkspaceBindings: Array<{ status: unknown; workspace: JsonObject }> = [];
 
@@ -222,7 +223,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
       outcome: "outcome",
     })) {
       if ((capabilities[capability] as JsonObject).status === "available" &&
-          !(evidence as JsonObject[]).some((item) => item.authority === authority)) {
+          !sourceEvidence.some((item) => item.authority === authority)) {
         errors.push(`/capture-report/${capability} is available without ${authority} evidence`);
       }
       if ((capabilities[capability] as JsonObject).status === "available" && missingEffects.has(authority)) {
@@ -758,6 +759,24 @@ test("rejects contradictory and incomplete contract records", () => {
     authority: "outcome",
   });
   assertContractInvalid(authorityAlias, completeArtifacts);
+
+  for (const [authority, nativeId] of [["semantic", "sessionId"], ["timing-resource", "traceId"]] as const) {
+    const derivativeOnly = structuredClone(complete);
+    const sourceDescriptors = (derivativeOnly.evidence as JsonObject[]).filter((descriptor) => descriptor.authority === authority);
+    derivativeOnly.evidence = [
+      ...(derivativeOnly.evidence as JsonObject[]).filter((descriptor) => descriptor.authority !== authority),
+      ...sourceDescriptors.map((descriptor, index) => ({
+        ...descriptor,
+        id: `sanitized-${authority}-${index}`,
+        sharingClass: "partner",
+        relativePath: `sanitized/${authority}-${index}.json`,
+        digest: `sha256:${String(index + 1).repeat(64)}`,
+        sanitizedFrom: { artifactId: descriptor.id, digest: descriptor.digest },
+      })),
+    ];
+    delete ((derivativeOnly.run as JsonObject).native as JsonObject)[nativeId];
+    assertContractInvalid(derivativeOnly, completeArtifacts);
+  }
 
   const caseFoldedAlias = structuredClone(complete);
   (caseFoldedAlias.evidence as JsonObject[]).push({
