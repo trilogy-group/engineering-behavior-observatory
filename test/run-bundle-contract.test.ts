@@ -280,6 +280,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   }
   const outcomeStatus = (captureReport?.capabilities as JsonObject | undefined)?.outcome as JsonObject | undefined;
   const workspaceDescriptors = sourceEvidence.filter((descriptor) => descriptor.kind === "workspace");
+  const retainedWorkspaceDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "workspace");
   const terminalWorkspace = typeof terminal.workspaceArtifactId === "string"
     ? workspaceDescriptors.find((descriptor) => descriptor.id === terminal.workspaceArtifactId)
     : undefined;
@@ -289,8 +290,8 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   const bindingMatches = (binding: { workspace: JsonObject }, workspace: JsonObject | undefined) => workspace !== undefined
     && workspace.id === binding.workspace.artifactId
     && JSON.stringify(workspace.digest) === JSON.stringify(binding.workspace.digest);
-  const bindingMatchesWorkspace = (binding: { workspace: JsonObject }) => workspaceDescriptors.some((descriptor) =>
-    bindingMatches(binding, descriptor),
+  const bindingMatchesWorkspace = (binding: { workspace: JsonObject; source: boolean }) => retainedWorkspaceDescriptors.some((descriptor) =>
+    binding.source === (descriptor.sanitizedFrom === undefined) && bindingMatches(binding, descriptor),
   );
   if (verifierWorkspaceBindings.some((binding) => !bindingMatchesWorkspace(binding))) {
     errors.push("/verifier workspace binding does not match retained workspace evidence");
@@ -717,6 +718,44 @@ test("rejects contradictory and incomplete contract records", () => {
     ["capture-report", completeCaptureReport],
     ["verifier", completeVerifier],
     ["error-verifier", verifierError],
+  ]));
+
+  const sharedVerifierWithSanitizedWorkspace = structuredClone(complete);
+  const sourceWorkspace = (sharedVerifierWithSanitizedWorkspace.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "workspace",
+  )!;
+  const sourceVerifier = (sharedVerifierWithSanitizedWorkspace.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "verifier",
+  )!;
+  const sanitizedWorkspace = {
+    ...sourceWorkspace,
+    id: "sanitized-workspace",
+    source: "ebo-sanitizer",
+    sharingClass: "partner",
+    relativePath: "sanitized/workspace.patch",
+    digest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    sizeBytes: sourceWorkspace.sizeBytes as number + 1,
+    sanitizedFrom: { artifactId: sourceWorkspace.id, digest: sourceWorkspace.digest },
+  };
+  (sharedVerifierWithSanitizedWorkspace.evidence as JsonObject[]).push(
+    sanitizedWorkspace,
+    {
+      ...sourceVerifier,
+      id: "sanitized-verifier",
+      source: "ebo-sanitizer",
+      sharingClass: "partner",
+      relativePath: "sanitized/verifier.json",
+      digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      sizeBytes: sourceVerifier.sizeBytes as number + 1,
+      sanitizedFrom: { artifactId: sourceVerifier.id, digest: sourceVerifier.digest },
+    },
+  );
+  const sanitizedVerifier = structuredClone(completeVerifier);
+  sanitizedVerifier.workspace = { artifactId: sanitizedWorkspace.id, digest: sanitizedWorkspace.digest };
+  assertContractValid(sharedVerifierWithSanitizedWorkspace, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", completeVerifier],
+    ["sanitized-verifier", sanitizedVerifier],
   ]));
 
   const completedWithIndependentNotRun = structuredClone(completedWithIndependentError);
