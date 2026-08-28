@@ -129,7 +129,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   const sessionDescriptors = sourceEvidence.filter((descriptor) => descriptor.kind === "session");
   const telemetryDescriptors = sourceEvidence.filter((descriptor) => descriptor.kind === "telemetry");
   const verifierStatuses: unknown[] = [];
-  const verifierWorkspaceBindings: Array<{ status: unknown; workspace: JsonObject }> = [];
+  const verifierWorkspaceBindings: Array<{ status: unknown; workspace: JsonObject; source: boolean }> = [];
 
   if (declaredSessionId !== undefined && !sessionDescriptors.some((descriptor) =>
         ((descriptor.nativeReference as JsonObject | undefined)?.type) === "session"
@@ -196,7 +196,11 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
       }
       verifierStatuses.push(report.status);
       if (report.workspace !== undefined) {
-        verifierWorkspaceBindings.push({ status: report.status, workspace: report.workspace as JsonObject });
+        verifierWorkspaceBindings.push({
+          status: report.status,
+          workspace: report.workspace as JsonObject,
+          source: descriptor.sanitizedFrom === undefined,
+        });
       }
       continue;
     }
@@ -245,10 +249,14 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   const captureReport = [...artifacts.entries()]
     .find(([artifactId]) => (evidence as JsonObject[]).some((descriptor) =>
       descriptor.id === artifactId && descriptor.kind === "capture-report"
-        && !["partner", "public"].includes(String(descriptor.sharingClass)),
+        && !["partner", "public"].includes(String(descriptor.sharingClass))
+        && descriptor.sanitizedFrom === undefined,
     ))?.[1];
+  if (captureReport === undefined) {
+    errors.push("/capture-report must be retained as authoritative source evidence");
+  }
   const outcomeStatus = (captureReport?.capabilities as JsonObject | undefined)?.outcome as JsonObject | undefined;
-  const workspaceDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "workspace");
+  const workspaceDescriptors = sourceEvidence.filter((descriptor) => descriptor.kind === "workspace");
   const terminalWorkspace = typeof terminal.workspaceArtifactId === "string"
     ? workspaceDescriptors.find((descriptor) => descriptor.id === terminal.workspaceArtifactId)
     : undefined;
@@ -265,15 +273,15 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     errors.push("/verifier workspace binding does not match retained workspace evidence");
   }
   const hasOutcomeWorkspace = verifierWorkspaceBindings.some((binding) =>
-    (binding.status === "passed" || binding.status === "failed") && bindingMatches(binding, terminalWorkspace),
+    binding.source && (binding.status === "passed" || binding.status === "failed") && bindingMatches(binding, terminalWorkspace),
   );
   if (terminal.state === "completed" && !verifierWorkspaceBindings.some((binding) =>
-    binding.status === "passed" && bindingMatches(binding, terminalWorkspace),
+    binding.source && binding.status === "passed" && bindingMatches(binding, terminalWorkspace),
   )) {
     errors.push("/terminal outcome requires a passed verifier bound to the terminal workspace");
   }
   if (terminal.state === "failed" && terminal.failureClass === "task" && !verifierWorkspaceBindings.some((binding) =>
-    binding.status === "failed" && bindingMatches(binding, terminalWorkspace),
+    binding.source && binding.status === "failed" && bindingMatches(binding, terminalWorkspace),
   )) {
     errors.push("/terminal outcome requires a failed verifier bound to the terminal workspace");
   }
@@ -776,6 +784,13 @@ test("rejects contradictory and incomplete contract records", () => {
       })),
     ];
     delete ((derivativeOnly.run as JsonObject).native as JsonObject)[nativeId];
+    assertContractInvalid(derivativeOnly, completeArtifacts);
+  }
+
+  for (const kind of ["workspace", "verifier", "capture-report"] as const) {
+    const derivativeOnly = structuredClone(complete);
+    const descriptor = (derivativeOnly.evidence as JsonObject[]).find((item) => item.kind === kind)!;
+    descriptor.sanitizedFrom = { artifactId: `missing-${kind}`, digest: descriptor.digest };
     assertContractInvalid(derivativeOnly, completeArtifacts);
   }
 
