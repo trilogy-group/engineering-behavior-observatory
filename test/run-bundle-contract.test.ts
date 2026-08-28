@@ -1160,7 +1160,7 @@ test("rejects contradictory and incomplete contract records", () => {
     { kind: "telemetry", reason: "not-checked", affects: ["timing-resource"] },
     { kind: "workspace-and-verifier", reason: "process-interrupted", affects: ["outcome"] },
   ];
-  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, mixedSemanticReasons), []);
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, mixedSemanticReasons), []);
 
   assert.doesNotThrow(() => assertContractInvalid({ evidence: [] }));
 
@@ -1523,7 +1523,7 @@ test("rejects contradictory and incomplete contract records", () => {
 
   const unsupportedReasonWithMissingStatus = structuredClone(telemetryReport);
   (unsupportedReasonWithMissingStatus.missingEvidence as JsonObject[])[0].reason = "unsupported";
-  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, unsupportedReasonWithMissingStatus), []);
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, unsupportedReasonWithMissingStatus), []);
 
   const unsupportedStatusWithoutReason = structuredClone(telemetryReport);
   ((unsupportedStatusWithoutReason.capabilities as JsonObject).timingResource as JsonObject).status = "unsupported";
@@ -1535,7 +1535,7 @@ test("rejects contradictory and incomplete contract records", () => {
 
   const notCheckedStatusWithoutReason = structuredClone(interruptedReport);
   ((notCheckedStatusWithoutReason.capabilities as JsonObject).timingResource as JsonObject).status = "missing";
-  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, notCheckedStatusWithoutReason), []);
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, notCheckedStatusWithoutReason), []);
 
   const nonJsonVerifierDescriptor = structuredClone(complete);
   ((nonJsonVerifierDescriptor.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "verifier")!).mediaType = "text/plain";

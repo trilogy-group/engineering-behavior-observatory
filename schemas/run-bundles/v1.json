@@ -632,7 +632,7 @@
         },
         {
           "if": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/unsupportedSemanticEvidence" } } } },
-          "then": { "properties": { "capabilities": { "properties": { "semantic": { "properties": { "status": { "enum": ["missing", "unsupported", "not-checked"] } } } } } } }
+          "then": { "properties": { "capabilities": { "properties": { "semantic": { "properties": { "status": { "const": "unsupported" } } } } } } }
         },
         {
           "if": {
@@ -647,7 +647,7 @@
         },
         {
           "if": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/unsupportedTimingEvidence" } } } },
-          "then": { "properties": { "capabilities": { "properties": { "timingResource": { "properties": { "status": { "enum": ["missing", "unsupported", "not-checked"] } } } } } } }
+          "then": { "properties": { "capabilities": { "properties": { "timingResource": { "properties": { "status": { "const": "unsupported" } } } } } } }
         },
         {
           "if": {
@@ -662,7 +662,7 @@
         },
         {
           "if": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/unsupportedOutcomeEvidence" } } } },
-          "then": { "properties": { "capabilities": { "properties": { "outcome": { "properties": { "status": { "enum": ["missing", "unsupported", "not-checked"] } } } } } } }
+          "then": { "properties": { "capabilities": { "properties": { "outcome": { "properties": { "status": { "const": "unsupported" } } } } } } }
         },
         {
           "if": { "properties": { "capabilities": { "properties": { "semantic": { "properties": { "status": { "const": "not-checked" } } } }, "required": ["semantic"] } } },
@@ -670,7 +670,7 @@
         },
         {
           "if": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/notCheckedSemanticEvidence" } } } },
-          "then": { "properties": { "capabilities": { "properties": { "semantic": { "properties": { "status": { "enum": ["missing", "unsupported", "not-checked"] } } } } } } }
+          "then": { "properties": { "capabilities": { "properties": { "semantic": { "properties": { "status": { "const": "not-checked" } } } } } } }
         },
         {
           "if": { "properties": { "capabilities": { "properties": { "timingResource": { "properties": { "status": { "const": "not-checked" } } } }, "required": ["timingResource"] } } },
@@ -678,7 +678,7 @@
         },
         {
           "if": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/notCheckedTimingEvidence" } } } },
-          "then": { "properties": { "capabilities": { "properties": { "timingResource": { "properties": { "status": { "enum": ["missing", "unsupported", "not-checked"] } } } } } } }
+          "then": { "properties": { "capabilities": { "properties": { "timingResource": { "properties": { "status": { "const": "not-checked" } } } } } } }
         },
         {
           "if": { "properties": { "capabilities": { "properties": { "outcome": { "properties": { "status": { "const": "not-checked" } } } }, "required": ["outcome"] } } },
@@ -686,7 +686,7 @@
         },
         {
           "if": { "properties": { "missingEvidence": { "contains": { "$ref": "#/$defs/notCheckedOutcomeEvidence" } } } },
-          "then": { "properties": { "capabilities": { "properties": { "outcome": { "properties": { "status": { "enum": ["missing", "unsupported", "not-checked"] } } } } } } }
+          "then": { "properties": { "capabilities": { "properties": { "outcome": { "properties": { "status": { "const": "not-checked" } } } } } } }
         }
       ]
     },
