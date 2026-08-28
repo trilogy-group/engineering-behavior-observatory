@@ -197,6 +197,14 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   (malformedIpv6Host.provenance as Document).repositoryUrl = "https://[.]/repository.git";
   expectInvalid(validatorWithoutFormatAssertion("task-packet.v1.schema.json"), malformedIpv6Host, "repositoryUrl");
 
+  const dotSegmentRepository = structuredClone(admitted) as Document;
+  (dotSegmentRepository.provenance as Document).repositoryUrl = "https://git.example.test/org/../other/repository.git";
+  expectInvalid(validate, dotSegmentRepository, "repositoryUrl");
+
+  const blankLicense = structuredClone(admitted) as Document;
+  (blankLicense.provenance as Document).license = " ";
+  expectInvalid(validate, blankLicense, "license");
+
   const unperturbed = structuredClone(admitted) as Document;
   unperturbed.controlledPerturbation = { status: "not-applied" };
   assert.equal(validate(unperturbed), true, JSON.stringify(validate.errors));
@@ -234,6 +242,10 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   const windowsDeviceInclude = structuredClone(admitted) as Document;
   (((windowsDeviceInclude.agentInput as Document).fixture as Document).materializer as Document).includePaths = ["src/NUL.txt"];
   expectInvalid(validate, windowsDeviceInclude, "includePaths");
+
+  const gitInclude = structuredClone(admitted) as Document;
+  (((gitInclude.agentInput as Document).fixture as Document).materializer as Document).includePaths = [".git/config"];
+  expectInvalid(validate, gitInclude, "includePaths");
 
   const trailingWindowsAlias = structuredClone(admitted) as Document;
   (((trailingWindowsAlias.agentInput as Document).fixture as Document).materializer as Document).includePaths = ["src/foo."];
@@ -464,6 +476,7 @@ test("configuration references stay inside the bundle without following links", 
     assert.throws(() => resolveTaskArchive(bundleRoot, { ...archiveReference, locator: "fixtures/escaped.tar.gz" }, 7), /escapes/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models/./model-a.json" }), /unsafe/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models/NUL.json" }), /unsafe/);
+    assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models/.git/model.json" }), /unsafe/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, { ...configurationReference, locator: "models" }), /not a regular file/);
   } finally {
     rmSync(bundleRoot, { force: true, recursive: true });
@@ -515,6 +528,16 @@ test("experiment fixtures pin identity and preserve native harness limits", () =
     /Model "model-c" duplicates/,
   );
 
+  const caseAliasedConfiguration = structuredClone(configurationExperiment);
+  caseAliasedConfiguration.modelSet["model-b"]!.configurationRef = {
+    ...caseAliasedConfiguration.modelSet["model-b"]!.configurationRef,
+    locator: "models/MODEL-A.json",
+  };
+  assert.throws(
+    () => assertResolvedExperimentConfigurationDigests(caseAliasedConfiguration, resolvedConfigurationDigests(caseAliasedConfiguration)),
+    /case-aliases/,
+  );
+
   const declaredConfiguration: ExperimentConfiguration = {
     schemaVersion: "ebo.experiment/v1",
     id: "declared-configuration",
@@ -564,6 +587,13 @@ test("experiment validation rejects mutable references, duplicate-array conditio
     locator: "models/NUL.json",
   };
   expectInvalid(validate, windowsDeviceConfigurationLocator, "locator");
+
+  const gitConfigurationLocator = structuredClone(experiment);
+  ((gitConfigurationLocator.modelSet as Document)["model-a"] as Document).configurationRef = {
+    ...(((gitConfigurationLocator.modelSet as Document)["model-a"] as Document).configurationRef as Document),
+    locator: "models/.git/model.json",
+  };
+  expectInvalid(validate, gitConfigurationLocator, "locator");
 
   const tooLongConfigurationLocator = structuredClone(experiment);
   ((tooLongConfigurationLocator.modelSet as Document)["model-a"] as Document).configurationRef = {

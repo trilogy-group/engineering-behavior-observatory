@@ -336,10 +336,12 @@ export function assertResolvedExperimentConfigurationDigests(
 ): void {
   const modelDigests = new Set<string>();
   const harnessCompositions = new Set<string>();
+  const references: ArtifactReference[] = [];
   for (const [modelId, condition] of Object.entries(experiment.modelSet)) {
     const identity = digestIdentity(condition.configurationRef.digest);
     if (modelDigests.has(identity)) throw new Error(`Model "${modelId}" duplicates a configuration digest.`);
     modelDigests.add(identity);
+    references.push(condition.configurationRef);
     assertResolvedDigest(`model "${modelId}"`, condition.configurationRef, resolvedDigests);
   }
   for (const [harnessId, condition] of Object.entries(experiment.harnessSet)) {
@@ -347,18 +349,22 @@ export function assertResolvedExperimentConfigurationDigests(
       .map((reference) => digestIdentity(reference.digest)).join("|");
     if (harnessCompositions.has(identity)) throw new Error(`Harness "${harnessId}" duplicates a composition.`);
     harnessCompositions.add(identity);
+    references.push(condition.configurationRef, condition.nativeLimitsRef, condition.nativeToolPolicyRef);
     assertResolvedDigest(`harness "${harnessId}"`, condition.configurationRef, resolvedDigests);
     assertResolvedDigest(`harness limits "${harnessId}"`, condition.nativeLimitsRef, resolvedDigests);
     assertResolvedDigest(`harness tool policy "${harnessId}"`, condition.nativeToolPolicyRef, resolvedDigests);
   }
+  references.push(experiment.captureProfile);
   assertResolvedDigest("capture profile", experiment.captureProfile, resolvedDigests);
 
   if (experiment.ordering.strategy === "permuted") {
     if (experiment.ordering.permutationAlgorithmRef === undefined) {
       throw new Error("Permuted experiment is missing its permutation algorithm reference.");
     }
+    references.push(experiment.ordering.permutationAlgorithmRef);
     assertResolvedDigest("permutation algorithm", experiment.ordering.permutationAlgorithmRef, resolvedDigests);
   }
+  assertDistinctConfigurationLocators(references);
 }
 
 export function assertAdmittedTaskPackets(
@@ -453,6 +459,30 @@ function assertResolvedDigest(
     || reference.digest.value !== resolvedDigest.value
   ) {
     throw new Error(`${label} digest does not match its reference.`);
+  }
+}
+
+function assertDistinctConfigurationLocators(references: readonly ArtifactReference[]): void {
+  const locators = new Map<string, string>();
+  const descendantPrefixes = new Set<string>();
+
+  for (const reference of references) {
+    const locator = reference.locator.toLowerCase();
+    const existing = locators.get(locator);
+    if (existing !== undefined && existing !== reference.locator) {
+      throw new Error(`Configuration locator "${reference.locator}" case-aliases "${existing}".`);
+    }
+    if (existing !== undefined) continue;
+    if (descendantPrefixes.has(locator)) {
+      throw new Error(`Configuration locator "${reference.locator}" aliases a descendant reference.`);
+    }
+    for (let boundary = locator.lastIndexOf("/"); boundary > 0; boundary = locator.lastIndexOf("/", boundary - 1)) {
+      if (locators.has(locator.slice(0, boundary))) {
+        throw new Error(`Configuration locator "${reference.locator}" aliases an ancestor reference.`);
+      }
+      descendantPrefixes.add(locator.slice(0, boundary));
+    }
+    locators.set(locator, reference.locator);
   }
 }
 
