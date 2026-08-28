@@ -561,6 +561,16 @@ test("experiment fixtures pin identity and preserve native harness limits", () =
     /case-aliases/,
   );
 
+  const caseAliasedTaskPacket = structuredClone(configurationExperiment);
+  caseAliasedTaskPacket.taskSet["task-a"]!.packetRef = {
+    ...caseAliasedTaskPacket.taskSet["task-a"]!.packetRef,
+    locator: "models/MODEL-A.json",
+  };
+  assert.throws(
+    () => assertResolvedExperimentConfigurationDigests(caseAliasedTaskPacket, resolvedConfigurationDigests(caseAliasedTaskPacket)),
+    /case-aliases/,
+  );
+
   const declaredConfiguration: ExperimentConfiguration = {
     schemaVersion: "ebo.experiment/v1",
     id: "declared-configuration",

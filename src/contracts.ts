@@ -290,7 +290,7 @@ function openBundleRegularFile(bundleRoot: string, locator: string, label: strin
     if (!isContained(resolvedRoot, selectedPath) || entry.isSymbolicLink()) {
       throw new Error(`${label} "${locator}" escapes its bundle root.`);
     }
-    if (index === segments.length - 1 && (!entry.isFile() || entry.nlink > 1)) {
+    if (index === segments.length - 1 && !entry.isFile()) {
       throw new Error(`${label} "${locator}" is not an isolated regular file.`);
     }
   }
@@ -304,8 +304,8 @@ function openBundleRegularFile(bundleRoot: string, locator: string, label: strin
   try {
     descriptor = openSync(resolvedPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const opened = fstatSync(descriptor);
-    if (!opened.isFile()) {
-      throw new Error(`${label} "${locator}" is not a regular file.`);
+    if (!opened.isFile() || opened.nlink > 1) {
+      throw new Error(`${label} "${locator}" is not an isolated regular file.`);
     }
     const currentPath = realpathSync(selectedPath);
     const current = statSync(currentPath);
@@ -366,7 +366,8 @@ export function assertResolvedExperimentConfigurationDigests(
     references.push(experiment.ordering.permutationAlgorithmRef);
     assertResolvedDigest("permutation algorithm", experiment.ordering.permutationAlgorithmRef, resolvedDigests);
   }
-  assertDistinctConfigurationLocators(references);
+  references.push(...Object.values(experiment.taskSet).map((condition) => condition.packetRef));
+  assertDistinctBundleLocators(references);
 }
 
 export function assertAdmittedTaskPackets(
@@ -464,7 +465,7 @@ function assertResolvedDigest(
   }
 }
 
-function assertDistinctConfigurationLocators(references: readonly ArtifactReference[]): void {
+function assertDistinctBundleLocators(references: readonly ArtifactReference[]): void {
   const locators = new Map<string, string>();
   const descendantPrefixes = new Set<string>();
 
@@ -472,15 +473,15 @@ function assertDistinctConfigurationLocators(references: readonly ArtifactRefere
     const locator = reference.locator.toLowerCase();
     const existing = locators.get(locator);
     if (existing !== undefined && existing !== reference.locator) {
-      throw new Error(`Configuration locator "${reference.locator}" case-aliases "${existing}".`);
+      throw new Error(`Bundle locator "${reference.locator}" case-aliases "${existing}".`);
     }
     if (existing !== undefined) continue;
     if (descendantPrefixes.has(locator)) {
-      throw new Error(`Configuration locator "${reference.locator}" aliases a descendant reference.`);
+      throw new Error(`Bundle locator "${reference.locator}" aliases a descendant reference.`);
     }
     for (let boundary = locator.lastIndexOf("/"); boundary > 0; boundary = locator.lastIndexOf("/", boundary - 1)) {
       if (locators.has(locator.slice(0, boundary))) {
-        throw new Error(`Configuration locator "${reference.locator}" aliases an ancestor reference.`);
+        throw new Error(`Bundle locator "${reference.locator}" aliases an ancestor reference.`);
       }
       descendantPrefixes.add(locator.slice(0, boundary));
     }
