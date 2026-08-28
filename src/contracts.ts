@@ -30,6 +30,7 @@ export type ArchiveMeasurements = {
 };
 
 export const MAX_CONFIGURATION_BYTES = 1_048_576;
+const MAX_ARCHIVE_PATH_COMPONENTS = 64;
 
 export type TaskCondition = {
   packetRef: {
@@ -137,7 +138,6 @@ export function assertNoSelectedSymlinks(
   archiveEntries: readonly ArchiveEntry[],
 ): void {
   const archiveByPath = new Map<string, string>();
-  const archiveCollisionPaths = new Set<string>();
   const destinations = new Map<string, string>();
   const destinationCollisionPaths = new Map<string, string>();
   const directoryPrefixes = new Map<string, string>();
@@ -148,15 +148,13 @@ export function assertNoSelectedSymlinks(
 
   for (const archiveEntry of archiveEntries) {
     const archivePath = canonicalArchiveMemberPath(archiveEntry.path);
-    const collisionPath = archivePath.toLowerCase();
 
     if (!isSafeArchiveMemberPath(archiveEntry.path)
         || (archiveEntry.kind === "file" && archiveEntry.path.endsWith("/"))
-        || archiveCollisionPaths.has(collisionPath)) {
+        || archiveByPath.has(archivePath)) {
       throw new Error(`Archive entry "${archiveEntry.path}" is unsafe or collides with another archive member.`);
     }
     archiveByPath.set(archivePath, archiveEntry.kind);
-    archiveCollisionPaths.add(collisionPath);
   }
 
   for (const entry of entries) {
@@ -221,6 +219,7 @@ export function resolveBundleConfiguration(
   reference: ArtifactReference,
   maxBytes = MAX_CONFIGURATION_BYTES,
 ): Buffer {
+  assertPositiveSafeInteger(maxBytes, "Configuration maximum bytes");
   return readVerifiedBundleFile(
     openBundleRegularFile(bundleRoot, reference.locator, "Configuration locator"),
     reference,
@@ -230,9 +229,7 @@ export function resolveBundleConfiguration(
 }
 
 export function resolveTaskArchive(bundleRoot: string, source: ArtifactReference, maxCompressedBytes: number): Buffer {
-  if (!Number.isSafeInteger(maxCompressedBytes) || maxCompressedBytes < 1) {
-    throw new Error("Task archive maximum compressed bytes must be a positive integer.");
-  }
+  assertPositiveSafeInteger(maxCompressedBytes, "Task archive maximum compressed bytes");
   return readVerifiedBundleFile(
     openBundleRegularFile(bundleRoot, source.locator, "Task archive locator"),
     source,
@@ -461,11 +458,20 @@ function digestIdentity(digest: Digest): string {
 }
 
 function isSafeArchiveMemberPath(path: string): boolean {
+  const segments = path.split("/");
+
   return path === posix.normalize(path)
     && path.length <= 1024
     && /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[A-Za-z0-9._-][A-Za-z0-9._\/-]*$/.test(path)
-    && !path.split("/").some((segment) => segment.length > 255 || segment.endsWith(".")
+    && segments.length <= MAX_ARCHIVE_PATH_COMPONENTS
+    && !segments.some((segment) => segment.length > 255 || segment.endsWith(".")
       || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(segment));
+}
+
+function assertPositiveSafeInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`${label} must be a positive safe integer.`);
+  }
 }
 
 function canonicalArchiveMemberPath(path: string): string {

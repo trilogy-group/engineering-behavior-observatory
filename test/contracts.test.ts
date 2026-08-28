@@ -33,6 +33,7 @@ const addFormats = formats.default as unknown as (instance: Ajv2020) => void;
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const longRelativePath = Array.from({ length: 513 }, () => "a").join("/");
+const tooDeepRelativePath = Array.from({ length: 65 }, () => "a").join("/");
 const fixture = (name: string): unknown =>
   JSON.parse(readFileSync(join(repositoryRoot, "tests", "fixtures", name), "utf8"));
 const schema = (name: string): object =>
@@ -247,6 +248,10 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   (((tooLongAggregateInclude.agentInput as Document).fixture as Document).materializer as Document).includePaths = [longRelativePath];
   expectInvalid(validate, tooLongAggregateInclude, "includePaths");
 
+  const tooDeepInclude = structuredClone(admitted) as Document;
+  (((tooDeepInclude.agentInput as Document).fixture as Document).materializer as Document).includePaths = [tooDeepRelativePath];
+  expectInvalid(validate, tooDeepInclude, "includePaths");
+
   const archiveBomb = structuredClone(admitted) as Document;
   ((((archiveBomb.agentInput as Document).fixture as Document).source as Document).limits as Document).maxMembers = 100001;
   expectInvalid(validate, archiveBomb, "maxMembers");
@@ -341,6 +346,15 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     ["src"],
     [{ path: "src-old/file.ts", kind: "file" }, { path: "src/index.ts", kind: "file" }],
   ));
+  assert.doesNotThrow(() => assertNoSelectedSymlinks(
+    [{ path: "src/index.ts", kind: "file" }],
+    ["src"],
+    [
+      { path: "src/index.ts", kind: "file" },
+      { path: "docs/A.txt", kind: "file" },
+      { path: "docs/a.txt", kind: "file" },
+    ],
+  ));
   assert.throws(() => assertNoSelectedSymlinks(
     [{ path: "src", kind: "directory" }, { path: "SRC/index.ts", kind: "file" }],
     ["src", "SRC"],
@@ -351,6 +365,7 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
   ), /case-inconsistent ancestor/);
   assert.throws(() => assertNoSelectedSymlinks([{ path: `src/${"a".repeat(256)}`, kind: "file" }], ["src"]), /unsafe/);
   assert.throws(() => assertNoSelectedSymlinks([{ path: longRelativePath, kind: "file" }], [longRelativePath]), /unsafe/);
+  assert.throws(() => assertNoSelectedSymlinks([{ path: tooDeepRelativePath, kind: "file" }], [tooDeepRelativePath]), /unsafe/);
   assert.throws(() => assertNoSelectedSymlinks(
     [{ path: "src/config.ts", kind: "file" }],
     ["src/config.ts"],
@@ -369,6 +384,12 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     boundaryEntries.map((entry) => entry.path),
     boundaryEntries,
   ));
+  const deepPrefix = Array.from({ length: 63 }, () => "d").join("/");
+  const deepEntries = Array.from(
+    { length: 100000 },
+    (_, index): ArchiveEntry => ({ path: `${deepPrefix}/${index}`, kind: "file" }),
+  );
+  assert.doesNotThrow(() => assertNoSelectedSymlinks(deepEntries, [deepPrefix], deepEntries));
   assert.doesNotThrow(() => assertArchiveMeasurements(
     { maxCompressedBytes: 10, maxExpandedBytes: 20, maxMembers: 2 },
     { compressedBytes: 10, expandedBytes: 20, memberCount: 2 },
@@ -411,6 +432,8 @@ test("configuration references stay inside the bundle without following links", 
     assert.deepEqual(verifiedConfiguration, Buffer.from("{}"));
     writeFileSync(configurationPath, "{}");
     assert.throws(() => resolveBundleConfiguration(bundleRoot, configurationReference, 1), /maximum bytes/);
+    assert.throws(() => resolveBundleConfiguration(bundleRoot, configurationReference, Number.NaN), /positive safe integer/);
+    assert.throws(() => resolveBundleConfiguration(bundleRoot, configurationReference, Number.POSITIVE_INFINITY), /positive safe integer/);
     const verifiedArchive = resolveTaskArchive(bundleRoot, archiveReference, 7);
     assert.deepEqual(verifiedArchive, Buffer.from("archive"));
     writeFileSync(archivePath, "changed");
@@ -542,6 +565,13 @@ test("experiment validation rejects mutable references, duplicate-array conditio
     locator: longRelativePath,
   };
   expectInvalid(validate, tooLongAggregateConfigurationLocator, "locator");
+
+  const tooDeepConfigurationLocator = structuredClone(experiment);
+  ((tooDeepConfigurationLocator.modelSet as Document)["model-a"] as Document).configurationRef = {
+    ...(((tooDeepConfigurationLocator.modelSet as Document)["model-a"] as Document).configurationRef as Document),
+    locator: tooDeepRelativePath,
+  };
+  expectInvalid(validate, tooDeepConfigurationLocator, "locator");
 
   const declaredOrder = (fixture("experiment.24-cell.v1.json") as {
     taskSet: Document;
