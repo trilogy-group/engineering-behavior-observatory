@@ -97,7 +97,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
     descriptorByPath.set(relativePath.toLowerCase(), descriptor);
   }
   for (const relativePath of descriptorByPath.keys()) {
-    if (relativePath === "manifest.json") {
+    if (relativePath === "manifest.json" || relativePath.startsWith("manifest.json/")) {
       errors.push("/evidence cannot reuse the containing manifest path");
     }
     for (let boundary = relativePath.lastIndexOf("/"); boundary > 0; boundary = relativePath.lastIndexOf("/", boundary - 1)) {
@@ -118,6 +118,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
   const sessionDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "session");
   const telemetryDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "telemetry");
   const verifierStatuses: unknown[] = [];
+  const verifierWorkspaceBindings: JsonObject[] = [];
 
   if (declaredSessionId !== undefined && !sessionDescriptors.some((descriptor) =>
         ((descriptor.nativeReference as JsonObject | undefined)?.id) === declaredSessionId,
@@ -181,6 +182,9 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
         errors.push(`/evidence/${String(descriptor.id)} contradicts the manifest terminal outcome`);
       }
       verifierStatuses.push(report.status);
+      if (report.status === "passed" || report.status === "failed") {
+        verifierWorkspaceBindings.push(report.workspace as JsonObject);
+      }
       continue;
     }
 
@@ -229,15 +233,14 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
       descriptor.id === artifactId && descriptor.kind === "capture-report",
     ))?.[1];
   const outcomeStatus = (captureReport?.capabilities as JsonObject | undefined)?.outcome as JsonObject | undefined;
-  if (outcomeStatus?.status === "available" && (
-    !(evidence as JsonObject[]).some((descriptor) => descriptor.kind === "workspace")
-    || !verifierStatuses.some((status) => status === "passed" || status === "failed")
-  )) {
+  const workspaceDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "workspace");
+  const hasOutcomeWorkspace = verifierWorkspaceBindings.some((binding) => workspaceDescriptors.some((descriptor) =>
+    descriptor.id === binding.artifactId && JSON.stringify(descriptor.digest) === JSON.stringify(binding.digest),
+  ));
+  if (outcomeStatus?.status === "available" && !hasOutcomeWorkspace) {
     errors.push("/capture-report/outcome requires retained workspace and an executed verifier");
   }
-  if (verifierStatuses.some((status) => status === "passed" || status === "failed")
-      && (evidence as JsonObject[]).some((descriptor) => descriptor.kind === "workspace")
-      && outcomeStatus?.status !== "available") {
+  if (hasOutcomeWorkspace && outcomeStatus?.status !== "available") {
     errors.push("/capture-report/outcome must be available when retained verifier evidence has an outcome");
   }
 
@@ -527,6 +530,13 @@ test("rejects contradictory and incomplete contract records", () => {
     ["verifier", verifierError],
   ]));
 
+  const verifierWithOtherWorkspace = structuredClone(completeVerifier);
+  (verifierWithOtherWorkspace.workspace as JsonObject).digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+  assertContractInvalid(complete, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", verifierWithOtherWorkspace],
+  ]));
+
   const firstAttemptRetry = structuredClone(complete);
   (firstAttemptRetry.attempt as JsonObject).retryOf = "prior-attempt";
   assertContractInvalid(firstAttemptRetry, completeArtifacts);
@@ -553,6 +563,10 @@ test("rejects contradictory and incomplete contract records", () => {
   const manifestPathAlias = structuredClone(complete);
   (manifestPathAlias.evidence as JsonObject[])[0].relativePath = "manifest.json";
   assertContractInvalid(manifestPathAlias, completeArtifacts);
+
+  const manifestDescendantAlias = structuredClone(complete);
+  (manifestDescendantAlias.evidence as JsonObject[])[0].relativePath = "manifest.json/session.jsonl";
+  assertContractInvalid(manifestDescendantAlias, completeArtifacts);
 
   const ancestorPathAlias = structuredClone(complete);
   (ancestorPathAlias.evidence as JsonObject[])[0].relativePath = "logs";

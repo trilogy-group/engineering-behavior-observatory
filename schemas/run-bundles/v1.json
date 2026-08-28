@@ -310,6 +310,15 @@
         "bundleId": { "$ref": "#/$defs/identifier" },
         "status": { "enum": ["passed", "failed", "error", "not-run"] },
         "exitCode": { "type": "integer" },
+        "workspace": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["artifactId", "digest"],
+          "properties": {
+            "artifactId": { "$ref": "#/$defs/identifier" },
+            "digest": { "$ref": "#/$defs/digest" }
+          }
+        },
         "assertions": {
           "type": "array",
           "items": {
@@ -327,6 +336,7 @@
         {
           "if": { "properties": { "status": { "const": "passed" } }, "required": ["status"] },
           "then": {
+            "required": ["workspace"],
             "properties": {
               "assertions": {
                 "minItems": 1,
@@ -342,6 +352,7 @@
         {
           "if": { "properties": { "status": { "const": "failed" } }, "required": ["status"] },
           "then": {
+            "required": ["workspace"],
             "properties": {
               "assertions": {
                 "contains": {

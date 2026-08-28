@@ -106,6 +106,8 @@ at least one failed verifier result and may retain independent passed results.
 Both outcomes require retained verifier and workspace evidence; workspace
 evidence alone cannot establish task pass or task failure. A passed verifier
 result contains only passed assertions and, when retained, an exit code of zero.
+Every passed or failed verifier also names the retained workspace artifact and
+digest it evaluated.
 
 ## Sharing boundary
 

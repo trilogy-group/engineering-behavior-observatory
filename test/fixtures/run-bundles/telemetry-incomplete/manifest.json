@@ -65,8 +65,8 @@
       "kind": "verifier",
       "authority": "outcome",
       "mediaType": "application/json",
-      "digest": "sha256:42dea81b0190fa9804ac685efcd38dcb95cbadf9bf28fce465d9dfb78d4b2c9c",
-      "sizeBytes": 201,
+      "digest": "sha256:56c85b28055d7235a47ae011fb6a3516b89a85e5b3c521bd877cc50c43c3aeae",
+      "sizeBytes": 342,
       "sharingClass": "restricted",
       "relativePath": "verifier.json"
     },
