@@ -143,7 +143,8 @@ export function assertNoSelectedSymlinks(
     const canonicalIncludePath = canonicalArchiveMemberPath(includePath);
     return entries.some((entry) => {
       const archivePath = canonicalArchiveMemberPath(entry.path);
-      return entry.kind === "directory" && (archivePath === canonicalIncludePath || archivePath.startsWith(`${canonicalIncludePath}/`));
+      return archivePath.startsWith(`${canonicalIncludePath}/`)
+        || (entry.kind === "directory" && archivePath === canonicalIncludePath);
     });
   })) {
     throw new Error("Directory includes require an authoritative archive enumeration.");

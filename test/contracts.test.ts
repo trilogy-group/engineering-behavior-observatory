@@ -322,6 +322,10 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
   ], ["src"]));
   assert.doesNotThrow(() => validateArchiveSelection([{ path: "src/index.ts", kind: "file" }], ["src/index.ts"]));
   assert.throws(
+    () => validateArchiveSelection([{ path: "src/index.ts", kind: "file" }], ["src"]),
+    /authoritative archive enumeration/,
+  );
+  assert.throws(
     () => validateArchiveSelection([{ path: "src", kind: "directory" }, { path: "src/index.ts", kind: "file" }], ["src"]),
     /authoritative archive enumeration/,
   );
