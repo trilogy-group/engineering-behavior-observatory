@@ -56,7 +56,8 @@ and verifier bytes to match their pinned digests. The review record binds the
 canonical pre-admission packet digest; the admitted packet can then hash its
 review-record reference without requiring a circular digest. Each declared
 materialization literal must select at least one verified archive file or
-directory tree.
+directory tree. A referenced controlled perturbation also hashes to its pinned
+digest before scheduling.
 
 ## Experiments
 

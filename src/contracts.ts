@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, posix, relative, resolve, sep } from "node:path";
 
 export type Digest = {
@@ -44,6 +44,8 @@ export type ResolvedTaskPacket = {
   reviewRecordDigest: Digest | null;
   resolvedReviewRecordDigest: Digest | null;
   reviewRecordPreAdmissionDigest: Digest | null;
+  controlledPerturbationDigest: Digest | null;
+  resolvedControlledPerturbationDigest: Digest | null;
   referenceSolutionDigest: Digest | null;
   resolvedReferenceSolutionDigest: Digest | null;
   verifierDigest: Digest;
@@ -197,8 +199,14 @@ export function resolveBundleConfiguration(bundleRoot: string, locator: string):
   return resolveBundleRegularFile(bundleRoot, locator, "Configuration locator");
 }
 
-export function resolveTaskArchive(bundleRoot: string, source: ArtifactReference): string {
+export function resolveTaskArchive(bundleRoot: string, source: ArtifactReference, maxCompressedBytes: number): string {
   const archivePath = resolveBundleRegularFile(bundleRoot, source.locator, "Task archive locator");
+  if (!Number.isSafeInteger(maxCompressedBytes) || maxCompressedBytes < 1) {
+    throw new Error("Task archive maximum compressed bytes must be a positive integer.");
+  }
+  if (statSync(archivePath).size > maxCompressedBytes) {
+    throw new Error("Task archive exceeds its maximum compressed bytes.");
+  }
   const resolvedDigest: Digest = {
     algorithm: "sha256",
     value: createHash("sha256").update(readFileSync(archivePath)).digest("hex"),
@@ -331,6 +339,13 @@ export function assertAdmittedTaskPackets(
     ) {
       throw new Error(`Task packet "${taskId}" verifier digest does not match its resolved bytes.`);
     }
+    if (packet.controlledPerturbationDigest !== null || packet.resolvedControlledPerturbationDigest !== null) {
+      assertEqualDigests(
+        `Task packet "${taskId}" controlled perturbation`,
+        packet.controlledPerturbationDigest,
+        packet.resolvedControlledPerturbationDigest,
+      );
+    }
     if (packet.referenceSolutionDigest !== null || packet.resolvedReferenceSolutionDigest !== null) {
       assertEqualDigests(
         `Task packet "${taskId}" reference solution`,
@@ -372,7 +387,8 @@ function digestIdentity(digest: Digest): string {
 
 function isSafeArchiveMemberPath(path: string): boolean {
   return path === posix.normalize(path)
-    && /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[A-Za-z0-9._-][A-Za-z0-9._\/-]*$/.test(path);
+    && /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[A-Za-z0-9._-][A-Za-z0-9._\/-]*$/.test(path)
+    && !path.split("/").some((segment) => /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(segment));
 }
 
 function canonicalArchiveMemberPath(path: string): string {
@@ -397,6 +413,13 @@ function hasFileAncestor(path: string, destinations: ReadonlyMap<string, string>
 }
 
 function hasPathOrDescendant(paths: readonly string[], path: string): boolean {
+  const exact = lowerBound(paths, path);
+  const descendant = lowerBound(paths, `${path}/`);
+
+  return paths[exact] === path || paths[descendant]?.startsWith(`${path}/`) === true;
+}
+
+function lowerBound(paths: readonly string[], path: string): number {
   let low = 0;
   let high = paths.length;
 
@@ -406,18 +429,17 @@ function hasPathOrDescendant(paths: readonly string[], path: string): boolean {
     else high = middle;
   }
 
-  const candidate = paths[low];
-  return candidate === path || candidate?.startsWith(`${path}/`) === true;
+  return low;
 }
 
 function assertRfc3339Timestamp(value: string | null): void {
-  const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|[+-](\d{2}):(\d{2}))$/);
+  const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|([+-])(\d{2}):(\d{2}))$/);
 
   if (match === null || match === undefined) {
     throw new Error("Admitted task packet review must have an RFC 3339 timestamp.");
   }
 
-  const [, yearText, monthText, dayText, hourText, minuteText, secondText, offsetHourText, offsetMinuteText] = match;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, offsetSign, offsetHourText, offsetMinuteText] = match;
   const year = Number(yearText);
   const month = Number(monthText);
   const day = Number(dayText);
@@ -433,7 +455,25 @@ function assertRfc3339Timestamp(value: string | null): void {
       || hour > 23 || minute > 59 || second > 60 || offsetHour > 23 || offsetMinute > 59) {
     throw new Error("Admitted task packet review must have an RFC 3339 timestamp.");
   }
+  if (second === 60) {
+    const offsetMinutes = offsetSign === undefined ? 0
+      : (offsetSign === "+" ? 1 : -1) * (offsetHour * 60 + offsetMinute);
+    const instant = new Date(Date.UTC(year, month - 1, day, hour, minute, 59) - offsetMinutes * 60_000);
+    const utcDate = `${instant.getUTCFullYear()}-${String(instant.getUTCMonth() + 1).padStart(2, "0")}-${String(instant.getUTCDate()).padStart(2, "0")}`;
+
+    if (instant.getUTCHours() !== 23 || instant.getUTCMinutes() !== 59 || !KNOWN_LEAP_SECOND_DATES.has(utcDate)) {
+      throw new Error("Admitted task packet review must have an RFC 3339 timestamp.");
+    }
+  }
 }
+
+// Update when IERS announces a future UTC leap second.
+const KNOWN_LEAP_SECOND_DATES = new Set([
+  "1972-06-30", "1972-12-31", "1973-12-31", "1974-12-31", "1975-12-31", "1976-12-31", "1977-12-31",
+  "1978-12-31", "1979-12-31", "1981-06-30", "1982-06-30", "1983-06-30", "1985-06-30", "1987-12-31",
+  "1989-12-31", "1990-12-31", "1992-06-30", "1993-06-30", "1994-06-30", "1995-12-31", "1997-06-30",
+  "1998-12-31", "2005-12-31", "2008-12-31", "2012-06-30", "2015-06-30", "2016-12-31",
+]);
 
 function isContained(root: string, path: string): boolean {
   const pathFromRoot = relative(root, path);
