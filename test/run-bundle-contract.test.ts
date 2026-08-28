@@ -228,7 +228,7 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
 
     if (descriptor.kind === "verifier") {
       if (descriptor.sanitizedFrom !== undefined) {
-        const sourceVerifier = sourceDescriptor(descriptor, evidenceById);
+        const sourceVerifier = evidenceById.get(String((descriptor.sanitizedFrom as JsonObject).artifactId));
         const sourceResult = sourceVerifier === undefined ? undefined : artifacts.get(String(sourceVerifier.id));
 
         if (sourceResult === undefined || sourceResult.status !== report.status) {
@@ -1009,6 +1009,50 @@ test("rejects contradictory and incomplete contract records", () => {
   inventedExitCodeArtifacts.set("sanitized-verifier", inventedExitCodeVerifier);
   assertContractInvalid(sharedVerifierWithInventedExitCode, inventedExitCodeArtifacts);
 
+  const multiHopSharedVerifier = structuredClone(sharedFailedVerifierWithChangedStatus);
+  const partnerWorkspace = (multiHopSharedVerifier.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-workspace",
+  )!;
+  const partnerVerifier = (multiHopSharedVerifier.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-verifier",
+  )!;
+  const publicWorkspace = {
+    ...partnerWorkspace,
+    id: "public-workspace",
+    sharingClass: "public",
+    relativePath: "public/workspace.patch",
+    digest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    sanitizedFrom: { artifactId: partnerWorkspace.id, digest: partnerWorkspace.digest },
+  };
+  (multiHopSharedVerifier.evidence as JsonObject[]).push(
+    publicWorkspace,
+    {
+      ...partnerVerifier,
+      id: "public-verifier",
+      sharingClass: "public",
+      relativePath: "public/verifier.json",
+      digest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      sanitizedFrom: { artifactId: partnerVerifier.id, digest: partnerVerifier.digest },
+    },
+  );
+  const multiHopSourceVerifier = structuredClone(taskFailedArtifacts.get("verifier")!);
+  multiHopSourceVerifier.assertions = [
+    { id: "source-failed", status: "failed" },
+    { id: "source-passed", status: "passed" },
+  ];
+  const redactedPartnerVerifier = structuredClone(multiHopSourceVerifier);
+  redactedPartnerVerifier.assertions = [{ id: "source-failed", status: "failed" }];
+  delete redactedPartnerVerifier.exitCode;
+  redactedPartnerVerifier.workspace = { artifactId: partnerWorkspace.id, digest: partnerWorkspace.digest };
+  const restoredPublicVerifier = structuredClone(multiHopSourceVerifier);
+  restoredPublicVerifier.workspace = { artifactId: publicWorkspace.id, digest: publicWorkspace.digest };
+  assertContractInvalid(multiHopSharedVerifier, new Map([
+    ["capture-report", taskFailedArtifacts.get("capture-report")!],
+    ["verifier", multiHopSourceVerifier],
+    ["sanitized-verifier", redactedPartnerVerifier],
+    ["public-verifier", restoredPublicVerifier],
+  ]));
+
   const sharedDerivativeWithOtherSourceBytes = structuredClone(complete);
   const firstSession = (sharedDerivativeWithOtherSourceBytes.evidence as JsonObject[]).find(
     (descriptor) => descriptor.kind === "session",
@@ -1291,6 +1335,12 @@ test("rejects contradictory and incomplete contract records", () => {
   (unsafeAttemptNumber.attempt as JsonObject).number = Number.MAX_SAFE_INTEGER + 1;
   (unsafeAttemptNumber.attempt as JsonObject).retryOf = "prior-attempt";
   assertContractInvalid(unsafeAttemptNumber, completeArtifacts);
+
+  const unsafeVerifierExitCode = structuredClone(verifier);
+  unsafeVerifierExitCode.status = "failed";
+  unsafeVerifierExitCode.exitCode = Number.MAX_SAFE_INTEGER + 1;
+  unsafeVerifierExitCode.assertions = [{ id: "example-check", status: "failed" }];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, unsafeVerifierExitCode), []);
 
   const mismatchedNativeTrace = structuredClone(complete);
   ((mismatchedNativeTrace.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "telemetry")!.nativeReference as JsonObject).id = "other-trace";
