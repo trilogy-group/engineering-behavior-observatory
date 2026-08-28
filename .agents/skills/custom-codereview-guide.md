@@ -13,21 +13,23 @@ Automated PR review reads this guidance: the OpenHands PR Review plugin loads it
 
 **This is a durable, shared document.** Never add PR-specific or ticket-specific content here — no "already resolved, do not re-flag" lists, no per-PR evidence dumps. Respond to review feedback in the PR's review threads instead. Only add guidance that applies to all future reviews.
 
-## Default Priorities
+## EBO Review Priorities
 
-- Prioritize correctness, regressions, security risks, and missing tests ahead of style-only feedback.
-- Treat behavior changes as incomplete unless the PR includes concrete verification or evidence.
-- Call out risky data migrations, auth changes, concurrency hazards, and production operability regressions explicitly.
+- Preserve native session, hook, telemetry, workspace, verifier, and capture-report evidence. Missing or unsupported evidence must stay explicit; do not synthesize events, false values, or zero-valued evidence.
+- Treat bundle-relative paths, digests, sharing class, retry lineage, terminal state, and capture qualification as integrity boundaries. Review partial and interrupted bundles as closely as successful ones.
+- Export must fail closed on unknown classification. Partner and public artifacts need distinct sanitized provenance; a changed sharing label is never sufficient.
+- Keep source-specific harness evidence authoritative. Do not replace it with a universal protocol, normalized event copy, or inferred semantic label.
 
-## Customize For This Repository
+## Expected Checks
 
-- List the most security-sensitive paths or subsystems.
-- List required validation commands reviewers should expect to see.
-- Describe any architecture invariants that must not be broken.
-- Add framework- or language-specific review heuristics that matter here.
+- `npm ci`
+- `npm run build`
+- `npm run typecheck`
+- `npm test`
+- `node dist/src/cli.js --help`
+- `git diff --check`
 
-## Evidence Expectations
+## Scope Guardrails
 
-- Behavior changes should include test or reproduction output.
-- UI changes should include screenshots or recordings.
-- Performance-sensitive changes should include benchmark data or timing notes.
+- Prefer Node standard-library facilities and `node:test`; do not add a capture shim, telemetry backend, graph database, distributed scheduler, dynamic plugin host, or hosted Atlas without an issue-backed need.
+- Review evidence loss, export leakage, partial-attempt overwrite, protocol-channel corruption, and untested failure paths before style.

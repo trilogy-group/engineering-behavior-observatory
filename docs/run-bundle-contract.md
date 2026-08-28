@@ -53,10 +53,11 @@ capture report is capture; and the export manifest is export.
 ## Attempt and terminal semantics
 
 A run identifies the declared task/model/harness condition. An attempt is one
-execution of that run; retries get a new attempt ID and may point at `retryOf`.
+execution of that run; retries get a new attempt ID and must point at `retryOf`.
 `retryOf` cannot name the attempt itself. No attempt replaces prior evidence.
 When a run declares a native session ID, it retains at least one session
-reference naming that same native session.
+reference naming that same native session, with at least one parsed native
+record.
 The same rule applies to a declared native trace ID and retained telemetry
 evidence. Runtime components are unique by source, name, and version.
 
@@ -112,7 +113,9 @@ A partner export that lists restricted native artifacts is `blocked`. A `ready`
 or `exported` package resolves every artifact ID and requires every descriptor
 to have the export's exact sharing class. A public package therefore cannot
 bypass lookup or classification, and both partner and public packages need
-separately sanitized artifacts. The export pipeline performs the actual
+separately sanitized artifacts. Each such descriptor records `sanitizedFrom`
+with the retained source artifact ID and digest, and has a distinct bundle path;
+changing a native artifact's sharing class is not sanitization. The export pipeline performs the actual
 sanitization and readback; the v1 contract fixture makes the unsafe direct
 reference visibly blocked. A ready or exported manifest also names its
 containing bundle before its artifact list is approved. Ready and exported

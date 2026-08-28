@@ -65,7 +65,16 @@
         "sizeBytes": { "type": "integer", "minimum": 0 },
         "sharingClass": { "$ref": "#/$defs/sharingClass" },
         "relativePath": { "$ref": "#/$defs/relativePath" },
-        "nativeReference": { "$ref": "#/$defs/nativeReference" }
+        "nativeReference": { "$ref": "#/$defs/nativeReference" },
+        "sanitizedFrom": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["artifactId", "digest"],
+          "properties": {
+            "artifactId": { "$ref": "#/$defs/identifier" },
+            "digest": { "$ref": "#/$defs/digest" }
+          }
+        }
       },
       "allOf": [
         {
@@ -251,6 +260,10 @@
             {
               "if": { "required": ["retryOf"] },
               "then": { "properties": { "number": { "minimum": 2 } } }
+            },
+            {
+              "if": { "properties": { "number": { "minimum": 2 } }, "required": ["number"] },
+              "then": { "required": ["retryOf"] }
             }
           ]
         },
