@@ -214,9 +214,6 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
       }
       missingEvidenceIdentities.add(identity);
     }
-    const missingEffects = new Set(
-      (report.missingEvidence as JsonObject[]).flatMap((entry) => entry.affects as string[]),
-    );
     for (const [capability, authority] of Object.entries({
       semantic: "semantic",
       timingResource: "timing-resource",
@@ -226,7 +223,11 @@ function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonOb
           !sourceEvidence.some((item) => item.authority === authority)) {
         errors.push(`/capture-report/${capability} is available without ${authority} evidence`);
       }
-      if ((capabilities[capability] as JsonObject).status === "available" && missingEffects.has(authority)) {
+      if ((capabilities[capability] as JsonObject).status === "available" &&
+          (report.missingEvidence as JsonObject[]).some((entry) =>
+            (entry.affects as string[]).includes(authority)
+              && !(authority === "timing-resource" && entry.reason === "optional-beta-unavailable"),
+          )) {
         errors.push(`/capture-report/${capability} is available but declared missing`);
       }
     }
@@ -995,6 +996,13 @@ test("rejects contradictory and incomplete contract records", () => {
   (qualifiedUnsupportedTiming.capabilities as JsonObject).timingResource = { status: "unsupported" };
   qualifiedUnsupportedTiming.missingEvidence = [{ kind: "telemetry", reason: "unsupported", affects: ["timing-resource"] }];
   assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, qualifiedUnsupportedTiming), []);
+
+  const availableOptionalBetaTiming = new Map(completeArtifacts);
+  availableOptionalBetaTiming.set("capture-report", {
+    ...completeCaptureReport,
+    missingEvidence: [{ kind: "hook-span", reason: "optional-beta-unavailable", affects: ["timing-resource"] }],
+  });
+  assertContractValid(complete, availableOptionalBetaTiming);
 
   const qualifiedUncheckedTiming = structuredClone(completeCaptureReport);
   (qualifiedUncheckedTiming.capabilities as JsonObject).timingResource = { status: "unsupported" };
