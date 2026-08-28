@@ -57,7 +57,8 @@ canonical pre-admission packet digest; the admitted packet can then hash its
 review-record reference without requiring a circular digest. Each declared
 materialization literal must select at least one verified archive file or
 directory tree. A referenced controlled perturbation also hashes to its pinned
-digest before scheduling.
+digest before scheduling; explicit unavailable states remain distinct from a
+referenced artifact that fails to resolve.
 
 ## Experiments
 

@@ -110,10 +110,8 @@ function admittedResolutions(taskSet: TaskConditionSet): Record<string, Resolved
         reviewRecordDigest: condition.packetRef.digest,
         resolvedReviewRecordDigest: condition.packetRef.digest,
         reviewRecordPreAdmissionDigest: preAdmissionDigest,
-        controlledPerturbationDigest: condition.packetRef.digest,
-        resolvedControlledPerturbationDigest: condition.packetRef.digest,
-        referenceSolutionDigest: condition.packetRef.digest,
-        resolvedReferenceSolutionDigest: condition.packetRef.digest,
+        controlledPerturbation: { status: "referenced", digest: condition.packetRef.digest, resolvedDigest: condition.packetRef.digest },
+        referenceSolution: { status: "referenced", digest: condition.packetRef.digest, resolvedDigest: condition.packetRef.digest },
         verifierDigest: condition.packetRef.digest,
         resolvedVerifierDigest: condition.packetRef.digest,
         admission: { status: "admitted", reviewedAt: "2026-08-26T00:00:00Z" },
@@ -229,6 +227,10 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
   (((windowsDeviceInclude.agentInput as Document).fixture as Document).materializer as Document).includePaths = ["src/NUL.txt"];
   expectInvalid(validate, windowsDeviceInclude, "includePaths");
 
+  const trailingWindowsAlias = structuredClone(admitted) as Document;
+  (((trailingWindowsAlias.agentInput as Document).fixture as Document).materializer as Document).includePaths = ["src/foo."];
+  expectInvalid(validate, trailingWindowsAlias, "includePaths");
+
   const archiveBomb = structuredClone(admitted) as Document;
   ((((archiveBomb.agentInput as Document).fixture as Document).source as Document).limits as Document).maxMembers = 100001;
   expectInvalid(validate, archiveBomb, "maxMembers");
@@ -312,11 +314,21 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     [{ path: "src/config", kind: "symlink" }],
   ), /does not match its archive member kind/);
   assert.throws(() => assertNoSelectedSymlinks([{ path: "src/NUL.txt", kind: "file" }], ["src/NUL.txt"]), /unsafe/);
+  assert.throws(() => assertNoSelectedSymlinks([{ path: "src/foo.", kind: "file" }], ["src/foo."]), /unsafe/);
+  assert.throws(() => assertNoSelectedSymlinks(
+    [{ path: "README.md", kind: "file" }],
+    ["README.md"],
+    [{ path: "README.md/", kind: "file" }],
+  ), /unsafe/);
   assert.doesNotThrow(() => assertNoSelectedSymlinks(
     [{ path: "src/index.ts", kind: "file" }],
     ["src"],
     [{ path: "src-old/file.ts", kind: "file" }, { path: "src/index.ts", kind: "file" }],
   ));
+  assert.throws(() => assertNoSelectedSymlinks(
+    [{ path: "src", kind: "directory" }, { path: "SRC/index.ts", kind: "file" }],
+    ["src", "SRC"],
+  ), /case-inconsistent ancestor/);
   assert.throws(() => assertNoSelectedSymlinks(
     [{ path: "src/config.ts", kind: "file" }],
     ["src/config.ts"],
@@ -343,6 +355,14 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     { maxCompressedBytes: 10, maxExpandedBytes: 20, maxMembers: 1 },
     { compressedBytes: 10, expandedBytes: 20, memberCount: 2 },
   ), /materialization limits/);
+  assert.throws(() => assertArchiveMeasurements(
+    { maxCompressedBytes: 10, maxExpandedBytes: 20, maxMembers: 2 },
+    { compressedBytes: Number.NaN, expandedBytes: 20, memberCount: 2 },
+  ), /measurements/);
+  assert.throws(() => assertArchiveMeasurements(
+    { maxCompressedBytes: 10, maxExpandedBytes: 20, maxMembers: 2 },
+    { compressedBytes: -1, expandedBytes: 20, memberCount: 2 },
+  ), /measurements/);
 });
 
 test("configuration references stay inside the bundle without following links", () => {
@@ -360,7 +380,11 @@ test("configuration references stay inside the bundle without following links", 
     writeFileSync(configurationPath, "{}");
     writeFileSync(archivePath, "archive");
     assert.equal(resolveBundleConfiguration(bundleRoot, "models/model-a.json"), realpathSync(configurationPath));
-    assert.equal(resolveTaskArchive(bundleRoot, archiveReference, 7), realpathSync(archivePath));
+    const verifiedArchive = resolveTaskArchive(bundleRoot, archiveReference, 7);
+    assert.deepEqual(verifiedArchive, Buffer.from("archive"));
+    writeFileSync(archivePath, "changed");
+    assert.deepEqual(verifiedArchive, Buffer.from("archive"));
+    writeFileSync(archivePath, "archive");
     assert.throws(() => resolveTaskArchive(bundleRoot, archiveReference, 6), /maximum compressed bytes/);
     assert.equal(exportedResolveBundleConfiguration, resolveBundleConfiguration);
     assert.throws(
@@ -372,6 +396,7 @@ test("configuration references stay inside the bundle without following links", 
     assert.throws(() => resolveBundleConfiguration(bundleRoot, "models/escaped.json"), /escapes/);
     assert.throws(() => resolveTaskArchive(bundleRoot, { ...archiveReference, locator: "fixtures/escaped.tar.gz" }, 7), /escapes/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, "models/./model-a.json"), /unsafe/);
+    assert.throws(() => resolveBundleConfiguration(bundleRoot, "models/NUL.json"), /unsafe/);
     assert.throws(() => resolveBundleConfiguration(bundleRoot, "models"), /not a regular file/);
   } finally {
     rmSync(bundleRoot, { force: true, recursive: true });
@@ -466,6 +491,13 @@ test("experiment validation rejects mutable references, duplicate-array conditio
   };
   expectInvalid(validate, trailingConfigurationLocator, "locator");
 
+  const windowsDeviceConfigurationLocator = structuredClone(experiment);
+  ((windowsDeviceConfigurationLocator.modelSet as Document)["model-a"] as Document).configurationRef = {
+    ...(((windowsDeviceConfigurationLocator.modelSet as Document)["model-a"] as Document).configurationRef as Document),
+    locator: "models/NUL.json",
+  };
+  expectInvalid(validate, windowsDeviceConfigurationLocator, "locator");
+
   const declaredOrder = (fixture("experiment.24-cell.v1.json") as {
     taskSet: Document;
     modelSet: Document;
@@ -510,10 +542,8 @@ test("task resolution accepts only matching admitted packets", () => {
     reviewRecordDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     resolvedReviewRecordDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     reviewRecordPreAdmissionDigest: { algorithm: "sha256", value: "0".repeat(64) },
-    controlledPerturbationDigest: experiment.taskSet["task-a"]!.packetRef.digest,
-    resolvedControlledPerturbationDigest: experiment.taskSet["task-a"]!.packetRef.digest,
-    referenceSolutionDigest: experiment.taskSet["task-a"]!.packetRef.digest,
-    resolvedReferenceSolutionDigest: experiment.taskSet["task-a"]!.packetRef.digest,
+    controlledPerturbation: { status: "referenced", digest: experiment.taskSet["task-a"]!.packetRef.digest, resolvedDigest: experiment.taskSet["task-a"]!.packetRef.digest },
+    referenceSolution: { status: "referenced", digest: experiment.taskSet["task-a"]!.packetRef.digest, resolvedDigest: experiment.taskSet["task-a"]!.packetRef.digest },
     verifierDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     resolvedVerifierDigest: experiment.taskSet["task-a"]!.packetRef.digest,
     admission: { status: "admitted", reviewedAt: "2026-08-26T00:00:00Z" },
@@ -552,7 +582,11 @@ test("task resolution accepts only matching admitted packets", () => {
   assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, tamperedVerifier), /verifier digest/);
 
   const tamperedPerturbation = admittedResolutions(experiment.taskSet);
-  tamperedPerturbation["task-a"]!.resolvedControlledPerturbationDigest = { algorithm: "sha256", value: "0".repeat(64) };
+  tamperedPerturbation["task-a"]!.controlledPerturbation = {
+    status: "referenced",
+    digest: experiment.taskSet["task-a"]!.packetRef.digest,
+    resolvedDigest: { algorithm: "sha256", value: "0".repeat(64) },
+  };
   assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, tamperedPerturbation), /controlled perturbation digest/);
 
   const tamperedReviewRecord = admittedResolutions(experiment.taskSet);
@@ -564,8 +598,17 @@ test("task resolution accepts only matching admitted packets", () => {
   assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, unboundReviewRecord), /reviewed pre-admission packet digest/);
 
   const tamperedReferenceSolution = admittedResolutions(experiment.taskSet);
-  tamperedReferenceSolution["task-a"]!.resolvedReferenceSolutionDigest = { algorithm: "sha256", value: "0".repeat(64) };
+  tamperedReferenceSolution["task-a"]!.referenceSolution = {
+    status: "referenced",
+    digest: experiment.taskSet["task-a"]!.packetRef.digest,
+    resolvedDigest: { algorithm: "sha256", value: "0".repeat(64) },
+  };
   assert.throws(() => assertAdmittedTaskPackets(experiment.taskSet, tamperedReferenceSolution), /reference solution digest/);
+
+  const unavailableOptionalArtifacts = admittedResolutions(experiment.taskSet);
+  unavailableOptionalArtifacts["task-a"]!.controlledPerturbation = { status: "not-applied" };
+  unavailableOptionalArtifacts["task-a"]!.referenceSolution = { status: "not-provided" };
+  assert.doesNotThrow(() => assertAdmittedTaskPackets(experiment.taskSet, unavailableOptionalArtifacts));
 
   const constructorTaskSet = Object.assign(Object.create(null), {
     constructor: experiment.taskSet["task-a"],

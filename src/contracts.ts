@@ -44,10 +44,12 @@ export type ResolvedTaskPacket = {
   reviewRecordDigest: Digest | null;
   resolvedReviewRecordDigest: Digest | null;
   reviewRecordPreAdmissionDigest: Digest | null;
-  controlledPerturbationDigest: Digest | null;
-  resolvedControlledPerturbationDigest: Digest | null;
-  referenceSolutionDigest: Digest | null;
-  resolvedReferenceSolutionDigest: Digest | null;
+  controlledPerturbation:
+    | { status: "referenced"; digest: Digest; resolvedDigest: Digest }
+    | { status: "not-applied" | "unsupported" };
+  referenceSolution:
+    | { status: "referenced"; digest: Digest; resolvedDigest: Digest }
+    | { status: "not-provided" | "unsupported" };
   verifierDigest: Digest;
   resolvedVerifierDigest: Digest;
   admission: {
@@ -126,6 +128,7 @@ export function assertNoSelectedSymlinks(
   const archiveCollisionPaths = new Set<string>();
   const destinations = new Map<string, string>();
   const destinationCollisionPaths = new Map<string, string>();
+  const destinationExactPaths = new Map<string, string>();
 
   if (entries.length === 0) {
     throw new Error("No archive entries were selected.");
@@ -135,7 +138,9 @@ export function assertNoSelectedSymlinks(
     const archivePath = canonicalArchiveMemberPath(archiveEntry.path);
     const collisionPath = archivePath.toLowerCase();
 
-    if (!isSafeArchiveMemberPath(archiveEntry.path) || archiveCollisionPaths.has(collisionPath)) {
+    if (!isSafeArchiveMemberPath(archiveEntry.path)
+        || (archiveEntry.kind === "file" && archiveEntry.path.endsWith("/"))
+        || archiveCollisionPaths.has(collisionPath)) {
       throw new Error(`Archive entry "${archiveEntry.path}" is unsafe or collides with another archive member.`);
     }
     archiveByPath.set(archivePath, archiveEntry.kind);
@@ -158,6 +163,7 @@ export function assertNoSelectedSymlinks(
     }
     destinations.set(destination, entry.kind);
     destinationCollisionPaths.set(collisionPath, entry.kind);
+    destinationExactPaths.set(collisionPath, destination);
   }
 
   const archivePaths = [...archiveByPath.keys()].sort();
@@ -184,10 +190,16 @@ export function assertNoSelectedSymlinks(
     if (hasFileAncestor(path.toLowerCase(), destinationCollisionPaths)) {
       throw new Error(`Selected archive entry "${path}" collides with a file destination.`);
     }
+    if (hasCaseInconsistentAncestor(path, destinationExactPaths)) {
+      throw new Error(`Selected archive entry "${path}" has a case-inconsistent ancestor.`);
+    }
   }
 }
 
 export function assertArchiveMeasurements(limits: ArchiveLimits, measurements: ArchiveMeasurements): void {
+  if (!Object.values(measurements).every((value) => Number.isSafeInteger(value) && value >= 0)) {
+    throw new Error("Sanitized archive measurements must be nonnegative safe integers.");
+  }
   if (measurements.compressedBytes > limits.maxCompressedBytes
       || measurements.expandedBytes > limits.maxExpandedBytes
       || measurements.memberCount > limits.maxMembers) {
@@ -199,7 +211,7 @@ export function resolveBundleConfiguration(bundleRoot: string, locator: string):
   return resolveBundleRegularFile(bundleRoot, locator, "Configuration locator");
 }
 
-export function resolveTaskArchive(bundleRoot: string, source: ArtifactReference, maxCompressedBytes: number): string {
+export function resolveTaskArchive(bundleRoot: string, source: ArtifactReference, maxCompressedBytes: number): Buffer {
   const archivePath = resolveBundleRegularFile(bundleRoot, source.locator, "Task archive locator");
   if (!Number.isSafeInteger(maxCompressedBytes) || maxCompressedBytes < 1) {
     throw new Error("Task archive maximum compressed bytes must be a positive integer.");
@@ -207,16 +219,17 @@ export function resolveTaskArchive(bundleRoot: string, source: ArtifactReference
   if (statSync(archivePath).size > maxCompressedBytes) {
     throw new Error("Task archive exceeds its maximum compressed bytes.");
   }
+  const archiveBytes = readFileSync(archivePath);
   const resolvedDigest: Digest = {
     algorithm: "sha256",
-    value: createHash("sha256").update(readFileSync(archivePath)).digest("hex"),
+    value: createHash("sha256").update(archiveBytes).digest("hex"),
   };
 
   if (source.digest.algorithm !== resolvedDigest.algorithm || source.digest.value !== resolvedDigest.value) {
     throw new Error("Task archive digest does not match its source reference.");
   }
 
-  return archivePath;
+  return archiveBytes;
 }
 
 function resolveBundleRegularFile(bundleRoot: string, locator: string, label: string): string {
@@ -339,18 +352,18 @@ export function assertAdmittedTaskPackets(
     ) {
       throw new Error(`Task packet "${taskId}" verifier digest does not match its resolved bytes.`);
     }
-    if (packet.controlledPerturbationDigest !== null || packet.resolvedControlledPerturbationDigest !== null) {
+    if (packet.controlledPerturbation.status === "referenced") {
       assertEqualDigests(
         `Task packet "${taskId}" controlled perturbation`,
-        packet.controlledPerturbationDigest,
-        packet.resolvedControlledPerturbationDigest,
+        packet.controlledPerturbation.digest,
+        packet.controlledPerturbation.resolvedDigest,
       );
     }
-    if (packet.referenceSolutionDigest !== null || packet.resolvedReferenceSolutionDigest !== null) {
+    if (packet.referenceSolution.status === "referenced") {
       assertEqualDigests(
         `Task packet "${taskId}" reference solution`,
-        packet.referenceSolutionDigest,
-        packet.resolvedReferenceSolutionDigest,
+        packet.referenceSolution.digest,
+        packet.referenceSolution.resolvedDigest,
       );
     }
   }
@@ -388,7 +401,8 @@ function digestIdentity(digest: Digest): string {
 function isSafeArchiveMemberPath(path: string): boolean {
   return path === posix.normalize(path)
     && /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[A-Za-z0-9._-][A-Za-z0-9._\/-]*$/.test(path)
-    && !path.split("/").some((segment) => /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(segment));
+    && !path.split("/").some((segment) => segment.endsWith(".")
+      || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(segment));
 }
 
 function canonicalArchiveMemberPath(path: string): string {
@@ -407,6 +421,16 @@ function isWithinAllowlist(path: string, includePaths: ReadonlySet<string>): boo
 function hasFileAncestor(path: string, destinations: ReadonlyMap<string, string>): boolean {
   for (let boundary = path.lastIndexOf("/"); boundary > 0; boundary = path.lastIndexOf("/", boundary - 1)) {
     if (destinations.get(path.slice(0, boundary)) === "file") return true;
+  }
+
+  return false;
+}
+
+function hasCaseInconsistentAncestor(path: string, destinations: ReadonlyMap<string, string>): boolean {
+  for (let boundary = path.lastIndexOf("/"); boundary > 0; boundary = path.lastIndexOf("/", boundary - 1)) {
+    const ancestor = path.slice(0, boundary);
+    const selectedAncestor = destinations.get(ancestor.toLowerCase());
+    if (selectedAncestor !== undefined && selectedAncestor !== ancestor) return true;
   }
 
   return false;
