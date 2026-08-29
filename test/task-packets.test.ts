@@ -406,6 +406,58 @@ test("create-if-absent publication preserves unowned binding sidecars during mar
   }
 });
 
+test("create-if-absent publication preserves a newer binding during marker recovery", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-binding-recovery-race-"));
+  const marker = join(root, "metadata.json.quarantine.marker");
+  const staging = join(root, ".bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.tmp");
+  const binding = `${marker}.binding`;
+  const bindingTemporary = `${binding}.tmp`;
+  const markerRecord = {
+    schemaVersion: "ebo.publication-staging/v1",
+    relativePath: "metadata.json",
+    stagingPath: ".bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.tmp",
+    attemptId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    ownerPid: 999999999,
+    ownerStart: "dead",
+  };
+  const originalOpenSync = fs.openSync;
+  let replaced = false;
+  fs.openSync = ((path: fs.PathLike, ...args: Parameters<typeof originalOpenSync> extends [fs.PathLike, ...infer Rest] ? Rest : never) => {
+    const descriptor = originalOpenSync(path, ...args);
+    if (!replaced && typeof path === "string" && path === "metadata.json.quarantine.marker.binding.tmp") {
+      replaced = true;
+      fs.unlinkSync(binding);
+      writeFileSync(binding, "new publisher binding");
+      chmodSync(binding, 0o600);
+    }
+    return descriptor;
+  }) as typeof originalOpenSync;
+  syncBuiltinESMExports();
+  try {
+    writeFileSync(marker, JSON.stringify(markerRecord));
+    chmodSync(marker, 0o600);
+    writeFileSync(staging, "staging bytes");
+    chmodSync(staging, 0o600);
+    const stagingIdentity = lstatSync(staging);
+    writeFileSync(bindingTemporary, JSON.stringify({
+      ...markerRecord,
+      stagingIdentity: { dev: stagingIdentity.dev, ino: stagingIdentity.ino },
+    }));
+    chmodSync(bindingTemporary, 0o600);
+    linkSync(bindingTemporary, binding);
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }),
+      /already occupied|binding|changed/,
+    );
+    assert.equal(replaced, true);
+    assert.equal(readFileSync(binding, "utf8"), "new publisher binding");
+  } finally {
+    fs.openSync = originalOpenSync;
+    syncBuiltinESMExports();
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("create-if-absent publication does not recover a live staging marker", () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-live-marker-"));
   const marker = join(root, "metadata.json.quarantine.marker");

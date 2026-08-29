@@ -1264,11 +1264,12 @@ function moveRecoveredMarkerToAttempt(
     const binding = lstatIfPresent(bindingPath);
     const bindingTemporary = lstatIfPresent(bindingTemporaryPath);
     if (binding !== undefined && bindingTemporary !== undefined && sameFileIdentity(binding, bindingTemporary)) {
-      moveOptionalPathToAttempt(bindingTemporaryPath);
+      movePathToAttemptIfIdentity(bindingTemporaryPath, binding);
     }
-    moveOptionalPathToAttempt(bindingPath);
+    if (binding !== undefined) movePathToAttemptIfIdentity(bindingPath, binding);
   } else if (bindingTemporaryOwned && lstatIfPresent(bindingPath) === undefined) {
-    moveOptionalPathToAttempt(bindingTemporaryPath);
+    const bindingTemporary = lstatIfPresent(bindingTemporaryPath);
+    if (bindingTemporary !== undefined) movePathToAttemptIfIdentity(bindingTemporaryPath, bindingTemporary);
   }
 
   const markerTemporaryPath = `${markerPath}.tmp`;
