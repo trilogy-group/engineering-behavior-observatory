@@ -214,6 +214,7 @@ test("create-if-absent publication recovers interrupted quarantine staging", asy
   const root = mkdtempSync(join(tmpdir(), "ebo-staging-recovery-"));
   const staging = join(root, "metadata.json.quarantine");
   const marker = `${staging}.marker`;
+  const binding = `${marker}.binding`;
   const metadata = { state: "ready" };
   try {
     writeFileSync(staging, "partial");
@@ -223,9 +224,15 @@ test("create-if-absent publication recovers interrupted quarantine staging", asy
       schemaVersion: "ebo.publication-staging/v1",
       relativePath: "metadata.json",
       attemptId: "11111111-1111-4111-8111-111111111111",
-      stagingIdentity: { dev: stagingIdentity.dev, ino: stagingIdentity.ino },
     }));
     chmodSync(marker, 0o600);
+    writeFileSync(binding, JSON.stringify({
+      schemaVersion: "ebo.publication-staging/v1",
+      relativePath: "metadata.json",
+      attemptId: "11111111-1111-4111-8111-111111111111",
+      stagingIdentity: { dev: stagingIdentity.dev, ino: stagingIdentity.ino },
+    }));
+    chmodSync(binding, 0o600);
     const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", metadata);
     assert.equal(result.created, true);
     assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", result.digest), Buffer.from('{"state":"ready"}'));

@@ -832,11 +832,8 @@ function recoverInterruptedStaging(path: string, markerPath: string, relativePat
     if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600) {
       throw new Error(`Publication quarantine "${path}" is already occupied.`);
     }
-    if (!stagingMarkerMatches(markerPath, relativePath, stat)) {
-      if (!stagingMarkerMatches(`${markerPath}.binding`, relativePath, stat)) {
-        throw new Error(`Publication quarantine "${path}" is already occupied.`);
-      }
-      bindStagingMarker(markerPath, relativePath, descriptor);
+    if (!stagingMarkerMatches(`${markerPath}.binding`, relativePath, stat)) {
+      throw new Error(`Publication quarantine "${path}" is already occupied.`);
     }
     movePathToAttempt(path, descriptor);
     moveOptionalPathToAttempt(markerPath);
@@ -898,20 +895,18 @@ function bindStagingMarker(path: string, relativePath: string, stagingDescriptor
       stagingIdentity: { dev: staging.dev, ino: staging.ino },
     }));
     const bindingPath = `${path}.binding`;
-    if (!stagingMarkerMatches(bindingPath, relativePath, staging)) {
-      const bindingDescriptor = openSync(bindingPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
-      try {
-        writeFileSync(bindingDescriptor, bytes);
-        fsyncSync(bindingDescriptor);
-      } finally {
-        closeSync(bindingDescriptor);
-      }
+    if (stagingMarkerMatches(bindingPath, relativePath, staging)) return;
+    const bindingDescriptor = openSync(bindingPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+    try {
+      writeFileSync(bindingDescriptor, bytes);
+      fsyncSync(bindingDescriptor);
+    } finally {
+      closeSync(bindingDescriptor);
     }
     const current = lstatSync(path);
     if (!sameFileIdentity(opened, current)) {
       throw new Error(`Publication staging marker "${path}" changed during binding.`);
     }
-    renameSync(bindingPath, path);
   } finally {
     closeSync(descriptor);
   }
