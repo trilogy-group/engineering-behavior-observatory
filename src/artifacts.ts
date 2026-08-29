@@ -625,6 +625,7 @@ function nestedVerifierDiagnosticErrors(
       && (retainedEvidence.mediaType === "text/plain" || retainedEvidence.mediaType === "application/octet-stream")
       && (retainedEvidence.sharingClass === "partner" || retainedEvidence.sharingClass === "public")
       && isRecord(retainedEvidence.sanitizedFrom)
+      && retainedEvidence.sanitizedFrom.artifactId === sanitizedSourceVerifierId
       && sourceBindingMatches
       && !byteIdentical;
     const invalidSanitizedReference = sanitized && !isSanitizedSidecar;
@@ -793,6 +794,9 @@ function validateExportedDiagnosticSidecar(
   const sourceBinding = isDiagnosticSourceBinding(descriptor.diagnosticSource) ? descriptor.diagnosticSource : undefined;
   if (sourceBinding === undefined) {
     return [{ artifact, schemaVersion: "export-manifest/v1", field: `${scope}/diagnosticSource`, message: "Exported diagnostic sidecars require source-specific provenance." }];
+  }
+  if (!isRecord(descriptor.sanitizedFrom) || descriptor.sanitizedFrom.artifactId !== sourceBinding.verifierId) {
+    return [{ artifact, schemaVersion: "export-manifest/v1", field: `${scope}/sanitizedFrom`, message: "Diagnostic sidecar provenance must name its diagnostic source verifier." }];
   }
   const sourceDescriptor = evidenceById.get(sourceBinding.verifierId);
   if (sourceDescriptor === undefined || sourceDescriptor.kind !== "verifier"
