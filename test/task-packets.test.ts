@@ -214,7 +214,7 @@ test("create-if-absent publication recovers interrupted quarantine staging", asy
   const root = mkdtempSync(join(tmpdir(), "ebo-staging-recovery-"));
   const staging = join(root, "metadata.json.quarantine");
   const marker = `${staging}.marker`;
-  const binding = `${marker}.binding`;
+  const binding = `${marker}.binding.tmp`;
   const metadata = { state: "ready" };
   try {
     writeFileSync(staging, "partial");
@@ -290,6 +290,23 @@ test("create-if-absent publication preserves a pre-existing staging marker", () 
       /EEXIST|already exists|marker/,
     );
     assert.equal(readFileSync(marker, "utf8"), "durable marker");
+    assert.equal(existsSync(join(root, "metadata.json")), false);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("create-if-absent publication preserves a pre-existing staging binding", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-binding-collision-"));
+  const binding = join(root, "metadata.json.quarantine.marker.binding");
+  try {
+    writeFileSync(binding, "durable binding");
+    chmodSync(binding, 0o600);
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }),
+      /already occupied|binding/,
+    );
+    assert.equal(readFileSync(binding, "utf8"), "durable binding");
     assert.equal(existsSync(join(root, "metadata.json")), false);
   } finally {
     rmSync(root, { force: true, recursive: true });

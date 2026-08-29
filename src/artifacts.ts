@@ -295,6 +295,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
       const temporaryPath = quarantinePath;
       let descriptor: number | undefined;
       let markerCreated = false;
+      let bindingCreated = false;
 
       try {
         try {
@@ -322,7 +323,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
         if (descriptor !== undefined) {
           assertPublishRootHandle(root, rootDescriptor, relativePath);
           assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
-          bindStagingMarker(markerPath, relativePath, descriptor);
+          bindingCreated = bindStagingMarker(markerPath, relativePath, descriptor);
           writeFileSync(descriptor, bytes);
           fsyncSync(descriptor);
           const openedTemporary = fstatSync(descriptor);
@@ -351,19 +352,17 @@ export function writeMetadataAtomicallyIfAbsentSync(
               if (!sameFileIdentity(existingDestination, openedTemporary)) {
                 movePathToAttempt(temporaryPath, descriptor);
                 if (markerCreated) {
-                  moveOptionalPathToAttempt(markerPath);
-                  moveOptionalPathToAttempt(`${markerPath}.binding`);
+                  moveMarkerToAttempt(markerPath, bindingCreated);
                 }
                 closeSync(descriptor);
                 descriptor = undefined;
               }
             } else {
-              if (linkedHere) preserveFailedPublication(destination, temporaryPath, markerCreated ? markerPath : undefined, descriptor);
+              if (linkedHere) preserveFailedPublication(destination, temporaryPath, markerCreated ? markerPath : undefined, bindingCreated, descriptor);
               else {
                 movePathToAttempt(temporaryPath, descriptor);
                 if (markerCreated) {
-                  moveOptionalPathToAttempt(markerPath);
-                  moveOptionalPathToAttempt(`${markerPath}.binding`);
+                  moveMarkerToAttempt(markerPath, bindingCreated);
                 }
               }
               closeSync(descriptor);
@@ -375,7 +374,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
             assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
           } catch (error) {
             if (created && descriptor !== undefined) {
-              preserveFailedPublication(destination, temporaryPath, markerCreated ? markerPath : undefined, descriptor);
+              preserveFailedPublication(destination, temporaryPath, markerCreated ? markerPath : undefined, bindingCreated, descriptor);
               closeSync(descriptor);
               descriptor = undefined;
             }
@@ -388,8 +387,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
           if (!created && !winnerRequired) {
             movePathToAttempt(temporaryPath, descriptor);
             if (markerCreated) {
-              moveOptionalPathToAttempt(`${temporaryPath}.marker`);
-              moveOptionalPathToAttempt(`${temporaryPath}.marker.binding`);
+              moveMarkerToAttempt(`${temporaryPath}.marker`, bindingCreated);
             }
           }
           closeSync(descriptor);
@@ -819,7 +817,8 @@ function assertPublicationPathWithinLimits(relativePath: string): void {
   if (isSafeArtifactRelativePath(relativePath)
       && (!isSafeArtifactRelativePath(`${relativePath}.quarantine`)
         || !isSafeArtifactRelativePath(`${relativePath}.quarantine.marker`)
-        || !isSafeArtifactRelativePath(`${relativePath}.quarantine.marker.binding`))) {
+        || !isSafeArtifactRelativePath(`${relativePath}.quarantine.marker.binding`)
+        || !isSafeArtifactRelativePath(`${relativePath}.quarantine.marker.binding.tmp`))) {
     throw new Error(`Publication path "${relativePath}" exceeds safe path limits including quarantine staging.`);
   }
 }
@@ -832,12 +831,18 @@ function recoverInterruptedStaging(path: string, markerPath: string, relativePat
     if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600) {
       throw new Error(`Publication quarantine "${path}" is already occupied.`);
     }
-    if (!stagingMarkerMatches(`${markerPath}.binding`, relativePath, stat)) {
-      throw new Error(`Publication quarantine "${path}" is already occupied.`);
+    const bindingPath = `${markerPath}.binding`;
+    if (!stagingMarkerMatches(bindingPath, relativePath, stat)) {
+      if (!stagingMarkerMatches(`${bindingPath}.tmp`, relativePath, stat)) {
+        throw new Error(`Publication quarantine "${path}" is already occupied.`);
+      }
+      bindStagingMarker(markerPath, relativePath, descriptor);
+      if (!stagingMarkerMatches(bindingPath, relativePath, stat)) {
+        throw new Error(`Publication quarantine "${path}" is already occupied.`);
+      }
     }
     movePathToAttempt(path, descriptor);
-    moveOptionalPathToAttempt(markerPath);
-    moveOptionalPathToAttempt(`${markerPath}.binding`);
+    moveMarkerToAttempt(markerPath, true);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     if (error instanceof Error && error.message.includes("already occupied")) throw error;
@@ -851,8 +856,7 @@ function recoverInterruptedMarker(path: string, relativePath: string): void {
   if (!stagingMarkerMatches(path, relativePath)) {
     throw new Error(`Publication staging marker "${path}" is already occupied.`);
   }
-  moveOptionalPathToAttempt(path);
-  moveOptionalPathToAttempt(`${path}.binding`);
+  moveMarkerToAttempt(path, true);
 }
 
 function writeStagingMarker(path: string, relativePath: string): void {
@@ -877,11 +881,14 @@ function isStagingMarker(value: unknown, relativePath: string): value is Record<
     && STAGING_ATTEMPT_PATTERN.test(value.attemptId);
 }
 
-function bindStagingMarker(path: string, relativePath: string, stagingDescriptor: number): void {
+function bindStagingMarker(path: string, relativePath: string, stagingDescriptor: number): boolean {
   const descriptor = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const bindingPath = `${path}.binding`;
+  const bindingTemporaryPath = `${bindingPath}.tmp`;
+  let bindingTemporaryCreated = false;
   try {
     const opened = fstatSync(descriptor);
-    if (!opened.isFile() || opened.nlink !== 1 || (opened.mode & 0o777) !== 0o600
+    if (!opened.isFile() || !isAccountedStagingMarkerLink(path, opened) || (opened.mode & 0o777) !== 0o600
         || !Number.isSafeInteger(opened.size) || opened.size > 4096) {
       throw new Error(`Publication staging marker "${path}" changed during binding.`);
     }
@@ -894,19 +901,36 @@ function bindStagingMarker(path: string, relativePath: string, stagingDescriptor
       ...marker,
       stagingIdentity: { dev: staging.dev, ino: staging.ino },
     }));
-    const bindingPath = `${path}.binding`;
-    if (stagingMarkerMatches(bindingPath, relativePath, staging)) return;
-    const bindingDescriptor = openSync(bindingPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
-    try {
-      writeFileSync(bindingDescriptor, bytes);
-      fsyncSync(bindingDescriptor);
-    } finally {
-      closeSync(bindingDescriptor);
+    if (stagingMarkerMatches(bindingPath, relativePath, staging)) return false;
+    if (lstatIfPresent(bindingPath) !== undefined) {
+      throw new Error(`Publication staging binding "${bindingPath}" is already occupied.`);
+    }
+    if (!stagingMarkerMatches(bindingTemporaryPath, relativePath, staging)) {
+      const bindingDescriptor = openSync(bindingTemporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+      bindingTemporaryCreated = true;
+      try {
+        writeFileSync(bindingDescriptor, bytes);
+        fsyncSync(bindingDescriptor);
+      } finally {
+        closeSync(bindingDescriptor);
+      }
     }
     const current = lstatSync(path);
     if (!sameFileIdentity(opened, current)) {
       throw new Error(`Publication staging marker "${path}" changed during binding.`);
     }
+    if (lstatIfPresent(bindingPath) !== undefined) {
+      if (!stagingMarkerMatches(bindingPath, relativePath, staging)) {
+        throw new Error(`Publication staging binding "${bindingPath}" is already occupied.`);
+      }
+      if (bindingTemporaryCreated) moveOptionalPathToAttempt(bindingTemporaryPath);
+      return false;
+    }
+    linkSync(bindingTemporaryPath, bindingPath);
+    return true;
+  } catch (error) {
+    if (bindingTemporaryCreated) moveOptionalPathToAttempt(bindingTemporaryPath);
+    throw error;
   } finally {
     closeSync(descriptor);
   }
@@ -917,11 +941,12 @@ function stagingMarkerMatches(path: string, relativePath: string, expectedStagin
   try {
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const opened = fstatSync(descriptor);
-    if (!opened.isFile() || opened.nlink !== 1 || (opened.mode & 0o777) !== 0o600
+    if (!opened.isFile() || !isAccountedStagingMarkerLink(path, opened) || (opened.mode & 0o777) !== 0o600
         || !Number.isSafeInteger(opened.size) || opened.size > 4096) return false;
     const marker = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(descriptor)));
     const completed = fstatSync(descriptor);
     return sameFileIdentity(opened, completed)
+      && isAccountedStagingMarkerLink(path, completed)
       && completed.size === opened.size
       && isStagingMarker(marker, relativePath)
       && (expectedStaging === undefined
@@ -936,6 +961,19 @@ function stagingMarkerMatches(path: string, relativePath: string, expectedStagin
   }
 }
 
+function isAccountedStagingMarkerLink(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
+  return target.nlink === 1 || (target.nlink === 2 && hasAliasIdentity(`${path}.tmp`, target));
+}
+
+function hasAliasIdentity(path: string, target: { dev: number; ino: number }): boolean {
+  try {
+    return sameFileIdentity(target, lstatSync(path));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 function moveOptionalPathToAttempt(path: string): void {
   try {
     movePathToAttempt(path);
@@ -944,16 +982,21 @@ function moveOptionalPathToAttempt(path: string): void {
   }
 }
 
-function preserveFailedPublication(destination: string, quarantine: string, marker: string | undefined, descriptor: number): void {
+function preserveFailedPublication(destination: string, quarantine: string, marker: string | undefined, bindingCreated: boolean, descriptor: number): void {
   movePathToAttempt(quarantine, descriptor);
-  if (marker !== undefined) {
-    moveOptionalPathToAttempt(marker);
-    moveOptionalPathToAttempt(`${marker}.binding`);
-  }
+  if (marker !== undefined) moveMarkerToAttempt(marker, bindingCreated);
   try {
     movePathToAttempt(destination, descriptor);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function moveMarkerToAttempt(marker: string, bindingCreated: boolean): void {
+  moveOptionalPathToAttempt(marker);
+  if (bindingCreated) {
+    moveOptionalPathToAttempt(`${marker}.binding`);
+    moveOptionalPathToAttempt(`${marker}.binding.tmp`);
   }
 }
 
