@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, linkSync, lstatSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -211,6 +211,8 @@ test("publication never overwrites an existing quarantine artifact", () => {
     writeFileSync(quarantine, "preserve me");
     assert.throws(() => freezeTaskPacket(root, "packet.json"), /already occupied/);
     assert.equal(readFileSync(quarantine, "utf8"), "preserve me");
+    assert.equal(existsSync(join(root, "packet.json.freeze.json")), false);
+    assert.equal(readdirSync(root).some((name) => /^\.[0-9a-f-]+\.tmp$/.test(name)), false);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

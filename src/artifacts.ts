@@ -276,6 +276,9 @@ export function writeMetadataAtomicallyIfAbsentSync(
         syncCreatedDirectories(root, createdDirectories, parentDescriptor);
         return { created: false, digest: winnerDigest };
       }
+      if (lstatIfPresent(`${destination}.quarantine`) !== undefined) {
+        throw new Error(`Publication quarantine "${destination}.quarantine" is already occupied.`);
+      }
 
       const temporaryPath = `.${randomUUID()}.tmp`;
       let descriptor: number | undefined;
