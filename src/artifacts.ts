@@ -1146,7 +1146,9 @@ export function writeMetadataAtomicallyIfAbsentSync(
           }
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-            winnerRequired = true;
+            moveMarkerToAttempt(markerPath, bindingCreated);
+            markerCreated = false;
+            throw new Error(`Artifact path "${relativePath}" staging entry is already occupied.`);
           } else if (markerCreated) {
             moveMarkerToAttempt(markerPath, bindingCreated);
             markerCreated = false;

@@ -747,6 +747,34 @@ test("create-if-absent publication preserves marker temp after installation iden
   }
 });
 
+test("create-if-absent publication preserves its marker on staging-name collision", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-staging-name-collision-"));
+  const originalOpenSync = fs.openSync;
+  let occupied = false;
+  fs.openSync = ((path: fs.PathLike, ...args: Parameters<typeof originalOpenSync> extends [fs.PathLike, ...infer Rest] ? Rest : never) => {
+    if (!occupied && typeof path === "string" && /^\.[0-9a-f-]{36}\.tmp$/.test(path)) {
+      occupied = true;
+      writeFileSync(path, "unowned staging");
+      chmodSync(path, 0o600);
+    }
+    return originalOpenSync(path, ...args);
+  }) as typeof originalOpenSync;
+  syncBuiltinESMExports();
+  try {
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }),
+      /staging entry is already occupied/,
+    );
+    assert.equal(occupied, true);
+    assert.equal(existsSync(join(root, "metadata.json.quarantine.marker")), false);
+    assert.equal(existsSync(join(root, "metadata.json.quarantine.marker.tmp")), false);
+  } finally {
+    fs.openSync = originalOpenSync;
+    syncBuiltinESMExports();
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("create-if-absent publication fails closed when marker ownership is unverifiable", () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-unknown-owner-marker-"));
   const marker = join(root, "metadata.json.quarantine.marker");
