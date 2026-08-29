@@ -35,7 +35,7 @@ test("executes a verifier outside the agent workspace and preserves diagnostics"
     assert.equal(result.assertions[0]?.status, "passed");
     assert.equal(result.diagnostics.length, 2);
     assert.equal(result.diagnostics[1]?.truncated, false);
-    assert.equal((await readFile(join(root.artifact, "diagnostics/stderr.log"), "utf8")), "a useful diagnostic");
+    assert.equal((await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8")), "a useful diagnostic");
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
@@ -59,6 +59,22 @@ test("preserves failed assertions as a task failure", async () => {
       { id: "second", status: "failed" },
     ]);
     assert.equal(result.exitCode, 1);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("classifies failed assertions with a zero exit as verifier errors", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "contradiction", status: "failed" }] }));
+    `);
+    const result = await run(root, verifier);
+
+    assert.equal(result.status, "error");
+    assert.deepEqual(result.assertions, [{ id: "contradiction", status: "failed" }]);
+    assert.match(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), /contradicts/);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
@@ -122,6 +138,44 @@ test("bounds oversized diagnostics without losing a valid result", async () => {
     assert.equal(stderr.sizeBytes, 128);
     assert.equal(stderr.truncated, true);
     assert.equal((await readFile(join(root.artifact, stderr.locator))).length, 128);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("terminates a verifier descendant on timeout", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      const { spawn } = require("node:child_process");
+      spawn(process.execPath, ["-e", "setTimeout(() => {}, 10000)"], { stdio: ["ignore", "inherit", "inherit"] });
+      setTimeout(() => {}, 10000);
+    `);
+    const result = await Promise.race([
+      run(root, verifier, { timeoutMs: 50 }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("descendant was not terminated")), 2_000)),
+    ]);
+
+    assert.equal(result.status, "error");
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("uses distinct diagnostic paths for repeated executions", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stderr.write(process.env.DIAGNOSTIC ?? "first");
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "repeatable", status: "passed" }] }));
+    `);
+    const first = await run(root, verifier, { maxOutputBytes: 128 });
+    const second = await run(root, verifier, { maxOutputBytes: 128 });
+
+    assert.notEqual(first.diagnostics[0]?.locator, second.diagnostics[0]?.locator);
+    await writeVerifierResult(root.artifact, "first.json", first);
+    await writeVerifierResult(root.artifact, "second.json", second);
+    assert.equal(await readFile(join(root.artifact, first.diagnostics[1]!.locator), "utf8"), "first");
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }

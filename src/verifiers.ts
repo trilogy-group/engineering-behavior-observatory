@@ -86,6 +86,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
   if (!isSafeArtifactRelativePath(diagnosticDirectory)) {
     throw new Error(`Diagnostic directory "${diagnosticDirectory}" is unsafe.`);
   }
+  const executionDiagnosticDirectory = join(diagnosticDirectory, randomUUID());
 
   let stdout: CapturedOutput = emptyOutput();
   let stderr: CapturedOutput = emptyOutput();
@@ -122,7 +123,11 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
 
     if (internalError === undefined && processResult.signal === undefined && exitCode !== undefined) {
       if (assertions.some((assertion) => assertion.status === "failed")) {
-        status = "failed";
+        if (exitCode === 0) {
+          internalError = "Verifier exit status contradicts its failed assertions.";
+        } else {
+          status = "failed";
+        }
       } else if (exitCode === 0 && assertions.every((assertion) => assertion.status === "passed")) {
         status = "passed";
       } else {
@@ -142,7 +147,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
     status = "error";
   }
 
-  const diagnostics = await writeDiagnostics(artifactRoot, diagnosticDirectory, stdout, stderr);
+  const diagnostics = await writeDiagnostics(artifactRoot, executionDiagnosticDirectory, stdout, stderr);
   const result: VerifierResult = {
     schemaVersion: "verifier-result/v1",
     bundleId: options.bundleId,
@@ -242,14 +247,16 @@ async function runProcess(
   const child = spawn(command, args, {
     cwd,
     env: overrides === undefined ? { PATH: process.env.PATH ?? "" } : cleanEnvironment(overrides),
+    detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
   });
   const stdout = capture(child.stdout, maxOutputBytes);
   const stderr = capture(child.stderr, maxOutputBytes);
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    child.kill("SIGKILL");
+    killProcessTree(child);
   }, timeoutMs);
   timer.unref();
 
@@ -270,6 +277,23 @@ async function runProcess(
       });
     });
   });
+}
+
+function killProcessTree(child: ReturnType<typeof spawn>): void {
+  if (child.pid === undefined) return;
+  if (process.platform === "win32") {
+    const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    killer.unref();
+    return;
+  }
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    child.kill("SIGKILL");
+  }
 }
 
 function capture(stream: NodeJS.ReadableStream | null, limit: number): Promise<CapturedOutput> {

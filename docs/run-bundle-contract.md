@@ -128,10 +128,13 @@ The executor records the assertion list, `durationMs`, observed `exitCode`
 when the process exits normally, and a `status` of `passed`, `failed`, or
 `error`. A valid assertion failure is a task failure; timeout, crash, invalid
 UTF-8/JSON, duplicate or invalid assertion, and an exit/assertion contradiction
-are verifier errors. `not-run` remains available for a caller that records a
-verifier which was never started. Stdout and stderr are drained without an
-unbounded buffer. Each retained stream is represented by a diagnostic reference
-with a bundle-relative `locator`, SHA-256 `digest`, retained `sizeBytes`, and a
+are verifier errors. A failed assertion therefore requires a nonzero verifier
+exit; a zero exit paired with a failure is not a task result. `not-run` remains
+available for a caller that records a verifier which was never started. Stdout
+and stderr are drained without an unbounded buffer, and a timeout terminates
+the verifier process group (or process tree on Windows). Each retained stream
+is represented by an execution-specific diagnostic reference with a
+bundle-relative `locator`, SHA-256 `digest`, retained `sizeBytes`, and a
 `truncated` flag. The result remains valid even when diagnostics are truncated.
 
 The result serializer validates `verifier-result/v1` before writing it. The
