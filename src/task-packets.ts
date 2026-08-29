@@ -5,7 +5,7 @@ import {
   fsyncSync,
   lstatSync,
   openSync,
-  readdirSync,
+  opendirSync,
   readFileSync,
   readSync,
   realpathSync,
@@ -123,6 +123,7 @@ export type TaskPacketStatus = {
 export const TASK_PACKET_FREEZE_SCHEMA_VERSION = "ebo.task-packet-freeze/v1";
 export const MAX_TASK_PACKET_METADATA_BYTES = MAX_CONFIGURATION_BYTES;
 const MAX_TRANSIENT_LINK_READ_RETRIES = 20;
+const MAX_FREEZE_RECOVERY_ENTRIES = 4096;
 const FREEZE_LOCATOR_SUFFIX = ".freeze.json";
 
 export function inspectTaskPacket(bundleRoot: string, packetLocator: string): TaskPacketInspection {
@@ -570,22 +571,33 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHan
       assertFreezeParent(root, parent, parentDescriptor, locator);
       const destinationStat = lstatSync(relative(parent, destination));
 
-      for (const name of readdirSync(".")) {
-        if (!/^\.[0-9a-f-]+\.tmp$/.test(name)) continue;
-        try {
-          const temporaryStat = lstatSync(name);
-          if (temporaryStat.isFile() && temporaryStat.dev === destinationStat.dev && temporaryStat.ino === destinationStat.ino) {
-            assertFreezeParent(root, parent, parentDescriptor, locator);
-            const currentDestination = lstatSync(relative(parent, destination));
-            const currentTemporary = lstatSync(name);
-            if (currentDestination.dev !== currentTemporary.dev || currentDestination.ino !== currentTemporary.ino) continue;
-            unlinkSync(name);
-            removed = true;
-            assertFreezeParent(root, parent, parentDescriptor, locator);
+      const directory = opendirSync(".");
+      let scanned = 0;
+      try {
+        for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
+          scanned += 1;
+          if (scanned > MAX_FREEZE_RECOVERY_ENTRIES) {
+            throw new Error("Freeze recovery directory exceeds its entry limit.");
           }
-        } catch (error) {
-          if (!isErrno(error, "ENOENT")) throw error;
+          const name = entry.name;
+          if (!/^\.[0-9a-f-]+\.tmp$/.test(name)) continue;
+          try {
+            const temporaryStat = lstatSync(name);
+            if (temporaryStat.isFile() && temporaryStat.dev === destinationStat.dev && temporaryStat.ino === destinationStat.ino) {
+              assertFreezeParent(root, parent, parentDescriptor, locator);
+              const currentDestination = lstatSync(relative(parent, destination));
+              const currentTemporary = lstatSync(name);
+              if (currentDestination.dev !== currentTemporary.dev || currentDestination.ino !== currentTemporary.ino) continue;
+              unlinkSync(name);
+              removed = true;
+              assertFreezeParent(root, parent, parentDescriptor, locator);
+            }
+          } catch (error) {
+            if (!isErrno(error, "ENOENT")) throw error;
+          }
         }
+      } finally {
+        directory.closeSync();
       }
 
       if (removed) fsyncSync(parentDescriptor);

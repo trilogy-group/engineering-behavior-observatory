@@ -225,6 +225,22 @@ test("status recovers an interrupted nested freeze link within its parent", () =
   }
 });
 
+test("status bounds orphan-link recovery directory scans", () => {
+  const { root } = createBundle();
+  const freezePath = join(root, "packet.json.freeze.json");
+  const temporaryLink = join(root, ".33333333-3333-4333-8333-333333333333.tmp");
+  try {
+    freezeTaskPacket(root, "packet.json");
+    linkSync(freezePath, temporaryLink);
+    for (let index = 0; index < 4_097; index += 1) writeFileSync(join(root, `scan-entry-${index}`), "");
+    const status = statusTaskPacket(root, "packet.json");
+    assert.equal(status.status, "invalid");
+    assert.ok(status.errors.some((error) => /recovery directory exceeds its entry limit/.test(error.message)));
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("freeze publication rejects a symlinked ancestor", () => {
   const { root } = createBundle();
   const outside = mkdtempSync(join(tmpdir(), "ebo-freeze-outside-"));
