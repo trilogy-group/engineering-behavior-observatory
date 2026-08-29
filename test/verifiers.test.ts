@@ -155,6 +155,38 @@ test("preserves failed assertions as a task failure", async () => {
   }
 });
 
+test("accepts an explicit verifier exit after a task result", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "explicit-failure", status: "failed" }] }));
+      process.exit(1);
+    `);
+    const result = await run(root, verifier);
+
+    assert.equal(result.status, "failed");
+    assert.equal(result.exitCode, 1);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("preserves CommonJS direct-entry semantics", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      if (require.main === module) {
+        process.stdout.write(JSON.stringify({ assertions: [{ id: "direct-entry", status: "passed" }] }));
+      }
+    `);
+    const result = await run(root, verifier);
+
+    assert.equal(result.status, "passed");
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("classifies failed assertions with a zero exit as verifier errors", async () => {
   const root = await createRoots();
   try {

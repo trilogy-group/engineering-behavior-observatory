@@ -146,28 +146,25 @@ const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const RESERVED_MANIFEST_PATHS = new Set(["manifest.json"]);
 const execFileAsync = promisify(execFile);
-const VERIFIER_WRAPPER = `
-import { rm, writeFile } from "node:fs/promises";
-import { pathToFileURL } from "node:url";
-
-const [verifier, workspace, marker] = process.argv.slice(2);
-process.argv = [process.argv[0], verifier, workspace];
+const VERIFIER_COMPLETION_HOOK = `
+const fs = require("node:fs");
+const marker = process.env.EBO_VERIFIER_COMPLETION;
 let abnormal = false;
 const report = (error) => {
   abnormal = true;
-  void rm(marker, { force: true }).catch(() => undefined);
+  if (marker !== undefined) {
+    try { fs.unlinkSync(marker); } catch {}
+  }
   console.error(error instanceof Error ? error.stack ?? error.message : String(error));
   process.exitCode = 1;
 };
 process.on("uncaughtException", report);
 process.on("unhandledRejection", report);
-try {
-  await import(pathToFileURL(verifier).href);
-  await new Promise((resolve) => setImmediate(resolve));
-  if (!abnormal) await writeFile(marker, "completed", { flag: "wx" });
-} catch (error) {
-  report(error);
-}
+process.on("exit", () => {
+  if (!abnormal && marker !== undefined) {
+    try { fs.writeFileSync(marker, "completed", { flag: "wx" }); } catch {}
+  }
+});
 `;
 
 export async function digestWorkspace(workspacePath: string): Promise<string> {
@@ -351,13 +348,13 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
         }
         const stagedVerifier = join(stagingRoot, stagedVerifierName(verifierFormat));
         await writePrivateFile(stagedVerifier, verifierBytes);
-        const wrapperPath = join(stagingRoot, "run-verifier.mjs");
-        await writePrivateFile(wrapperPath, Buffer.from(VERIFIER_WRAPPER));
+        const completionHookPath = join(stagingRoot, "completion-hook.cjs");
+        await writePrivateFile(completionHookPath, Buffer.from(VERIFIER_COMPLETION_HOOK));
         const completionMarker = join(stagingRoot, "completed");
 
         const processResult = await runProcess(
           options.command ?? process.execPath,
-          [wrapperPath, stagedVerifier, evaluatedWorkspacePath, completionMarker],
+          ["--require", completionHookPath, stagedVerifier, evaluatedWorkspacePath],
           evaluatedWorkspacePath,
           options.env,
           timeoutMs,
@@ -639,9 +636,11 @@ async function runProcess(
   diagnosticFiles: readonly DiagnosticFile[],
   completionMarker: string,
 ): Promise<ProcessResult> {
+  const environment = overrides === undefined ? { PATH: process.env.PATH ?? "" } : cleanEnvironment(overrides);
+  environment.EBO_VERIFIER_COMPLETION = completionMarker;
   const child = spawn(command, args, {
     cwd,
-    env: overrides === undefined ? { PATH: process.env.PATH ?? "" } : cleanEnvironment(overrides),
+    env: environment,
     detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
