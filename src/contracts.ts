@@ -957,8 +957,7 @@ function parseTarArchive(bytes: Buffer, maxMembers: number): { entries: ArchiveE
       continue;
     }
     if (type === "g") {
-      offset = dataOffset + paddedSize;
-      continue;
+      throw new Error("Sanitized task archive contains an unsupported global PAX header.");
     }
 
     const rawName = readTarText(header.subarray(0, 100));

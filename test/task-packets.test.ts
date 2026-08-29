@@ -318,6 +318,14 @@ test("inspection validates fixture archives before admission", () => {
       expected: /PAX size/,
       mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
     },
+    {
+      bytes: tarGzipArchive([
+        { path: "GlobalHeader", bytes: Buffer.from("16 path=../evil\n"), type: "g" },
+        { path: "README.md", bytes: Buffer.from("safe") },
+      ]),
+      expected: /unsupported global PAX/,
+      mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
+    },
   ];
 
   for (const invalidCase of invalidCases) {
