@@ -48,6 +48,7 @@ const schemaDirectory = fileURLToPath(new URL("../../schemas/", import.meta.url)
 const runBundleSchemaId = "urn:ebo:schema:run-bundle:v1";
 const MAX_EXISTING_DIGEST_RETRIES = 20;
 const STAGING_MARKER_SCHEMA_VERSION = "ebo.publication-staging/v1";
+const STAGING_ATTEMPT_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const validators = loadValidators();
 
 export const SUPPORTED_ARTIFACT_SCHEMA_VERSIONS = [...validators.keys()];
@@ -282,8 +283,11 @@ export function writeMetadataAtomicallyIfAbsentSync(
         return { created: false, digest: winnerDigest };
       }
       const quarantinePath = `${destination}.quarantine`;
+      const markerPath = `${quarantinePath}.marker`;
       if (lstatIfPresent(quarantinePath) !== undefined) {
-        recoverInterruptedStaging(quarantinePath, `${quarantinePath}.marker`, relativePath);
+        recoverInterruptedStaging(quarantinePath, markerPath, relativePath);
+      } else if (lstatIfPresent(markerPath) !== undefined) {
+        recoverInterruptedMarker(markerPath, relativePath);
       }
 
       // The deterministic quarantine sibling is also the staging inode. Keeping it as
@@ -294,10 +298,23 @@ export function writeMetadataAtomicallyIfAbsentSync(
 
       try {
         try {
-          descriptor = openSync(temporaryPath, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o600);
+          writeStagingMarker(markerPath, relativePath);
+          markerCreated = true;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          winnerRequired = true;
+        }
+        try {
+          if (markerCreated) {
+            descriptor = openSync(temporaryPath, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o600);
+          }
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === "EEXIST") {
             winnerRequired = true;
+          } else if (markerCreated) {
+            moveOptionalPathToAttempt(markerPath);
+            markerCreated = false;
+            throw error;
           } else {
             throw error;
           }
@@ -305,9 +322,6 @@ export function writeMetadataAtomicallyIfAbsentSync(
         if (descriptor !== undefined) {
           assertPublishRootHandle(root, rootDescriptor, relativePath);
           assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
-          const markerPath = `${temporaryPath}.marker`;
-          writeStagingMarker(markerPath, relativePath, descriptor);
-          markerCreated = true;
           writeFileSync(descriptor, bytes);
           fsyncSync(descriptor);
           const openedTemporary = fstatSync(descriptor);
@@ -805,7 +819,7 @@ function recoverInterruptedStaging(path: string, markerPath: string, relativePat
     descriptor = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const stat = fstatSync(descriptor);
     if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600
-        || !stagingMarkerMatches(markerPath, relativePath, stat)) {
+        || !stagingMarkerMatches(markerPath, relativePath)) {
       throw new Error(`Publication quarantine "${path}" is already occupied.`);
     }
     movePathToAttempt(path, descriptor);
@@ -819,14 +833,20 @@ function recoverInterruptedStaging(path: string, markerPath: string, relativePat
   }
 }
 
-function writeStagingMarker(path: string, relativePath: string, stagingDescriptor: number): void {
+function recoverInterruptedMarker(path: string, relativePath: string): void {
+  if (!stagingMarkerMatches(path, relativePath)) {
+    throw new Error(`Publication staging marker "${path}" is already occupied.`);
+  }
+  moveOptionalPathToAttempt(path);
+}
+
+function writeStagingMarker(path: string, relativePath: string): void {
   const descriptor = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
   try {
-    const staging = fstatSync(stagingDescriptor);
     writeFileSync(descriptor, Buffer.from(canonicalizeMetadata({
       schemaVersion: STAGING_MARKER_SCHEMA_VERSION,
       relativePath,
-      stagingIdentity: { dev: staging.dev, ino: staging.ino },
+      attemptId: randomUUID(),
     })));
     fsyncSync(descriptor);
   } finally {
@@ -834,7 +854,7 @@ function writeStagingMarker(path: string, relativePath: string, stagingDescripto
   }
 }
 
-function stagingMarkerMatches(path: string, relativePath: string, expectedStaging: { dev: number; ino: number }): boolean {
+function stagingMarkerMatches(path: string, relativePath: string): boolean {
   let descriptor: number | undefined;
   try {
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -848,9 +868,8 @@ function stagingMarkerMatches(path: string, relativePath: string, expectedStagin
       && isRecord(marker)
       && marker.schemaVersion === STAGING_MARKER_SCHEMA_VERSION
       && marker.relativePath === relativePath
-      && isRecord(marker.stagingIdentity)
-      && marker.stagingIdentity.dev === expectedStaging.dev
-      && marker.stagingIdentity.ino === expectedStaging.ino;
+      && typeof marker.attemptId === "string"
+      && STAGING_ATTEMPT_PATTERN.test(marker.attemptId);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     return false;

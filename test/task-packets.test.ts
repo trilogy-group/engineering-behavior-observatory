@@ -218,11 +218,10 @@ test("create-if-absent publication recovers interrupted quarantine staging", asy
   try {
     writeFileSync(staging, "partial");
     chmodSync(staging, 0o600);
-    const stagingIdentity = lstatSync(staging);
     writeFileSync(marker, JSON.stringify({
       schemaVersion: "ebo.publication-staging/v1",
       relativePath: "metadata.json",
-      stagingIdentity: { dev: stagingIdentity.dev, ino: stagingIdentity.ino },
+      attemptId: "11111111-1111-4111-8111-111111111111",
     }));
     chmodSync(marker, 0o600);
     const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", metadata);
