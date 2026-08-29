@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   closeSync,
   constants,
@@ -49,6 +50,7 @@ const runBundleSchemaId = "urn:ebo:schema:run-bundle:v1";
 const MAX_EXISTING_DIGEST_RETRIES = 200;
 const STAGING_MARKER_SCHEMA_VERSION = "ebo.publication-staging/v1";
 const STAGING_ATTEMPT_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const CURRENT_PROCESS_START = processStartIdentity(process.pid);
 const validators = loadValidators();
 
 export const SUPPORTED_ARTIFACT_SCHEMA_VERSIONS = [...validators.keys()];
@@ -875,6 +877,7 @@ function writeStagingMarker(path: string, relativePath: string): void {
       relativePath,
       attemptId: randomUUID(),
       ownerPid: process.pid,
+      ownerStart: CURRENT_PROCESS_START ?? "unknown",
     }));
     writeFileSync(descriptor, bytes);
     fsyncSync(descriptor);
@@ -902,19 +905,29 @@ function isStagingMarker(value: unknown, relativePath: string): value is Record<
     && STAGING_ATTEMPT_PATTERN.test(value.attemptId)
     && typeof value.ownerPid === "number"
     && Number.isInteger(value.ownerPid)
-    && value.ownerPid > 0;
+    && value.ownerPid > 0
+    && typeof value.ownerStart === "string"
+    && value.ownerStart.length > 0;
+}
+
+function processStartIdentity(pid: number): string | undefined {
+  try {
+    const value = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return value === "" ? undefined : value;
+  } catch {
+    return undefined;
+  }
 }
 
 function isActiveStagingMarker(path: string, relativePath: string): boolean {
   try {
     const marker = JSON.parse(readFileSync(path, "utf8")) as unknown;
     if (!isStagingMarker(marker, relativePath)) return false;
-    try {
-      process.kill(marker.ownerPid as number, 0);
-      return true;
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code === "EPERM";
-    }
+    const currentStart = processStartIdentity(marker.ownerPid as number);
+    return currentStart !== undefined && currentStart === marker.ownerStart;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     return false;
@@ -1054,7 +1067,13 @@ function movePathToAttempt(path: string, descriptor?: number): string {
       renameSync(path, target);
       const moved = lstatSync(target);
       if (!sameFileIdentity(expected, moved)) {
-        if (lstatIfPresent(path) === undefined) renameSync(target, path);
+        if (lstatIfPresent(path) === undefined) {
+          try {
+            linkSync(target, path);
+          } catch (restoreError) {
+            if ((restoreError as NodeJS.ErrnoException).code !== "EEXIST") throw restoreError;
+          }
+        }
         throw new Error(`Publication path "${path}" changed during failure preservation.`);
       }
       return target;

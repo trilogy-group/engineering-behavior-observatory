@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { chmodSync, existsSync, linkSync, lstatSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -27,6 +27,7 @@ import { closeBundleRoot, openBundleRoot } from "../src/contracts.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const fixturePath = (name: string) => join(repositoryRoot, "tests", "fixtures", name);
+const currentProcessStart = execFileSync("ps", ["-o", "lstart=", "-p", String(process.pid)], { encoding: "utf8" }).trim();
 
 function packetFixture(name = "task-packet.valid.v1.json"): TaskPacket {
   return JSON.parse(readFileSync(fixturePath(name), "utf8")) as TaskPacket;
@@ -225,6 +226,7 @@ test("create-if-absent publication recovers interrupted quarantine staging", asy
       relativePath: "metadata.json",
       attemptId: "11111111-1111-4111-8111-111111111111",
       ownerPid: 999999999,
+      ownerStart: "dead",
     }));
     chmodSync(marker, 0o600);
     writeFileSync(binding, JSON.stringify({
@@ -232,6 +234,7 @@ test("create-if-absent publication recovers interrupted quarantine staging", asy
       relativePath: "metadata.json",
       attemptId: "11111111-1111-4111-8111-111111111111",
       ownerPid: 999999999,
+      ownerStart: "dead",
       stagingIdentity: { dev: stagingIdentity.dev, ino: stagingIdentity.ino },
     }));
     chmodSync(binding, 0o600);
@@ -254,6 +257,7 @@ test("create-if-absent publication recovers a marker-only interruption", async (
       relativePath: "metadata.json",
       attemptId: "22222222-2222-4222-8222-222222222222",
       ownerPid: 999999999,
+      ownerStart: "dead",
     }));
     chmodSync(marker, 0o600);
     const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
@@ -274,11 +278,32 @@ test("create-if-absent publication does not recover a live staging marker", () =
       relativePath: "metadata.json",
       attemptId: "33333333-3333-4333-8333-333333333333",
       ownerPid: process.pid,
+      ownerStart: currentProcessStart,
     }));
     chmodSync(marker, 0o600);
     assert.throws(() => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }), /ENOENT|already occupied/);
     assert.equal(readFileSync(marker, "utf8").includes("33333333-3333-4333-8333-333333333333"), true);
     assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), false);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("create-if-absent publication recovers a marker with a reused PID", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-reused-pid-marker-"));
+  const marker = join(root, "metadata.json.quarantine.marker");
+  try {
+    writeFileSync(marker, JSON.stringify({
+      schemaVersion: "ebo.publication-staging/v1",
+      relativePath: "metadata.json",
+      attemptId: "44444444-4444-4444-8444-444444444444",
+      ownerPid: process.pid,
+      ownerStart: "different-process-start",
+    }));
+    chmodSync(marker, 0o600);
+    const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
+    assert.equal(result.created, true);
+    assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), true);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
