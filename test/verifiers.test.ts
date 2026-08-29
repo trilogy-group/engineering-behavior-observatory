@@ -235,6 +235,24 @@ test("preserves a subprocess launch error without native diagnostics", async () 
   }
 });
 
+test("rejects launcher arguments that replace the staged verifier", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "unused", status: "passed" }] }));
+    `);
+    await assert.rejects(
+      run(root, verifier, {
+        command: process.execPath,
+        args: ["-e", "process.stdout.write(JSON.stringify({ assertions: [{ id: 'bypass', status: 'passed' }] }))"],
+      }),
+      /launcher arguments cannot replace/,
+    );
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("keeps verifier staging outside a workspace-local temp directory", async () => {
   const root = await createRoots();
   const previousTempDirectory = process.env.TMPDIR;
@@ -753,7 +771,7 @@ async function addVerifier(root: string, source: string): Promise<{ locator: str
 async function run(
   root: Roots,
   verifier: { locator: string; digest: ReturnType<typeof digestBytes> },
-  options: { timeoutMs?: number; maxOutputBytes?: number; command?: string; diagnosticDirectory?: string } = {},
+  options: { timeoutMs?: number; maxOutputBytes?: number; command?: string; args?: readonly string[]; diagnosticDirectory?: string } = {},
 ): Promise<CompleteVerifierResult> {
   const workspaceFingerprint = await digestWorkspace(root.workspace);
   const workspace = {

@@ -388,6 +388,9 @@ export async function writeVerifierResult(
 
 function validateOptions(options: ExecuteVerifierOptions, timeoutMs: number, maxOutputBytes: number): void {
   if (!isValidIdentifier(options.bundleId)) throw new Error("Bundle ID is invalid.");
+  if (options.args?.some((argument) => /^(?:-[epcmr]|--(?:eval|print|command|module|input-type|require|import|loader)(?:=|$))/.test(argument))) {
+    throw new Error("Verifier launcher arguments cannot replace the staged verifier.");
+  }
   if (!isValidIdentifier(options.workspace.artifactId) || !/^sha256:[a-f0-9]{64}$/.test(options.workspace.digest)) {
     throw new Error("Workspace reference is invalid.");
   }

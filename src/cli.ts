@@ -52,10 +52,15 @@ export function main(
       if (document === undefined || typeof document !== "object" || document === null
           || (document as { schemaVersion?: unknown }).schemaVersion !== "export-manifest/v1") continue;
       const bundleId = (document as { bundleId?: unknown }).bundleId;
-      const containing = artifacts.find(({ document: candidate }) => candidate !== undefined && typeof candidate === "object" && candidate !== null
+      const containingEntry = artifacts.find(({ document: candidate }) => candidate !== undefined && typeof candidate === "object" && candidate !== null
         && (candidate as { schemaVersion?: unknown }).schemaVersion === "run-manifest/v1"
-        && (candidate as { bundleId?: unknown }).bundleId === bundleId)?.document;
-      errors.push(...validateExportManifest(artifact, document, containing));
+        && (candidate as { bundleId?: unknown }).bundleId === bundleId);
+      errors.push(...validateExportManifest(
+        artifact,
+        document,
+        containingEntry?.document,
+        containingEntry === undefined ? undefined : dirname(containingEntry.artifact),
+      ));
     }
 
     if (errors.length === 0) {

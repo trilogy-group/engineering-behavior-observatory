@@ -12,6 +12,7 @@ import {
   digestMetadata,
   readVerifiedArtifact,
   validateArtifact,
+  validateExportManifest,
   validateRunManifestEvidence,
   verifyDigest,
   writeMetadataAtomically,
@@ -459,6 +460,78 @@ test("binds verifier results to the configured verifier reference", async () => 
       validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
       /Verifier execution reference must match the run configuration/,
     );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("requires classified sidecars for sanitized verifier diagnostics", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ebo-sanitized-diagnostics-"));
+  try {
+    await cp(runFixturePath("complete"), root, { recursive: true });
+    const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8"));
+    const exportManifest = JSON.parse(readFileSync(join(root, "export/manifest.json"), "utf8"));
+    exportManifest.status = "ready";
+    const verifierDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "verifier");
+    const workspaceDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "workspace");
+    const sourceVerifier = JSON.parse(readFileSync(join(root, "verifier.json"), "utf8"));
+    const sanitizedVerifierDescriptor = {
+      ...verifierDescriptor,
+      id: "sanitized-verifier",
+      relativePath: "sanitized/verifier.json",
+      sharingClass: "partner",
+      sanitizedFrom: { artifactId: verifierDescriptor.id, digest: verifierDescriptor.digest },
+    };
+    manifest.evidence.push(sanitizedVerifierDescriptor);
+    exportManifest.artifactIds = ["sanitized-verifier"];
+    const rawDiagnostic = Buffer.from("restricted diagnostic");
+    sourceVerifier.diagnostics = [{
+      stream: "stderr",
+      locator: "raw-diagnostic.log",
+      digest: `sha256:${digestBytes(rawDiagnostic).value}`,
+      sizeBytes: rawDiagnostic.length,
+      truncated: false,
+    }];
+    const rawVerifierBytes = Buffer.from(JSON.stringify(sourceVerifier));
+    await mkdir(join(root, "sanitized"));
+    await writeFile(join(root, "sanitized/verifier.json"), rawVerifierBytes);
+    sanitizedVerifierDescriptor.digest = `sha256:${digestBytes(rawVerifierBytes).value}`;
+    sanitizedVerifierDescriptor.sizeBytes = rawVerifierBytes.length;
+
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /separately classified sanitized sidecars/,
+    );
+    assert.match(
+      validateExportManifest("export/manifest.json", exportManifest, manifest, root).map((error) => error.message).join("\n"),
+      /separately classified sanitized sidecars/,
+    );
+
+    const sidecar = {
+      ...workspaceDescriptor,
+      id: "sanitized-diagnostic",
+      relativePath: "sanitized/diagnostic.log",
+      digest: `sha256:${digestBytes(rawDiagnostic).value}`,
+      sizeBytes: rawDiagnostic.length,
+      sharingClass: "partner",
+      sanitizedFrom: { artifactId: workspaceDescriptor.id, digest: workspaceDescriptor.digest },
+    };
+    await writeFile(join(root, sidecar.relativePath), rawDiagnostic);
+    manifest.evidence.push(sidecar);
+    sourceVerifier.diagnostics[0].locator = sidecar.relativePath;
+    sourceVerifier.diagnostics[0].digest = sidecar.digest;
+    const sidecarVerifierBytes = Buffer.from(JSON.stringify(sourceVerifier));
+    await writeFile(join(root, sanitizedVerifierDescriptor.relativePath), sidecarVerifierBytes);
+    sanitizedVerifierDescriptor.digest = `sha256:${digestBytes(sidecarVerifierBytes).value}`;
+    sanitizedVerifierDescriptor.sizeBytes = sidecarVerifierBytes.length;
+
+    assert.deepEqual(validateRunManifestEvidence("manifest.json", manifest, root), []);
+    assert.match(
+      validateExportManifest("export/manifest.json", exportManifest, manifest, root).map((error) => error.message).join("\n"),
+      /sidecars must be included in the export/,
+    );
+    exportManifest.artifactIds.push(sidecar.id);
+    assert.deepEqual(validateExportManifest("export/manifest.json", exportManifest, manifest, root), []);
   } finally {
     await rm(root, { force: true, recursive: true });
   }

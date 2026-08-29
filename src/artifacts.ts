@@ -210,6 +210,12 @@ export function validateRunManifestEvidence(
   );
   const verifierOutcomes: NestedVerifierOutcome[] = [];
   const verifierResults = new Map<string, NestedVerifierOutcome>();
+  const evidenceByPath = new Map<string, Record<string, unknown>>(
+    manifest.evidence
+      .filter((entry): entry is Record<string, unknown> => isRecord(entry)
+        && typeof entry.relativePath === "string")
+      .map((entry) => [(entry.relativePath as string).toLowerCase(), entry]),
+  );
   const evidencePaths = new Set(
     manifest.evidence
       .filter((entry): entry is Record<string, unknown> => isRecord(entry) && typeof entry.relativePath === "string")
@@ -235,6 +241,8 @@ export function validateRunManifestEvidence(
           expectedBundleId,
           expectedVerifier,
           workspaceEvidence,
+          descriptor.sanitizedFrom !== undefined,
+          evidenceByPath,
           evidencePaths,
           nestedDiagnosticPaths,
         );
@@ -287,6 +295,22 @@ export function validateRunManifestEvidence(
         message: "Sanitized verifier must preserve its source exit code.",
       });
     }
+    const sourceWorkspace = source.workspace;
+    const derivativeWorkspace = derivative.workspace;
+    const sameWorkspace = sourceWorkspace === undefined
+      ? derivativeWorkspace === undefined
+      : derivativeWorkspace !== undefined
+        && derivativeWorkspace.artifactId === sourceWorkspace.artifactId
+        && derivativeWorkspace.digest === sourceWorkspace.digest
+        && derivativeWorkspace.fingerprint === sourceWorkspace.fingerprint;
+    if (!sameWorkspace) {
+      errors.push({
+        artifact,
+        schemaVersion: "run-manifest/v1",
+        field: `/evidence/${escapeJsonPointer(descriptor.id)}/workspace`,
+        message: "Sanitized verifier must preserve its source workspace binding.",
+      });
+    }
   }
   const terminal = isRecord(manifest.terminal) ? manifest.terminal : undefined;
   const terminalWorkspace = typeof terminal?.workspaceArtifactId === "string"
@@ -321,7 +345,7 @@ export function validateRunManifestEvidence(
 type NestedVerifierOutcome = {
   status: string;
   assertions: Array<{ id: string; status: string }>;
-  workspace?: { artifactId: string; digest: string };
+  workspace?: { artifactId: string; digest: string; fingerprint?: string };
   exitCode?: number;
 };
 
@@ -332,7 +356,11 @@ function nestedVerifierOutcome(bytes: Buffer): NestedVerifierOutcome | undefined
     const workspace = isRecord(result.workspace)
       && typeof result.workspace.artifactId === "string"
       && typeof result.workspace.digest === "string"
-      ? { artifactId: result.workspace.artifactId, digest: result.workspace.digest }
+      ? {
+        artifactId: result.workspace.artifactId,
+        digest: result.workspace.digest,
+        ...(typeof result.workspace.fingerprint === "string" ? { fingerprint: result.workspace.fingerprint } : {}),
+      }
       : undefined;
     const assertions = Array.isArray(result.assertions)
       ? result.assertions.flatMap((assertion) => isRecord(assertion)
@@ -360,6 +388,8 @@ function nestedVerifierDiagnosticErrors(
   expectedBundleId: string | undefined,
   expectedVerifier: Record<string, unknown> | undefined,
   workspaceEvidence: ReadonlyMap<string, Record<string, unknown>>,
+  sanitized: boolean,
+  evidenceByPath: ReadonlyMap<string, Record<string, unknown>>,
   evidencePaths: ReadonlySet<string>,
   nestedDiagnosticPaths: Set<string>,
 ): ArtifactValidationError[] {
@@ -440,10 +470,24 @@ function nestedVerifierDiagnosticErrors(
       continue;
     }
     const normalizedLocator = diagnostic.locator.toLowerCase();
+    const retainedEvidence = evidenceByPath.get(normalizedLocator);
+    const isSanitizedSidecar = retainedEvidence !== undefined
+      && (retainedEvidence.sharingClass === "partner" || retainedEvidence.sharingClass === "public")
+      && isRecord(retainedEvidence.sanitizedFrom);
+    const invalidSanitizedReference = sanitized && !isSanitizedSidecar;
+    const aliasesRetainedEvidence = !sanitized && hasPortablePathCollision(normalizedLocator, evidencePaths);
     if (hasPortablePathCollision(normalizedLocator, RESERVED_MANIFEST_PATHS)
-        || hasPortablePathCollision(normalizedLocator, evidencePaths)
+        || invalidSanitizedReference
+        || aliasesRetainedEvidence
         || hasPortablePathCollision(normalizedLocator, nestedDiagnosticPaths)) {
-      errors.push({ artifact, schemaVersion: "run-manifest/v1", field: `${scope}/diagnostics`, message: "Verifier diagnostics cannot alias retained evidence paths." });
+      errors.push({
+        artifact,
+        schemaVersion: "run-manifest/v1",
+        field: `${scope}/diagnostics`,
+        message: invalidSanitizedReference
+          ? "Sanitized verifier diagnostics require separately classified sanitized sidecars."
+          : "Verifier diagnostics cannot alias retained evidence paths.",
+      });
       continue;
     }
     nestedDiagnosticPaths.add(normalizedLocator);
@@ -475,6 +519,7 @@ export function validateExportManifest(
   artifact: string,
   exportManifest: unknown,
   containingManifest: unknown | undefined,
+  bundleRoot?: string,
 ): ArtifactValidationError[] {
   if (!isRecord(exportManifest) || exportManifest.schemaVersion !== "export-manifest/v1"
       || !["ready", "exported"].includes(String(exportManifest.status))) return [];
@@ -490,6 +535,27 @@ export function validateExportManifest(
     if (isRecord(descriptor) && typeof descriptor.id === "string") evidenceById.set(descriptor.id, descriptor);
   }
   const errors: ArtifactValidationError[] = [];
+  const expectedBundleId = typeof containingManifest.bundleId === "string" ? containingManifest.bundleId : undefined;
+  const expectedVerifier = isRecord(containingManifest.run) && isRecord(containingManifest.run.verifier)
+    ? containingManifest.run.verifier
+    : undefined;
+  const workspaceEvidence = new Map<string, Record<string, unknown>>(
+    containingManifest.evidence
+      .filter((entry): entry is Record<string, unknown> => isRecord(entry)
+        && typeof entry.id === "string" && entry.kind === "workspace")
+      .map((entry) => [entry.id as string, entry]),
+  );
+  const evidenceByPath = new Map<string, Record<string, unknown>>(
+    containingManifest.evidence
+      .filter((entry): entry is Record<string, unknown> => isRecord(entry)
+        && typeof entry.relativePath === "string")
+      .map((entry) => [(entry.relativePath as string).toLowerCase(), entry]),
+  );
+  const exportedIds = new Set(
+    Array.isArray(exportManifest.artifactIds)
+      ? exportManifest.artifactIds.filter((id): id is string => typeof id === "string")
+      : [],
+  );
   let hasNonExportArtifact = false;
   for (const id of Array.isArray(exportManifest.artifactIds) ? exportManifest.artifactIds : []) {
     const descriptor = typeof id === "string" ? evidenceById.get(id) : undefined;
@@ -499,10 +565,83 @@ export function validateExportManifest(
     }
     if (exportManifest.sharingClass === "partner" || exportManifest.sharingClass === "public") {
       validateSanitizedProvenance(artifact, "export-manifest/v1", descriptor, evidenceById, errors);
+      if (descriptor.kind === "verifier" && descriptor.sanitizedFrom !== undefined) {
+        errors.push(...validateExportedVerifierDiagnostics(
+          artifact,
+          descriptor,
+          bundleRoot,
+          expectedBundleId,
+          expectedVerifier,
+          workspaceEvidence,
+          evidenceByPath,
+          exportedIds,
+        ));
+      }
     }
     hasNonExportArtifact ||= descriptor.kind !== "export-manifest";
   }
   if (!hasNonExportArtifact) errors.push({ artifact, schemaVersion: "export-manifest/v1", field: "/artifactIds", message: "Ready exports must include non-export evidence." });
+  return errors;
+}
+
+function validateExportedVerifierDiagnostics(
+  artifact: string,
+  descriptor: Record<string, unknown>,
+  bundleRoot: string | undefined,
+  expectedBundleId: string | undefined,
+  expectedVerifier: Record<string, unknown> | undefined,
+  workspaceEvidence: ReadonlyMap<string, Record<string, unknown>>,
+  evidenceByPath: ReadonlyMap<string, Record<string, unknown>>,
+  exportedIds: ReadonlySet<string>,
+): ArtifactValidationError[] {
+  const scope = `/artifactIds/${escapeJsonPointer(String(descriptor.id))}`;
+  if (bundleRoot === undefined) {
+    return [{ artifact, schemaVersion: "export-manifest/v1", field: scope, message: "Sanitized verifier exports require a bundle root to validate diagnostics." }];
+  }
+  let bytes: Buffer;
+  try {
+    bytes = resolveBundleArtifact(bundleRoot, {
+      locator: descriptor.relativePath as string,
+      digest: runDigest(descriptor.digest as string),
+    });
+  } catch (error) {
+    return [{ artifact, schemaVersion: "export-manifest/v1", field: scope, message: error instanceof Error ? error.message : "Sanitized verifier could not be read." }];
+  }
+  const evidencePaths = new Set([...evidenceByPath.keys()]);
+  const errors = nestedVerifierDiagnosticErrors(
+    artifact,
+    String(descriptor.id),
+    bytes,
+    bundleRoot,
+    expectedBundleId,
+    expectedVerifier,
+    workspaceEvidence,
+    true,
+    evidenceByPath,
+    evidencePaths,
+    new Set(),
+  );
+  if (errors.length > 0) return errors.map((error) => ({ ...error, schemaVersion: "export-manifest/v1", field: `${scope}${error.field.replace(/^\/evidence\/[^/]*/, "")}` }));
+
+  let result: unknown;
+  try {
+    result = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    return [];
+  }
+  if (!isRecord(result) || !Array.isArray(result.diagnostics)) return [];
+  for (const [index, diagnostic] of result.diagnostics.entries()) {
+    if (!isRecord(diagnostic) || typeof diagnostic.locator !== "string") continue;
+    const sidecar = evidenceByPath.get(diagnostic.locator.toLowerCase());
+    if (sidecar !== undefined && typeof sidecar.id === "string" && !exportedIds.has(sidecar.id)) {
+      errors.push({
+        artifact,
+        schemaVersion: "export-manifest/v1",
+        field: `${scope}/diagnostics/${index}/locator`,
+        message: "Sanitized verifier diagnostic sidecars must be included in the export.",
+      });
+    }
+  }
   return errors;
 }
 
