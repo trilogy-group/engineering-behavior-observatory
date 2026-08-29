@@ -1478,7 +1478,7 @@ test("failure preservation leaves a raced replacement at its source path", () =>
   }
 });
 
-test("failure preservation restores a raced directory replacement", () => {
+test("failure preservation retains a raced directory replacement", () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-preservation-directory-"));
   const originalRenameSync = fs.renameSync;
   let replaced = false;
@@ -1487,6 +1487,7 @@ test("failure preservation restores a raced directory replacement", () => {
       replaced = true;
       unlinkSync(oldPath);
       mkdirSync(oldPath);
+      writeFileSync(join(oldPath, "keep.txt"), "keep this directory");
     }
     return originalRenameSync(oldPath, newPath);
   }) as typeof originalRenameSync;
@@ -1504,8 +1505,11 @@ test("failure preservation restores a raced directory replacement", () => {
       /injected post-publication failure/,
     );
     assert.equal(replaced, true);
-    assert.equal(lstatSync(join(root, "published.json")).isDirectory(), true);
-    assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), true);
+    assert.equal(existsSync(join(root, "published.json")), false);
+    const failedDirectories = readdirSync(root).filter((name) => name.endsWith(".failed")
+      && lstatSync(join(root, name)).isDirectory());
+    assert.equal(failedDirectories.length, 1);
+    assert.equal(readFileSync(join(root, failedDirectories[0]!, "keep.txt"), "utf8"), "keep this directory");
   } finally {
     fs.renameSync = originalRenameSync;
     syncBuiltinESMExports();

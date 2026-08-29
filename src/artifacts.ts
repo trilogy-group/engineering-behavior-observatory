@@ -2327,6 +2327,8 @@ function movePathToAttempt(path: string, descriptor?: number): string {
       // the inode. If another actor replaced the source, restore that inode
       // with a no-replace link and leave it untouched when restoration races.
       const retired = `.${randomUUID()}.failed`;
+      const beforeRename = lstatIfPresent(path);
+      if (beforeRename === undefined || !sameFileIdentity(expected, beforeRename)) return target;
       try {
         renameSync(path, retired);
       } catch (error) {
@@ -2339,18 +2341,9 @@ function movePathToAttempt(path: string, descriptor?: number): string {
         return target;
       }
       if (retiredIdentity.isDirectory()) {
-        // Directories cannot be hard-linked. Restore a directory replacement
-        // with rename only while the original pathname is still vacant; an
-        // occupied source is left untouched and the replacement remains
-        // available under its failed alias.
-        if (lstatIfPresent(path) === undefined) {
-          try {
-            renameSync(retired, path);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "EEXIST"
-                && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-          }
-        }
+        // Directories cannot be hard-linked and Node has no no-replace
+        // directory rename. Keep a raced directory under failed evidence
+        // rather than risk replacing a newer source entry.
         return target;
       }
       let restored = false;
