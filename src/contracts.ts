@@ -1019,6 +1019,7 @@ function parsePaxAttributes(bytes: Uint8Array): { path?: string; size?: number }
     const space = bytes.indexOf(0x20, offset);
     if (space <= offset) throw new Error("Sanitized task archive contains an invalid PAX header.");
     const lengthText = new TextDecoder("ascii", { fatal: true }).decode(bytes.subarray(offset, space));
+    if (!/^[0-9]+$/.test(lengthText)) throw new Error("Sanitized task archive contains an invalid PAX record length.");
     const length = Number.parseInt(lengthText, 10);
     if (!Number.isSafeInteger(length) || length <= space - offset || offset + length > bytes.length) {
       throw new Error("Sanitized task archive contains an invalid PAX record length.");

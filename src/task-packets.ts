@@ -362,10 +362,9 @@ export function freezeTaskPacket(
       throw new Error(`Task packet changed before freeze publication: ${prePublicationMismatches.join(", ")}.`);
     }
     const retained = readRetainedFreezeRecord(root, freezeLocator);
-    const retainedMismatches = retained === undefined ? ["freeze-record"] : compareFreezeRecord(retained, confirmedInspection);
-    const candidate = retained !== undefined && retainedMismatches.length === 0
-      ? retained
-      : freezeCandidate(packetLocator, confirmedInspection);
+    // Restore any validated retained publication first. The final inspection
+    // below is the authority for whether current inputs still match it.
+    const candidate = retained ?? freezeCandidate(packetLocator, confirmedInspection);
     const candidateErrors = validateArtifact(freezeLocator, candidate);
     if (candidateErrors.length > 0) throw new Error(formatErrors(candidateErrors));
 

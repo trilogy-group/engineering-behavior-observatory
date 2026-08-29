@@ -157,6 +157,31 @@ test("freeze restores a deleted destination from its retained publication", () =
   }
 });
 
+test("freeze restores a retained destination before reporting changed inputs", () => {
+  const { root, packet } = createBundle();
+  const freezePath = join(root, "packet.json.freeze.json");
+  try {
+    const first = freezeTaskPacket(root, "packet.json");
+    unlinkSync(freezePath);
+    packet.agentInput.prompt = "A changed prompt after the original freeze.";
+    const preAdmission = structuredClone(packet) as unknown as Record<string, unknown>;
+    delete preAdmission.admission;
+    const reviewBytes = Buffer.from(JSON.stringify({
+      preAdmissionDigest: digestMetadata(preAdmission),
+      decision: packet.admission.status,
+      reviewedAt: packet.admission.review!.reviewedAt,
+      reviewedBy: packet.admission.review!.reviewedBy,
+    }));
+    writeFileSync(join(root, "review.json"), reviewBytes);
+    packet.admission.review!.reviewRecord.digest = digestBytes(reviewBytes);
+    writeFileSync(join(root, "packet.json"), JSON.stringify(packet, null, 2));
+    assert.throws(() => freezeTaskPacket(root, "packet.json"), /Frozen task packet changed|Task packet changed/);
+    assert.deepEqual(JSON.parse(readFileSync(freezePath, "utf8")), first);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("status identifies every frozen component mutation", () => {
   for (const mutation of ["prompt", "fixture", "reference", "verifier", "reviewRecord", "controlledPerturbation"]) {
     const { root, packet } = createBundle();
@@ -324,6 +349,14 @@ test("inspection validates fixture archives before admission", () => {
         { path: "README.md", bytes: Buffer.from("safe") },
       ]),
       expected: /unsupported global PAX/,
+      mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
+    },
+    {
+      bytes: tarGzipArchive([
+        { path: "PaxHeader", bytes: Buffer.from("12x path=aa\n"), type: "x" },
+        { path: "README.md", bytes: Buffer.from("safe") },
+      ]),
+      expected: /PAX record length/,
       mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
     },
   ];
