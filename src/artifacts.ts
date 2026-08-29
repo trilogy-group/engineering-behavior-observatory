@@ -896,10 +896,15 @@ function recoverInterruptedMarker(path: string, relativePath: string): void {
   const { marker, identity } = validated;
   const markerPath = path.endsWith(".tmp") ? path.slice(0, -4) : path;
   const stagingPath = typeof marker.stagingPath === "string" ? marker.stagingPath : undefined;
-  const stagingIdentity = stagingPath === undefined ? undefined : lstatIfPresent(stagingPath);
+  const bindingPath = `${markerPath}.binding`;
+  const bindingTemporaryPath = `${bindingPath}.tmp`;
+  const binding = isOwnedMarkerBinding(bindingPath, relativePath, marker)
+    ?? (lstatIfPresent(bindingPath) === undefined
+      ? isOwnedMarkerBinding(bindingTemporaryPath, relativePath, marker)
+      : undefined);
   moveRecoveredMarkerToAttempt(markerPath, path, relativePath, marker, identity);
-  if (stagingPath !== undefined && stagingIdentity !== undefined) {
-    movePathToAttemptIfIdentity(stagingPath, stagingIdentity);
+  if (stagingPath !== undefined && binding !== undefined) {
+    movePathToAttemptIfIdentity(stagingPath, binding.stagingIdentity);
   }
 }
 
@@ -1264,16 +1269,21 @@ function moveRecoveredMarkerToAttempt(
   const bindingTemporaryPath = `${bindingPath}.tmp`;
   const bindingOwned = isOwnedMarkerBinding(bindingPath, relativePath, marker);
   const bindingTemporaryOwned = isOwnedMarkerBinding(bindingTemporaryPath, relativePath, marker);
-  if (bindingOwned) {
+  if (bindingOwned !== undefined) {
     const binding = lstatIfPresent(bindingPath);
     const bindingTemporary = lstatIfPresent(bindingTemporaryPath);
-    if (binding !== undefined && bindingTemporary !== undefined && sameFileIdentity(binding, bindingTemporary)) {
-      movePathToAttemptIfIdentity(bindingTemporaryPath, binding);
+    if (binding !== undefined && sameFileIdentity(bindingOwned.bindingIdentity, binding)
+        && bindingTemporary !== undefined && sameFileIdentity(binding, bindingTemporary)) {
+      movePathToAttemptIfIdentity(bindingTemporaryPath, bindingOwned.bindingIdentity);
     }
-    if (binding !== undefined) movePathToAttemptIfIdentity(bindingPath, binding);
-  } else if (bindingTemporaryOwned && lstatIfPresent(bindingPath) === undefined) {
+    if (binding !== undefined && sameFileIdentity(bindingOwned.bindingIdentity, binding)) {
+      movePathToAttemptIfIdentity(bindingPath, bindingOwned.bindingIdentity);
+    }
+  } else if (bindingTemporaryOwned !== undefined && lstatIfPresent(bindingPath) === undefined) {
     const bindingTemporary = lstatIfPresent(bindingTemporaryPath);
-    if (bindingTemporary !== undefined) movePathToAttemptIfIdentity(bindingTemporaryPath, bindingTemporary);
+    if (bindingTemporary !== undefined && sameFileIdentity(bindingTemporaryOwned.bindingIdentity, bindingTemporary)) {
+      movePathToAttemptIfIdentity(bindingTemporaryPath, bindingTemporaryOwned.bindingIdentity);
+    }
   }
 
   const markerTemporaryPath = `${markerPath}.tmp`;
@@ -1287,7 +1297,7 @@ function moveRecoveredMarkerToAttempt(
   }
 }
 
-function movePathToAttemptIfIdentity(path: string, expected: Stats): boolean {
+function movePathToAttemptIfIdentity(path: string, expected: { dev: number; ino: number }): boolean {
   let descriptor: number | undefined;
   try {
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -1303,15 +1313,22 @@ function movePathToAttemptIfIdentity(path: string, expected: Stats): boolean {
   }
 }
 
-function isOwnedMarkerBinding(path: string, relativePath: string, marker: Record<string, unknown>): boolean {
+function isOwnedMarkerBinding(
+  path: string,
+  relativePath: string,
+  marker: Record<string, unknown>,
+): { bindingIdentity: Stats; stagingIdentity: { dev: number; ino: number } } | undefined {
   const candidate = readMarkerMetadata(path);
   if (candidate === undefined || !isOwnedMarkerSidecarValue(candidate, relativePath, marker)
-      || !isRecord(candidate.stagingIdentity) || typeof marker.stagingPath !== "string") return false;
+      || !isRecord(candidate.stagingIdentity) || typeof marker.stagingPath !== "string") return undefined;
   const { dev, ino } = candidate.stagingIdentity;
   const staging = lstatIfPresent(resolve(dirname(path), marker.stagingPath));
-  return typeof dev === "number" && typeof ino === "number"
-    && Number.isSafeInteger(dev) && Number.isSafeInteger(ino)
-    && (staging === undefined || sameFileIdentity(staging, { dev, ino }));
+  const bindingIdentity = lstatIfPresent(path);
+  if (bindingIdentity === undefined) return undefined;
+  if (typeof dev !== "number" || typeof ino !== "number"
+      || !Number.isSafeInteger(dev) || !Number.isSafeInteger(ino)
+      || (staging !== undefined && !sameFileIdentity(staging, { dev, ino }))) return undefined;
+  return { bindingIdentity, stagingIdentity: { dev, ino } };
 }
 
 function isOwnedMarkerSidecar(path: string, relativePath: string, marker: Record<string, unknown>): boolean {
