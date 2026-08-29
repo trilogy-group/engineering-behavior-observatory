@@ -697,7 +697,8 @@ function digestExistingPath(path: string, relativePath: string): Digest {
   try {
     const opened = fstatSync(descriptor);
     const openedTimes = fstatSync(descriptor, { bigint: true });
-    if (!isReadablePublishedFile(path, opened) || !Number.isSafeInteger(opened.size) || opened.size < 0) {
+    if (!opened.isFile() || !isReadablePublishedFile(path, opened)
+        || !Number.isSafeInteger(opened.size) || opened.size < 0) {
       throw new Error(`Artifact path "${relativePath}" is not an isolated regular file.`);
     }
     const hash = createHash("sha256");
@@ -714,7 +715,7 @@ function digestExistingPath(path: string, relativePath: string): Digest {
     }
     const completed = fstatSync(descriptor);
     const completedTimes = fstatSync(descriptor, { bigint: true });
-    if (!isReadablePublishedFile(path, completed) || !sameFileIdentity(opened, completed)
+    if (!completed.isFile() || !isReadablePublishedFile(path, completed) || !sameFileIdentity(opened, completed)
         || completed.size !== opened.size || completedTimes.mtimeNs !== openedTimes.mtimeNs
         || completedTimes.ctimeNs !== openedTimes.ctimeNs) {
       throw new Error(`Artifact path "${relativePath}" changed while it was being read.`);
@@ -724,8 +725,6 @@ function digestExistingPath(path: string, relativePath: string): Digest {
       throw new Error(`Artifact path "${relativePath}" changed while it was being read.`);
     }
     return { algorithm: "sha256", value: hash.digest("hex") };
-  } catch (error) {
-    throw error;
   } finally {
     closeSync(descriptor);
   }

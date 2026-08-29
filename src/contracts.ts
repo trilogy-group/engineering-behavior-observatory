@@ -319,7 +319,7 @@ export function resolveBundleArtifactDigest(
     const opened = fstatSync(descriptor);
     const openedTimes = fstatSync(descriptor, { bigint: true });
     const size = opened.size;
-    if (!isReadableBundleFile(resolve(root.path, reference.locator), opened)
+    if (!opened.isFile() || !isReadableBundleFile(resolve(root.path, reference.locator), opened)
         || !Number.isSafeInteger(size) || size < 0) {
       throw new Error("Artifact is not an isolated regular file.");
     }
@@ -337,7 +337,7 @@ export function resolveBundleArtifactDigest(
     }
     const completed = fstatSync(descriptor);
     const completedTimes = fstatSync(descriptor, { bigint: true });
-    if (!isReadableBundleFile(resolve(root.path, reference.locator), completed)
+    if (!completed.isFile() || !isReadableBundleFile(resolve(root.path, reference.locator), completed)
         || completed.dev !== opened.dev || completed.ino !== opened.ino
         || completed.size !== size || completedTimes.mtimeNs !== openedTimes.mtimeNs
         || completedTimes.ctimeNs !== openedTimes.ctimeNs) {
@@ -388,7 +388,7 @@ function readVerifiedBundleFile(
     const opened = fstatSync(descriptor);
     const openedTimes = fstatSync(descriptor, { bigint: true });
     const size = opened.size;
-    if (!isReadableBundleFile(root === undefined ? undefined : resolve(root.path, reference.locator), opened)
+    if (!opened.isFile() || !isReadableBundleFile(root === undefined ? undefined : resolve(root.path, reference.locator), opened)
         || !Number.isSafeInteger(size) || size < 0
         || (maxBytes !== undefined && size > maxBytes)) {
       throw new Error(`${label} exceeds its maximum bytes.`);
@@ -405,7 +405,7 @@ function readVerifiedBundleFile(
     }
     const completed = fstatSync(descriptor);
     const completedTimes = fstatSync(descriptor, { bigint: true });
-    if (!isReadableBundleFile(root === undefined ? undefined : resolve(root.path, reference.locator), completed)
+    if (!completed.isFile() || !isReadableBundleFile(root === undefined ? undefined : resolve(root.path, reference.locator), completed)
         || completed.dev !== opened.dev || completed.ino !== opened.ino
         || completed.size !== size || completedTimes.mtimeNs !== openedTimes.mtimeNs
         || completedTimes.ctimeNs !== openedTimes.ctimeNs
@@ -451,7 +451,7 @@ function openBundleRegularFile(
   try {
     descriptor = openSync(selectedPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const opened = fstatSync(descriptor);
-    if (!isReadableBundleFile(selectedPath, opened)) {
+    if (!opened.isFile() || !isReadableBundleFile(selectedPath, opened)) {
       throw new Error(`${label} "${locator}" is not an isolated regular file.`);
     }
     assertBundleRootHandle(root, bundleRoot, locator);
