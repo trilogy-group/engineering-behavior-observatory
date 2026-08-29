@@ -28,6 +28,7 @@ export {
   resolveBundleArtifact,
   resolveBundleArtifactDigest,
   resolveTaskArchive,
+  validateTaskArchive,
 } from "./contracts.js";
 export {
   admitTaskPacket,

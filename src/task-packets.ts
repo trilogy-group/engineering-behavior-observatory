@@ -29,6 +29,7 @@ import {
   resolveBundleArtifact,
   resolveBundleArtifactDigest,
   resolveTaskArchive,
+  validateTaskArchive,
   closeBundleRoot,
   openBundleRoot,
   type ArtifactReference,
@@ -194,6 +195,10 @@ function inspectTaskPacketWithRoot(
       errors,
       root,
       packet.agentInput.fixture.source.limits.maxCompressedBytes,
+      {
+        limits: packet.agentInput.fixture.source.limits,
+        includePaths: packet.agentInput.fixture.materializer.includePaths,
+      },
     ),
     reference: "locator" in packet.restricted.referenceSolution
       ? { status: "referenced", digest: resolveComponent(bundleRoot, packet.restricted.referenceSolution, "/restricted/referenceSolution", packetLocator, errors, root) }
@@ -576,11 +581,13 @@ function resolveComponent(
   errors: ArtifactValidationError[],
   root: BundleRootHandle,
   maxCompressedBytes?: number,
+  archive?: { limits: TaskPacket["agentInput"]["fixture"]["source"]["limits"]; includePaths: readonly string[] },
 ): Digest | null {
   try {
-    return maxCompressedBytes === undefined
-      ? resolveBundleArtifactDigest(bundleRoot, reference, root)
-      : digestBytes(resolveTaskArchive(bundleRoot, reference, maxCompressedBytes, root));
+    if (maxCompressedBytes === undefined) return resolveBundleArtifactDigest(bundleRoot, reference, root);
+    const bytes = resolveTaskArchive(bundleRoot, reference, maxCompressedBytes, root);
+    if (archive !== undefined) validateTaskArchive(bytes, archive.limits, archive.includePaths);
+    return digestBytes(bytes);
   } catch (error) {
     errors.push(packetError(artifact, field, errorMessage(error)));
     return null;

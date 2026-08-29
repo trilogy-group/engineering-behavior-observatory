@@ -63,10 +63,12 @@ referenced artifact that fails to resolve.
 ### Admission and freeze
 
 Task-packet tooling consumes an externally authored packet; it does not create
-tasks or make a human review decision. `validate` checks the packet schema and
-resolves every declared fixture, perturbation, reference solution, verifier,
-and review-record digest. `admit` additionally requires the recorded admission
-status to be `admitted` and a complete human review.
+tasks or make a human review decision. `validate` checks the packet schema,
+parses each declared TAR+gzip fixture, verifies its declared size/member/link
+limits and literal allowlist, and resolves every declared perturbation,
+reference solution, verifier, and review-record digest. `admit` additionally
+requires the recorded admission status to be `admitted` and a complete human
+review.
 
 `freeze` writes a sibling
 [`ebo.task-packet-freeze/v1`](../schemas/task-packet-freeze.v1.schema.json)

@@ -8,6 +8,7 @@ import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 
 import {
   admitTaskPacket,
@@ -32,6 +33,33 @@ const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const fixturePath = (name: string) => join(repositoryRoot, "tests", "fixtures", name);
 const currentProcessStart = execFileSync("ps", ["-o", "lstart=", "-p", String(process.pid)], { encoding: "utf8" }).trim();
 
+function tarGzipArchive(entries: Array<{ path: string; bytes: Buffer; type?: string }>): Buffer {
+  const blocks = entries.map(({ path, bytes, type = "0" }) => {
+    const header = Buffer.alloc(512);
+    header.write(path, 0, "utf8");
+    header.write(bytes.length.toString(8).padStart(11, "0"), 124, "ascii");
+    header[156] = type.charCodeAt(0);
+    header.write("ustar\0", 257, "ascii");
+    header.write("00", 263, "ascii");
+    header.fill(0x20, 148, 156);
+    const checksum = header.reduce((sum, value) => sum + value, 0);
+    header.write(checksum.toString(8).padStart(6, "0") + "\0 ", 148, "ascii");
+    const padding = Buffer.alloc((512 - (bytes.length % 512)) % 512);
+    return Buffer.concat([header, bytes, padding]);
+  });
+  return gzipSync(Buffer.concat([...blocks, Buffer.alloc(1024)]));
+}
+
+function fixtureArchive(): Buffer {
+  const entries: Array<{ path: string; bytes: Buffer; type?: string }> = [
+    { path: "README.md", bytes: Buffer.from("# fixture\n") },
+    { path: "package.json", bytes: Buffer.from("{}\n") },
+    { path: "src", bytes: Buffer.alloc(0), type: "5" },
+    { path: "src/index.ts", bytes: Buffer.from("export {};\n") },
+  ];
+  return tarGzipArchive(entries);
+}
+
 function packetFixture(name = "task-packet.valid.v1.json"): TaskPacket {
   return JSON.parse(readFileSync(fixturePath(name), "utf8")) as TaskPacket;
 }
@@ -39,7 +67,7 @@ function packetFixture(name = "task-packet.valid.v1.json"): TaskPacket {
 function createBundle(packet = packetFixture()): { root: string; packet: TaskPacket } {
   const root = mkdtempSync(join(tmpdir(), "ebo-task-packet-"));
   const components = {
-    fixture: Buffer.from("fixture bytes"),
+    fixture: fixtureArchive(),
     perturbation: Buffer.from('{"kind":"controlled"}\n'),
     reference: Buffer.from("reference solution\n"),
     verifier: Buffer.from("#!/bin/sh\nexit 0\n"),
@@ -79,6 +107,12 @@ function createBundle(packet = packetFixture()): { root: string; packet: TaskPac
   return { root, packet };
 }
 
+function replaceFixture(root: string, packet: TaskPacket, bytes: Buffer): void {
+  packet.agentInput.fixture.source.digest = digestBytes(bytes);
+  writeFileSync(join(root, "fixture.bin"), bytes);
+  writeFileSync(join(root, "packet.json"), JSON.stringify(packet, null, 2));
+}
+
 test("freezing a packet is idempotent and keeps the model projection private", () => {
   const { root, packet } = createBundle();
   try {
@@ -88,7 +122,7 @@ test("freezing a packet is idempotent and keeps the model projection private", (
     const second = freezeTaskPacket(root, "packet.json");
     assert.deepEqual(second, first);
     assert.equal(first.components.prompt.algorithm, "sha256");
-    assert.equal(first.components.fixture!.value, digestBytes(Buffer.from("fixture bytes")).value);
+    assert.equal(first.components.fixture!.value, digestBytes(fixtureArchive()).value);
     assert.equal(statusTaskPacket(root, "packet.json").status, "frozen");
     assert.deepEqual(modelVisibleTaskPacket(packet), packet.agentInput);
     assert.doesNotMatch(JSON.stringify(modelVisibleTaskPacket(packet)), /referenceSolution|reviewRecord|verifier/);
@@ -229,6 +263,51 @@ test("inspection enforces the fixture compressed-byte limit", () => {
     assert.ok(result.errors.some((error) => /exceeds its maximum bytes/.test(error.message)));
   } finally {
     rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("inspection validates fixture archives before admission", () => {
+  const invalidCases: Array<{
+    bytes: Buffer;
+    expected: RegExp;
+    mutate?: (packet: TaskPacket) => void;
+  }> = [
+    { bytes: Buffer.from("not a gzip archive"), expected: /valid gzip stream/ },
+    {
+      bytes: fixtureArchive(),
+      expected: /No archive entries were selected/,
+      mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["missing"]; },
+    },
+    {
+      bytes: fixtureArchive(),
+      expected: /materialization limits/,
+      mutate: (packet) => { packet.agentInput.fixture.source.limits.maxExpandedBytes = 1; },
+    },
+    {
+      bytes: fixtureArchive(),
+      expected: /materialization limits/,
+      mutate: (packet) => { packet.agentInput.fixture.source.limits.maxMembers = 1; },
+    },
+    {
+      bytes: tarGzipArchive([
+        { path: "src", bytes: Buffer.alloc(0), type: "5" },
+        { path: "src/link", bytes: Buffer.alloc(0), type: "2" },
+      ]),
+      expected: /unsafe/,
+      mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["src"]; },
+    },
+  ];
+
+  for (const invalidCase of invalidCases) {
+    const { root, packet } = createBundle(packetFixture("task-packet.proposed.v1.json"));
+    try {
+      invalidCase.mutate?.(packet);
+      replaceFixture(root, packet, invalidCase.bytes);
+      const result = inspectTaskPacket(root, "packet.json");
+      assert.ok(result.errors.some((error) => invalidCase.expected.test(error.message)), JSON.stringify(result));
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
   }
 });
 

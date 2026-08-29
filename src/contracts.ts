@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
+import { gunzipSync } from "node:zlib";
 
 export type Digest = {
   algorithm: "sha256";
@@ -37,6 +38,8 @@ export type ArchiveMeasurements = {
 export const MAX_CONFIGURATION_BYTES = 1_048_576;
 const MAX_ARCHIVE_PATH_COMPONENTS = 64;
 const MAX_ARCHIVE_PATH_LENGTH = 960;
+const MAX_ARCHIVE_INSPECTION_BYTES = 64 * 1024 * 1024;
+const TAR_BLOCK_BYTES = 512;
 const PUBLICATION_MARKER_SCHEMA_VERSION = "ebo.publication-staging/v1";
 const PUBLICATION_ATTEMPT_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const PUBLICATION_STAGING_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
@@ -250,6 +253,39 @@ export function assertArchiveMeasurements(limits: ArchiveLimits, measurements: A
       || measurements.memberCount > limits.maxMembers) {
     throw new Error("Sanitized archive exceeds its declared materialization limits.");
   }
+}
+
+export function validateTaskArchive(
+  bytes: Uint8Array,
+  limits: ArchiveLimits,
+  includePaths: readonly string[],
+): void {
+  if (![limits.maxCompressedBytes, limits.maxExpandedBytes, limits.maxMembers]
+    .every((value) => Number.isSafeInteger(value) && value >= 1)) {
+    throw new Error("Sanitized archive limits must be positive safe integers.");
+  }
+  if (bytes.byteLength > limits.maxCompressedBytes) {
+    throw new Error("Sanitized archive exceeds its declared materialization limits.");
+  }
+
+  let archive: Buffer;
+  try {
+    archive = gunzipSync(Buffer.from(bytes), { maxOutputLength: MAX_ARCHIVE_INSPECTION_BYTES });
+  } catch {
+    throw new Error("Sanitized task archive is not a valid gzip stream or exceeds the inspection limit.");
+  }
+  const parsed = parseTarArchive(archive, limits.maxMembers);
+  assertArchiveMeasurements(limits, {
+    compressedBytes: bytes.byteLength,
+    expandedBytes: parsed.expandedBytes,
+    memberCount: parsed.entries.length,
+  });
+  const selected = parsed.entries.filter((entry) => includePaths.some((includePath) => {
+    const selectedPath = canonicalArchiveMemberPath(includePath);
+    const entryPath = canonicalArchiveMemberPath(entry.path);
+    return entryPath === selectedPath || entryPath.startsWith(`${selectedPath}/`);
+  }));
+  assertNoSelectedSymlinks(selected, includePaths, parsed.entries);
 }
 
 export function resolveBundleConfiguration(
@@ -881,6 +917,140 @@ export function isSafeArtifactRelativePath(path: string): boolean {
 function assertPositiveSafeInteger(value: number, label: string): void {
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new Error(`${label} must be a positive safe integer.`);
+  }
+}
+
+function parseTarArchive(bytes: Buffer, maxMembers: number): { entries: ArchiveEntry[]; expandedBytes: number } {
+  const entries: ArchiveEntry[] = [];
+  let expandedBytes = 0;
+  let offset = 0;
+  let pendingPath: string | undefined;
+  let pendingPax: { path?: string; size?: number } | undefined;
+
+  while (offset + TAR_BLOCK_BYTES <= bytes.length) {
+    const header = bytes.subarray(offset, offset + TAR_BLOCK_BYTES);
+    if (header.every((value) => value === 0)) {
+      if (bytes.subarray(offset).every((value) => value === 0)) return { entries, expandedBytes };
+      throw new Error("Sanitized task archive has nonzero data after its end marker.");
+    }
+    verifyTarHeaderChecksum(header);
+    const headerSize = parseTarOctal(header.subarray(124, 136), "size");
+    const dataOffset = offset + TAR_BLOCK_BYTES;
+    const paddedSize = headerSize + ((TAR_BLOCK_BYTES - (headerSize % TAR_BLOCK_BYTES)) % TAR_BLOCK_BYTES);
+    if (!Number.isSafeInteger(paddedSize) || dataOffset + paddedSize > bytes.length) {
+      throw new Error("Sanitized task archive contains a truncated member.");
+    }
+    const data = bytes.subarray(dataOffset, dataOffset + headerSize);
+    const type = String.fromCharCode(header[156] ?? 0);
+    if (type === "L") {
+      pendingPath = readTarText(data);
+      offset = dataOffset + paddedSize;
+      continue;
+    }
+    if (type === "K") {
+      offset = dataOffset + paddedSize;
+      continue;
+    }
+    if (type === "x") {
+      pendingPax = parsePaxAttributes(data);
+      offset = dataOffset + paddedSize;
+      continue;
+    }
+    if (type === "g") {
+      offset = dataOffset + paddedSize;
+      continue;
+    }
+
+    const rawName = readTarText(header.subarray(0, 100));
+    const prefix = readTarText(header.subarray(345, 500));
+    const headerPath = prefix === "" ? rawName : `${prefix}/${rawName}`;
+    const path = pendingPax?.path ?? pendingPath ?? headerPath;
+    const size = pendingPax?.size ?? headerSize;
+    if (!Number.isSafeInteger(size) || size < 0) throw new Error("Sanitized task archive contains an invalid member size.");
+    const kind = tarEntryKind(type);
+    entries.push({ path, kind });
+    if (entries.length > maxMembers) throw new Error("Sanitized archive exceeds its declared materialization limits.");
+    if (kind === "file") {
+      if (!Number.isSafeInteger(expandedBytes + size)) throw new Error("Sanitized task archive exceeds safe expanded size.");
+      expandedBytes += size;
+    }
+    pendingPath = undefined;
+    pendingPax = undefined;
+    offset = dataOffset + paddedSize;
+  }
+  throw new Error("Sanitized task archive is not a complete TAR stream.");
+}
+
+function verifyTarHeaderChecksum(header: Buffer): void {
+  const expected = parseTarOctal(header.subarray(148, 156), "checksum");
+  let actual = 0;
+  for (let index = 0; index < header.length; index += 1) {
+    actual += index >= 148 && index < 156 ? 0x20 : header[index]!;
+  }
+  if (actual !== expected) throw new Error("Sanitized task archive contains an invalid TAR header checksum.");
+}
+
+function parseTarOctal(field: Uint8Array, label: string): number {
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(field).replace(/\0.*$/s, "").trim();
+  if (text === "" || !/^[0-7]+$/.test(text)) throw new Error(`Sanitized task archive contains an invalid TAR ${label}.`);
+  const value = Number.parseInt(text, 8);
+  if (!Number.isSafeInteger(value)) throw new Error(`Sanitized task archive contains an unsafe TAR ${label}.`);
+  return value;
+}
+
+function readTarText(bytes: Uint8Array): string {
+  const end = bytes.indexOf(0);
+  const value = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, end < 0 ? bytes.length : end));
+  return value.endsWith("\n") ? value.slice(0, -1) : value;
+}
+
+function parsePaxAttributes(bytes: Uint8Array): { path?: string; size?: number } {
+  const attributes: { path?: string; size?: number } = {};
+  for (let offset = 0; offset < bytes.length;) {
+    const space = bytes.indexOf(0x20, offset);
+    if (space <= offset) throw new Error("Sanitized task archive contains an invalid PAX header.");
+    const lengthText = new TextDecoder("ascii", { fatal: true }).decode(bytes.subarray(offset, space));
+    const length = Number.parseInt(lengthText, 10);
+    if (!Number.isSafeInteger(length) || length <= space - offset || offset + length > bytes.length) {
+      throw new Error("Sanitized task archive contains an invalid PAX record length.");
+    }
+    const record = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(space + 1, offset + length));
+    const equals = record.indexOf("=");
+    if (equals <= 0 || !record.endsWith("\n")) throw new Error("Sanitized task archive contains an invalid PAX record.");
+    const key = record.slice(0, equals);
+    const value = record.slice(equals + 1, -1);
+    if (key === "path") attributes.path = value;
+    if (key === "size") {
+      const size = Number(value);
+      if (!Number.isSafeInteger(size) || size < 0) throw new Error("Sanitized task archive contains an invalid PAX size.");
+      attributes.size = size;
+    }
+    offset += length;
+  }
+  return attributes;
+}
+
+function tarEntryKind(type: string): string {
+  switch (type) {
+    case "\0":
+    case "0":
+      return "file";
+    case "5":
+      return "directory";
+    case "1":
+      return "hardlink";
+    case "2":
+      return "symlink";
+    case "3":
+      return "character-device";
+    case "4":
+      return "block-device";
+    case "6":
+      return "fifo";
+    case "7":
+      return "contiguous-file";
+    default:
+      return "special";
   }
 }
 
