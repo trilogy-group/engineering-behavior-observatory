@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -203,6 +204,15 @@ test("rejects overlong execution identifiers before starting", async () => {
       workspace: { artifactId: "x".repeat(257), digest: workspaceDigest },
       artifactRoot: root.artifact,
     }), /Workspace reference/);
+    await assert.rejects(() => executeVerifier({
+      bundleId: "bundle-test",
+      verifierRoot: root.verifier,
+      verifier,
+      workspacePath: root.workspace,
+      workspace: { artifactId: "workspace", digest: workspaceDigest },
+      artifactRoot: root.artifact,
+      timeoutMs: 2_147_483_648,
+    }), /timeout/);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
@@ -398,6 +408,26 @@ test("terminates a verifier descendant on timeout", async () => {
     ]);
 
     assert.equal(result.status, "error");
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("terminates a background descendant before returning a result", async () => {
+  const root = await createRoots();
+  const marker = join(root.workspace, "descendant-marker");
+  try {
+    const childCode = `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "leaked"), 500);`;
+    const verifier = await addVerifier(root.verifier, `
+      const { spawn } = require("node:child_process");
+      spawn(process.execPath, ["-e", ${JSON.stringify(childCode)}], { stdio: "ignore" }).unref();
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "background-clean", status: "passed" }] }));
+    `);
+    const result = await run(root, verifier);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+
+    assert.equal(result.status, "passed");
+    assert.equal(existsSync(marker), false);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }

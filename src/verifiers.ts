@@ -85,6 +85,7 @@ export type ExecuteVerifierOptions = {
 };
 
 const DEFAULT_TIMEOUT_MS = 60_000;
+const MAX_TIMEOUT_MS = 2_147_483_647;
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
@@ -243,7 +244,9 @@ function validateOptions(options: ExecuteVerifierOptions, timeoutMs: number, max
   if (!isValidIdentifier(options.workspace.artifactId) || !/^sha256:[a-f0-9]{64}$/.test(options.workspace.digest)) {
     throw new Error("Workspace reference is invalid.");
   }
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("Verifier timeout must be a positive safe integer.");
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS) {
+    throw new Error(`Verifier timeout must be between 1 and ${MAX_TIMEOUT_MS} ms.`);
+  }
   if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 0 || maxOutputBytes > MAX_OUTPUT_BYTES) {
     throw new Error(`Verifier output limit must be between 0 and ${MAX_OUTPUT_BYTES} bytes.`);
   }
@@ -341,9 +344,11 @@ async function runProcess(
   const stdout = capture(child.stdout, maxOutputBytes, diagnosticFiles[0]);
   const stderr = capture(child.stderr, maxOutputBytes, diagnosticFiles[1]);
   let timedOut = false;
+  let termination: Promise<void> | undefined;
+  const terminate = (): Promise<void> => termination ??= killProcessTree(child);
   const timer = setTimeout(() => {
     timedOut = true;
-    killProcessTree(child);
+    void terminate().catch(() => undefined);
   }, timeoutMs);
   timer.unref();
 
@@ -352,8 +357,12 @@ async function runProcess(
     child.once("error", (cause) => {
       error = cause.message;
     });
+    child.once("exit", () => {
+      void terminate().catch(() => undefined);
+    });
     child.once("close", async (code, signal) => {
       clearTimeout(timer);
+      await terminate();
       resolveProcess({
         stdout: await stdout,
         stderr: await stderr,
@@ -366,14 +375,14 @@ async function runProcess(
   });
 }
 
-function killProcessTree(child: ReturnType<typeof spawn>): void {
+async function killProcessTree(child: ReturnType<typeof spawn>): Promise<void> {
   if (child.pid === undefined) return;
   if (process.platform === "win32") {
     const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
       stdio: "ignore",
       windowsHide: true,
     });
-    killer.unref();
+    await new Promise<void>((resolveKiller) => killer.once("close", () => resolveKiller()));
     return;
   }
   try {
