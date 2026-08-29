@@ -406,14 +406,14 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
         if (stdout.error !== undefined) internalError = combineErrors(internalError, `stdout capture failed: ${stdout.error}`);
         if (stderr.error !== undefined) internalError = combineErrors(internalError, `stderr capture failed: ${stderr.error}`);
 
-        if (internalError === undefined) {
+        if (processResult.started && stdout.error === undefined) {
           if (stdout.truncated) {
-            internalError = `Verifier stdout exceeded ${maxOutputBytes} bytes.`;
+            internalError = combineErrors(internalError, `Verifier stdout exceeded ${maxOutputBytes} bytes.`);
           } else {
             try {
               assertions = parseAssertions(stdout.bytes);
             } catch (error) {
-              internalError = error instanceof Error ? error.message : "Verifier output is invalid.";
+              internalError = combineErrors(internalError, error instanceof Error ? error.message : "Verifier output is invalid.");
             }
           }
         }
