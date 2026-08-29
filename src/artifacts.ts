@@ -29,10 +29,13 @@ import {
   closeBundleRoot,
   isSafeArtifactRelativePath,
   isOwnedPublicationAlias,
+  isPublicationOwnershipCurrent,
+  readPublicationOwnership,
   openBundleRoot,
   resolveBundleArtifact,
   type BundleRootHandle,
   type Digest,
+  type PublicationOwnership,
 } from "./contracts.js";
 
 export type ArtifactValidationError = {
@@ -2289,12 +2292,15 @@ function movePathToAttempt(path: string, descriptor?: number): string {
 }
 
 function isReadablePublishedFile(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
-  const owned = isOwnedPublicationAlias(path, target);
-  const quarantine = owned && hasAliasSync(`${path}.quarantine`, target);
-  const recovered = owned && hasAliasSync(`${path}.recovered`, target);
-  const staging = owned && hasStagingAlias(path, target);
+  if (target.nlink === 1) return true;
+  const ownership = readPublicationOwnership(path, target);
+  if (ownership === undefined) return false;
+  const quarantine = hasAliasSync(`${path}.quarantine`, target);
+  const recovered = hasAliasSync(`${path}.recovered`, target);
+  const staging = hasStagingAlias(path, target, ownership);
   const accounted = Number(quarantine) + Number(recovered) + Number(staging);
-  return target.nlink === 1 || (accounted > 0 && target.nlink === 1 + accounted);
+  return isPublicationOwnershipCurrent(path, ownership)
+    && (target.nlink === 1 || (accounted > 0 && target.nlink === 1 + accounted));
 }
 
 function hasAliasSync(path: string, target: { dev: number; ino: number }): boolean {
@@ -2306,12 +2312,15 @@ function hasAliasSync(path: string, target: { dev: number; ino: number }): boole
   }
 }
 
-function hasStagingAlias(path: string, target: { dev: number; ino: number }): boolean {
+function hasStagingAlias(
+  path: string,
+  target: { dev: number; ino: number },
+  ownership: PublicationOwnership,
+): boolean {
   try {
-    const marker = readMarkerMetadata(`${path}.quarantine.marker`);
-    if (marker === undefined || typeof marker.stagingPath !== "string"
-        || !STAGING_ATTEMPT_PATTERN.test(marker.stagingPath.slice(1, -4))) return false;
-    return sameFileIdentity(target, lstatSync(resolve(dirname(path), marker.stagingPath)));
+    const stagingPath = ownership.marker.stagingPath;
+    if (typeof stagingPath !== "string" || !STAGING_ATTEMPT_PATTERN.test(stagingPath.slice(1, -4))) return false;
+    return sameFileIdentity(target, lstatSync(resolve(dirname(path), stagingPath)));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     return false;
@@ -2325,12 +2334,13 @@ function readStagingPath(path: string, relativePath: string): string | undefined
 
 async function isReadablePublishedArtifact(path: string, target: { dev: number; ino: number; nlink: number }): Promise<boolean> {
   if (target.nlink === 1) return true;
-  const owned = isOwnedPublicationAlias(path, target);
-  const quarantine = owned && await hasAlias(`${path}.quarantine`, target);
-  const recovered = owned && await hasAlias(`${path}.recovered`, target);
-  const staging = owned && hasStagingAlias(path, target);
+  const ownership = readPublicationOwnership(path, target);
+  if (ownership === undefined) return false;
+  const quarantine = await hasAlias(`${path}.quarantine`, target);
+  const recovered = await hasAlias(`${path}.recovered`, target);
+  const staging = hasStagingAlias(path, target, ownership);
   const accounted = Number(quarantine) + Number(recovered) + Number(staging);
-  return accounted > 0 && target.nlink === 1 + accounted;
+  return isPublicationOwnershipCurrent(path, ownership) && accounted > 0 && target.nlink === 1 + accounted;
 }
 
 async function hasAlias(path: string, target: { dev: number; ino: number }): Promise<boolean> {

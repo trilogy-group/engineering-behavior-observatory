@@ -42,6 +42,14 @@ const PUBLICATION_ATTEMPT_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab
 const PUBLICATION_STAGING_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
 const MAX_PUBLICATION_MARKER_BYTES = 4096;
 
+export type PublicationOwnership = {
+  marker: Record<string, unknown>;
+  binding: Record<string, unknown>;
+  markerIdentity: { dev: number; ino: number };
+  bindingIdentity: { dev: number; ino: number };
+  stagingIdentity: { dev: number; ino: number };
+};
+
 export type TaskCondition = {
   packetRef: {
     locator: string;
@@ -506,12 +514,13 @@ function assertBundlePathWithoutLinks(bundleRoot: string, locator: string, label
 function isReadableBundleFile(path: string | undefined, target: { dev: number; ino: number; nlink: number }): boolean {
   if (target.nlink === 1) return true;
   if (path === undefined) return false;
-  const owned = isOwnedPublicationAlias(path, target);
-  const quarantine = owned && hasAlias(path + ".quarantine", target);
-  const recovered = owned && hasAlias(path + ".recovered", target);
-  const staging = owned && hasStagingAlias(path, target);
+  const ownership = readPublicationOwnership(path, target);
+  if (ownership === undefined) return false;
+  const quarantine = hasAlias(path + ".quarantine", target);
+  const recovered = hasAlias(path + ".recovered", target);
+  const staging = hasStagingAlias(path, target, ownership);
   const accounted = Number(quarantine) + Number(recovered) + Number(staging);
-  return accounted > 0 && target.nlink === 1 + accounted;
+  return isPublicationOwnershipCurrent(path, ownership) && accounted > 0 && target.nlink === 1 + accounted;
 }
 
 export function isOwnedPublicationAlias(
@@ -519,18 +528,45 @@ export function isOwnedPublicationAlias(
   target: { dev: number; ino: number },
   expectedRelativePath?: string,
 ): boolean {
-  const marker = readPublicationMarker(`${path}.quarantine.marker`);
-  const binding = readPublicationMarker(`${path}.quarantine.marker.binding`);
-  if (marker === undefined || binding === undefined
-      || !isPublicationMarker(marker, expectedRelativePath)
-      || !isPublicationMarker(binding, expectedRelativePath)
-      || !samePublicationMarkerFields(marker, binding)
-      || !isRecord(binding.stagingIdentity)) {
-    return false;
-  }
-  const { dev, ino } = binding.stagingIdentity;
-  return Number.isSafeInteger(dev) && Number.isSafeInteger(ino)
-    && dev === target.dev && ino === target.ino;
+  return readPublicationOwnership(path, target, expectedRelativePath) !== undefined;
+}
+
+export function readPublicationOwnership(
+  path: string,
+  target: { dev: number; ino: number },
+  expectedRelativePath?: string,
+): PublicationOwnership | undefined {
+  const markerMetadata = readPublicationMarkerWithIdentity(`${path}.quarantine.marker`);
+  const bindingMetadata = readPublicationMarkerWithIdentity(`${path}.quarantine.marker.binding`);
+  if (markerMetadata === undefined || bindingMetadata === undefined
+      || !isPublicationMarker(markerMetadata.value, expectedRelativePath)
+      || !isPublicationMarker(bindingMetadata.value, expectedRelativePath)
+      || !samePublicationMarkerFields(markerMetadata.value, bindingMetadata.value)
+      || !isRecord(bindingMetadata.value.stagingIdentity)) return undefined;
+  const { dev, ino } = bindingMetadata.value.stagingIdentity;
+  if (!Number.isSafeInteger(dev) || !Number.isSafeInteger(ino)
+      || dev !== target.dev || ino !== target.ino) return undefined;
+  return {
+    marker: markerMetadata.value,
+    binding: bindingMetadata.value,
+    markerIdentity: markerMetadata.identity,
+    bindingIdentity: bindingMetadata.identity,
+    stagingIdentity: { dev, ino },
+  };
+}
+
+export function isPublicationOwnershipCurrent(
+  path: string,
+  ownership: PublicationOwnership,
+  expectedRelativePath?: string,
+): boolean {
+  const current = readPublicationOwnership(path, ownership.stagingIdentity, expectedRelativePath);
+  return current !== undefined
+    && sameFileIdentity(current.markerIdentity, ownership.markerIdentity)
+    && sameFileIdentity(current.bindingIdentity, ownership.bindingIdentity)
+    && sameFileIdentity(current.stagingIdentity, ownership.stagingIdentity)
+    && samePublicationMarkerFields(current.marker, ownership.marker)
+    && samePublicationMarkerFields(current.binding, ownership.binding);
 }
 
 export function readPublicationStagingPath(path: string, expectedRelativePath?: string): string | undefined {
@@ -541,6 +577,12 @@ export function readPublicationStagingPath(path: string, expectedRelativePath?: 
 }
 
 function readPublicationMarker(path: string): Record<string, unknown> | undefined {
+  return readPublicationMarkerWithIdentity(path)?.value;
+}
+
+function readPublicationMarkerWithIdentity(
+  path: string,
+): { value: Record<string, unknown>; identity: { dev: number; ino: number } } | undefined {
   let descriptor: number | undefined;
   try {
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -559,7 +601,7 @@ function readPublicationMarker(path: string): Record<string, unknown> | undefine
     if (!completed.isFile() || completed.dev !== opened.dev || completed.ino !== opened.ino
         || completed.size !== opened.size) return undefined;
     const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
-    return isRecord(value) ? value : undefined;
+    return isRecord(value) ? { value, identity: opened } : undefined;
   } catch {
     return undefined;
   } finally {
@@ -604,9 +646,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function hasStagingAlias(path: string, target: { dev: number; ino: number }): boolean {
+function hasStagingAlias(
+  path: string,
+  target: { dev: number; ino: number },
+  ownership: PublicationOwnership,
+): boolean {
   try {
-    const marker = readPublicationMarker(`${path}.quarantine.marker`);
+    const marker = ownership.marker;
     if (marker === undefined
         || marker.schemaVersion !== "ebo.publication-staging/v1"
         || typeof marker.stagingPath !== "string"

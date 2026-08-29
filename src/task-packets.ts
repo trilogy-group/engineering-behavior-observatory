@@ -22,7 +22,8 @@ import {
 } from "./artifacts.js";
 import {
   isSafeArtifactRelativePath,
-  isOwnedPublicationAlias,
+  isPublicationOwnershipCurrent,
+  readPublicationOwnership,
   readPublicationStagingPath,
   MAX_CONFIGURATION_BYTES,
   resolveBundleArtifact,
@@ -33,6 +34,7 @@ import {
   type ArtifactReference,
   type BundleRootHandle,
   type Digest,
+  type PublicationOwnership,
 } from "./contracts.js";
 
 export type TaskPacket = {
@@ -764,9 +766,10 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHan
       assertFreezeParent(root, parent, parentDescriptor, locator);
       if (hasAlias(`${relative(parent, destination)}.quarantine`, lstatSync(relative(parent, destination)))) return false;
       const destinationStat = lstatSync(relative(parent, destination));
-      if (!isOwnedPublicationAlias(destination, destinationStat, locator)) return false;
-      const stagingName = readStagingPath(`${relative(parent, destination)}.quarantine.marker`, locator);
-      if (stagingName === undefined) return false;
+      const ownership = readPublicationOwnership(destination, destinationStat, locator);
+      if (ownership === undefined || !isPublicationOwnershipCurrent(destination, ownership, locator)) return false;
+      const stagingName = ownership.marker.stagingPath;
+      if (typeof stagingName !== "string") return false;
 
       const directory = opendirSync(".");
       let scanned = 0;
@@ -901,18 +904,24 @@ function readBundleFile(
 }
 
 function hasPublicationAliases(path: string, locator: string, target: { dev: number; ino: number; nlink: number }): boolean {
-  if (!isOwnedPublicationAlias(path, target, locator)) return false;
+  const ownership = readPublicationOwnership(path, target, locator);
+  if (ownership === undefined) return false;
   const quarantine = hasAlias(`${path}.quarantine`, target);
   const recovered = hasAlias(`${path}.recovered`, target);
-  const staging = hasStagingAlias(path, locator, target);
+  const staging = hasStagingAlias(path, target, ownership);
   if (staging && !quarantine && !recovered) return false;
   const accounted = Number(quarantine) + Number(recovered) + Number(staging);
-  return accounted > 0 && target.nlink === 1 + accounted;
+  return isPublicationOwnershipCurrent(path, ownership, locator) && accounted > 0 && target.nlink === 1 + accounted;
 }
 
-function hasStagingAlias(path: string, locator: string, target: { dev: number; ino: number }): boolean {
-  const stagingPath = readPublicationStagingPath(path, locator);
-  return stagingPath !== undefined && sameFileIdentity(target, lstatSync(resolve(dirname(path), stagingPath)));
+function hasStagingAlias(
+  path: string,
+  target: { dev: number; ino: number },
+  ownership: PublicationOwnership,
+): boolean {
+  const stagingPath = ownership.marker.stagingPath;
+  return typeof stagingPath === "string"
+    && sameFileIdentity(target, lstatSync(resolve(dirname(path), stagingPath)));
 }
 
 function readStagingPath(path: string, locator: string): string | undefined {
