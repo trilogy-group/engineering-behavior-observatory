@@ -613,6 +613,9 @@ function nestedVerifierDiagnosticErrors(
       && sameDiagnosticOrigin(sourceBinding, sourceOrigin);
     const byteIdentical = sanitized && sourceOrigin !== undefined && diagnostic.digest === sourceOrigin.digest;
     const isSanitizedSidecar = retainedEvidence !== undefined
+      && retainedEvidence.kind === "diagnostic"
+      && retainedEvidence.authority === "outcome"
+      && (retainedEvidence.mediaType === "text/plain" || retainedEvidence.mediaType === "application/octet-stream")
       && (retainedEvidence.sharingClass === "partner" || retainedEvidence.sharingClass === "public")
       && isRecord(retainedEvidence.sanitizedFrom)
       && sourceBindingMatches
@@ -1056,7 +1059,9 @@ function validateSanitizedProvenance(
       return;
     }
     const currentShared = current.sharingClass === "partner" || current.sharingClass === "public";
-    if (["source", "kind", "authority"].some((key) => source[key] !== current[key])
+    const diagnosticDerivative = current.kind === "diagnostic" && source.kind === "verifier";
+    if (["source", "authority"].some((key) => source[key] !== current[key])
+        || (!diagnosticDerivative && source.kind !== current.kind)
         || (currentShared ? current.nativeReference !== undefined : !sameNativeReference(source.nativeReference, current.nativeReference))
         || source.digest !== digest || source.digest === current.digest || source.digest === sharedDigest || source.relativePath === current.relativePath) {
       errors.push({ artifact, schemaVersion, field, message: "Sanitized provenance does not preserve its source evidence." });

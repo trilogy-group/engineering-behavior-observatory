@@ -76,6 +76,7 @@
             "telemetry",
             "workspace",
             "verifier",
+            "diagnostic",
             "capture-report",
             "export-manifest"
           ]
@@ -129,6 +130,13 @@
         {
           "if": {
             "properties": { "kind": { "enum": ["workspace", "verifier"] } },
+            "required": ["kind"]
+          },
+          "then": { "properties": { "authority": { "const": "outcome" } } }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "diagnostic" } },
             "required": ["kind"]
           },
           "then": { "properties": { "authority": { "const": "outcome" } } }

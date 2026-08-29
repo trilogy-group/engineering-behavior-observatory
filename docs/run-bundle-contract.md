@@ -164,7 +164,7 @@ execution-specific diagnostic reference with a `stream` (`stdout` or `stderr`),
 bundle-relative `locator`, SHA-256 `digest`, retained `sizeBytes`, and a
 `truncated` flag. Sanitized verifier results may retain diagnostics only when
 each one carries a source diagnostic origin and points to a separately
-classified sanitized sidecar. The result remains valid even when diagnostics
+classified `diagnostic` evidence sidecar. The result remains valid even when diagnostics
 are truncated.
 The `durationMs` and `diagnostics` fields are optional for older v1 records;
 new executor results include both. An `error` result requires a nonempty

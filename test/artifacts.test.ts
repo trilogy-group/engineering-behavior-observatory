@@ -532,12 +532,16 @@ test("requires classified sidecars for sanitized verifier diagnostics", async ()
     const sidecar = {
       ...workspaceDescriptor,
       id: "sanitized-diagnostic",
+      source: verifierDescriptor.source,
+      kind: "diagnostic",
+      authority: "outcome",
+      mediaType: "text/plain",
       relativePath: "sanitized/diagnostic.log",
       digest: `sha256:${digestBytes(sanitizedDiagnostic).value}`,
       sizeBytes: sanitizedDiagnostic.length,
       sharingClass: "partner",
       diagnosticSource: { verifierId: verifierDescriptor.id, ...sourceDiagnostic },
-      sanitizedFrom: { artifactId: workspaceDescriptor.id, digest: workspaceDescriptor.digest },
+      sanitizedFrom: { artifactId: verifierDescriptor.id, digest: verifierDescriptor.digest },
     };
     await writeFile(join(root, sidecar.relativePath), sanitizedDiagnostic);
     manifest.evidence.push(sidecar);
