@@ -48,6 +48,7 @@ export {
   writeVerifierResult,
 } from "./verifiers.js";
 export type {
+  CompleteVerifierResult,
   DiagnosticReference,
   ExecuteVerifierOptions,
   VerifierAssertion,

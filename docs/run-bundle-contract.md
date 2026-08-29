@@ -138,6 +138,8 @@ process tree on Windows). Each retained stream is represented by an
 execution-specific diagnostic reference with a
 bundle-relative `locator`, SHA-256 `digest`, retained `sizeBytes`, and a
 `truncated` flag. The result remains valid even when diagnostics are truncated.
+The `durationMs` and `diagnostics` fields are optional for older v1 records;
+new executor results include both.
 
 The result serializer validates `verifier-result/v1` before writing it. The
 diagnostic references are read back and digest-checked before the result is

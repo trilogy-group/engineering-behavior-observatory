@@ -35,9 +35,9 @@ export type DiagnosticReference = {
 type VerifierResultBase = {
   schemaVersion: "verifier-result/v1";
   bundleId: string;
-  durationMs: number;
+  durationMs?: number;
   assertions: VerifierAssertion[];
-  diagnostics: DiagnosticReference[];
+  diagnostics?: DiagnosticReference[];
 };
 
 export type VerifierRunResult = VerifierResultBase & {
@@ -53,6 +53,11 @@ export type VerifierNotRunResult = VerifierResultBase & {
 };
 
 export type VerifierResult = VerifierRunResult | VerifierNotRunResult;
+
+export type CompleteVerifierResult = VerifierRunResult & {
+  durationMs: number;
+  diagnostics: DiagnosticReference[];
+};
 
 export type ExecuteVerifierOptions = {
   bundleId: string;
@@ -80,7 +85,7 @@ const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
  * evaluated workspace path. Its stdout is the assertion JSON protocol; stderr
  * is retained as bounded diagnostic evidence.
  */
-export async function executeVerifier(options: ExecuteVerifierOptions): Promise<VerifierRunResult> {
+export async function executeVerifier(options: ExecuteVerifierOptions): Promise<CompleteVerifierResult> {
   const startedAt = Date.now();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
@@ -129,10 +134,14 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
       exitCode = processResult.exitCode;
       if (processResult.error !== undefined) internalError = processResult.error;
 
-      try {
-        assertions = parseAssertions(stdout.bytes);
-      } catch (error) {
-        internalError = error instanceof Error ? error.message : "Verifier output is invalid.";
+      if (stdout.truncated) {
+        internalError = `Verifier stdout exceeded ${maxOutputBytes} bytes.`;
+      } else {
+        try {
+          assertions = parseAssertions(stdout.bytes);
+        } catch (error) {
+          internalError = error instanceof Error ? error.message : "Verifier output is invalid.";
+        }
       }
 
       if (internalError === undefined && processResult.signal === undefined && exitCode !== undefined) {
@@ -166,7 +175,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
     await finalizeDiagnosticFiles(diagnosticFiles);
     if (diagnosticFiles.some((file) => file.error !== undefined)) status = "error";
     const diagnostics = diagnosticFiles.map((file, index) => diagnosticReference(file, index === 0 ? stdout : stderr));
-    const result: VerifierRunResult = {
+    const result: CompleteVerifierResult = {
       schemaVersion: "verifier-result/v1",
       bundleId: options.bundleId,
       status,
@@ -194,7 +203,7 @@ export async function writeVerifierResult(
   result: VerifierResult,
 ): Promise<{ algorithm: "sha256"; value: string }> {
   assertVerifierResult(result, relativePath);
-  for (const diagnostic of result.diagnostics) {
+  for (const diagnostic of result.diagnostics ?? []) {
     const bytes = await readVerifiedArtifact(artifactRoot, diagnostic.locator, {
       algorithm: "sha256",
       value: diagnostic.digest.slice("sha256:".length),
@@ -470,16 +479,16 @@ async function prepareDiagnosticPath(root: string, locator: string): Promise<{ p
 }
 
 function assertVerifierResult(result: VerifierResult, artifact: string): void {
-  const errors = validateArtifact(artifact, result);
-  if (errors.length > 0) {
-    throw new Error(errors.map((error) => `${error.field}: ${error.message}`).join("; "));
-  }
   if (new Set(result.assertions.map((assertion) => assertion.id)).size !== result.assertions.length) {
     throw new Error("Verifier assertion IDs must be unique.");
   }
   if (result.status === "failed" && (result.exitCode === undefined || result.exitCode === 0)
       && result.assertions.some((assertion) => assertion.status === "failed")) {
     throw new Error("Verifier exit status contradicts its failed assertions.");
+  }
+  const errors = validateArtifact(artifact, result);
+  if (errors.length > 0) {
+    throw new Error(errors.map((error) => `${error.field}: ${error.message}`).join("; "));
   }
 }
 

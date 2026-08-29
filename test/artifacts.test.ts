@@ -130,6 +130,11 @@ test("validation reports schema versions, fields, duplicate identities, and fixt
 
   assert.deepEqual(validateArtifact("packet.json", packet), []);
   assert.deepEqual(validateArtifact("run/manifest.json", runManifest), []);
+  const failedVerifier = JSON.parse(readFileSync(runFixturePath("task-failed/verifier.json"), "utf8"));
+  delete failedVerifier.exitCode;
+  assert.notDeepEqual(validateArtifact("verifier.json", failedVerifier), []);
+  failedVerifier.exitCode = 0;
+  assert.notDeepEqual(validateArtifact("verifier.json", failedVerifier), []);
   packet.agentInput.prompt = " ";
   assert.deepEqual(validateArtifact("packet.json", packet)[0], {
     artifact: "packet.json",

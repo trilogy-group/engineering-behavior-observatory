@@ -12,8 +12,7 @@ import {
   serializeVerifierResult,
   validateArtifact,
   writeVerifierResult,
-  type VerifierResult,
-  type VerifierRunResult,
+  type CompleteVerifierResult,
 } from "../src/index.js";
 
 const workspaceDigest = `sha256:${"a".repeat(64)}`;
@@ -104,7 +103,7 @@ test("classifies timeout, crash, and malformed output as verifier errors", async
       name: "timeout",
       source: `process.stderr.write("before-timeout"); setTimeout(() => {}, 10000);`,
       options: { timeoutMs: 150 },
-      check: async (result: VerifierResult, root: Roots) => {
+      check: async (result: CompleteVerifierResult, root: Roots) => {
         const diagnostic = await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8");
         assert.match(diagnostic, /before-timeout/);
         assert.match(diagnostic, /timed out/);
@@ -114,13 +113,13 @@ test("classifies timeout, crash, and malformed output as verifier errors", async
       name: "crash",
       source: `throw new Error("verifier crashed");`,
       options: {},
-      check: async (result: VerifierResult) => assert.equal(result.exitCode, 1),
+      check: async (result: CompleteVerifierResult) => assert.equal(result.exitCode, 1),
     },
     {
       name: "malformed output",
       source: `process.stdout.write("not-json");`,
       options: {},
-      check: async (result: VerifierResult, root: Roots) => assert.match(
+      check: async (result: CompleteVerifierResult, root: Roots) => assert.match(
         await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"),
         /invalid|Unexpected token/i,
       ),
@@ -157,6 +156,23 @@ test("bounds oversized diagnostics without losing a valid result", async () => {
     assert.equal(stderr.sizeBytes, 128);
     assert.equal(stderr.truncated, true);
     assert.equal((await readFile(join(root.artifact, stderr.locator))).length, 128);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("rejects truncated verifier protocol output", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      const result = JSON.stringify({ assertions: [{ id: "truncated", status: "passed" }] });
+      process.stdout.write(result + "x".repeat(200));
+    `);
+    const result = await run(root, verifier, { maxOutputBytes: 128 });
+
+    assert.equal(result.status, "error");
+    assert.equal(result.diagnostics.find((diagnostic) => diagnostic.locator.endsWith("stdout.log"))?.truncated, true);
+    assert.match(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), /stdout exceeded/);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
@@ -204,6 +220,17 @@ test("represents a not-run verifier without a workspace", () => {
   };
 
   assert.doesNotThrow(() => serializeVerifierResult(result));
+});
+
+test("accepts existing v1 results without optional execution fields", () => {
+  assert.doesNotThrow(() => serializeVerifierResult({
+    schemaVersion: "verifier-result/v1",
+    bundleId: "bundle-legacy",
+    status: "passed",
+    exitCode: 0,
+    workspace: { artifactId: "workspace", digest: workspaceDigest },
+    assertions: [{ id: "legacy", status: "passed" }],
+  }));
 });
 
 test("uses POSIX separators in diagnostic locators", async () => {
@@ -299,7 +326,7 @@ async function run(
   root: Roots,
   verifier: { locator: string; digest: ReturnType<typeof digestBytes> },
   options: { timeoutMs?: number; maxOutputBytes?: number } = {},
-): Promise<VerifierRunResult> {
+): Promise<CompleteVerifierResult> {
   return executeVerifier({
     bundleId: "bundle-test",
     verifierRoot: root.verifier,
@@ -311,7 +338,7 @@ async function run(
   });
 }
 
-function diagnosticPath(result: VerifierResult, stream: "stdout" | "stderr"): string {
+function diagnosticPath(result: CompleteVerifierResult, stream: "stdout" | "stderr"): string {
   const diagnostic = result.diagnostics.find((item) => item.locator.endsWith(`${stream}.log`));
   assert.ok(diagnostic);
   return diagnostic.locator;

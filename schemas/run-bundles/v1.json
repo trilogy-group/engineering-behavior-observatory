@@ -393,8 +393,9 @@
         {
           "if": { "properties": { "status": { "const": "failed" } }, "required": ["status"] },
           "then": {
-            "required": ["workspace"],
+            "required": ["workspace", "exitCode"],
             "properties": {
+              "exitCode": { "not": { "const": 0 } },
               "assertions": {
                 "contains": {
                   "properties": { "status": { "const": "failed" } },
