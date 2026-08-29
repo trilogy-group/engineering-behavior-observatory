@@ -125,6 +125,8 @@ export const MAX_TASK_PACKET_METADATA_BYTES = MAX_CONFIGURATION_BYTES;
 const MAX_TRANSIENT_LINK_READ_RETRIES = 20;
 const MAX_FREEZE_RECOVERY_ENTRIES = 4096;
 const TEMPORARY_FREEZE_LINK_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
+const QUARANTINED_FREEZE_LINK_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp\.quarantine-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const TASK_PACKET_SCHEMA_VERSION = "ebo.task-packet/v1";
 const FREEZE_LOCATOR_SUFFIX = ".freeze.json";
 
 export function inspectTaskPacket(bundleRoot: string, packetLocator: string): TaskPacketInspection {
@@ -167,7 +169,7 @@ function inspectTaskPacketWithRoot(
     };
   }
 
-  const errors = validateArtifact(packetLocator, document);
+  const errors = validateTaskPacket(packetLocator, document);
   if (errors.length > 0) {
     return { packetLocator, packet: null, preAdmissionDigest: null, packetDigest: null, components: null, modelVisible: null, errors };
   }
@@ -521,6 +523,13 @@ function validateFreezeRecord(freezeLocator: string, document: unknown): Artifac
   return validateArtifact(freezeLocator, document);
 }
 
+function validateTaskPacket(packetLocator: string, document: unknown): ArtifactValidationError[] {
+  if (isRecord(document) && document.schemaVersion !== TASK_PACKET_SCHEMA_VERSION) {
+    return [packetError(packetLocator, "/schemaVersion", `must equal ${TASK_PACKET_SCHEMA_VERSION}`)];
+  }
+  return validateArtifact(packetLocator, document);
+}
+
 function aggregateDigest(
   packetId: string,
   packetLocator: string,
@@ -635,7 +644,7 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHan
           }
           const name = entry.name;
           if (name === relative(parent, destination)) continue;
-          if (!TEMPORARY_FREEZE_LINK_PATTERN.test(name)) continue;
+          if (!TEMPORARY_FREEZE_LINK_PATTERN.test(name) && !QUARANTINED_FREEZE_LINK_PATTERN.test(name)) continue;
           try {
             const temporaryStat = lstatSync(name);
             if (temporaryStat.isFile() && temporaryStat.dev === destinationStat.dev && temporaryStat.ino === destinationStat.ino) {

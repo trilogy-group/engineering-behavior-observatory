@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, linkSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -225,6 +225,23 @@ test("status recovers an interrupted nested freeze link within its parent", () =
   }
 });
 
+test("status recovers an interrupted quarantine alias", () => {
+  const { root } = createBundle();
+  const freezePath = join(root, "packet.json.freeze.json");
+  const temporaryName = ".55555555-5555-4555-8555-555555555555.tmp";
+  const quarantineName = `${temporaryName}.quarantine-66666666-6666-4666-8666-666666666666`;
+  const quarantinePath = join(root, quarantineName);
+  try {
+    freezeTaskPacket(root, "packet.json");
+    linkSync(freezePath, join(root, temporaryName));
+    renameSync(join(root, temporaryName), quarantinePath);
+    assert.equal(statusTaskPacket(root, "packet.json").status, "frozen");
+    assert.equal(existsSync(quarantinePath), false);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("status bounds orphan-link recovery directory scans", () => {
   const { root } = createBundle();
   const freezePath = join(root, "packet.json.freeze.json");
@@ -369,6 +386,21 @@ test("status rejects a document with the wrong freeze-record schema", () => {
     assert.deepEqual(status.mismatches, ["freeze-record"]);
     assert.ok(status.errors.some((error) => /ebo\.task-packet-freeze\/v1/.test(error.message)));
     assert.throws(() => freezeTaskPacket(root, "packet.json"), /ebo\.task-packet-freeze\/v1/);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("packet inspection rejects a document with the wrong schema", () => {
+  const { root, packet } = createBundle();
+  try {
+    packet.schemaVersion = "ebo.task-packet-freeze/v1" as TaskPacket["schemaVersion"];
+    writeFileSync(join(root, "packet.json"), JSON.stringify(packet));
+    const result = admitTaskPacket(root, "packet.json");
+    assert.equal(result.packet, null);
+    assert.ok(result.errors.some((error) => /ebo\.task-packet\/v1/.test(error.message)));
+    assert.equal(statusTaskPacket(root, "packet.json").status, "invalid");
+    assert.throws(() => freezeTaskPacket(root, "packet.json"), /ebo\.task-packet\/v1/);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
