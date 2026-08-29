@@ -147,7 +147,7 @@ export async function digestWorkspace(workspacePath: string): Promise<string> {
   hash.update("ebo.workspace/v1\0");
   const metadata = await lstat(root, { bigint: true });
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("Workspace root is not a directory.");
-  hash.update(`root\0${metadata.mode & 0o7777n}\0${metadata.mtimeNs}\0`);
+  hash.update(`root\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0`);
   await hashWorkspaceDirectory(root, "", hash);
   return `sha256:${hash.digest("hex")}`;
 }
@@ -165,12 +165,12 @@ async function hashWorkspaceDirectory(
     const metadata = await lstat(path, { bigint: true });
     if (metadata.isSymbolicLink()) throw new Error(`Workspace contains a symbolic link at "${relativePath}".`);
     if (metadata.isDirectory()) {
-      hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777n}\0${metadata.mtimeNs}\0`);
+      hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0`);
       await hashWorkspaceDirectory(path, relativePath, hash);
     } else if (metadata.isFile()) {
       if (metadata.nlink > 1n) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
       const bytes = await readFile(path);
-      hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777n}\0${metadata.mtimeNs}\0${bytes.length}\0`);
+      hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0${bytes.length}\0`);
       hash.update(bytes);
     } else {
       throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
@@ -256,6 +256,10 @@ async function restoreWorkspaceTimestamps(source: string, destination: string): 
 
 function timestampSeconds(milliseconds: bigint): number {
   return Number(milliseconds) / 1_000 + 0.000001;
+}
+
+function workspaceTimestamp(metadata: { mtimeNs: bigint; mtimeMs: bigint }): bigint {
+  return process.platform === "win32" ? metadata.mtimeMs : metadata.mtimeNs;
 }
 
 /**

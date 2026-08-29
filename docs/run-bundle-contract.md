@@ -112,8 +112,10 @@ digest it evaluated.
 The executor receives both the retained workspace artifact reference and a
 separate live-workspace fingerprint. The v1 live-workspace fingerprint hashes
 the root and sorted descendant relative paths, entry kinds, permission mode
-bits, nanosecond modification times, and file bytes; hard-linked files,
-symbolic links, and unsupported entry kinds are rejected. The fingerprint must
+bits, reproducible modification times, and file bytes; hard-linked files,
+symbolic links, and unsupported entry kinds are rejected. POSIX snapshots use
+nanosecond modification times; the Windows fallback uses Node's reproducible
+millisecond precision. The fingerprint must
 match the live workspace before and after its private snapshot is created. The
 executor then evaluates that detached snapshot, while the artifact digest
 remains the digest of the retained workspace evidence. The complete executor
