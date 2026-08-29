@@ -12,6 +12,7 @@ import {
   readSync,
   realpathSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import type { BigIntStats, Stats } from "node:fs";
@@ -312,7 +313,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
       } finally {
         if (descriptor !== undefined) {
           try {
-            removeOwnedPath(temporaryPath, descriptor, destination);
+            removeOwnedPath(temporaryPath, descriptor, destination, true);
           } finally {
             closeSync(descriptor);
             descriptor = undefined;
@@ -682,7 +683,7 @@ function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined 
   }
 }
 
-function removeOwnedPath(path: string, descriptor: number, quarantineBase = path): void {
+function removeOwnedPath(path: string, descriptor: number, quarantineBase = path, removeSource = false): void {
   const quarantine = `${quarantineBase}.quarantine`;
   try {
     const opened = fstatSync(descriptor);
@@ -690,19 +691,27 @@ function removeOwnedPath(path: string, descriptor: number, quarantineBase = path
     if (!sameFileIdentity(opened, current)) {
       throw new Error(`Publication path "${path}" changed before cleanup.`);
     }
+    let quarantined: ReturnType<typeof lstatSync>;
     try {
       linkSync(path, quarantine);
+      quarantined = lstatSync(quarantine);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const existing = lstatSync(quarantine);
-      if (!sameFileIdentity(opened, existing)) {
+      quarantined = lstatSync(quarantine);
+      if (!sameFileIdentity(opened, quarantined)) {
         throw new Error(`Publication quarantine "${quarantine}" is already occupied.`);
       }
-      return;
+      if (!removeSource) return;
     }
-    const quarantined = lstatSync(quarantine);
     if (!sameFileIdentity(opened, quarantined)) {
       throw new Error(`Publication path "${path}" changed during quarantine.`);
+    }
+    if (removeSource) {
+      const current = lstatSync(path);
+      if (!sameFileIdentity(opened, current)) {
+        throw new Error(`Publication path "${path}" changed before source cleanup.`);
+      }
+      unlinkSync(path);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;

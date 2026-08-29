@@ -127,6 +127,7 @@ const MAX_FREEZE_RECOVERY_ENTRIES = 4096;
 const TEMPORARY_FREEZE_LINK_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
 const TASK_PACKET_SCHEMA_VERSION = "ebo.task-packet/v1";
 const FREEZE_LOCATOR_SUFFIX = ".freeze.json";
+const FREEZE_QUARANTINE_SUFFIX = `${FREEZE_LOCATOR_SUFFIX}.quarantine`;
 
 export function inspectTaskPacket(bundleRoot: string, packetLocator: string): TaskPacketInspection {
   let root: BundleRootHandle | undefined;
@@ -283,12 +284,9 @@ export function modelVisibleTaskPacket(packet: TaskPacket): TaskPacket["agentInp
 }
 
 export function defaultFreezeLocator(packetLocator: string): string {
-  const leafLength = packetLocator.slice(packetLocator.lastIndexOf("/") + 1).length;
-  if (packetLocator.length + FREEZE_LOCATOR_SUFFIX.length > 960
-      || leafLength + FREEZE_LOCATOR_SUFFIX.length > 255) {
-    throw new Error(`Default freeze locator for "${packetLocator}" exceeds safe path limits.`);
-  }
-  return `${packetLocator}${FREEZE_LOCATOR_SUFFIX}`;
+  const freezeLocator = `${packetLocator}${FREEZE_LOCATOR_SUFFIX}`;
+  assertFreezeLocatorPathWithinLimits(freezeLocator, packetLocator);
+  return freezeLocator;
 }
 
 export function freezeTaskPacket(
@@ -296,6 +294,7 @@ export function freezeTaskPacket(
   packetLocator: string,
   freezeLocator = defaultFreezeLocator(packetLocator),
 ): TaskPacketFreezeRecord {
+  assertFreezeLocatorPathWithinLimits(freezeLocator, packetLocator);
   if (packetLocator === freezeLocator) {
     throw new Error("Freeze record must use a path distinct from the task packet.");
   }
@@ -610,6 +609,14 @@ function freezeCandidate(packetLocator: string, inspection: TaskPacketInspection
   };
 }
 
+function assertFreezeLocatorPathWithinLimits(freezeLocator: string, packetLocator: string): void {
+  const leafLength = freezeLocator.slice(freezeLocator.lastIndexOf("/") + 1).length;
+  if (freezeLocator.length + FREEZE_QUARANTINE_SUFFIX.length > 960
+      || leafLength + FREEZE_QUARANTINE_SUFFIX.length > 255) {
+    throw new Error(`Freeze locator "${freezeLocator}" for packet "${packetLocator}" exceeds safe path limits including quarantine.`);
+  }
+}
+
 function validateFreezeRecord(freezeLocator: string, document: unknown): ArtifactValidationError[] {
   if (isRecord(document) && document.schemaVersion !== TASK_PACKET_FREEZE_SCHEMA_VERSION) {
     return [
@@ -798,7 +805,7 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
     try {
       const opened = fstatSync(descriptor);
       const openedTimes = fstatSync(descriptor, { bigint: true });
-      const openedHasQuarantine = opened.nlink > 1
+      const openedHasQuarantine = opened.nlink === 2
         && hasQuarantineAlias(path, opened);
       if (!opened.isFile() || (opened.nlink > 1 && !openedHasQuarantine)) {
         throw new Error(`Artifact path "${locator}" is not an isolated regular file.`);
@@ -818,7 +825,7 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
       }
       const completed = fstatSync(descriptor);
       const completedTimes = fstatSync(descriptor, { bigint: true });
-      const completedHasQuarantine = completed.nlink > 1
+      const completedHasQuarantine = completed.nlink === 2
         && hasQuarantineAlias(path, completed);
       if (!completed.isFile() || (completed.nlink > 1 && !completedHasQuarantine)
           || completed.dev !== opened.dev || completed.ino !== opened.ino

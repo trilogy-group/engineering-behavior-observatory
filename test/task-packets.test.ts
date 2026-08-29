@@ -200,6 +200,22 @@ test("publication never overwrites an existing quarantine artifact", () => {
   }
 });
 
+test("status rejects a freeze with an unaccounted hard link", () => {
+  const { root } = createBundle();
+  const freezePath = join(root, "packet.json.freeze.json");
+  const extraLink = join(root, "unexpected-freeze-link");
+  try {
+    freezeTaskPacket(root, "packet.json");
+    linkSync(freezePath, extraLink);
+    const status = statusTaskPacket(root, "packet.json");
+    assert.equal(status.status, "invalid");
+    assert.ok(status.errors.some((error) => /not an isolated regular file/.test(error.message)));
+    assert.equal(existsSync(extraLink), true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("publication rejects a synchronized temporary-file mutation", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-publication-race-"));
   const mutator = spawn(
@@ -430,7 +446,7 @@ test("freeze validates its constructed record and bounds the default locator", (
     rmSync(root, { force: true, recursive: true });
   }
 
-  const nearLimit = Array.from({ length: 4 }, () => "a".repeat(239)).join("/");
+  const nearLimit = Array.from({ length: 4 }, () => "a".repeat(236)).join("/");
   assert.throws(() => defaultFreezeLocator(nearLimit), /exceeds safe path limits/);
 });
 
