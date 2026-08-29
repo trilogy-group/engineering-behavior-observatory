@@ -11,7 +11,7 @@ import {
   readFileSync,
   readSync,
   realpathSync,
-  rmSync,
+  renameSync,
   writeFileSync,
 } from "node:fs";
 import type { BigIntStats, Stats } from "node:fs";
@@ -263,7 +263,6 @@ export function writeMetadataAtomicallyIfAbsentSync(
     assertPublishRootHandle(root, rootDescriptor, relativePath);
     const parentDescriptor = openPublishParent(root, parent, relativePath, rootDescriptor);
     const destination = relative(parent, path);
-    let quarantineBase = destination;
     const originalCwd = process.cwd();
     let changedCwd = false;
     try {
@@ -284,65 +283,79 @@ export function writeMetadataAtomicallyIfAbsentSync(
         throw new Error(`Publication quarantine "${destination}.quarantine" is already occupied.`);
       }
 
-      const temporaryPath = `.${randomUUID()}.tmp`;
+      // The deterministic quarantine sibling is also the staging inode. Keeping it as
+      // the final accounted link avoids a post-publication path deletion race.
+      const temporaryPath = `${destination}.quarantine`;
       let descriptor: number | undefined;
 
       try {
-        descriptor = openSync(temporaryPath, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o600);
-        assertPublishRootHandle(root, rootDescriptor, relativePath);
-        assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
-        writeFileSync(descriptor, bytes);
-        fsyncSync(descriptor);
-        const openedTemporary = fstatSync(descriptor);
-        const namedTemporary = lstatSync(temporaryPath);
-        if (!sameFileIdentity(openedTemporary, namedTemporary)) {
-          throw new Error(`Artifact path "${relativePath}" temporary publication entry changed.`);
-        }
-        assertPublishRootHandle(root, rootDescriptor, relativePath);
-        assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
-        let linkedHere = false;
         try {
-          linkSync(temporaryPath, destination);
-          linkedHere = true;
-          const published = lstatSync(destination);
-          const currentTemporary = fstatSync(descriptor);
-          if (!sameFileIdentity(currentTemporary, published)) {
-            throw new Error(`Artifact path "${relativePath}" published a different temporary entry.`);
-          }
-          assertPublishedDigest(descriptor, digest, currentTemporary, fstatSync(descriptor, { bigint: true }), relativePath);
-          created = true;
+          descriptor = openSync(temporaryPath, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o600);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-            linkedHere = false;
             winnerRequired = true;
-            const existingDestination = lstatSync(destination);
-            quarantineBase = sameFileIdentity(existingDestination, openedTemporary) ? destination : temporaryPath;
           } else {
-            if (linkedHere) {
-              quarantineBase = temporaryPath;
-              removeOwnedPath(destination, descriptor, quarantineBase, true);
-            }
             throw error;
           }
         }
-        try {
+        if (descriptor !== undefined) {
+          assertPublishRootHandle(root, rootDescriptor, relativePath);
           assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
-        } catch (error) {
-          if (linkedHere) {
-            quarantineBase = temporaryPath;
-            removeOwnedPath(destination, descriptor, quarantineBase, true);
+          writeFileSync(descriptor, bytes);
+          fsyncSync(descriptor);
+          const openedTemporary = fstatSync(descriptor);
+          const namedTemporary = lstatSync(temporaryPath);
+          if (!sameFileIdentity(openedTemporary, namedTemporary)) {
+            throw new Error(`Artifact path "${relativePath}" temporary publication entry changed.`);
           }
-          created = false;
-          throw error;
+          assertPublishRootHandle(root, rootDescriptor, relativePath);
+          assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
+          let linkedHere = false;
+          try {
+            linkSync(temporaryPath, destination);
+            linkedHere = true;
+            const published = lstatSync(destination);
+            const currentTemporary = fstatSync(descriptor);
+            if (!sameFileIdentity(currentTemporary, published)) {
+              throw new Error(`Artifact path "${relativePath}" published a different temporary entry.`);
+            }
+            assertPublishedDigest(descriptor, digest, currentTemporary, fstatSync(descriptor, { bigint: true }), relativePath);
+            created = true;
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+              linkedHere = false;
+              winnerRequired = true;
+              const existingDestination = lstatSync(destination);
+              if (!sameFileIdentity(existingDestination, openedTemporary)) {
+                movePathToAttempt(temporaryPath, descriptor);
+                closeSync(descriptor);
+                descriptor = undefined;
+              }
+            } else {
+              if (linkedHere) preserveFailedPublication(destination, temporaryPath, descriptor);
+              else movePathToAttempt(temporaryPath, descriptor);
+              closeSync(descriptor);
+              descriptor = undefined;
+              throw error;
+            }
+          }
+          try {
+            assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
+          } catch (error) {
+            if (created && descriptor !== undefined) {
+              preserveFailedPublication(destination, temporaryPath, descriptor);
+              closeSync(descriptor);
+              descriptor = undefined;
+            }
+            created = false;
+            throw error;
+          }
         }
       } finally {
         if (descriptor !== undefined) {
-          try {
-            removeOwnedPath(temporaryPath, descriptor, quarantineBase, true);
-          } finally {
-            closeSync(descriptor);
-            descriptor = undefined;
-          }
+          if (!created && !winnerRequired) movePathToAttempt(temporaryPath, descriptor);
+          closeSync(descriptor);
+          descriptor = undefined;
         }
         assertPublishRootHandle(root, rootDescriptor, relativePath);
         syncCreatedDirectories(root, createdDirectories, parentDescriptor);
@@ -756,54 +769,39 @@ function digestExistingPathWithRetry(path: string, relativePath: string): Digest
     try {
       return digestExistingPath(path, relativePath);
     } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
       if (attempt >= MAX_EXISTING_DIGEST_RETRIES || !(error instanceof Error)
-          || !error.message.includes("not an isolated regular file")) throw error;
+          || (code !== "ENOENT" && !error.message.includes("not an isolated regular file"))) throw error;
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
     }
   }
 }
 
-function removeOwnedPath(path: string, descriptor: number, quarantineBase: string, removeSource: boolean): void {
-  const quarantine = `${quarantineBase}.quarantine`;
+function preserveFailedPublication(destination: string, quarantine: string, descriptor: number): void {
+  movePathToAttempt(quarantine, descriptor);
   try {
-    const opened = fstatSync(descriptor);
-    const current = lstatSync(path);
-    if (!sameFileIdentity(opened, current)) {
-      throw new Error(`Publication path "${path}" changed before cleanup.`);
-    }
-    let quarantined: ReturnType<typeof lstatSync>;
-    try {
-      linkSync(path, quarantine);
-      quarantined = lstatSync(quarantine);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      quarantined = lstatSync(quarantine);
-      if (!sameFileIdentity(opened, quarantined)) {
-        throw new Error(`Publication quarantine "${quarantine}" is already occupied.`);
-      }
-      if (!removeSource) return;
-    }
-    if (!sameFileIdentity(opened, quarantined)) {
-      throw new Error(`Publication path "${path}" changed during quarantine.`);
-    }
-    if (removeSource) {
-      const current = lstatSync(path);
-      if (!sameFileIdentity(opened, current)) {
-        throw new Error(`Publication path "${path}" changed before source cleanup.`);
-      }
-      unlinkPathAfterIdentityCheck(path, opened);
-    }
+    movePathToAttempt(destination, descriptor);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 }
 
-function unlinkPathAfterIdentityCheck(path: string, expected: { dev: number; ino: number }): void {
+function movePathToAttempt(path: string, descriptor: number): string {
+  const expected = fstatSync(descriptor);
   const current = lstatSync(path);
   if (!sameFileIdentity(expected, current)) {
-    throw new Error(`Publication path "${path}" changed before source cleanup.`);
+    throw new Error(`Publication path "${path}" changed during failure preservation.`);
   }
-  rmSync(path, { force: true });
+  for (let attempt = 0; attempt < MAX_EXISTING_DIGEST_RETRIES; attempt += 1) {
+    const target = `.${randomUUID()}.failed`;
+    try {
+      renameSync(path, target);
+      return target;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+  }
+  throw new Error(`Could not preserve failed publication path "${path}".`);
 }
 
 function isReadablePublishedFile(path: string, target: { dev: number; ino: number; nlink: number }): boolean {

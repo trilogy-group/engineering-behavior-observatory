@@ -215,20 +215,15 @@ test("create-if-absent publication returns the winner after a link-time race", a
       `const fs = require("node:fs");
 const path = require("node:path");
 const root = process.argv[1];
+const source = path.join(root, "metadata.json.quarantine");
 const destination = path.join(root, "metadata.json");
-const pattern = /^\\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.tmp$/;
 process.stdout.write("ready\\n");
 function race() {
-  for (const name of fs.readdirSync(root)) {
-    if (!pattern.test(name)) continue;
-    try {
-      const source = path.join(root, name);
-      fs.linkSync(source, destination);
-      fs.linkSync(source, destination + ".quarantine");
-      process.stdout.write("linked\\n");
-      return;
-    } catch {}
-  }
+  try {
+    fs.linkSync(source, destination);
+    process.stdout.write("linked\\n");
+    return;
+  } catch {}
   setImmediate(race);
 }
 race();`,
@@ -293,19 +288,16 @@ test("publication rejects a synchronized temporary-file mutation", async () => {
       `const fs = require("node:fs");
 const path = require("node:path");
 const root = process.argv[1];
-const pattern = /^\\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.tmp$/;
+const target = path.join(root, "published.json.quarantine");
 process.stdout.write("ready\\n");
 function mutate() {
-  for (const name of fs.readdirSync(root)) {
-    if (!pattern.test(name)) continue;
-    try {
-      const descriptor = fs.openSync(path.join(root, name), fs.constants.O_RDWR);
-      const stat = fs.fstatSync(descriptor);
-      if (stat.size > 0) fs.writeSync(descriptor, Buffer.from("!"), 0, 1, 0);
-      fs.fsyncSync(descriptor);
-      fs.closeSync(descriptor);
-    } catch {}
-  }
+  try {
+    const descriptor = fs.openSync(target, fs.constants.O_RDWR);
+    const stat = fs.fstatSync(descriptor);
+    if (stat.size > 0) fs.writeSync(descriptor, Buffer.from("!"), 0, 1, 0);
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+  } catch {}
   setImmediate(mutate);
 }
 mutate();`,
