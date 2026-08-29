@@ -393,16 +393,17 @@ test("create-if-absent publication recovers a marker-only interruption", async (
   }
 });
 
-test("create-if-absent publication recovers a partial marker sidecar", () => {
+test("create-if-absent publication preserves an unowned partial marker sidecar", () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-partial-marker-recovery-"));
   const markerTemporary = join(root, "metadata.json.quarantine.marker.tmp");
   try {
     writeFileSync(markerTemporary, "{");
     chmodSync(markerTemporary, 0o600);
-    const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
-    assert.equal(result.created, true);
-    assert.equal(JSON.parse(readFileSync(markerTemporary, "utf8")).schemaVersion, "ebo.publication-staging/v1");
-    assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), true);
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }),
+      /already occupied/,
+    );
+    assert.equal(readFileSync(markerTemporary, "utf8"), "{");
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

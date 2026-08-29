@@ -1104,8 +1104,9 @@ export function writeMetadataAtomicallyIfAbsentSync(
         if (markerObservation?.active) winnerRequired = true;
         else if (stagingMarkerMatches(`${markerPath}.tmp`, relativePath)) {
           recoverInterruptedMarker(`${markerPath}.tmp`, relativePath, markerObservation?.identity);
+        } else {
+          throw new Error(`Publication staging marker "${markerPath}.tmp" is already occupied.`);
         }
-        else moveOptionalPathToAttempt(`${markerPath}.tmp`);
       }
 
       // Stage in an attempt-specific inode, then retain it as an explicitly accounted

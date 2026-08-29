@@ -533,6 +533,13 @@ export function isOwnedPublicationAlias(
     && dev === target.dev && ino === target.ino;
 }
 
+export function readPublicationStagingPath(path: string, expectedRelativePath?: string): string | undefined {
+  const marker = readPublicationMarker(`${path}.quarantine.marker`);
+  return marker !== undefined && isPublicationMarker(marker, expectedRelativePath)
+    ? marker.stagingPath as string
+    : undefined;
+}
+
 function readPublicationMarker(path: string): Record<string, unknown> | undefined {
   let descriptor: number | undefined;
   try {

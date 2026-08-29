@@ -24,6 +24,7 @@ import {
 import {
   isSafeArtifactRelativePath,
   isOwnedPublicationAlias,
+  readPublicationStagingPath,
   MAX_CONFIGURATION_BYTES,
   resolveBundleArtifact,
   resolveBundleArtifactDigest,
@@ -896,36 +897,22 @@ function hasPublicationAliases(path: string, locator: string, target: { dev: num
   if (!isOwnedPublicationAlias(path, target, locator)) return false;
   const quarantine = hasAlias(`${path}.quarantine`, target);
   const recovered = hasAlias(`${path}.recovered`, target);
-  const staging = hasStagingAlias(path, target);
+  const staging = hasStagingAlias(path, locator, target);
   if (staging && !quarantine && !recovered) return false;
   const accounted = Number(quarantine) + Number(recovered) + Number(staging);
   return accounted > 0 && target.nlink === 1 + accounted;
 }
 
-function hasStagingAlias(path: string, target: { dev: number; ino: number }): boolean {
-  try {
-    const marker = JSON.parse(readFileSync(`${path}.quarantine.marker`, "utf8")) as unknown;
-    if (!isRecord(marker) || marker.schemaVersion !== "ebo.publication-staging/v1"
-        || typeof marker.stagingPath !== "string"
-        || !/^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(marker.stagingPath)) return false;
-    return sameFileIdentity(target, lstatSync(resolve(dirname(path), marker.stagingPath)));
-  } catch (error) {
-    if (isErrno(error, "ENOENT")) return false;
-    return false;
-  }
+function hasStagingAlias(path: string, locator: string, target: { dev: number; ino: number }): boolean {
+  const stagingPath = readPublicationStagingPath(path, locator);
+  return stagingPath !== undefined && sameFileIdentity(target, lstatSync(resolve(dirname(path), stagingPath)));
 }
 
 function readStagingPath(path: string, locator: string): string | undefined {
-  try {
-    const marker = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    if (!isRecord(marker) || marker.schemaVersion !== "ebo.publication-staging/v1"
-        || marker.relativePath !== locator || typeof marker.stagingPath !== "string"
-        || !/^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(marker.stagingPath)) return undefined;
-    return marker.stagingPath;
-  } catch (error) {
-    if (isErrno(error, "ENOENT")) return undefined;
-    return undefined;
-  }
+  const markerSuffix = ".quarantine.marker";
+  return path.endsWith(markerSuffix)
+    ? readPublicationStagingPath(path.slice(0, -markerSuffix.length), locator)
+    : undefined;
 }
 
 function hasAlias(path: string, target: { dev: number; ino: number }): boolean {
