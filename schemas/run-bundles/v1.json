@@ -324,6 +324,17 @@
         "version": { "$ref": "#/$defs/identifier" }
       }
     },
+    "diagnosticReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["locator", "digest", "sizeBytes", "truncated"],
+      "properties": {
+        "locator": { "$ref": "#/$defs/relativePath" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "sizeBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "truncated": { "type": "boolean" }
+      }
+    },
     "verifierResult": {
       "type": "object",
       "additionalProperties": false,
@@ -332,6 +343,7 @@
         "schemaVersion": { "const": "verifier-result/v1" },
         "bundleId": { "$ref": "#/$defs/identifier" },
         "status": { "enum": ["passed", "failed", "error", "not-run"] },
+        "durationMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
         "exitCode": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
         "workspace": {
           "type": "object",
@@ -353,6 +365,12 @@
               "status": { "enum": ["passed", "failed", "not-run"] }
             }
           }
+        },
+        "diagnostics": {
+          "type": "array",
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/diagnosticReference" },
+          "uniqueItems": true
         }
       },
       "allOf": [

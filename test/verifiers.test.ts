@@ -1,0 +1,188 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import {
+  digestBytes,
+  executeVerifier,
+  readVerifiedArtifact,
+  validateArtifact,
+  writeVerifierResult,
+  type VerifierResult,
+} from "../src/index.js";
+
+const workspaceDigest = `sha256:${"a".repeat(64)}`;
+
+test("executes a verifier outside the agent workspace and preserves diagnostics", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      const fs = require("node:fs");
+      const outsideWorkspace = !fs.realpathSync(process.argv[1]).startsWith(fs.realpathSync(process.argv[2]));
+      process.stderr.write("a useful diagnostic");
+      process.stdout.write(JSON.stringify({ assertions: [
+        { id: "workspace-isolation", status: outsideWorkspace ? "passed" : "failed" },
+      ] }));
+    `);
+    const result = await run(root, verifier);
+
+    assert.equal(result.status, "passed");
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.assertions[0]?.id, "workspace-isolation");
+    assert.equal(result.assertions[0]?.status, "passed");
+    assert.equal(result.diagnostics.length, 2);
+    assert.equal(result.diagnostics[1]?.truncated, false);
+    assert.equal((await readFile(join(root.artifact, "diagnostics/stderr.log"), "utf8")), "a useful diagnostic");
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("preserves failed assertions as a task failure", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [
+        { id: "first", status: "passed" },
+        { id: "second", status: "failed" },
+      ] }));
+      process.exitCode = 1;
+    `);
+    const result = await run(root, verifier);
+
+    assert.equal(result.status, "failed");
+    assert.deepEqual(result.assertions, [
+      { id: "first", status: "passed" },
+      { id: "second", status: "failed" },
+    ]);
+    assert.equal(result.exitCode, 1);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("classifies timeout, crash, and malformed output as verifier errors", async (t) => {
+  const cases = [
+    {
+      name: "timeout",
+      source: `setTimeout(() => {}, 10000);`,
+      options: { timeoutMs: 25 },
+      check: async (result: VerifierResult, root: Roots) => assert.match(
+        await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"),
+        /timed out/,
+      ),
+    },
+    {
+      name: "crash",
+      source: `throw new Error("verifier crashed");`,
+      options: {},
+      check: async (result: VerifierResult) => assert.equal(result.exitCode, 1),
+    },
+    {
+      name: "malformed output",
+      source: `process.stdout.write("not-json");`,
+      options: {},
+      check: async (result: VerifierResult, root: Roots) => assert.match(
+        await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"),
+        /invalid|Unexpected token/i,
+      ),
+    },
+  ] as const;
+
+  for (const item of cases) {
+    await t.test(item.name, async () => {
+      const root = await createRoots();
+      try {
+        const verifier = await addVerifier(root.verifier, item.source);
+        const result = await run(root, verifier, item.options);
+        assert.equal(result.status, "error");
+        await item.check(result, root);
+      } finally {
+        await rm(root.parent, { force: true, recursive: true });
+      }
+    });
+  }
+});
+
+test("bounds oversized diagnostics without losing a valid result", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stderr.write("x".repeat(200));
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "small-result", status: "passed" }] }));
+    `);
+    const result = await run(root, verifier, { maxOutputBytes: 128 });
+
+    assert.equal(result.status, "passed");
+    const stderr = result.diagnostics.find((diagnostic) => diagnostic.locator.endsWith("stderr.log"));
+    assert.ok(stderr);
+    assert.equal(stderr.sizeBytes, 128);
+    assert.equal(stderr.truncated, true);
+    assert.equal((await readFile(join(root.artifact, stderr.locator))).length, 128);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("serializes a result that validates against the run-bundle schema", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "serializable", status: "passed" }] }));
+    `);
+    const result = await run(root, verifier);
+    const digest = await writeVerifierResult(root.artifact, "verifier.json", result);
+    const bytes = await readVerifiedArtifact(root.artifact, "verifier.json", digest);
+
+    assert.deepEqual(validateArtifact("verifier.json", JSON.parse(bytes.toString("utf8"))), []);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+type Roots = {
+  parent: string;
+  verifier: string;
+  workspace: string;
+  artifact: string;
+};
+
+async function createRoots(): Promise<Roots> {
+  const parent = await mkdtemp(join(tmpdir(), "ebo-verifier-test-"));
+  const verifier = join(parent, "restricted");
+  const workspace = join(parent, "workspace");
+  const artifact = join(parent, "bundle");
+  await Promise.all([mkdir(verifier), mkdir(workspace), mkdir(artifact)]);
+  return { parent, verifier, workspace, artifact };
+}
+
+async function addVerifier(root: string, source: string): Promise<{ locator: string; digest: ReturnType<typeof digestBytes> }> {
+  const bytes = Buffer.from(source);
+  await writeFile(join(root, "verifier.js"), bytes, { mode: 0o600 });
+  return { locator: "verifier.js", digest: digestBytes(bytes) };
+}
+
+async function run(
+  root: Roots,
+  verifier: { locator: string; digest: ReturnType<typeof digestBytes> },
+  options: { timeoutMs?: number; maxOutputBytes?: number } = {},
+): Promise<VerifierResult> {
+  return executeVerifier({
+    bundleId: "bundle-test",
+    verifierRoot: root.verifier,
+    verifier,
+    workspacePath: root.workspace,
+    workspace: { artifactId: "workspace", digest: workspaceDigest },
+    artifactRoot: root.artifact,
+    ...options,
+  });
+}
+
+function diagnosticPath(result: VerifierResult, stream: "stdout" | "stderr"): string {
+  const diagnostic = result.diagnostics.find((item) => item.locator.endsWith(`${stream}.log`));
+  assert.ok(diagnostic);
+  return diagnostic.locator;
+}

@@ -109,6 +109,35 @@ result contains only passed assertions and, when retained, an exit code of zero.
 Every passed or failed verifier also names the retained workspace artifact and
 digest it evaluated.
 
+Verifier execution uses a small subprocess boundary. The executor resolves the
+digest-pinned restricted verifier from its task-bundle root, stages it in a
+private directory, and invokes it with the staged verifier path followed by the
+agent workspace path. The restricted implementation and any reference solution
+remain outside that workspace. The verifier writes one JSON object to stdout:
+
+```json
+{
+  "assertions": [
+    { "id": "unit-tests", "status": "passed" },
+    { "id": "lint", "status": "failed" }
+  ]
+}
+```
+
+The executor records the assertion list, `durationMs`, observed `exitCode`
+when the process exits normally, and a `status` of `passed`, `failed`, or
+`error`. A valid assertion failure is a task failure; timeout, crash, invalid
+UTF-8/JSON, duplicate or invalid assertion, and an exit/assertion contradiction
+are verifier errors. `not-run` remains available for a caller that records a
+verifier which was never started. Stdout and stderr are drained without an
+unbounded buffer. Each retained stream is represented by a diagnostic reference
+with a bundle-relative `locator`, SHA-256 `digest`, retained `sizeBytes`, and a
+`truncated` flag. The result remains valid even when diagnostics are truncated.
+
+The result serializer validates `verifier-result/v1` before writing it. The
+diagnostic references are read back and digest-checked before the result is
+saved, so a result cannot point at missing or changed diagnostic bytes.
+
 ## Sharing boundary
 
 A partner export that lists restricted native artifacts is `blocked`. A `ready`
