@@ -199,6 +199,12 @@ test("create-if-absent metadata writes remain readable through the artifact API"
     const written = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
     assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", written.digest), Buffer.from('{"state":"ready"}'));
     assert.deepEqual(resolveBundleArtifact(root, { locator: "metadata.json", digest: written.digest }), Buffer.from('{"state":"ready"}'));
+    const plain = Buffer.from("plain artifact");
+    writeFileSync(join(root, "plain.json"), plain);
+    linkSync(join(root, "plain.json"), join(root, "plain-alias"));
+    const plainDigest = digestBytes(plain);
+    await assert.rejects(readVerifiedArtifact(root, "plain.json", plainDigest), /not an isolated regular file/);
+    assert.throws(() => resolveBundleArtifact(root, { locator: "plain.json", digest: plainDigest }), /not an isolated regular file/);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -212,10 +218,11 @@ test("create-if-absent publication recovers interrupted quarantine staging", asy
   try {
     writeFileSync(staging, "partial");
     chmodSync(staging, 0o600);
+    const stagingIdentity = lstatSync(staging);
     writeFileSync(marker, JSON.stringify({
       schemaVersion: "ebo.publication-staging/v1",
       relativePath: "metadata.json",
-      digest: digestMetadata(metadata),
+      stagingIdentity: { dev: stagingIdentity.dev, ino: stagingIdentity.ino },
     }));
     chmodSync(marker, 0o600);
     const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", metadata);
@@ -240,6 +247,23 @@ test("create-if-absent publication preserves unrecognized quarantine staging", (
     );
     assert.equal(readFileSync(staging, "utf8"), "not ours");
     assert.deepEqual(readdirSync(root), ["metadata.json.quarantine"]);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("create-if-absent publication preserves a pre-existing staging marker", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-marker-collision-"));
+  const marker = join(root, "metadata.json.quarantine.marker");
+  try {
+    writeFileSync(marker, "durable marker");
+    chmodSync(marker, 0o600);
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }),
+      /EEXIST|already exists|marker/,
+    );
+    assert.equal(readFileSync(marker, "utf8"), "durable marker");
+    assert.equal(existsSync(join(root, "metadata.json")), false);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
