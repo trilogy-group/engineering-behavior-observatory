@@ -111,6 +111,18 @@ test("validation reports schema versions, fields, duplicate identities, and fixt
   const overwrittenManifest = JSON.parse(readFileSync(runFixturePath("complete/manifest.json"), "utf8"));
   overwrittenManifest.evidence[0].relativePath = "manifest.json";
   assert.match(validateArtifact("run/manifest.json", overwrittenManifest).map((error) => error.message).join("\n"), /containing manifest/);
+  const selfSanitized = JSON.parse(readFileSync(runFixturePath("complete/manifest.json"), "utf8"));
+  const source = selfSanitized.evidence.find((entry: { kind: string }) => entry.kind === "session");
+  const sanitized = { ...source, id: "sanitized-session", digest: `sha256:${"f".repeat(64)}`, relativePath: "sanitized/session.json", sharingClass: "partner", sanitizedFrom: { artifactId: "sanitized-session", digest: source.digest } };
+  delete sanitized.nativeReference;
+  selfSanitized.evidence.push(sanitized);
+  assert.match(validateArtifact("run/manifest.json", selfSanitized).map((error) => error.message).join("\n"), /provenance cannot contain a cycle/);
+  const nativeMismatch = JSON.parse(readFileSync(runFixturePath("complete/manifest.json"), "utf8"));
+  nativeMismatch.run.native.sessionId = "other-session";
+  assert.match(validateArtifact("run/manifest.json", nativeMismatch).map((error) => error.message).join("\n"), /sessionId does not match/);
+  const workspaceMismatch = JSON.parse(readFileSync(runFixturePath("complete/manifest.json"), "utf8"));
+  workspaceMismatch.terminal.workspaceArtifactId = "other-workspace";
+  assert.match(validateArtifact("run/manifest.json", workspaceMismatch).map((error) => error.message).join("\n"), /Terminal workspace/);
 
   let output = "";
   assert.equal(main(["validate", fixturePath("task-packet.valid.v1.json"), runFixturePath("complete/manifest.json")], (message) => (output += message)), 0);

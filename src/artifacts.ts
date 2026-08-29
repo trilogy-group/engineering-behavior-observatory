@@ -244,9 +244,11 @@ function runManifestIntegrityErrors(
   }
 
   const evidenceClasses = new Map<string, string>();
+  const evidenceById = new Map<string, Record<string, unknown>>();
   for (const descriptor of evidence) {
     if (!isRecord(descriptor)) continue;
-    const { digest, kind, authority, relativePath } = descriptor;
+    const { digest, id, kind, authority, relativePath } = descriptor;
+    if (typeof id === "string") evidenceById.set(id, descriptor);
     if (typeof relativePath === "string" && (relativePath.toLowerCase() === "manifest.json" || relativePath.toLowerCase().startsWith("manifest.json/"))) {
       errors.push({ artifact, schemaVersion, field: "/evidence", message: "Evidence cannot reuse the containing manifest path." });
     }
@@ -260,10 +262,82 @@ function runManifestIntegrityErrors(
     evidenceClasses.set(digest, evidenceClass);
   }
 
+  for (const descriptor of evidenceById.values()) {
+    validateSanitizedProvenance(artifact, schemaVersion, descriptor, evidenceById, errors);
+  }
+
   if (isRecord(manifest.attempt) && manifest.attempt.retryOf === manifest.attempt.id) {
     errors.push({ artifact, schemaVersion, field: "/attempt/retryOf", message: "Retry lineage cannot reference the current attempt." });
   }
+  const sourceEvidence = [...evidenceById.values()].filter((descriptor) => descriptor.sanitizedFrom === undefined);
+  if (isRecord(manifest.run) && isRecord(manifest.run.native)) {
+    validateNativeReference(artifact, schemaVersion, "sessionId", "session", "session", manifest.run.native, sourceEvidence, errors);
+    validateNativeReference(artifact, schemaVersion, "traceId", "telemetry", "trace", manifest.run.native, sourceEvidence, errors);
+  }
+  const terminal = isRecord(manifest.terminal) ? manifest.terminal : undefined;
+  if (terminal !== undefined && typeof terminal.workspaceArtifactId === "string"
+      && !sourceEvidence.some((descriptor) => descriptor.id === terminal.workspaceArtifactId && descriptor.kind === "workspace")) {
+    errors.push({ artifact, schemaVersion, field: "/terminal/workspaceArtifactId", message: "Terminal workspace must reference retained workspace evidence." });
+  }
   return errors;
+}
+
+function validateSanitizedProvenance(
+  artifact: string,
+  schemaVersion: string,
+  descriptor: Record<string, unknown>,
+  evidenceById: ReadonlyMap<string, Record<string, unknown>>,
+  errors: ArtifactValidationError[],
+): void {
+  if (!isRecord(descriptor.sanitizedFrom) || typeof descriptor.id !== "string" || typeof descriptor.digest !== "string") return;
+  const field = `/evidence/${escapeJsonPointer(descriptor.id)}/sanitizedFrom`;
+  const shared = descriptor.sharingClass === "partner" || descriptor.sharingClass === "public";
+  const seen = new Set([descriptor.id]);
+  const sharedDigest = descriptor.digest;
+  let current = descriptor;
+
+  while (isRecord(current.sanitizedFrom)) {
+    const { artifactId, digest } = current.sanitizedFrom;
+    if (typeof artifactId !== "string" || typeof digest !== "string" || seen.has(artifactId)) {
+      errors.push({ artifact, schemaVersion, field, message: "Sanitized provenance cannot contain a cycle." });
+      return;
+    }
+    const source = evidenceById.get(artifactId);
+    if (source === undefined) {
+      errors.push({ artifact, schemaVersion, field, message: "Sanitized provenance must reference retained source evidence." });
+      return;
+    }
+    if (["source", "kind", "authority"].some((key) => source[key] !== current[key])
+        || (shared ? current.nativeReference !== undefined : JSON.stringify(source.nativeReference ?? null) !== JSON.stringify(current.nativeReference ?? null))
+        || source.digest !== digest || source.digest === current.digest || source.digest === sharedDigest || source.relativePath === current.relativePath) {
+      errors.push({ artifact, schemaVersion, field, message: "Sanitized provenance does not preserve its source evidence." });
+      return;
+    }
+    seen.add(artifactId);
+    current = source;
+  }
+
+  if (shared && [...evidenceById.values()].some((candidate) => !seen.has(String(candidate.id)) && candidate.digest === sharedDigest)) {
+    errors.push({ artifact, schemaVersion, field, message: "Sanitized shared evidence cannot reuse unrelated retained bytes." });
+  }
+}
+
+function validateNativeReference(
+  artifact: string,
+  schemaVersion: string,
+  field: "sessionId" | "traceId",
+  kind: "session" | "telemetry",
+  nativeType: "session" | "trace",
+  native: Record<string, unknown>,
+  sourceEvidence: readonly Record<string, unknown>[],
+  errors: ArtifactValidationError[],
+): void {
+  if (typeof native[field] === "string" && !sourceEvidence.some((descriptor) =>
+    descriptor.kind === kind && isRecord(descriptor.nativeReference)
+      && descriptor.nativeReference.type === nativeType && descriptor.nativeReference.id === native[field],
+  )) {
+    errors.push({ artifact, schemaVersion, field: `/run/native/${field}`, message: `Declared ${field} does not match retained ${kind} evidence.` });
+  }
 }
 
 function escapeJsonPointer(value: string): string {
