@@ -188,7 +188,7 @@ import { pathToFileURL } from "node:url";
 const stageRoot = pathToFileURL(process.env.EBO_VERIFIER_ROOT).href;
 export async function resolve(specifier, context, nextResolve) {
   const result = await nextResolve(specifier, context);
-  if (result.url.startsWith("node:") || result.url.startsWith(stageRoot)) {
+  if (result.url.startsWith("node:") || result.url === stageRoot || result.url.startsWith(stageRoot + "/")) {
     return result;
   }
   throw new Error("Verifier dependency resolves outside its private staging root.");
@@ -963,9 +963,8 @@ function assertVerifierResult(result: VerifierResult, artifact: string): void {
 }
 
 function cleanEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const blocked = /^(?:PATH|NODE_OPTIONS|NODE_PATH|LD_PRELOAD|LD_AUDIT|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|DYLD_LIBRARY_PATH|DYLD_FRAMEWORK_PATH|DYLD_FALLBACK_LIBRARY_PATH|DYLD_FALLBACK_FRAMEWORK_PATH|DYLD_FORCE_FLAT_NAMESPACE|BASH_ENV|ENV|KSH_ENV|ZDOTDIR|SHELLOPTS|BASHOPTS)$/i;
-  return Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] =>
-    entry[1] !== undefined && !blocked.test(entry[0])));
+  void environment;
+  return {};
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
