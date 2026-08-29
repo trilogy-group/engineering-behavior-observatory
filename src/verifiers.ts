@@ -130,6 +130,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
     let assertions: VerifierAssertion[] = [];
     let internalError: string | undefined = diagnosticSetup.error;
     let stagingRoot: string | undefined;
+    let spawnAttempted = false;
 
     try {
       if (internalError === undefined) {
@@ -138,6 +139,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
         const stagedVerifier = join(stagingRoot, "verifier");
         await writePrivateFile(stagedVerifier, verifierBytes);
 
+        spawnAttempted = true;
         const processResult = await runProcess(
           options.command ?? process.execPath,
           [...(options.args ?? []), stagedVerifier, workspacePath],
@@ -197,13 +199,22 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
       status = "error";
       internalError = combineErrors(internalError, "Verifier diagnostics could not be persisted.");
     }
-    const references = await Promise.all(diagnosticFiles.map((file, index) =>
-      diagnosticReference(artifactRoot, file, index === 0 ? stdout : stderr)));
-    if (references.some((reference) => reference === undefined)) {
-      status = "error";
-      internalError = combineErrors(internalError, "Verifier diagnostics could not be verified.");
+    let diagnostics: DiagnosticReference[] = [];
+    if (!spawnAttempted) {
+      const cleanupError = await removeDiagnosticFiles(artifactRoot, diagnosticFiles);
+      if (cleanupError !== undefined) {
+        status = "error";
+        internalError = combineErrors(internalError, cleanupError);
+      }
+    } else {
+      const references = await Promise.all(diagnosticFiles.map((file, index) =>
+        diagnosticReference(artifactRoot, file, index === 0 ? stdout : stderr)));
+      if (references.some((reference) => reference === undefined)) {
+        status = "error";
+        internalError = combineErrors(internalError, "Verifier diagnostics could not be verified.");
+      }
+      diagnostics = references.flatMap((reference) => reference === undefined ? [] : [reference]);
     }
-    const diagnostics = references.flatMap((reference) => reference === undefined ? [] : [reference]);
     const result: CompleteVerifierResult = {
       schemaVersion: "verifier-result/v1",
       bundleId: options.bundleId,
@@ -507,16 +518,23 @@ async function openDiagnosticFiles(root: string, directory: string): Promise<Dia
   } catch (error) {
     await finalizeDiagnosticFiles(files);
     let setupError = error instanceof Error ? error.message : "Verifier diagnostic setup failed.";
-    for (const file of files) {
-      await rm(resolve(root, file.locator), { force: true }).catch((cleanupError: unknown) => {
-        setupError = combineErrors(setupError, cleanupError instanceof Error ? cleanupError.message : "Verifier diagnostic cleanup failed.");
-      });
-    }
+    const cleanupError = await removeDiagnosticFiles(root, files);
+    if (cleanupError !== undefined) setupError = combineErrors(setupError, cleanupError);
     return {
       files: [],
       error: setupError,
     };
   }
+}
+
+async function removeDiagnosticFiles(root: string, files: readonly DiagnosticFile[]): Promise<string | undefined> {
+  let error: string | undefined;
+  for (const file of files) {
+    await rm(resolve(root, file.locator), { force: true }).catch((cleanupError: unknown) => {
+      error = combineErrors(error, cleanupError instanceof Error ? cleanupError.message : "Verifier diagnostic cleanup failed.");
+    });
+  }
+  return error;
 }
 
 function queueDiagnosticWrite(file: DiagnosticFile, bytes: Uint8Array): void {
