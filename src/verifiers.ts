@@ -44,11 +44,17 @@ export type DiagnosticReference = {
   truncated: boolean;
 };
 
+export type VerifierExecutionReference = {
+  locator: string;
+  digest: string;
+};
+
 type VerifierResultBase = {
   schemaVersion: "verifier-result/v1";
   bundleId: string;
   durationMs?: number;
   error?: string;
+  verifier?: VerifierExecutionReference;
   assertions: VerifierAssertion[];
   diagnostics?: DiagnosticReference[];
 };
@@ -126,7 +132,7 @@ export async function digestWorkspace(workspacePath: string): Promise<string> {
   hash.update("ebo.workspace/v1\0");
   const metadata = await lstat(root, { bigint: true });
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("Workspace root is not a directory.");
-  hash.update(`root\0${metadata.mode & 0o7777n}\0${metadata.mtimeMs / 1000n}\0`);
+  hash.update(`root\0${metadata.mode & 0o7777n}\0${metadata.mtimeMs}\0`);
   await hashWorkspaceDirectory(root, "", hash);
   return `sha256:${hash.digest("hex")}`;
 }
@@ -144,7 +150,7 @@ async function hashWorkspaceDirectory(
     const metadata = await lstat(path, { bigint: true });
     if (metadata.isSymbolicLink()) throw new Error(`Workspace contains a symbolic link at "${relativePath}".`);
     if (metadata.isDirectory()) {
-      hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777n}\0${metadata.mtimeMs / 1000n}\0`);
+      hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777n}\0${metadata.mtimeMs}\0`);
       await hashWorkspaceDirectory(path, relativePath, hash);
     } else if (metadata.isFile()) {
       if (metadata.nlink > 1n) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
@@ -321,6 +327,10 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
       schemaVersion: "verifier-result/v1",
       bundleId: options.bundleId,
       status,
+      verifier: {
+        locator: options.verifier.locator,
+        digest: `sha256:${options.verifier.digest.value}`,
+      },
       durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
       ...(internalError === undefined ? {} : { error: internalError }),
       ...(exitCode === undefined ? {} : { exitCode }),
@@ -426,6 +436,10 @@ async function createStagingRoot(workspacePath: string): Promise<string> {
     let resolvedStagingRoot: string;
     try {
       const candidateRoot = await realpath(candidate);
+      if (isContained(workspacePath, candidateRoot)) {
+        lastError = new Error("temporary directory candidate is inside the evaluated workspace");
+        continue;
+      }
       resolvedStagingRoot = await realpath(await mkdtemp(join(candidateRoot, "ebo-verifier-")));
     } catch (error) {
       lastError = error;

@@ -423,3 +423,38 @@ test("does not qualify terminal outcomes from sanitized verifier copies", async 
     await rm(root, { force: true, recursive: true });
   }
 });
+
+test("binds verifier results to the configured verifier reference", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ebo-verifier-binding-"));
+  try {
+    await cp(runFixturePath("complete"), root, { recursive: true });
+    const manifestPath = join(root, "manifest.json");
+    const verifierPath = join(root, "verifier.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const verifierDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "verifier");
+    const verifierReference = {
+      locator: "restricted/verifier.js",
+      digest: `sha256:${"a".repeat(64)}`,
+    };
+    manifest.run.verifier = verifierReference;
+    const verifier = JSON.parse(readFileSync(verifierPath, "utf8"));
+    verifier.verifier = verifierReference;
+    const verifierBytes = Buffer.from(JSON.stringify(verifier));
+    await writeFile(verifierPath, verifierBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(verifierBytes).value}`;
+    verifierDescriptor.sizeBytes = verifierBytes.length;
+
+    assert.deepEqual(validateRunManifestEvidence("manifest.json", manifest, root), []);
+    verifier.verifier = { ...verifierReference, digest: `sha256:${"b".repeat(64)}` };
+    const mismatchedBytes = Buffer.from(JSON.stringify(verifier));
+    await writeFile(verifierPath, mismatchedBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(mismatchedBytes).value}`;
+    verifierDescriptor.sizeBytes = mismatchedBytes.length;
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /Verifier execution reference must match the run configuration/,
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});

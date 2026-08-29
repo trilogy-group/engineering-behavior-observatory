@@ -140,9 +140,12 @@ Each assertion object contains exactly `id` and `status`; undeclared fields,
 non-string statuses, duplicate IDs, and IDs longer than 256 characters are
 verifier errors rather than silently normalized away.
 
-The executor records the assertion list, `durationMs`, observed `exitCode`
-when the process exits normally, and a `status` of `passed`, `failed`, or
-`error`. A valid assertion failure is a task failure; timeout, crash, invalid
+The executor records the selected verifier's locator and digest, the assertion
+list, `durationMs`, observed `exitCode` when the process exits normally, and a
+`status` of `passed`, `failed`, or `error`. A run manifest may declare the
+task-bound verifier reference under `run.verifier`; manifest validation then
+requires each retained unsanitized verifier result to identify that same
+reference. A valid assertion failure is a task failure; timeout, crash, invalid
 UTF-8/JSON, duplicate or invalid assertion, and an exit/assertion contradiction
 are verifier errors. A failed assertion therefore requires a nonzero verifier
 exit; a zero exit paired with a failure is not a task result. `not-run` remains

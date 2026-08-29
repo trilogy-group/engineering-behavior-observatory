@@ -36,6 +36,8 @@ test("executes a verifier outside the agent workspace and preserves diagnostics"
 
     assert.equal(result.status, "passed");
     assert.equal(result.exitCode, 0);
+    assert.equal(result.verifier?.locator, verifier.locator);
+    assert.equal(result.verifier?.digest, `sha256:${verifier.digest.value}`);
     assert.equal(result.workspace.digest, workspaceDigest);
     assert.equal(result.workspace.fingerprint, await digestWorkspace(root.workspace));
     assert.equal(Number.isSafeInteger(result.durationMs), true);

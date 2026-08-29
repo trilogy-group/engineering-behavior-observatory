@@ -30,6 +30,15 @@
         "id": { "$ref": "#/$defs/identifier" }
       }
     },
+    "verifierReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["locator", "digest"],
+      "properties": {
+        "locator": { "$ref": "#/$defs/relativePath" },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    },
     "evidenceDescriptor": {
       "type": "object",
       "additionalProperties": false,
@@ -257,6 +266,7 @@
               "uniqueItems": true,
               "items": { "$ref": "#/$defs/runtimeComponent" }
             },
+            "verifier": { "$ref": "#/$defs/verifierReference" },
             "native": {
               "type": "object",
               "additionalProperties": false,
@@ -346,6 +356,7 @@
         "status": { "enum": ["passed", "failed", "error", "not-run"] },
         "durationMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
         "error": { "type": "string", "maxLength": 4096, "pattern": ".*\\S.*" },
+        "verifier": { "$ref": "#/$defs/verifierReference" },
         "exitCode": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
         "workspace": {
           "type": "object",

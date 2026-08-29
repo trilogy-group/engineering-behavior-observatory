@@ -199,6 +199,9 @@ export function validateRunManifestEvidence(
   if (!isRecord(manifest) || manifest.schemaVersion !== "run-manifest/v1" || !Array.isArray(manifest.evidence)) return [];
   const errors: ArtifactValidationError[] = [];
   const expectedBundleId = typeof manifest.bundleId === "string" ? manifest.bundleId : undefined;
+  const expectedVerifier = isRecord(manifest.run) && isRecord(manifest.run.verifier)
+    ? manifest.run.verifier
+    : undefined;
   const workspaceEvidence = new Map<string, Record<string, unknown>>(
     manifest.evidence
       .filter((entry): entry is Record<string, unknown> => isRecord(entry)
@@ -229,6 +232,7 @@ export function validateRunManifestEvidence(
           bytes,
           bundleRoot,
           expectedBundleId,
+          expectedVerifier,
           workspaceEvidence,
           evidencePaths,
           nestedDiagnosticPaths,
@@ -304,6 +308,7 @@ function nestedVerifierDiagnosticErrors(
   bytes: Buffer,
   bundleRoot: string,
   expectedBundleId: string | undefined,
+  expectedVerifier: Record<string, unknown> | undefined,
   workspaceEvidence: ReadonlyMap<string, Record<string, unknown>>,
   evidencePaths: ReadonlySet<string>,
   nestedDiagnosticPaths: Set<string>,
@@ -330,6 +335,19 @@ function nestedVerifierDiagnosticErrors(
       field: `${scope}/bundleId`,
       message: "Verifier bundleId must match its containing run manifest.",
     });
+  }
+  if (expectedVerifier !== undefined) {
+    const actualVerifier = isRecord(result.verifier) ? result.verifier : undefined;
+    if (actualVerifier === undefined
+        || actualVerifier.locator !== expectedVerifier.locator
+        || actualVerifier.digest !== expectedVerifier.digest) {
+      bindingErrors.push({
+        artifact,
+        schemaVersion: "run-manifest/v1",
+        field: `${scope}/verifier`,
+        message: "Verifier execution reference must match the run configuration.",
+      });
+    }
   }
   if (isRecord(result.workspace)) {
     const workspaceArtifactId = result.workspace.artifactId;
