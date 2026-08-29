@@ -82,6 +82,23 @@ test("atomic metadata writes retain the previous valid file when interrupted", a
   }
 });
 
+test("CLI rejects non-UTF-8 JSON bytes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ebo-utf8-"));
+  const artifact = join(root, "packet.json");
+  const bytes = Buffer.from(readFileSync(fixturePath("task-packet.valid.v1.json")));
+  const prompt = bytes.indexOf(Buffer.from('"prompt": "')) + '"prompt": "'.length;
+  bytes[prompt] = 0xff;
+
+  try {
+    await writeFile(artifact, bytes);
+    let output = "";
+    assert.equal(main(["validate", artifact], (message) => (output += message)), 1);
+    assert.match(output, /encoded data/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("validation reports schema versions, fields, duplicate identities, and fixture results", () => {
   const packet = JSON.parse(readFileSync(fixturePath("task-packet.valid.v1.json"), "utf8"));
   const runManifest = JSON.parse(readFileSync(runFixturePath("complete/manifest.json"), "utf8"));
@@ -132,6 +149,13 @@ test("validation reports schema versions, fields, duplicate identities, and fixt
   delete intermediate.nativeReference;
   multiHop.evidence.push(intermediate, { ...intermediate, id: "shared-session", digest: `sha256:${"d".repeat(64)}`, relativePath: "shared/session.json", sharingClass: "partner", sanitizedFrom: { artifactId: intermediate.id, digest: intermediate.digest } });
   assert.match(validateArtifact("run/manifest.json", multiHop).map((error) => error.message).join("\n"), /does not preserve/);
+  const reorderedNative = JSON.parse(readFileSync(runFixturePath("complete/manifest.json"), "utf8"));
+  const nativeSource = reorderedNative.evidence.find((entry: { kind: string }) => entry.kind === "session");
+  const nativeIntermediate = { ...nativeSource, id: "native-intermediate", digest: `sha256:${"c".repeat(64)}`, relativePath: "internal/native-session.json", sharingClass: "internal", nativeReference: { id: nativeSource.nativeReference.id, type: nativeSource.nativeReference.type }, sanitizedFrom: { artifactId: nativeSource.id, digest: nativeSource.digest } };
+  const nativeShared = { ...nativeIntermediate, id: "native-shared", digest: `sha256:${"b".repeat(64)}`, relativePath: "shared/native-session.json", sharingClass: "partner", sanitizedFrom: { artifactId: nativeIntermediate.id, digest: nativeIntermediate.digest } };
+  delete nativeShared.nativeReference;
+  reorderedNative.evidence.push(nativeIntermediate, nativeShared);
+  assert.doesNotMatch(validateArtifact("run/manifest.json", reorderedNative).map((error) => error.message).join("\n"), /does not preserve/);
 
   let output = "";
   assert.equal(main(["validate", fixturePath("task-packet.valid.v1.json"), runFixturePath("complete/manifest.json")], (message) => (output += message)), 0);

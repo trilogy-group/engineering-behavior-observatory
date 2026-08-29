@@ -137,6 +137,7 @@ export async function writeMetadataAtomically(
     handle = undefined;
     if (signal?.aborted) throw new Error("Artifact metadata write interrupted.");
     await rename(temporaryPath, path);
+    await syncDirectory(parent);
   } finally {
     await handle?.close();
     await rm(temporaryPath, { force: true });
@@ -317,7 +318,7 @@ function validateSanitizedProvenance(
     }
     const currentShared = current.sharingClass === "partner" || current.sharingClass === "public";
     if (["source", "kind", "authority"].some((key) => source[key] !== current[key])
-        || (currentShared ? current.nativeReference !== undefined : JSON.stringify(source.nativeReference ?? null) !== JSON.stringify(current.nativeReference ?? null))
+        || (currentShared ? current.nativeReference !== undefined : !sameNativeReference(source.nativeReference, current.nativeReference))
         || source.digest !== digest || source.digest === current.digest || source.digest === sharedDigest || source.relativePath === current.relativePath) {
       errors.push({ artifact, schemaVersion, field, message: "Sanitized provenance does not preserve its source evidence." });
       return;
@@ -347,6 +348,11 @@ function validateNativeReference(
   )) {
     errors.push({ artifact, schemaVersion, field: `/run/native/${field}`, message: `Declared ${field} does not match retained ${kind} evidence.` });
   }
+}
+
+function sameNativeReference(left: unknown, right: unknown): boolean {
+  if (left == null || right == null) return left == null && right == null;
+  return isRecord(left) && isRecord(right) && left.type === right.type && left.id === right.id;
 }
 
 function escapeJsonPointer(value: string): string {
@@ -405,6 +411,15 @@ async function prepareArtifactPath(artifactRoot: string, relativePath: string): 
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   return { parent, path };
+}
+
+async function syncDirectory(path: string): Promise<void> {
+  const handle = await open(path, constants.O_RDONLY);
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
 }
 
 function assertSafeArtifactPath(relativePath: string): void {

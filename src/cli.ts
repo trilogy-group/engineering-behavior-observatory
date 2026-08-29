@@ -29,7 +29,7 @@ export function main(
 
     const errors = args.slice(1).flatMap((artifact) => {
       try {
-        return validateArtifact(artifact, JSON.parse(readFileSync(artifact, "utf8")));
+        return validateArtifact(artifact, JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(artifact))));
       } catch (error) {
         return [{
           artifact,
