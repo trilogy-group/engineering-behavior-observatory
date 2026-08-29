@@ -134,9 +134,10 @@ POSIX dynamic-loader, shell-startup, and interpreter module-path injection are
 unavailable. Verifier tools must be invoked by absolute pinned paths. The
 restricted implementation and any
 reference solution remain outside that workspace. `.mjs`/`.cjs` locators retain
-their module semantics; ambiguous `.js` artifacts require an explicit module
-format, and explicit formats cannot contradict an unambiguous suffix. The
-verifier writes one JSON object to stdout:
+their module semantics; ambiguous `.js` or extensionless artifacts default to
+CommonJS unless the caller supplies `moduleFormat: "module"`, and explicit
+formats cannot contradict an unambiguous suffix. The verifier writes one JSON
+object to stdout:
 
 ```json
 {
