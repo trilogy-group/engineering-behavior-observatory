@@ -200,6 +200,7 @@ function inspectTaskPacketWithRoot(
         bundleRoot,
         packet.admission.review.reviewRecord,
         preAdmissionDigest,
+        packet.admission,
         "/admission/review/reviewRecord",
         packetLocator,
         errors,
@@ -569,6 +570,7 @@ function resolveReviewRecord(
   bundleRoot: string,
   reference: ArtifactReference,
   expectedPreAdmissionDigest: Digest,
+  expectedAdmission: TaskPacket["admission"],
   field: string,
   artifact: string,
   errors: ArtifactValidationError[],
@@ -582,6 +584,15 @@ function resolveReviewRecord(
       : undefined;
     if (!isDigest(bound) || !sameDigest(bound, expectedPreAdmissionDigest)) {
       throw new Error("Review record does not bind the packet's pre-admission digest.");
+    }
+    if (record === null || typeof record !== "object" || Array.isArray(record)) {
+      throw new Error("Review record does not bind the packet's admission decision.");
+    }
+    const reviewed = record as { decision?: unknown; reviewedAt?: unknown; reviewedBy?: unknown };
+    const review = expectedAdmission.review;
+    if (review === null || reviewed.decision !== expectedAdmission.status
+        || reviewed.reviewedAt !== review.reviewedAt || reviewed.reviewedBy !== review.reviewedBy) {
+      throw new Error("Review record does not bind the packet's admission decision.");
     }
     return digestBytes(bytes);
   } catch (error) {

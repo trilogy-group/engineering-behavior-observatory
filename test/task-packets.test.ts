@@ -60,7 +60,12 @@ function createBundle(packet = packetFixture()): { root: string; packet: TaskPac
     packet.admission.review.reviewRecord.locator = "review.json";
     const preAdmission = structuredClone(packet);
     delete (preAdmission as unknown as Record<string, unknown>).admission;
-    components.review = Buffer.from(JSON.stringify({ preAdmissionDigest: digestMetadata(preAdmission) }));
+    components.review = Buffer.from(JSON.stringify({
+      preAdmissionDigest: digestMetadata(preAdmission),
+      decision: packet.admission.status,
+      reviewedAt: packet.admission.review!.reviewedAt,
+      reviewedBy: packet.admission.review!.reviewedBy,
+    }));
     packet.admission.review.reviewRecord.digest = digestBytes(components.review);
   }
 
@@ -167,6 +172,22 @@ test("admission rejects a review record bound to another packet", () => {
     assert.ok(result.errors.some((error) => /pre-admission digest/.test(error.message)));
   } finally {
     rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("admission rejects packet decision metadata changed after review", () => {
+  for (const mutation of ["status", "reviewedAt", "reviewedBy"] as const) {
+    const { root, packet } = createBundle();
+    try {
+      if (mutation === "status") packet.admission.status = "rejected";
+      if (mutation === "reviewedAt") packet.admission.review!.reviewedAt = "2026-08-29T00:00:01Z";
+      if (mutation === "reviewedBy") packet.admission.review!.reviewedBy = "another-reviewer";
+      writeFileSync(join(root, "packet.json"), JSON.stringify(packet, null, 2));
+      const result = admitTaskPacket(root, "packet.json");
+      assert.ok(result.errors.some((error) => /admission decision/.test(error.message)), mutation);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
   }
 });
 
@@ -422,6 +443,26 @@ test("create-if-absent publication recovers a marker with a reused PID", () => {
     const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
     assert.equal(result.created, true);
     assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("create-if-absent publication recovers an unknown-start marker after owner death", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-unknown-start-marker-"));
+  const marker = join(root, "metadata.json.quarantine.marker");
+  try {
+    writeFileSync(marker, JSON.stringify({
+      schemaVersion: "ebo.publication-staging/v1",
+      relativePath: "metadata.json",
+      stagingPath: ".aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.tmp",
+      attemptId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      ownerPid: 999999999,
+      ownerStart: "unknown",
+    }));
+    chmodSync(marker, 0o600);
+    const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
+    assert.equal(result.created, true);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -989,8 +1030,9 @@ test("status never reports an unadmitted packet as frozen", () => {
     packet.admission.status = "rejected";
     writeFileSync(join(root, "packet.json"), JSON.stringify(packet, null, 2));
     const status = statusTaskPacket(root, "packet.json");
-    assert.equal(status.status, "unadmitted");
-    assert.deepEqual(status.mismatches, ["admission"]);
+    assert.equal(status.status, "invalid");
+    assert.ok(status.mismatches.includes("packet"));
+    assert.ok(status.mismatches.includes("components.reviewRecord"));
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

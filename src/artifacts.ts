@@ -1049,7 +1049,9 @@ function isActiveStagingMarker(path: string, relativePath: string): boolean {
     const currentStart = processStartIdentity(marker.ownerPid as number);
     // Unknown ownership is potentially active. Recover only when the owner is
     // proven absent or its start identity is known to differ.
-    return marker.ownerStart === "unknown" || currentStart === undefined || currentStart === marker.ownerStart;
+    return currentStart === undefined
+      || (marker.ownerStart === "unknown" && currentStart !== null)
+      || currentStart === marker.ownerStart;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     return false;
