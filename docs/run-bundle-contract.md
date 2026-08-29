@@ -130,8 +130,9 @@ private directory, and invokes the pinned Node runtime with the staged verifier
 path followed by the snapshot workspace path. Launcher options cannot replace
 the staged entry point, and Node/POSIX dynamic-loader injection variables are
 removed from the child environment. The restricted implementation and any
-reference solution remain outside that workspace. The verifier writes one JSON object to
-stdout:
+reference solution remain outside that workspace. `.mjs`/`.cjs` locators retain
+their module semantics; ambiguous `.js` artifacts require an explicit module
+format. The verifier writes one JSON object to stdout:
 
 ```json
 {
@@ -146,7 +147,7 @@ Each assertion object contains exactly `id` and `status`; undeclared fields,
 non-string statuses, duplicate IDs, and IDs longer than 256 characters are
 verifier errors rather than silently normalized away.
 
-The executor records the selected verifier's locator and digest, the assertion
+The executor records the selected verifier's locator, digest, and module format, the assertion
 list, `durationMs`, observed `exitCode` when the process exits normally, and a
 `status` of `passed`, `failed`, or `error`. A run manifest may declare the
 task-bound verifier reference under `run.verifier`; manifest validation then

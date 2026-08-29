@@ -53,6 +53,7 @@ export type DiagnosticReference = DiagnosticOrigin & {
 export type VerifierExecutionReference = {
   locator: string;
   digest: string;
+  format?: "commonjs" | "module";
 };
 
 type VerifierResultBase = {
@@ -132,6 +133,7 @@ export type ExecuteVerifierOptions = {
   artifactRoot: string;
   command?: string;
   args?: readonly string[];
+  moduleFormat?: "commonjs" | "module";
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
   maxOutputBytes?: number;
@@ -329,6 +331,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
     let internalError: string | undefined = diagnosticSetup.error;
     let stagingRoot: string | undefined;
     let evaluatedWorkspaceFingerprint: string | undefined;
+    const verifierFormat = options.moduleFormat ?? inferredModuleFormat(options.verifier.locator);
     let spawnAttempted = false;
 
     try {
@@ -346,7 +349,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
         if (evaluatedWorkspaceFingerprint !== options.workspaceFingerprint) {
           throw new Error("Workspace snapshot metadata does not match the evaluated workspace.");
         }
-        const stagedVerifier = join(stagingRoot, stagedVerifierName(options.verifier.locator));
+        const stagedVerifier = join(stagingRoot, stagedVerifierName(verifierFormat));
         await writePrivateFile(stagedVerifier, verifierBytes);
         const wrapperPath = join(stagingRoot, "run-verifier.mjs");
         await writePrivateFile(wrapperPath, Buffer.from(VERIFIER_WRAPPER));
@@ -441,6 +444,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
       verifier: {
         locator: options.verifier.locator,
         digest: `sha256:${options.verifier.digest.value}`,
+        format: verifierFormat,
       },
       durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
       ...(internalError === undefined ? {} : { error: internalError }),
@@ -502,6 +506,9 @@ function validateOptions(options: ExecuteVerifierOptions, timeoutMs: number, max
   if (options.command !== undefined && options.command !== process.execPath) {
     throw new Error("Verifier command must be the pinned Node runtime.");
   }
+  if (options.moduleFormat !== undefined && !["commonjs", "module"].includes(options.moduleFormat)) {
+    throw new Error("Verifier module format is invalid.");
+  }
   if (options.args !== undefined && options.args.length > 0) {
     throw new Error("Verifier launcher arguments cannot replace the staged verifier.");
   }
@@ -525,11 +532,13 @@ function isValidIdentifier(value: unknown): value is string {
   return typeof value === "string" && value.trim() !== "" && [...value].length <= 256;
 }
 
-function stagedVerifierName(locator: string): string {
+function inferredModuleFormat(locator: string): "commonjs" | "module" {
   const lowerLocator = locator.toLowerCase();
-  if (lowerLocator.endsWith(".mjs")) return "verifier.mjs";
-  if (lowerLocator.endsWith(".cjs")) return "verifier.cjs";
-  return "verifier";
+  return lowerLocator.endsWith(".mjs") ? "module" : "commonjs";
+}
+
+function stagedVerifierName(format: "commonjs" | "module"): string {
+  return format === "module" ? "verifier.mjs" : "verifier.cjs";
 }
 
 async function prepareRoot(root: string): Promise<string> {

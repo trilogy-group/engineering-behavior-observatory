@@ -38,6 +38,7 @@ test("executes a verifier outside the agent workspace and preserves diagnostics"
     assert.equal(result.exitCode, 0);
     assert.equal(result.verifier?.locator, verifier.locator);
     assert.equal(result.verifier?.digest, `sha256:${verifier.digest.value}`);
+    assert.equal(result.verifier?.format, "commonjs");
     assert.equal(result.workspace.digest, workspaceDigest);
     assert.match(result.workspace.fingerprint ?? "", /^sha256:[a-f0-9]{64}$/);
     assert.equal(Number.isSafeInteger(result.durationMs), true);

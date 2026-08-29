@@ -36,7 +36,8 @@
       "required": ["locator", "digest"],
       "properties": {
         "locator": { "$ref": "#/$defs/relativePath" },
-        "digest": { "$ref": "#/$defs/digest" }
+        "digest": { "$ref": "#/$defs/digest" },
+        "format": { "enum": ["commonjs", "module"] }
       }
     },
     "diagnosticSourceBinding": {

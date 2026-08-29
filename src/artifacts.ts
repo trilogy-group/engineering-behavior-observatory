@@ -306,7 +306,8 @@ export function validateRunManifestEvidence(
       ? derivativeVerifier === undefined
       : derivativeVerifier !== undefined
         && derivativeVerifier.locator === sourceVerifier.locator
-        && derivativeVerifier.digest === sourceVerifier.digest;
+        && derivativeVerifier.digest === sourceVerifier.digest
+        && derivativeVerifier.format === sourceVerifier.format;
     if (!sameVerifier) {
       errors.push({
         artifact,
@@ -399,7 +400,7 @@ type NestedVerifierOutcome = {
   error?: string;
   errorRedacted?: boolean;
   assertions: Array<{ id: string; status: string }>;
-  verifier?: { locator: string; digest: string };
+  verifier?: { locator: string; digest: string; format?: "commonjs" | "module" };
   workspace?: { artifactId: string; digest: string; fingerprint?: string };
   diagnostics: NestedVerifierDiagnostic[];
   exitCode?: number;
@@ -456,7 +457,11 @@ function nestedVerifierOutcome(bytes: Buffer): NestedVerifierOutcome | undefined
     const verifier = isRecord(result.verifier)
       && typeof result.verifier.locator === "string"
       && typeof result.verifier.digest === "string"
-      ? { locator: result.verifier.locator, digest: result.verifier.digest }
+      ? {
+        locator: result.verifier.locator,
+        digest: result.verifier.digest,
+        ...(typeof result.verifier.format === "string" ? { format: result.verifier.format as "commonjs" | "module" } : {}),
+      }
       : undefined;
     const workspace = isRecord(result.workspace)
       && typeof result.workspace.artifactId === "string"
@@ -563,7 +568,8 @@ function nestedVerifierDiagnosticErrors(
     const actualVerifier = isRecord(result.verifier) ? result.verifier : undefined;
     if (actualVerifier === undefined
         || actualVerifier.locator !== expectedVerifier.locator
-        || actualVerifier.digest !== expectedVerifier.digest) {
+        || actualVerifier.digest !== expectedVerifier.digest
+        || (expectedVerifier.format !== undefined && actualVerifier.format !== expectedVerifier.format)) {
       bindingErrors.push({
         artifact,
         schemaVersion: "run-manifest/v1",
