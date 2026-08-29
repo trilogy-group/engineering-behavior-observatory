@@ -377,6 +377,7 @@ test("create-if-absent publication preserves a pre-existing staging marker", () 
 
 test("create-if-absent publication preserves a pre-existing staging binding", () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-binding-collision-"));
+  const marker = join(root, "metadata.json.quarantine.marker");
   const binding = join(root, "metadata.json.quarantine.marker.binding");
   try {
     writeFileSync(binding, "durable binding");
@@ -387,6 +388,7 @@ test("create-if-absent publication preserves a pre-existing staging binding", ()
     );
     assert.equal(readFileSync(binding, "utf8"), "durable binding");
     assert.equal(existsSync(join(root, "metadata.json")), false);
+    assert.equal(existsSync(marker), false);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

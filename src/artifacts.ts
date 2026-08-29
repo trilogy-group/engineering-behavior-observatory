@@ -411,7 +411,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
           if (!created && !winnerRequired) {
             movePathToAttempt(temporaryPath, descriptor);
             if (markerCreated) {
-              moveMarkerToAttempt(`${temporaryPath}.marker`, bindingCreated);
+              moveMarkerToAttempt(markerPath, bindingCreated);
             }
           }
           closeSync(descriptor);
