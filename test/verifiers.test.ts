@@ -219,17 +219,16 @@ test("rejects duplicate JSON object keys in verifier output", async () => {
   }
 });
 
-test("preserves a subprocess launch error without native diagnostics", async () => {
+test("rejects arbitrary verifier commands before execution", async () => {
   const root = await createRoots();
   try {
     const verifier = await addVerifier(root.verifier, `
       process.stdout.write(JSON.stringify({ assertions: [{ id: "unused", status: "passed" }] }));
     `);
-    const result = await run(root, verifier, { command: join(root.parent, "missing-command") });
-
-    assert.equal(result.status, "error");
-    assert.match(result.error ?? "", /ENOENT|spawn/);
-    assert.deepEqual(result.diagnostics, []);
+    await assert.rejects(
+      run(root, verifier, { command: join(root.parent, "missing-command") }),
+      /pinned Node runtime/,
+    );
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }

@@ -112,20 +112,21 @@ digest it evaluated.
 The executor receives both the retained workspace artifact reference and a
 separate live-workspace fingerprint. The v1 live-workspace fingerprint hashes
 the root and sorted descendant relative paths, entry kinds, permission mode
-bits, modification times, and file bytes; hard-linked files are rejected as
-unsupported;
-symbolic links and unsupported entry kinds are rejected. The fingerprint must match the directory
-being evaluated, while the executor evaluates a private snapshot detached from
-the mutable agent workspace. The artifact digest remains the digest of the
-retained workspace evidence. This prevents a stale live-directory binding
-without changing the artifact digest domain; the complete executor result
-records the snapshot fingerprint alongside the workspace reference.
+bits, nanosecond modification times, and file bytes; hard-linked files,
+symbolic links, and unsupported entry kinds are rejected. The fingerprint must
+match the live workspace before and after its private snapshot is created. The
+executor then evaluates that detached snapshot, while the artifact digest
+remains the digest of the retained workspace evidence. The complete executor
+result records the snapshot fingerprint alongside the workspace reference.
 
 Verifier execution uses a small subprocess boundary. The executor resolves the
 digest-pinned restricted verifier from its task-bundle root, stages it in a
-private directory, and invokes it with the staged verifier path followed by the
-agent workspace path. The restricted implementation and any reference solution
-remain outside that workspace. The verifier writes one JSON object to stdout:
+private directory, and invokes the pinned Node runtime with the staged verifier
+path followed by the snapshot workspace path. Launcher options cannot replace
+the staged entry point, and `NODE_OPTIONS` preload/import settings are removed
+from the child environment. The restricted implementation and any reference
+solution remain outside that workspace. The verifier writes one JSON object to
+stdout:
 
 ```json
 {
@@ -157,7 +158,10 @@ execution ends abnormally. A timeout terminates the verifier process group (or
 process tree on Windows). Each retained stream is represented by an
 execution-specific diagnostic reference with a `stream` (`stdout` or `stderr`),
 bundle-relative `locator`, SHA-256 `digest`, retained `sizeBytes`, and a
-`truncated` flag. The result remains valid even when diagnostics are truncated.
+`truncated` flag. Sanitized verifier results may retain diagnostics only when
+each one carries a source diagnostic origin and points to a separately
+classified sanitized sidecar. The result remains valid even when diagnostics
+are truncated.
 The `durationMs` and `diagnostics` fields are optional for older v1 records;
 new executor results include both. An `error` result requires a nonempty
 explanation and may omit `workspace` when the verifier failed before a

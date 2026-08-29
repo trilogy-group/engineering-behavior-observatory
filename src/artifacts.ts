@@ -647,6 +647,9 @@ export function validateExportManifest(
       ? exportManifest.artifactIds.filter((id): id is string => typeof id === "string")
       : [],
   );
+  if (bundleRoot !== undefined) {
+    errors.push(...validateRunManifestEvidence(artifact, containingManifest, bundleRoot));
+  }
   let hasNonExportArtifact = false;
   for (const id of Array.isArray(exportManifest.artifactIds) ? exportManifest.artifactIds : []) {
     const descriptor = typeof id === "string" ? evidenceById.get(id) : undefined;

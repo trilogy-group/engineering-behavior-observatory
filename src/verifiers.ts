@@ -392,6 +392,9 @@ export async function writeVerifierResult(
 
 function validateOptions(options: ExecuteVerifierOptions, timeoutMs: number, maxOutputBytes: number): void {
   if (!isValidIdentifier(options.bundleId)) throw new Error("Bundle ID is invalid.");
+  if (options.command !== undefined && options.command !== process.execPath) {
+    throw new Error("Verifier command must be the pinned Node runtime.");
+  }
   if (options.args?.some((argument) => /^(?:-[epcmr]|--(?:eval|print|command|module|input-type|require|import|loader)(?:=|$))/.test(argument))) {
     throw new Error("Verifier launcher arguments cannot replace the staged verifier.");
   }
