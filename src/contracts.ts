@@ -1031,6 +1031,7 @@ function parsePaxAttributes(bytes: Uint8Array): { path?: string; size?: number }
     const value = record.slice(equals + 1, -1);
     if (key === "path") attributes.path = value;
     if (key === "size") {
+      if (!/^[0-9]+$/.test(value)) throw new Error("Sanitized task archive contains an invalid PAX size.");
       const size = Number(value);
       if (!Number.isSafeInteger(size) || size < 0) throw new Error("Sanitized task archive contains an invalid PAX size.");
       attributes.size = size;
