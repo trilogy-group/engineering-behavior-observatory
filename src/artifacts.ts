@@ -947,6 +947,7 @@ function countFailedPublicationLinks(path: string, target: { dev: number; ino: n
 function writeStagingMarker(path: string, relativePath: string, stagingPath: string): void {
   const temporaryPath = `${path}.tmp`;
   const descriptor = openSync(temporaryPath, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o600);
+  let temporaryPreserved = false;
   try {
     const bytes = Buffer.from(canonicalizeMetadata({
       schemaVersion: STAGING_MARKER_SCHEMA_VERSION,
@@ -964,11 +965,15 @@ function writeStagingMarker(path: string, relativePath: string, stagingPath: str
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       movePathToAttempt(temporaryPath, descriptor);
+      temporaryPreserved = true;
       throw error;
     }
     if (!sameFileIdentity(expected, lstatSync(path))) {
       throw new Error(`Publication staging marker "${path}" changed during installation.`);
     }
+  } catch (error) {
+    if (!temporaryPreserved) moveOptionalPathToAttempt(temporaryPath, descriptor);
+    throw error;
   } finally {
     closeSync(descriptor);
   }
@@ -1114,9 +1119,9 @@ function hasAliasIdentity(path: string, target: { dev: number; ino: number }): b
   }
 }
 
-function moveOptionalPathToAttempt(path: string): void {
+function moveOptionalPathToAttempt(path: string, descriptor?: number): void {
   try {
-    movePathToAttempt(path);
+    movePathToAttempt(path, descriptor);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }

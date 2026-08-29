@@ -469,6 +469,36 @@ test("create-if-absent publication moves the marker sidecar after staging-open f
   }
 });
 
+test("create-if-absent publication preserves marker temp after installation identity failure", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-marker-installation-failure-"));
+  const originalLinkSync = fs.linkSync;
+  let markerUnlinked = false;
+  fs.linkSync = ((existingPath: fs.PathLike, newPath: fs.PathLike) => {
+    const result = originalLinkSync(existingPath, newPath);
+    if (!markerUnlinked && typeof existingPath === "string" && existingPath === "metadata.json.quarantine.marker.tmp"
+        && typeof newPath === "string" && newPath === "metadata.json.quarantine.marker") {
+      markerUnlinked = true;
+      fs.unlinkSync(newPath);
+    }
+    return result;
+  }) as typeof originalLinkSync;
+  syncBuiltinESMExports();
+  try {
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }),
+      /changed during installation|ENOENT/,
+    );
+    assert.equal(markerUnlinked, true);
+    assert.equal(existsSync(join(root, "metadata.json.quarantine.marker")), false);
+    assert.equal(existsSync(join(root, "metadata.json.quarantine.marker.tmp")), false);
+    assert.equal(readdirSync(root).filter((name) => name.endsWith(".failed")).length, 1);
+  } finally {
+    fs.linkSync = originalLinkSync;
+    syncBuiltinESMExports();
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("create-if-absent publication fails closed when marker ownership is unverifiable", () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-unknown-owner-marker-"));
   const marker = join(root, "metadata.json.quarantine.marker");
