@@ -37,6 +37,10 @@ export type ArchiveMeasurements = {
 export const MAX_CONFIGURATION_BYTES = 1_048_576;
 const MAX_ARCHIVE_PATH_COMPONENTS = 64;
 const MAX_ARCHIVE_PATH_LENGTH = 960;
+const PUBLICATION_MARKER_SCHEMA_VERSION = "ebo.publication-staging/v1";
+const PUBLICATION_ATTEMPT_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const PUBLICATION_STAGING_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
+const MAX_PUBLICATION_MARKER_BYTES = 4096;
 
 export type TaskCondition = {
   packetRef: {
@@ -502,11 +506,82 @@ function assertBundlePathWithoutLinks(bundleRoot: string, locator: string, label
 function isReadableBundleFile(path: string | undefined, target: { dev: number; ino: number; nlink: number }): boolean {
   if (target.nlink === 1) return true;
   if (path === undefined) return false;
-  const quarantine = hasAlias(path + ".quarantine", target);
-  const recovered = hasAlias(path + ".recovered", target);
-  const staging = hasStagingAlias(path, target);
+  const owned = isOwnedPublicationAlias(path, target);
+  const quarantine = owned && hasAlias(path + ".quarantine", target);
+  const recovered = owned && hasAlias(path + ".recovered", target);
+  const staging = owned && hasStagingAlias(path, target);
   const accounted = Number(quarantine) + Number(recovered) + Number(staging);
   return accounted > 0 && target.nlink === 1 + accounted;
+}
+
+export function isOwnedPublicationAlias(
+  path: string,
+  target: { dev: number; ino: number },
+  expectedRelativePath?: string,
+): boolean {
+  const marker = readPublicationMarker(`${path}.quarantine.marker`);
+  const binding = readPublicationMarker(`${path}.quarantine.marker.binding`);
+  if (marker === undefined || binding === undefined
+      || !isPublicationMarker(marker, expectedRelativePath)
+      || !isPublicationMarker(binding, expectedRelativePath)
+      || !samePublicationMarkerFields(marker, binding)
+      || !isRecord(binding.stagingIdentity)) {
+    return false;
+  }
+  const { dev, ino } = binding.stagingIdentity;
+  return Number.isSafeInteger(dev) && Number.isSafeInteger(ino)
+    && dev === target.dev && ino === target.ino;
+}
+
+function readPublicationMarker(path: string): Record<string, unknown> | undefined {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile() || (opened.mode & 0o777) !== 0o600
+        || !Number.isSafeInteger(opened.size) || opened.size > MAX_PUBLICATION_MARKER_BYTES) return undefined;
+    const bytes = Buffer.alloc(opened.size);
+    for (let offset = 0; offset < opened.size;) {
+      const read = readSync(descriptor, bytes, offset, opened.size - offset, offset);
+      if (read === 0) return undefined;
+      offset += read;
+    }
+    const trailing = Buffer.allocUnsafe(1);
+    if (readSync(descriptor, trailing, 0, 1, opened.size) !== 0) return undefined;
+    const completed = fstatSync(descriptor);
+    if (!completed.isFile() || completed.dev !== opened.dev || completed.ino !== opened.ino
+        || completed.size !== opened.size) return undefined;
+    const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+    return isRecord(value) ? value : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function isPublicationMarker(value: Record<string, unknown>, expectedRelativePath?: string): boolean {
+  return value.schemaVersion === PUBLICATION_MARKER_SCHEMA_VERSION
+    && typeof value.relativePath === "string"
+    && isSafeArtifactRelativePath(value.relativePath)
+    && (expectedRelativePath === undefined || value.relativePath === expectedRelativePath)
+    && typeof value.stagingPath === "string"
+    && PUBLICATION_STAGING_PATTERN.test(value.stagingPath)
+    && typeof value.attemptId === "string"
+    && PUBLICATION_ATTEMPT_PATTERN.test(value.attemptId)
+    && typeof value.ownerPid === "number"
+    && Number.isSafeInteger(value.ownerPid)
+    && value.ownerPid > 0
+    && typeof value.ownerStart === "string"
+    && value.ownerStart.length > 0;
+}
+
+function samePublicationMarkerFields(
+  marker: Record<string, unknown>,
+  binding: Record<string, unknown>,
+): boolean {
+  return ["schemaVersion", "relativePath", "stagingPath", "attemptId", "ownerPid", "ownerStart"]
+    .every((field) => marker[field] === binding[field]);
 }
 
 function hasAlias(path: string, target: { dev: number; ino: number }): boolean {

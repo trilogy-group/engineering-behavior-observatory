@@ -208,6 +208,19 @@ test("create-if-absent metadata writes remain readable through the artifact API"
     const plainDigest = digestBytes(plain);
     await assert.rejects(readVerifiedArtifact(root, "plain.json", plainDigest), /not an isolated regular file/);
     assert.throws(() => resolveBundleArtifact(root, { locator: "plain.json", digest: plainDigest }), /not an isolated regular file/);
+    for (const suffix of [".quarantine", ".recovered"]) {
+      const unownedPath = join(root, `unowned${suffix.slice(1)}.json`);
+      writeFileSync(unownedPath, plain);
+      linkSync(unownedPath, `${unownedPath}${suffix}`);
+      await assert.rejects(
+        readVerifiedArtifact(root, `unowned${suffix.slice(1)}.json`, plainDigest),
+        /not an isolated regular file/,
+      );
+      assert.throws(
+        () => resolveBundleArtifact(root, { locator: `unowned${suffix.slice(1)}.json`, digest: plainDigest }),
+        /not an isolated regular file/,
+      );
+    }
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -296,6 +309,36 @@ test("create-if-absent publication recovers a marker-only interruption", async (
     assert.equal(result.created, true);
     assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", result.digest), Buffer.from('{"state":"ready"}'));
     assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("create-if-absent publication preserves unowned binding sidecars during marker recovery", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-unowned-binding-recovery-"));
+  const marker = join(root, "metadata.json.quarantine.marker");
+  const binding = `${marker}.binding`;
+  const bindingTemporary = `${binding}.tmp`;
+  try {
+    writeFileSync(marker, JSON.stringify({
+      schemaVersion: "ebo.publication-staging/v1",
+      relativePath: "metadata.json",
+      stagingPath: ".88888888-8888-4888-8888-888888888888.tmp",
+      attemptId: "88888888-8888-4888-8888-888888888888",
+      ownerPid: 999999999,
+      ownerStart: "dead",
+    }));
+    chmodSync(marker, 0o600);
+    writeFileSync(binding, "unrelated binding");
+    writeFileSync(bindingTemporary, "unrelated binding temp");
+    chmodSync(binding, 0o600);
+    chmodSync(bindingTemporary, 0o600);
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }),
+      /already occupied|binding/,
+    );
+    assert.equal(readFileSync(binding, "utf8"), "unrelated binding");
+    assert.equal(readFileSync(bindingTemporary, "utf8"), "unrelated binding temp");
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -472,6 +515,17 @@ test("create-if-absent publication returns the winner after a link-time race", a
   const root = mkdtempSync(join(tmpdir(), "ebo-link-winner-race-"));
   const payload = "x".repeat(8 * 1024 * 1024);
   const expectedBytes = Buffer.from(JSON.stringify({ payload }));
+  const originalLinkSync = fs.linkSync;
+  let destinationLinkAttempted = false;
+  fs.linkSync = ((existingPath: fs.PathLike, newPath: fs.PathLike) => {
+    if (!destinationLinkAttempted && typeof existingPath === "string" && existingPath === "metadata.json.quarantine"
+        && typeof newPath === "string" && newPath === "metadata.json") {
+      destinationLinkAttempted = true;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+    }
+    return originalLinkSync(existingPath, newPath);
+  }) as typeof originalLinkSync;
+  syncBuiltinESMExports();
   const winner = spawn(
     process.execPath,
     [
@@ -502,6 +556,8 @@ race();`,
     assert.deepEqual(result.digest, digestBytes(expectedBytes));
     assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", result.digest), expectedBytes);
   } finally {
+    fs.linkSync = originalLinkSync;
+    syncBuiltinESMExports();
     if (winner.exitCode === null) {
       winner.kill();
       await once(winner, "exit").catch(() => undefined);

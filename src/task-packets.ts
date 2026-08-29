@@ -22,6 +22,7 @@ import {
 } from "./artifacts.js";
 import {
   isSafeArtifactRelativePath,
+  isOwnedPublicationAlias,
   MAX_CONFIGURATION_BYTES,
   resolveBundleArtifact,
   resolveBundleArtifactDigest,
@@ -742,7 +743,7 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHan
       assertFreezeParent(root, parent, parentDescriptor, locator);
       if (hasAlias(`${relative(parent, destination)}.quarantine`, lstatSync(relative(parent, destination)))) return false;
       const destinationStat = lstatSync(relative(parent, destination));
-      if (!hasPublicationOwnership(destination, locator, destinationStat)) return false;
+      if (!isOwnedPublicationAlias(destination, destinationStat, locator)) return false;
       const stagingName = readStagingPath(`${relative(parent, destination)}.quarantine.marker`, locator);
       if (stagingName === undefined) return false;
 
@@ -834,7 +835,7 @@ function readBundleFile(
     try {
       const opened = fstatSync(descriptor);
       const openedTimes = fstatSync(descriptor, { bigint: true });
-      if (!opened.isFile() || (opened.nlink > 1 && (!allowPublicationAliases || !hasPublicationAliases(path, opened)))) {
+      if (!opened.isFile() || (opened.nlink > 1 && (!allowPublicationAliases || !hasPublicationAliases(path, locator, opened)))) {
         throw new Error(`Artifact path "${locator}" is not an isolated regular file.`);
       }
       if (!Number.isSafeInteger(opened.size) || opened.size > MAX_TASK_PACKET_METADATA_BYTES) {
@@ -852,7 +853,7 @@ function readBundleFile(
       }
       const completed = fstatSync(descriptor);
       const completedTimes = fstatSync(descriptor, { bigint: true });
-      if (!completed.isFile() || (completed.nlink > 1 && (!allowPublicationAliases || !hasPublicationAliases(path, completed)))
+      if (!completed.isFile() || (completed.nlink > 1 && (!allowPublicationAliases || !hasPublicationAliases(path, locator, completed)))
           || completed.dev !== opened.dev || completed.ino !== opened.ino
           || completed.size !== opened.size || completedTimes.mtimeNs !== openedTimes.mtimeNs
           || completedTimes.ctimeNs !== openedTimes.ctimeNs
@@ -873,7 +874,8 @@ function readBundleFile(
   }
 }
 
-function hasPublicationAliases(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
+function hasPublicationAliases(path: string, locator: string, target: { dev: number; ino: number; nlink: number }): boolean {
+  if (!isOwnedPublicationAlias(path, target, locator)) return false;
   const quarantine = hasAlias(`${path}.quarantine`, target);
   const recovered = hasAlias(`${path}.recovered`, target);
   const staging = hasStagingAlias(path, target);
@@ -905,29 +907,6 @@ function readStagingPath(path: string, locator: string): string | undefined {
   } catch (error) {
     if (isErrno(error, "ENOENT")) return undefined;
     return undefined;
-  }
-}
-
-function hasPublicationOwnership(
-  path: string,
-  locator: string | undefined,
-  target: { dev: number; ino: number; nlink: number },
-): boolean {
-  try {
-    const marker = JSON.parse(readFileSync(`${path}.quarantine.marker`, "utf8")) as unknown;
-    const binding = JSON.parse(readFileSync(`${path}.quarantine.marker.binding`, "utf8")) as unknown;
-    return isRecord(marker)
-      && marker.schemaVersion === "ebo.publication-staging/v1"
-      && typeof marker.relativePath === "string"
-      && (locator === undefined || marker.relativePath === locator)
-      && typeof marker.attemptId === "string"
-      && isRecord(binding)
-      && isRecord(binding.stagingIdentity)
-      && binding.stagingIdentity.dev === target.dev
-      && binding.stagingIdentity.ino === target.ino;
-  } catch (error) {
-    if (isErrno(error, "ENOENT")) return false;
-    return false;
   }
 }
 

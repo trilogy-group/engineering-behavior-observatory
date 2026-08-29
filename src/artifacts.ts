@@ -27,6 +27,7 @@ import * as formats from "ajv-formats";
 import {
   closeBundleRoot,
   isSafeArtifactRelativePath,
+  isOwnedPublicationAlias,
   openBundleRoot,
   resolveBundleArtifact,
   type BundleRootHandle,
@@ -778,7 +779,7 @@ function prepareArtifactPathSync(
   }
 }
 
-function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined {
+function lstatIfPresent(path: string): Stats | undefined {
   try {
     return lstatSync(path);
   } catch (error) {
@@ -885,7 +886,8 @@ function recoverInterruptedMarker(path: string, relativePath: string): void {
     throw new Error(`Publication staging marker "${path}" is already occupied.`);
   }
   const marker = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-  moveMarkerToAttempt(path.endsWith(".tmp") ? path.slice(0, -4) : path, true);
+  const markerPath = path.endsWith(".tmp") ? path.slice(0, -4) : path;
+  moveRecoveredMarkerToAttempt(markerPath, path, relativePath, marker);
   if (typeof marker.stagingPath === "string") moveOptionalPathToAttempt(marker.stagingPath);
 }
 
@@ -1155,6 +1157,78 @@ function moveMarkerToAttempt(marker: string, bindingCreated: boolean): void {
   moveOptionalPathToAttempt(marker);
 }
 
+function moveRecoveredMarkerToAttempt(
+  markerPath: string,
+  sourcePath: string,
+  relativePath: string,
+  marker: Record<string, unknown>,
+): void {
+  const bindingPath = `${markerPath}.binding`;
+  const bindingTemporaryPath = `${bindingPath}.tmp`;
+  const bindingOwned = isOwnedMarkerBinding(bindingPath, relativePath, marker);
+  const bindingTemporaryOwned = isOwnedMarkerBinding(bindingTemporaryPath, relativePath, marker);
+  if (bindingOwned) {
+    const binding = lstatIfPresent(bindingPath);
+    const bindingTemporary = lstatIfPresent(bindingTemporaryPath);
+    if (binding !== undefined && bindingTemporary !== undefined && sameFileIdentity(binding, bindingTemporary)) {
+      moveOptionalPathToAttempt(bindingTemporaryPath);
+    }
+    moveOptionalPathToAttempt(bindingPath);
+  } else if (bindingTemporaryOwned && lstatIfPresent(bindingPath) === undefined) {
+    moveOptionalPathToAttempt(bindingTemporaryPath);
+  }
+
+  const markerTemporaryPath = `${markerPath}.tmp`;
+  if (sourcePath === markerTemporaryPath) {
+    moveOptionalPathToAttempt(sourcePath);
+  } else {
+    if (isOwnedMarkerSidecar(markerTemporaryPath, relativePath, marker)) {
+      moveOptionalPathToAttempt(markerTemporaryPath);
+    }
+    moveOptionalPathToAttempt(markerPath);
+  }
+}
+
+function isOwnedMarkerBinding(path: string, relativePath: string, marker: Record<string, unknown>): boolean {
+  const candidate = readMarkerMetadata(path);
+  if (candidate === undefined || !isOwnedMarkerSidecarValue(candidate, relativePath, marker)
+      || !isRecord(candidate.stagingIdentity) || typeof marker.stagingPath !== "string") return false;
+  const { dev, ino } = candidate.stagingIdentity;
+  const staging = lstatIfPresent(resolve(dirname(path), marker.stagingPath));
+  return staging !== undefined && typeof dev === "number" && typeof ino === "number"
+    && Number.isSafeInteger(dev) && Number.isSafeInteger(ino)
+    && sameFileIdentity(staging, { dev, ino });
+}
+
+function isOwnedMarkerSidecar(path: string, relativePath: string, marker: Record<string, unknown>): boolean {
+  const candidate = readMarkerMetadata(path);
+  return candidate !== undefined && isOwnedMarkerSidecarValue(candidate, relativePath, marker);
+}
+
+function isOwnedMarkerSidecarValue(
+  candidate: Record<string, unknown>,
+  relativePath: string,
+  marker: Record<string, unknown>,
+): boolean {
+  return isStagingMarker(candidate, relativePath)
+    && ["schemaVersion", "relativePath", "stagingPath", "attemptId", "ownerPid", "ownerStart"]
+      .every((field) => candidate[field] === marker[field]);
+}
+
+function readMarkerMetadata(path: string): Record<string, unknown> | undefined {
+  try {
+    const opened = lstatSync(path);
+    if (!opened.isFile() || opened.isSymbolicLink() || (opened.mode & 0o777) !== 0o600
+        || !Number.isSafeInteger(opened.size) || opened.size > 4096) return undefined;
+    const value = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const completed = lstatSync(path);
+    if (!sameFileIdentity(opened, completed) || completed.size !== opened.size) return undefined;
+    return isRecord(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function movePathToAttempt(path: string, descriptor?: number): string {
   const expected = descriptor === undefined ? lstatSync(path) : fstatSync(descriptor);
   const current = lstatSync(path);
@@ -1179,9 +1253,10 @@ function movePathToAttempt(path: string, descriptor?: number): string {
 }
 
 function isReadablePublishedFile(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
-  const quarantine = hasAliasSync(`${path}.quarantine`, target);
-  const recovered = hasAliasSync(`${path}.recovered`, target);
-  const staging = hasStagingAlias(path, target);
+  const owned = isOwnedPublicationAlias(path, target);
+  const quarantine = owned && hasAliasSync(`${path}.quarantine`, target);
+  const recovered = owned && hasAliasSync(`${path}.recovered`, target);
+  const staging = owned && hasStagingAlias(path, target);
   const accounted = Number(quarantine) + Number(recovered) + Number(staging);
   return target.nlink === 1 || (accounted > 0 && target.nlink === 1 + accounted);
 }
@@ -1219,9 +1294,10 @@ function readStagingPath(path: string, relativePath: string): string | undefined
 
 async function isReadablePublishedArtifact(path: string, target: { dev: number; ino: number; nlink: number }): Promise<boolean> {
   if (target.nlink === 1) return true;
-  const quarantine = await hasAlias(`${path}.quarantine`, target);
-  const recovered = await hasAlias(`${path}.recovered`, target);
-  const staging = hasStagingAlias(path, target);
+  const owned = isOwnedPublicationAlias(path, target);
+  const quarantine = owned && await hasAlias(`${path}.quarantine`, target);
+  const recovered = owned && await hasAlias(`${path}.recovered`, target);
+  const staging = owned && hasStagingAlias(path, target);
   const accounted = Number(quarantine) + Number(recovered) + Number(staging);
   return accounted > 0 && target.nlink === 1 + accounted;
 }
