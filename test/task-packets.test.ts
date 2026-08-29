@@ -143,6 +143,20 @@ test("freeze keeps a relative bundle root during pre-link validation", () => {
   }
 });
 
+test("freeze restores a deleted destination from its retained publication", () => {
+  const { root } = createBundle();
+  const freezePath = join(root, "packet.json.freeze.json");
+  try {
+    const first = freezeTaskPacket(root, "packet.json");
+    unlinkSync(freezePath);
+    const second = freezeTaskPacket(root, "packet.json");
+    assert.deepEqual(second, first);
+    assert.equal(statusTaskPacket(root, "packet.json").status, "frozen");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("status identifies every frozen component mutation", () => {
   for (const mutation of ["prompt", "fixture", "reference", "verifier", "reviewRecord", "controlledPerturbation"]) {
     const { root, packet } = createBundle();
@@ -296,6 +310,14 @@ test("inspection validates fixture archives before admission", () => {
       expected: /unsafe/,
       mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["src"]; },
     },
+    {
+      bytes: tarGzipArchive([
+        { path: "PaxHeader", bytes: Buffer.from("10 size=1\n"), type: "x" },
+        { path: "README.md", bytes: Buffer.from("0123456789") },
+      ]),
+      expected: /PAX size/,
+      mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
+    },
   ];
 
   for (const invalidCase of invalidCases) {
@@ -308,6 +330,23 @@ test("inspection validates fixture archives before admission", () => {
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
+  }
+});
+
+test("inspection honors declared expanded archive limits above 64 MiB", () => {
+  const { root, packet } = createBundle(packetFixture("task-packet.proposed.v1.json"));
+  const expandedBytes = 65 * 1024 * 1024;
+  const archive = tarGzipArchive([{ path: "README.md", bytes: Buffer.alloc(expandedBytes, 0x61) }]);
+  try {
+    packet.agentInput.fixture.source.limits.maxExpandedBytes = expandedBytes + 1;
+    packet.agentInput.fixture.materializer.includePaths = ["README.md"];
+    replaceFixture(root, packet, archive);
+    const result = inspectTaskPacket(root, "packet.json");
+    assert.deepEqual(result.errors, []);
+    assert.ok(result.components !== null);
+    assert.equal(result.components.fixture?.value, digestBytes(archive).value);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
   }
 });
 

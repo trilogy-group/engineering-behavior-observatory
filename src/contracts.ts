@@ -38,8 +38,8 @@ export type ArchiveMeasurements = {
 export const MAX_CONFIGURATION_BYTES = 1_048_576;
 const MAX_ARCHIVE_PATH_COMPONENTS = 64;
 const MAX_ARCHIVE_PATH_LENGTH = 960;
-const MAX_ARCHIVE_INSPECTION_BYTES = 64 * 1024 * 1024;
 const TAR_BLOCK_BYTES = 512;
+const MAX_TAR_OVERHEAD_PER_MEMBER = 4096;
 const PUBLICATION_MARKER_SCHEMA_VERSION = "ebo.publication-staging/v1";
 const PUBLICATION_ATTEMPT_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const PUBLICATION_STAGING_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
@@ -270,7 +270,7 @@ export function validateTaskArchive(
 
   let archive: Buffer;
   try {
-    archive = gunzipSync(Buffer.from(bytes), { maxOutputLength: MAX_ARCHIVE_INSPECTION_BYTES });
+    archive = gunzipSync(Buffer.from(bytes), { maxOutputLength: archiveInspectionLimit(limits) });
   } catch {
     throw new Error("Sanitized task archive is not a valid gzip stream or exceeds the inspection limit.");
   }
@@ -965,6 +965,9 @@ function parseTarArchive(bytes: Buffer, maxMembers: number): { entries: ArchiveE
     const prefix = readTarText(header.subarray(345, 500));
     const headerPath = prefix === "" ? rawName : `${prefix}/${rawName}`;
     const path = pendingPax?.path ?? pendingPath ?? headerPath;
+    if (pendingPax?.size !== undefined && pendingPax.size !== headerSize) {
+      throw new Error("Sanitized task archive PAX size does not match TAR member framing.");
+    }
     const size = pendingPax?.size ?? headerSize;
     if (!Number.isSafeInteger(size) || size < 0) throw new Error("Sanitized task archive contains an invalid member size.");
     const kind = tarEntryKind(type);
@@ -979,6 +982,13 @@ function parseTarArchive(bytes: Buffer, maxMembers: number): { entries: ArchiveE
     offset = dataOffset + paddedSize;
   }
   throw new Error("Sanitized task archive is not a complete TAR stream.");
+}
+
+function archiveInspectionLimit(limits: ArchiveLimits): number {
+  const overhead = MAX_TAR_OVERHEAD_PER_MEMBER * (limits.maxMembers + 2);
+  const limit = limits.maxExpandedBytes + overhead;
+  if (!Number.isSafeInteger(limit)) throw new Error("Sanitized archive inspection limit is not a safe integer.");
+  return limit;
 }
 
 function verifyTarHeaderChecksum(header: Buffer): void {

@@ -301,6 +301,47 @@ export function defaultFreezeLocator(packetLocator: string): string {
   return freezeLocator;
 }
 
+function readRetainedFreezeRecord(root: BundleRootHandle, freezeLocator: string): TaskPacketFreezeRecord | undefined {
+  const destination = resolve(root.path, freezeLocator);
+  const parent = dirname(destination);
+  const quarantine = `${destination}.quarantine`;
+  let descriptor: number | undefined;
+  try {
+    assertBundleRoot(root.path, root.descriptor, freezeLocator);
+    assertFreezeParentPath(root.path, parent, freezeLocator);
+    const quarantinePath = lstatSync(quarantine);
+    if (!quarantinePath.isFile() || (quarantinePath.mode & 0o777) !== 0o600
+        || !Number.isSafeInteger(quarantinePath.size) || quarantinePath.size > MAX_TASK_PACKET_METADATA_BYTES) return undefined;
+    if (readPublicationOwnership(destination, quarantinePath, freezeLocator) === undefined) return undefined;
+    descriptor = openSync(quarantine, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile() || (opened.mode & 0o777) !== 0o600
+        || !sameFileIdentity(opened, quarantinePath) || opened.size !== quarantinePath.size) return undefined;
+    const bytes = Buffer.alloc(opened.size);
+    for (let offset = 0; offset < opened.size;) {
+      const read = readSync(descriptor, bytes, offset, opened.size - offset, offset);
+      if (read === 0) return undefined;
+      offset += read;
+    }
+    const trailing = Buffer.allocUnsafe(1);
+    if (readSync(descriptor, trailing, 0, 1, opened.size) !== 0) return undefined;
+    const completed = fstatSync(descriptor);
+    if (!sameFileIdentity(opened, completed) || completed.size !== opened.size
+        || !sameFileIdentity(completed, lstatSync(quarantine))) return undefined;
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    assertNoDuplicateJsonKeys(text);
+    const value = JSON.parse(text) as unknown;
+    const errors = validateFreezeRecord(freezeLocator, value);
+    if (errors.length > 0 || !isRecord(value) || !sameDigest(digestMetadata(value), digestBytes(bytes))) return undefined;
+    return value as TaskPacketFreezeRecord;
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) return undefined;
+    return undefined;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
 export function freezeTaskPacket(
   bundleRoot: string,
   packetLocator: string,
@@ -320,7 +361,11 @@ export function freezeTaskPacket(
     if (prePublicationMismatches.length > 0) {
       throw new Error(`Task packet changed before freeze publication: ${prePublicationMismatches.join(", ")}.`);
     }
-    const candidate = freezeCandidate(packetLocator, confirmedInspection);
+    const retained = readRetainedFreezeRecord(root, freezeLocator);
+    const retainedMismatches = retained === undefined ? ["freeze-record"] : compareFreezeRecord(retained, confirmedInspection);
+    const candidate = retained !== undefined && retainedMismatches.length === 0
+      ? retained
+      : freezeCandidate(packetLocator, confirmedInspection);
     const candidateErrors = validateArtifact(freezeLocator, candidate);
     if (candidateErrors.length > 0) throw new Error(formatErrors(candidateErrors));
 
@@ -631,7 +676,7 @@ function resolveReviewRecord(
   }
 }
 
-function freezeCandidate(packetLocator: string, inspection: TaskPacketInspection): TaskPacketFreezeRecord {
+function freezeCandidate(packetLocator: string, inspection: TaskPacketInspection, frozenAt = new Date().toISOString()): TaskPacketFreezeRecord {
   const packet = inspection.packet;
   const preAdmissionDigest = inspection.preAdmissionDigest;
   const packetDigest = inspection.packetDigest;
@@ -639,7 +684,6 @@ function freezeCandidate(packetLocator: string, inspection: TaskPacketInspection
   if (packet === null || preAdmissionDigest === null || packetDigest === null || components === null) {
     throw new Error("Cannot freeze an incomplete task-packet inspection.");
   }
-  const frozenAt = new Date().toISOString();
   return {
     schemaVersion: TASK_PACKET_FREEZE_SCHEMA_VERSION,
     packetId: packet.id,
