@@ -236,32 +236,41 @@ export function writeMetadataAtomicallyIfAbsentSync(
   const digest = digestBytes(bytes);
   const parentDescriptor = openPublishParent(root, parent, relativePath);
   let created = false;
+  const destination = relative(parent, path);
+  const originalCwd = process.cwd();
+  let changedCwd = false;
   try {
-    if (lstatIfPresent(path) !== undefined) return { created: false, digest };
+    // ponytail: synchronous cwd critical section anchors relative operations;
+    // replace with descriptor-relative fs calls if Node exposes openat/linkat.
+    process.chdir(parent);
+    changedCwd = true;
+    assertPublishParentHandle(parentDescriptor, relativePath);
+    if (lstatIfPresent(destination) !== undefined) return { created: false, digest };
 
-    const temporaryPath = resolve(parent, `.${randomUUID()}.tmp`);
+    const temporaryPath = `.${randomUUID()}.tmp`;
     let descriptor: number | undefined;
 
     try {
       descriptor = openSync(temporaryPath, "wx", 0o600);
-      assertPublishParent(root, parent, relativePath, parentDescriptor);
+      assertPublishParentHandle(parentDescriptor, relativePath);
       writeFileSync(descriptor, bytes);
       fsyncSync(descriptor);
       closeSync(descriptor);
       descriptor = undefined;
-      assertPublishParent(root, parent, relativePath, parentDescriptor);
+      assertPublishParentHandle(parentDescriptor, relativePath);
       try {
-        linkSync(temporaryPath, path);
+        linkSync(temporaryPath, destination);
         created = true;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       }
-      if (created) fsyncSync(parentDescriptor);
     } finally {
       if (descriptor !== undefined) closeSync(descriptor);
       rmSync(temporaryPath, { force: true });
+      if (created) fsyncSync(parentDescriptor);
     }
   } finally {
+    if (changedCwd) process.chdir(originalCwd);
     closeSync(parentDescriptor);
   }
 
@@ -606,21 +615,10 @@ function openPublishParent(root: string, parent: string, relativePath: string): 
   }
 }
 
-function assertPublishParent(root: string, parent: string, relativePath: string, descriptor: number): void {
-  const segments = relative(root, parent) === "" ? [] : relative(root, parent).split(sep);
-  let current = root;
-  for (const segment of segments) {
-    current = resolve(current, segment);
-    const entry = lstatSync(current);
-    if (!entry.isDirectory() || entry.isSymbolicLink()) {
-      throw new Error(`Artifact path "${relativePath}" crosses a symbolic link.`);
-    }
-  }
-
+function assertPublishParentHandle(descriptor: number, relativePath: string): void {
   const opened = fstatSync(descriptor);
-  const currentStat = lstatSync(parent);
-  if (!opened.isDirectory() || currentStat.isSymbolicLink()
-      || opened.dev !== currentStat.dev || opened.ino !== currentStat.ino) {
+  const current = lstatSync(".");
+  if (!opened.isDirectory() || current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino) {
     throw new Error(`Artifact path "${relativePath}" parent changed during publication.`);
   }
 }

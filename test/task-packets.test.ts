@@ -67,7 +67,9 @@ function createBundle(packet = packetFixture()): { root: string; packet: TaskPac
 test("freezing a packet is idempotent and keeps the model projection private", () => {
   const { root, packet } = createBundle();
   try {
+    const cwd = process.cwd();
     const first = freezeTaskPacket(root, "packet.json");
+    assert.equal(process.cwd(), cwd);
     const second = freezeTaskPacket(root, "packet.json");
     assert.deepEqual(second, first);
     assert.equal(first.components.prompt.algorithm, "sha256");
