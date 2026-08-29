@@ -7,7 +7,6 @@ import {
   lstatSync,
   openSync,
   opendirSync,
-  readFileSync,
   readSync,
   realpathSync,
 } from "node:fs";
@@ -868,7 +867,12 @@ function readBundleFile(
       if (opened.dev !== current.dev || opened.ino !== current.ino) {
         throw new Error(`Artifact path "${locator}" changed after bundle-root verification.`);
       }
-      const bytes = readFileSync(descriptor);
+      const bytes = Buffer.alloc(opened.size);
+      for (let offset = 0; offset < opened.size;) {
+        const read = readSync(descriptor, bytes, offset, opened.size - offset, offset);
+        if (read === 0) throw new Error(`Artifact path "${locator}" changed while it was being read.`);
+        offset += read;
+      }
       const trailing = Buffer.allocUnsafe(1);
       if (readSync(descriptor, trailing, 0, 1, opened.size) !== 0) {
         throw new Error(`Artifact path "${locator}" changed while it was being read.`);
