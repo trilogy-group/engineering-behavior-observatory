@@ -846,14 +846,11 @@ function recoverInterruptedStaging(path: string, markerPath: string, relativePat
     const bindingPath = `${markerPath}.binding`;
     if (!stagingMarkerMatches(bindingPath, relativePath, stat)) {
       if (!stagingMarkerMatches(`${bindingPath}.tmp`, relativePath, stat)) {
-        if (!isStaleStagingMarker(markerPath, relativePath)) {
-          throw new Error(`Publication quarantine "${path}" is already occupied.`);
-        }
-      } else {
-        bindStagingMarker(markerPath, relativePath, descriptor);
-        if (!stagingMarkerMatches(bindingPath, relativePath, stat)) {
-          throw new Error(`Publication quarantine "${path}" is already occupied.`);
-        }
+        throw new Error(`Publication quarantine "${path}" is already occupied.`);
+      }
+      bindStagingMarker(markerPath, relativePath, descriptor);
+      if (!stagingMarkerMatches(bindingPath, relativePath, stat)) {
+        throw new Error(`Publication quarantine "${path}" is already occupied.`);
       }
     }
     movePathToAttempt(path, descriptor);
@@ -961,16 +958,6 @@ function isActiveStagingMarker(path: string, relativePath: string): boolean {
     if (!isStagingMarker(marker, relativePath)) return false;
     const currentStart = processStartIdentity(marker.ownerPid as number);
     return currentStart !== undefined && currentStart === marker.ownerStart;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    return false;
-  }
-}
-
-function isStaleStagingMarker(path: string, relativePath: string): boolean {
-  try {
-    const marker = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    return isStagingMarker(marker, relativePath) && !isActiveStagingMarker(path, relativePath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     return false;

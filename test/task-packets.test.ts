@@ -248,7 +248,7 @@ test("create-if-absent publication recovers interrupted quarantine staging", asy
   }
 });
 
-test("create-if-absent publication recovers an unbound dead-owner staging inode", async () => {
+test("create-if-absent publication preserves unbound dead-owner staging", () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-unbound-staging-recovery-"));
   const staging = join(root, "metadata.json.quarantine");
   const marker = `${staging}.marker`;
@@ -263,9 +263,12 @@ test("create-if-absent publication recovers an unbound dead-owner staging inode"
       ownerStart: "dead",
     }));
     chmodSync(marker, 0o600);
-    const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
-    assert.equal(result.created, true);
-    assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", result.digest), Buffer.from('{"state":"ready"}'));
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }),
+      /already occupied/,
+    );
+    assert.equal(existsSync(staging), true);
+    assert.equal(existsSync(marker), true);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
