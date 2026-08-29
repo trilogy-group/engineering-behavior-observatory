@@ -224,12 +224,14 @@ test("create-if-absent publication recovers interrupted quarantine staging", asy
       schemaVersion: "ebo.publication-staging/v1",
       relativePath: "metadata.json",
       attemptId: "11111111-1111-4111-8111-111111111111",
+      ownerPid: 999999999,
     }));
     chmodSync(marker, 0o600);
     writeFileSync(binding, JSON.stringify({
       schemaVersion: "ebo.publication-staging/v1",
       relativePath: "metadata.json",
       attemptId: "11111111-1111-4111-8111-111111111111",
+      ownerPid: 999999999,
       stagingIdentity: { dev: stagingIdentity.dev, ino: stagingIdentity.ino },
     }));
     chmodSync(binding, 0o600);
@@ -251,12 +253,32 @@ test("create-if-absent publication recovers a marker-only interruption", async (
       schemaVersion: "ebo.publication-staging/v1",
       relativePath: "metadata.json",
       attemptId: "22222222-2222-4222-8222-222222222222",
+      ownerPid: 999999999,
     }));
     chmodSync(marker, 0o600);
     const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
     assert.equal(result.created, true);
     assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", result.digest), Buffer.from('{"state":"ready"}'));
     assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("create-if-absent publication does not recover a live staging marker", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-live-marker-"));
+  const marker = join(root, "metadata.json.quarantine.marker");
+  try {
+    writeFileSync(marker, JSON.stringify({
+      schemaVersion: "ebo.publication-staging/v1",
+      relativePath: "metadata.json",
+      attemptId: "33333333-3333-4333-8333-333333333333",
+      ownerPid: process.pid,
+    }));
+    chmodSync(marker, 0o600);
+    assert.throws(() => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }), /ENOENT|already occupied/);
+    assert.equal(readFileSync(marker, "utf8").includes("33333333-3333-4333-8333-333333333333"), true);
+    assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), false);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

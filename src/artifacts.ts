@@ -46,7 +46,7 @@ export type ArtifactIdentity = {
 const addFormats = formats.default as unknown as (instance: Ajv2020) => void;
 const schemaDirectory = fileURLToPath(new URL("../../schemas/", import.meta.url));
 const runBundleSchemaId = "urn:ebo:schema:run-bundle:v1";
-const MAX_EXISTING_DIGEST_RETRIES = 20;
+const MAX_EXISTING_DIGEST_RETRIES = 200;
 const STAGING_MARKER_SCHEMA_VERSION = "ebo.publication-staging/v1";
 const STAGING_ATTEMPT_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const validators = loadValidators();
@@ -285,11 +285,14 @@ export function writeMetadataAtomicallyIfAbsentSync(
       const quarantinePath = `${destination}.quarantine`;
       const markerPath = `${quarantinePath}.marker`;
       if (lstatIfPresent(quarantinePath) !== undefined) {
-        recoverInterruptedStaging(quarantinePath, markerPath, relativePath);
+        if (isActiveStagingMarker(markerPath, relativePath)) winnerRequired = true;
+        else recoverInterruptedStaging(quarantinePath, markerPath, relativePath);
       } else if (lstatIfPresent(markerPath) !== undefined) {
-        recoverInterruptedMarker(markerPath, relativePath);
+        if (isActiveStagingMarker(markerPath, relativePath)) winnerRequired = true;
+        else recoverInterruptedMarker(markerPath, relativePath);
       } else if (lstatIfPresent(`${markerPath}.tmp`) !== undefined) {
-        recoverInterruptedMarker(`${markerPath}.tmp`, relativePath);
+        if (isActiveStagingMarker(`${markerPath}.tmp`, relativePath)) winnerRequired = true;
+        else recoverInterruptedMarker(`${markerPath}.tmp`, relativePath);
       }
 
       // The deterministic quarantine sibling is also the staging inode. Keeping it as
@@ -299,7 +302,8 @@ export function writeMetadataAtomicallyIfAbsentSync(
       let markerCreated = false;
       let bindingCreated = false;
 
-      try {
+      if (!winnerRequired) {
+        try {
         try {
           writeStagingMarker(markerPath, relativePath);
           markerCreated = true;
@@ -397,6 +401,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
         }
         assertPublishRootHandle(root, rootDescriptor, relativePath);
         syncCreatedDirectories(root, createdDirectories, parentDescriptor);
+        }
       }
     } finally {
       if (changedCwd) process.chdir(originalCwd);
@@ -869,6 +874,7 @@ function writeStagingMarker(path: string, relativePath: string): void {
       schemaVersion: STAGING_MARKER_SCHEMA_VERSION,
       relativePath,
       attemptId: randomUUID(),
+      ownerPid: process.pid,
     }));
     writeFileSync(descriptor, bytes);
     fsyncSync(descriptor);
@@ -893,7 +899,26 @@ function isStagingMarker(value: unknown, relativePath: string): value is Record<
     && value.schemaVersion === STAGING_MARKER_SCHEMA_VERSION
     && value.relativePath === relativePath
     && typeof value.attemptId === "string"
-    && STAGING_ATTEMPT_PATTERN.test(value.attemptId);
+    && STAGING_ATTEMPT_PATTERN.test(value.attemptId)
+    && typeof value.ownerPid === "number"
+    && Number.isInteger(value.ownerPid)
+    && value.ownerPid > 0;
+}
+
+function isActiveStagingMarker(path: string, relativePath: string): boolean {
+  try {
+    const marker = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (!isStagingMarker(marker, relativePath)) return false;
+    try {
+      process.kill(marker.ownerPid as number, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "EPERM";
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    return false;
+  }
 }
 
 function bindStagingMarker(path: string, relativePath: string, stagingDescriptor: number): boolean {
