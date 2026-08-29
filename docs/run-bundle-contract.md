@@ -147,7 +147,8 @@ new executor results include both. An `error` result may omit `workspace` when
 the verifier failed before a workspace was available; it must not invent a
 workspace binding. Coordinator failures such as timeout, launch, parse, or
 cleanup errors are recorded in the result's `error` field; the native stderr
-diagnostic remains byte-for-byte separate. The process-group boundary cannot
+diagnostic remains byte-for-byte separate. `error` is not valid on passed or
+failed results. The process-group boundary cannot
 contain a verifier that deliberately creates a new POSIX session; callers that
 run untrusted verifiers need an OS sandbox or equivalent isolation boundary.
 

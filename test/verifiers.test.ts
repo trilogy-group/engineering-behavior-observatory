@@ -331,6 +331,10 @@ test("rejects contradictory failed results in public serializers", async () => {
       ...result,
       diagnostics: [result.diagnostics[0]!, { ...result.diagnostics[0]!, truncated: true }],
     }), /diagnostic locators must be unique/);
+    assert.throws(() => serializeVerifierResult({
+      ...result,
+      error: "unexpected coordinator error",
+    }), /must NOT be valid/);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }

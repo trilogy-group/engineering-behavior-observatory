@@ -178,7 +178,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
     } finally {
       if (stagingRoot !== undefined) {
         await rm(stagingRoot, { force: true, recursive: true }).catch((error: unknown) => {
-          internalError ??= error instanceof Error ? error.message : "Verifier staging cleanup failed.";
+          internalError = combineErrors(internalError, error instanceof Error ? error.message : "Verifier staging cleanup failed.");
         });
       }
     }
@@ -188,13 +188,13 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
     await finalizeDiagnosticFiles(diagnosticFiles);
     if (diagnosticFiles.some((file) => file.error !== undefined)) {
       status = "error";
-      internalError ??= "Verifier diagnostics could not be persisted.";
+      internalError = combineErrors(internalError, "Verifier diagnostics could not be persisted.");
     }
     const references = await Promise.all(diagnosticFiles.map((file, index) =>
       diagnosticReference(artifactRoot, file, index === 0 ? stdout : stderr)));
     if (references.some((reference) => reference === undefined)) {
       status = "error";
-      internalError ??= "Verifier diagnostics could not be verified.";
+      internalError = combineErrors(internalError, "Verifier diagnostics could not be verified.");
     }
     const diagnostics = references.flatMap((reference) => reference === undefined ? [] : [reference]);
     const result: CompleteVerifierResult = {
@@ -213,6 +213,10 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
   } finally {
     await finalizeDiagnosticFiles(diagnosticFiles);
   }
+}
+
+function combineErrors(current: string | undefined, next: string): string {
+  return current === undefined ? next : `${current}; ${next}`;
 }
 
 export function serializeVerifierResult(result: VerifierResult): string {

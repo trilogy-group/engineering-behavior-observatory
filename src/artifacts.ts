@@ -121,6 +121,7 @@ export function validateRunManifestEvidence(
       .filter((entry): entry is Record<string, unknown> => isRecord(entry) && typeof entry.relativePath === "string")
       .map((entry) => (entry.relativePath as string).toLowerCase()),
   );
+  const nestedDiagnosticPaths = new Set<string>();
 
   for (const descriptor of manifest.evidence) {
     if (!isRecord(descriptor) || typeof descriptor.id !== "string" || typeof descriptor.relativePath !== "string"
@@ -132,7 +133,7 @@ export function validateRunManifestEvidence(
       });
       if (bytes.length !== descriptor.sizeBytes) throw new Error("Artifact size does not match its manifest descriptor.");
       if (descriptor.kind === "verifier") {
-        errors.push(...nestedVerifierDiagnosticErrors(artifact, descriptor.id, bytes, bundleRoot, evidencePaths));
+        errors.push(...nestedVerifierDiagnosticErrors(artifact, descriptor.id, bytes, bundleRoot, evidencePaths, nestedDiagnosticPaths));
       }
     } catch (error) {
       errors.push({
@@ -152,6 +153,7 @@ function nestedVerifierDiagnosticErrors(
   bytes: Buffer,
   bundleRoot: string,
   evidencePaths: ReadonlySet<string>,
+  nestedDiagnosticPaths: Set<string>,
 ): ArtifactValidationError[] {
   let result: unknown;
   try {
@@ -165,10 +167,13 @@ function nestedVerifierDiagnosticErrors(
   for (const diagnostic of result.diagnostics) {
     if (!isRecord(diagnostic) || typeof diagnostic.locator !== "string"
         || typeof diagnostic.digest !== "string" || typeof diagnostic.sizeBytes !== "number") continue;
-    if (diagnostic.locator.toLowerCase() === "manifest.json" || evidencePaths.has(diagnostic.locator.toLowerCase())) {
+    const normalizedLocator = diagnostic.locator.toLowerCase();
+    if (normalizedLocator === "manifest.json" || evidencePaths.has(normalizedLocator)
+        || nestedDiagnosticPaths.has(normalizedLocator)) {
       errors.push({ artifact, schemaVersion: "run-manifest/v1", field: `/evidence/${escapeJsonPointer(verifierId)}/diagnostics`, message: "Verifier diagnostics cannot alias retained evidence paths." });
       continue;
     }
+    nestedDiagnosticPaths.add(normalizedLocator);
     try {
       const diagnosticBytes = resolveBundleArtifact(bundleRoot, {
         locator: diagnostic.locator,

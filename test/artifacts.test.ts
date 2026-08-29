@@ -207,12 +207,13 @@ test("validates nested verifier diagnostics against retained bundle bytes", asyn
     const verifier = JSON.parse(readFileSync(verifierPath, "utf8"));
     const diagnosticBytes = Buffer.from("nested verifier diagnostic");
     await writeFile(diagnosticPath, diagnosticBytes);
-    verifier.diagnostics = [{
+    const nestedDiagnostic = {
       locator: "diagnostics.log",
       digest: `sha256:${digestBytes(diagnosticBytes).value}`,
       sizeBytes: diagnosticBytes.length,
       truncated: false,
-    }];
+    };
+    verifier.diagnostics = [nestedDiagnostic];
     const verifierBytes = Buffer.from(JSON.stringify(verifier));
     await writeFile(verifierPath, verifierBytes);
     const verifierDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "verifier");
@@ -238,6 +239,18 @@ test("validates nested verifier diagnostics against retained bundle bytes", asyn
     await writeFile(verifierPath, aliasedVerifierBytes);
     verifierDescriptor.digest = `sha256:${digestBytes(aliasedVerifierBytes).value}`;
     verifierDescriptor.sizeBytes = aliasedVerifierBytes.length;
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /alias retained evidence/,
+    );
+    await writeFile(diagnosticPath, diagnosticBytes);
+    verifier.diagnostics = [nestedDiagnostic];
+    const firstVerifierBytes = Buffer.from(JSON.stringify(verifier));
+    await writeFile(verifierPath, firstVerifierBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(firstVerifierBytes).value}`;
+    verifierDescriptor.sizeBytes = firstVerifierBytes.length;
+    await writeFile(join(root, "second-verifier.json"), firstVerifierBytes);
+    manifest.evidence.push({ ...verifierDescriptor, id: "second-verifier", relativePath: "second-verifier.json" });
     assert.match(
       validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
       /alias retained evidence/,

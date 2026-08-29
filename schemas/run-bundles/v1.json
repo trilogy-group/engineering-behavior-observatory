@@ -419,6 +419,10 @@
               }
             }
           }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["passed", "failed"] } }, "required": ["status"] },
+          "then": { "not": { "required": ["error"] } }
         }
       ]
     },
