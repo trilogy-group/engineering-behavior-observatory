@@ -41,9 +41,15 @@ type VerifierResultBase = {
 };
 
 export type VerifierRunResult = VerifierResultBase & {
-  status: "passed" | "failed" | "error";
+  status: "passed" | "failed";
   exitCode?: number;
   workspace: VerifierWorkspace;
+};
+
+export type VerifierErrorResult = VerifierResultBase & {
+  status: "error";
+  exitCode?: number;
+  workspace?: VerifierWorkspace;
 };
 
 export type VerifierNotRunResult = VerifierResultBase & {
@@ -52,11 +58,14 @@ export type VerifierNotRunResult = VerifierResultBase & {
   exitCode?: never;
 };
 
-export type VerifierResult = VerifierRunResult | VerifierNotRunResult;
+export type VerifierResult = VerifierRunResult | VerifierErrorResult | VerifierNotRunResult;
 
-export type CompleteVerifierResult = VerifierRunResult & {
+export type CompleteVerifierResult = VerifierResultBase & {
+  status: "passed" | "failed" | "error";
   durationMs: number;
   diagnostics: DiagnosticReference[];
+  exitCode?: number;
+  workspace: VerifierWorkspace;
 };
 
 export type ExecuteVerifierOptions = {
@@ -109,7 +118,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
     let stdout: CapturedOutput = emptyOutput();
     let stderr: CapturedOutput = emptyOutput();
     let exitCode: number | undefined;
-    let status: VerifierRunResult["status"] = "error";
+    let status: CompleteVerifierResult["status"] = "error";
     let assertions: VerifierAssertion[] = [];
     let internalError: string | undefined;
     let stagingRoot: string | undefined;
@@ -174,7 +183,10 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
 
     await finalizeDiagnosticFiles(diagnosticFiles);
     if (diagnosticFiles.some((file) => file.error !== undefined)) status = "error";
-    const diagnostics = diagnosticFiles.map((file, index) => diagnosticReference(file, index === 0 ? stdout : stderr));
+    const references = await Promise.all(diagnosticFiles.map((file, index) =>
+      diagnosticReference(artifactRoot, file, index === 0 ? stdout : stderr)));
+    if (references.some((reference) => reference === undefined)) status = "error";
+    const diagnostics = references.flatMap((reference) => reference === undefined ? [] : [reference]);
     const result: CompleteVerifierResult = {
       schemaVersion: "verifier-result/v1",
       bundleId: options.bundleId,
@@ -443,14 +455,23 @@ async function finalizeDiagnosticFiles(files: readonly DiagnosticFile[]): Promis
   }));
 }
 
-function diagnosticReference(file: DiagnosticFile, output: CapturedOutput): DiagnosticReference {
+async function diagnosticReference(
+  root: string,
+  file: DiagnosticFile,
+  output: CapturedOutput,
+): Promise<DiagnosticReference | undefined> {
   const digest = digestBytes(output.bytes);
-  return {
-    locator: file.locator,
-    digest: `sha256:${digest.value}`,
-    sizeBytes: output.bytes.length,
-    truncated: output.truncated,
-  };
+  try {
+    const bytes = await readVerifiedArtifact(root, file.locator, digest);
+    return {
+      locator: file.locator,
+      digest: `sha256:${digest.value}`,
+      sizeBytes: bytes.length,
+      truncated: output.truncated,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 async function prepareDiagnosticPath(root: string, locator: string): Promise<{ parent: string; path: string }> {

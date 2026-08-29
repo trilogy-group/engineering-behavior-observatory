@@ -222,6 +222,15 @@ test("represents a not-run verifier without a workspace", () => {
   assert.doesNotThrow(() => serializeVerifierResult(result));
 });
 
+test("represents a pre-workspace verifier error without inventing a workspace", () => {
+  assert.doesNotThrow(() => serializeVerifierResult({
+    schemaVersion: "verifier-result/v1",
+    bundleId: "bundle-error",
+    status: "error",
+    assertions: [],
+  }));
+});
+
 test("accepts existing v1 results without optional execution fields", () => {
   assert.doesNotThrow(() => serializeVerifierResult({
     schemaVersion: "verifier-result/v1",

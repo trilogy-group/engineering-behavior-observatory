@@ -53,6 +53,7 @@ export type {
   ExecuteVerifierOptions,
   VerifierAssertion,
   VerifierAssertionStatus,
+  VerifierErrorResult,
   VerifierNotRunResult,
   VerifierResult,
   VerifierRunResult,

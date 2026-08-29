@@ -135,6 +135,9 @@ test("validation reports schema versions, fields, duplicate identities, and fixt
   assert.notDeepEqual(validateArtifact("verifier.json", failedVerifier), []);
   failedVerifier.exitCode = 0;
   assert.notDeepEqual(validateArtifact("verifier.json", failedVerifier), []);
+  failedVerifier.exitCode = 1;
+  failedVerifier.assertions.push({ id: "example-check", status: "failed" });
+  assert.match(validateArtifact("verifier.json", failedVerifier).map((error) => error.message).join("\n"), /assertion IDs must be unique/);
   packet.agentInput.prompt = " ";
   assert.deepEqual(validateArtifact("packet.json", packet)[0], {
     artifact: "packet.json",

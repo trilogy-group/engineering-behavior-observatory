@@ -89,6 +89,14 @@ export function validateArtifact(artifact: string, document: unknown): ArtifactV
   if (schemaVersion === "run-manifest/v1" && isRecord(document) && Array.isArray(document.evidence)) {
     errors.push(...runManifestIntegrityErrors(artifact, schemaVersion, document));
   }
+  if (schemaVersion === "verifier-result/v1" && isRecord(document) && Array.isArray(document.assertions)) {
+    const assertionIds = document.assertions
+      .filter((assertion): assertion is Record<string, unknown> => isRecord(assertion) && typeof assertion.id === "string")
+      .map((assertion) => assertion.id as string);
+    if (new Set(assertionIds).size !== assertionIds.length) {
+      errors.push({ artifact, schemaVersion, field: "/assertions", message: "Verifier assertion IDs must be unique." });
+    }
+  }
 
   return errors;
 }
