@@ -129,9 +129,10 @@ digest-pinned restricted verifier from its task-bundle root, stages it in a
 private trusted subdirectory separate from the snapshot, and invokes the pinned
 Node runtime with the staged verifier path followed by the snapshot workspace
 path. Launcher options cannot replace the staged entry point, and the child
-environment contains only fixed coordinator variables; `PATH`, Node preload,
-POSIX dynamic-loader, shell-startup, and interpreter module-path injection are
-unavailable. Verifier tools must be invoked by absolute pinned paths. The
+environment contains only fixed coordinator variables; `PATH` points to a
+dedicated empty trusted-stage directory, while Node preload, POSIX dynamic-loader,
+shell-startup, and interpreter module-path injection are unavailable. Verifier
+tools must be invoked by absolute pinned paths. The
 restricted implementation and any
 reference solution remain outside that workspace. `.mjs`/`.cjs` locators retain
 their module semantics; ambiguous `.js` or extensionless artifacts default to

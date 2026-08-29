@@ -376,6 +376,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
         }
         const trustedRoot = join(stagingRoot, "trusted");
         await mkdir(trustedRoot, { recursive: true });
+        await mkdir(join(trustedRoot, "bin"));
         const stagedVerifier = join(trustedRoot, stagedVerifierName(verifierFormat));
         await writePrivateFile(stagedVerifier, verifierBytes);
         const completionHookPath = join(trustedRoot, "completion-hook.cjs");
@@ -682,7 +683,7 @@ async function runProcess(
   verifierRoot: string,
 ): Promise<ProcessResult> {
   const environment = overrides === undefined ? { PATH: "" } : cleanEnvironment(overrides);
-  environment.PATH = "";
+  environment.PATH = join(verifierRoot, "bin");
   environment.EBO_VERIFIER_COMPLETION = completionMarker;
   environment.EBO_VERIFIER_ROOT = verifierRoot;
   const child = spawn(command, args, {
