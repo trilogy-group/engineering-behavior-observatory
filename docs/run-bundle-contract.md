@@ -113,10 +113,11 @@ The executor receives both the retained workspace artifact reference and a
 separate live-workspace fingerprint. The v1 live-workspace fingerprint hashes
 sorted relative paths, entry kinds, and file bytes; symbolic links and
 unsupported entry kinds are rejected. The fingerprint must match the directory
-being evaluated, while the artifact digest remains the digest of the retained
-workspace evidence. This prevents a stale live-directory binding without
-changing the artifact digest domain; the complete executor result records that
-fingerprint alongside the workspace reference.
+being evaluated, while the executor evaluates a private snapshot detached from
+the mutable agent workspace. The artifact digest remains the digest of the
+retained workspace evidence. This prevents a stale live-directory binding
+without changing the artifact digest domain; the complete executor result
+records the snapshot fingerprint alongside the workspace reference.
 
 Verifier execution uses a small subprocess boundary. The executor resolves the
 digest-pinned restricted verifier from its task-bundle root, stages it in a
@@ -173,7 +174,10 @@ artifact ID/digest against the containing bundle's retained evidence. The
 manifest and cannot be used for verifier results or diagnostic directories.
 The CLI applies duplicate-key detection to standalone verifier JSON before
 parsing, just as manifest-nested verifier artifacts and subprocess output are
-checked before interpretation.
+checked before interpretation. Manifest validation also requires a retained
+passed verifier for a completed run and a retained failed verifier for a
+task-failed run, and checks each verifier's status against that terminal
+outcome before the bundle is accepted.
 
 ## Sharing boundary
 

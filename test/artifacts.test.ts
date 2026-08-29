@@ -262,6 +262,20 @@ test("validates nested verifier diagnostics against retained bundle bytes", asyn
       /workspace digest.*retained workspace evidence/,
     );
     await retainVerifier(verifier);
+    const originalTerminal = manifest.terminal;
+    await retainVerifier({ ...verifier, status: "error", error: "verifier infrastructure failed", assertions: [] });
+    manifest.terminal = { ...originalTerminal, state: "completed" };
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /Completed runs require a retained passed verifier/,
+    );
+    await retainVerifier(verifier);
+    manifest.terminal = { ...originalTerminal, state: "failed", failureClass: "task" };
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /Task-failed runs require a retained failed verifier/,
+    );
+    manifest.terminal = originalTerminal;
     await writeFile(diagnosticPath, "tampered");
     assert.match(
       validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),

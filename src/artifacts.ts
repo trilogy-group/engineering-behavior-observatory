@@ -204,6 +204,7 @@ export function validateRunManifestEvidence(
         && typeof entry.id === "string" && entry.kind === "workspace")
       .map((entry) => [entry.id as string, entry]),
   );
+  const verifierStatuses = new Set<string>();
   const evidencePaths = new Set(
     manifest.evidence
       .filter((entry): entry is Record<string, unknown> => isRecord(entry) && typeof entry.relativePath === "string")
@@ -221,7 +222,7 @@ export function validateRunManifestEvidence(
       });
       if (bytes.length !== descriptor.sizeBytes) throw new Error("Artifact size does not match its manifest descriptor.");
       if (descriptor.kind === "verifier") {
-        errors.push(...nestedVerifierDiagnosticErrors(
+        const verifierErrors = nestedVerifierDiagnosticErrors(
           artifact,
           descriptor.id,
           bytes,
@@ -230,7 +231,12 @@ export function validateRunManifestEvidence(
           workspaceEvidence,
           evidencePaths,
           nestedDiagnosticPaths,
-        ));
+        );
+        errors.push(...verifierErrors);
+        if (verifierErrors.length === 0) {
+          const status = nestedVerifierStatus(bytes);
+          if (status !== undefined) verifierStatuses.add(status);
+        }
       }
     } catch (error) {
       errors.push({
@@ -241,7 +247,33 @@ export function validateRunManifestEvidence(
       });
     }
   }
+  const terminal = isRecord(manifest.terminal) ? manifest.terminal : undefined;
+  if (terminal?.state === "completed" && !verifierStatuses.has("passed")) {
+    errors.push({
+      artifact,
+      schemaVersion: "run-manifest/v1",
+      field: "/terminal/state",
+      message: "Completed runs require a retained passed verifier result.",
+    });
+  }
+  if (terminal?.state === "failed" && terminal.failureClass === "task" && !verifierStatuses.has("failed")) {
+    errors.push({
+      artifact,
+      schemaVersion: "run-manifest/v1",
+      field: "/terminal/state",
+      message: "Task-failed runs require a retained failed verifier result.",
+    });
+  }
   return errors;
+}
+
+function nestedVerifierStatus(bytes: Buffer): string | undefined {
+  try {
+    const result: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    return isRecord(result) && typeof result.status === "string" ? result.status : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function nestedVerifierDiagnosticErrors(

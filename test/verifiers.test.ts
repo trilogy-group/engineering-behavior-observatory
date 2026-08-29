@@ -51,6 +51,32 @@ test("executes a verifier outside the agent workspace and preserves diagnostics"
   }
 });
 
+test("evaluates a private workspace snapshot", async () => {
+  const root = await createRoots();
+  const sourceFile = join(root.workspace, "candidate.txt");
+  try {
+    await writeFile(sourceFile, "before");
+    const workspaceFingerprint = await digestWorkspace(root.workspace);
+    const verifier = await addVerifier(root.verifier, `
+      const fs = require("node:fs");
+      const path = require("node:path");
+      fs.writeFileSync(${JSON.stringify(sourceFile)}, "after");
+      const snapshotValue = fs.readFileSync(path.join(process.argv[2], "candidate.txt"), "utf8");
+      process.stdout.write(JSON.stringify({ assertions: [
+        { id: "snapshot-is-stable", status: snapshotValue === "before" ? "passed" : "failed" },
+      ] }));
+    `);
+    const result = await run(root, verifier);
+
+    assert.equal(result.status, "passed");
+    assert.equal(result.workspace.fingerprint, workspaceFingerprint);
+    assert.equal(await readFile(sourceFile, "utf8"), "after");
+    assert.notEqual(await digestWorkspace(root.workspace), workspaceFingerprint);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("preserves failed assertions as a task failure", async () => {
   const root = await createRoots();
   try {

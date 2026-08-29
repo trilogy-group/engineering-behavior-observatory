@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
@@ -186,19 +186,26 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
     let assertions: VerifierAssertion[] = [];
     let internalError: string | undefined = diagnosticSetup.error;
     let stagingRoot: string | undefined;
+    let evaluatedWorkspaceFingerprint: string | undefined;
     let spawnAttempted = false;
 
     try {
       if (internalError === undefined) {
         const verifierBytes = await readVerifiedArtifact(verifierRoot, options.verifier.locator, options.verifier.digest);
         stagingRoot = await createStagingRoot(workspacePath);
+        const evaluatedWorkspacePath = join(stagingRoot, "workspace");
+        await cp(workspacePath, evaluatedWorkspacePath, { recursive: true, force: false });
+        evaluatedWorkspaceFingerprint = await digestWorkspace(evaluatedWorkspacePath);
+        if (evaluatedWorkspaceFingerprint !== options.workspaceFingerprint) {
+          throw new Error("Workspace changed while its private evaluation snapshot was being created.");
+        }
         const stagedVerifier = join(stagingRoot, "verifier");
         await writePrivateFile(stagedVerifier, verifierBytes);
 
         const processResult = await runProcess(
           options.command ?? process.execPath,
-          [...(options.args ?? []), stagedVerifier, workspacePath],
-          workspacePath,
+          [...(options.args ?? []), stagedVerifier, evaluatedWorkspacePath],
+          evaluatedWorkspacePath,
           options.env,
           timeoutMs,
           maxOutputBytes,
@@ -280,7 +287,10 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
       durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
       ...(internalError === undefined ? {} : { error: internalError }),
       ...(exitCode === undefined ? {} : { exitCode }),
-      workspace: { ...options.workspace, fingerprint: options.workspaceFingerprint },
+      workspace: {
+        ...options.workspace,
+        ...(evaluatedWorkspaceFingerprint === undefined ? {} : { fingerprint: evaluatedWorkspaceFingerprint }),
+      },
       assertions,
       diagnostics,
     } as CompleteVerifierResult;
