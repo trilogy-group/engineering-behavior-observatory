@@ -10,6 +10,7 @@ import {
   openSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -680,13 +681,19 @@ function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined 
 }
 
 function removeOwnedPath(path: string, descriptor: number): void {
+  const quarantine = `${path}.quarantine-${randomUUID()}`;
   try {
     const opened = fstatSync(descriptor);
     const current = lstatSync(path);
     if (!sameFileIdentity(opened, current)) {
       throw new Error(`Publication path "${path}" changed before cleanup.`);
     }
-    rmSync(path, { force: true });
+    renameSync(path, quarantine);
+    const quarantined = lstatSync(quarantine);
+    if (!sameFileIdentity(opened, quarantined)) {
+      throw new Error(`Publication path "${path}" changed during quarantine.`);
+    }
+    rmSync(quarantine, { force: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
