@@ -411,15 +411,31 @@ function statusTaskPacketWithRoot(
       errors: inspection.errors,
     };
   }
-  const mismatches = compareFreezeRecord(record, inspection);
+  let currentInspection = inspection;
+  let mismatches = compareFreezeRecord(record, currentInspection);
+  if (inspection.errors.length === 0 && mismatches.length === 0) {
+    currentInspection = admitTaskPacketWithRoot(bundleRoot, packetLocator, root);
+    if (currentInspection.errors.length > 0 || currentInspection.packet?.admission.status !== "admitted") {
+      return {
+        status: currentInspection.errors.length > 0 ? "invalid" : "unadmitted",
+        packetId: currentInspection.packet?.id ?? packetId,
+        packetDigest: currentInspection.packetDigest,
+        aggregateDigest: record.aggregateDigest,
+        freezeLocator,
+        mismatches: ["admission"],
+        errors: currentInspection.errors,
+      };
+    }
+    mismatches = compareFreezeRecord(record, currentInspection);
+  }
   return {
-    status: inspection.errors.length > 0 ? "invalid" : mismatches.length > 0 ? "changed" : "frozen",
-    packetId,
-    packetDigest,
+    status: currentInspection.errors.length > 0 ? "invalid" : mismatches.length > 0 ? "changed" : "frozen",
+    packetId: currentInspection.packet?.id ?? packetId,
+    packetDigest: currentInspection.packetDigest,
     aggregateDigest: record.aggregateDigest,
     freezeLocator,
     mismatches,
-    errors: inspection.errors,
+    errors: currentInspection.errors,
   };
 }
 
@@ -623,13 +639,22 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHan
           try {
             const temporaryStat = lstatSync(name);
             if (temporaryStat.isFile() && temporaryStat.dev === destinationStat.dev && temporaryStat.ino === destinationStat.ino) {
-              assertFreezeParent(root, parent, parentDescriptor, locator);
-              const currentDestination = lstatSync(relative(parent, destination));
-              const currentTemporary = lstatSync(name);
-              if (currentDestination.dev !== currentTemporary.dev || currentDestination.ino !== currentTemporary.ino) continue;
-              unlinkSync(name);
-              removed = true;
-              assertFreezeParent(root, parent, parentDescriptor, locator);
+              const targetDescriptor = openSync(name, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+              try {
+                const openedTarget = fstatSync(targetDescriptor);
+                if (!openedTarget.isFile() || openedTarget.nlink < 2
+                    || openedTarget.dev !== destinationStat.dev || openedTarget.ino !== destinationStat.ino) continue;
+                assertFreezeParent(root, parent, parentDescriptor, locator);
+                const currentDestination = lstatSync(relative(parent, destination));
+                const currentTemporary = lstatSync(name);
+                if (!sameFileIdentity(currentDestination, currentTemporary)
+                    || !sameFileIdentity(openedTarget, currentTemporary)) continue;
+                unlinkSync(name);
+                removed = true;
+                assertFreezeParent(root, parent, parentDescriptor, locator);
+              } finally {
+                closeSync(targetDescriptor);
+              }
             }
           } catch (error) {
             if (!isErrno(error, "ENOENT")) throw error;
@@ -761,6 +786,10 @@ function assertFreezeParentPath(root: string, parent: string, locator: string): 
       throw new Error(`Artifact path "${locator}" crosses a symbolic link.`);
     }
   }
+}
+
+function sameFileIdentity(left: { dev: number; ino: number }, right: { dev: number; ino: number }): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
 }
 
 function packetError(artifact: string, field: string, message: string): ArtifactValidationError {
