@@ -8,7 +8,7 @@ import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { gzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 import {
   admitTaskPacket,
@@ -58,6 +58,15 @@ function fixtureArchive(): Buffer {
     { path: "src/index.ts", bytes: Buffer.from("export {};\n") },
   ];
   return tarGzipArchive(entries);
+}
+
+function tarNumericWhitespaceArchive(): Buffer {
+  const archive = gunzipSync(tarGzipArchive([{ path: "README.md", bytes: Buffer.from("safe") }]));
+  archive.write("00000000004\t", 124, "ascii");
+  archive.fill(0x20, 148, 156);
+  const checksum = archive.subarray(0, 512).reduce((sum, value) => sum + value, 0);
+  archive.write(checksum.toString(8).padStart(6, "0") + "\0 ", 148, "ascii");
+  return gzipSync(archive);
 }
 
 function packetFixture(name = "task-packet.valid.v1.json"): TaskPacket {
@@ -394,6 +403,11 @@ test("inspection validates fixture archives before admission", () => {
     {
       bytes: tarGzipArchive([{ path: "README.md\n", bytes: Buffer.from("safe") }]),
       expected: /No archive entries were selected/,
+      mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
+    },
+    {
+      bytes: tarNumericWhitespaceArchive(),
+      expected: /invalid TAR size/,
       mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
     },
   ];

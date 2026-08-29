@@ -1046,7 +1046,8 @@ function verifyTarHeaderChecksum(header: Buffer): void {
 }
 
 function parseTarOctal(field: Uint8Array, label: string): number {
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(field).replace(/\0.*$/s, "").trim();
+  const raw = new TextDecoder("utf-8", { fatal: true }).decode(field).replace(/\0.*$/s, "");
+  const text = raw.replace(/^ +| +$/g, "");
   if (text === "" || !/^[0-7]+$/.test(text)) throw new Error(`Sanitized task archive contains an invalid TAR ${label}.`);
   const value = Number.parseInt(text, 8);
   if (!Number.isSafeInteger(value)) throw new Error(`Sanitized task archive contains an unsafe TAR ${label}.`);
