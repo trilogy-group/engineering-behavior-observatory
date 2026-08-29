@@ -156,6 +156,14 @@ if (stageRoot !== undefined) {
   const nodeModulePaths = Module._nodeModulePaths;
   Module._nodeModulePaths = (from) => nodeModulePaths(from)
     .filter((candidate) => candidate === stageRoot || candidate.startsWith(stageRoot + path.sep));
+  const resolveFilename = Module._resolveFilename;
+  Module._resolveFilename = function (request, parent, isMain, options) {
+    const resolved = resolveFilename.call(this, request, parent, isMain, options);
+    if (typeof resolved === "string"
+        && (resolved.startsWith("node:") || Module.builtinModules.includes(resolved)
+          || resolved === stageRoot || resolved.startsWith(stageRoot + path.sep))) return resolved;
+    throw new Error("Verifier dependency resolves outside its private staging root.");
+  };
 }
 let abnormal = false;
 const report = (error) => {

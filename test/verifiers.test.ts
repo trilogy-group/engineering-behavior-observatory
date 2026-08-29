@@ -330,13 +330,15 @@ test("does not resolve verifier dependencies from staging ancestors", async () =
   try {
     await mkdir(join(temporaryRoot, "node_modules", "escape"), { recursive: true });
     await writeFile(join(temporaryRoot, "node_modules", "escape", "index.js"), "module.exports = true;");
+    await writeFile(join(temporaryRoot, "outside.cjs"), "module.exports = true;");
     process.env.TMPDIR = temporaryRoot;
     const verifier = await addVerifier(root.verifier, `
       let escaped = false;
       try { require("escape"); escaped = true; } catch {}
+      try { require(process.env.OUTSIDE); escaped = true; } catch {}
       process.stdout.write(JSON.stringify({ assertions: [{ id: "private-resolution", status: escaped ? "failed" : "passed" }] }));
     `);
-    const result = await run(root, verifier);
+    const result = await run(root, verifier, { env: { OUTSIDE: join(temporaryRoot, "outside.cjs") } });
 
     assert.equal(result.status, "passed");
   } finally {
