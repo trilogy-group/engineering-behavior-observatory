@@ -324,7 +324,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
           if ((error as NodeJS.ErrnoException).code === "EEXIST") {
             winnerRequired = true;
           } else if (markerCreated) {
-            moveOptionalPathToAttempt(markerPath);
+            moveMarkerToAttempt(markerPath, bindingCreated);
             markerCreated = false;
             throw error;
           } else {
@@ -987,7 +987,13 @@ function isStagingMarker(value: unknown, relativePath: string): value is Record<
     && value.ownerStart.length > 0;
 }
 
-function processStartIdentity(pid: number): string | undefined {
+function processStartIdentity(pid: number): string | null | undefined {
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return null;
+    return undefined;
+  }
   try {
     const value = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
       encoding: "utf8",
@@ -1004,7 +1010,9 @@ function isActiveStagingMarker(path: string, relativePath: string): boolean {
     const marker = JSON.parse(readFileSync(path, "utf8")) as unknown;
     if (!isStagingMarker(marker, relativePath)) return false;
     const currentStart = processStartIdentity(marker.ownerPid as number);
-    return currentStart !== undefined && currentStart === marker.ownerStart;
+    // Unknown ownership is potentially active. Recover only when the owner is
+    // proven absent or its start identity is known to differ.
+    return marker.ownerStart === "unknown" || currentStart === undefined || currentStart === marker.ownerStart;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     return false;

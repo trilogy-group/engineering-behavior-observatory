@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
+import fs from "node:fs";
 import { chmodSync, existsSync, linkSync, lstatSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -390,6 +392,64 @@ test("create-if-absent publication preserves a pre-existing staging binding", ()
     assert.equal(existsSync(join(root, "metadata.json")), false);
     assert.equal(existsSync(marker), false);
   } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("create-if-absent publication moves the marker sidecar after staging-open failure", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-staging-open-failure-"));
+  const originalOpenSync = fs.openSync;
+  let injected = false;
+  fs.openSync = ((path: fs.PathLike, ...args: Parameters<typeof originalOpenSync> extends [fs.PathLike, ...infer Rest] ? Rest : never) => {
+    if (!injected && typeof path === "string" && /^\.[0-9a-f-]{36}\.tmp$/.test(path)) {
+      injected = true;
+      const error = new Error("injected staging-open failure") as NodeJS.ErrnoException;
+      error.code = "EMFILE";
+      throw error;
+    }
+    return originalOpenSync(path, ...args);
+  }) as typeof originalOpenSync;
+  syncBuiltinESMExports();
+  try {
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }),
+      /injected staging-open failure/,
+    );
+    assert.equal(injected, true);
+    assert.equal(existsSync(join(root, "metadata.json.quarantine.marker")), false);
+    assert.equal(existsSync(join(root, "metadata.json.quarantine.marker.tmp")), false);
+    assert.equal(readdirSync(root).filter((name) => name.endsWith(".failed")).length, 2);
+  } finally {
+    fs.openSync = originalOpenSync;
+    syncBuiltinESMExports();
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("create-if-absent publication fails closed when marker ownership is unverifiable", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-unknown-owner-marker-"));
+  const marker = join(root, "metadata.json.quarantine.marker");
+  const originalPath = process.env.PATH;
+  try {
+    writeFileSync(marker, JSON.stringify({
+      schemaVersion: "ebo.publication-staging/v1",
+      relativePath: "metadata.json",
+      stagingPath: ".77777777-7777-4777-8777-777777777777.tmp",
+      attemptId: "77777777-7777-4777-8777-777777777777",
+      ownerPid: process.pid,
+      ownerStart: "unverifiable-owner-start",
+    }));
+    chmodSync(marker, 0o600);
+    process.env.PATH = "/ebo/no-such-process-tools";
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }),
+      /ENOENT|already occupied/,
+    );
+    assert.equal(existsSync(marker), true);
+    assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), false);
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
     rmSync(root, { force: true, recursive: true });
   }
 });
