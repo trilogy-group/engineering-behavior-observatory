@@ -732,6 +732,21 @@ test("create-if-absent publication fails closed when marker ownership is unverif
   }
 });
 
+test("create-if-absent publication rejects a nonregular staging marker", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-nonregular-marker-"));
+  const marker = join(root, "metadata.json.quarantine.marker");
+  try {
+    execFileSync("mkfifo", [marker]);
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }),
+      /already occupied|regular file/,
+    );
+    assert.equal(lstatSync(marker).isFIFO(), true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("generic publication reserves space for quarantine staging", () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-publication-path-limit-"));
   const locator = "a".repeat(250);

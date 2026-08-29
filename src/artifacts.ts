@@ -1092,14 +1092,19 @@ export function writeMetadataAtomicallyIfAbsentSync(
       const quarantinePath = `${destination}.quarantine`;
       const markerPath = `${quarantinePath}.marker`;
       if (lstatIfPresent(quarantinePath) !== undefined) {
-        if (isActiveStagingMarker(markerPath, relativePath)) winnerRequired = true;
-        else recoverInterruptedStaging(quarantinePath, markerPath, relativePath);
+        const markerObservation = observeStagingMarker(markerPath, relativePath);
+        if (markerObservation?.active) winnerRequired = true;
+        else recoverInterruptedStaging(quarantinePath, markerPath, relativePath, markerObservation?.identity);
       } else if (lstatIfPresent(markerPath) !== undefined) {
-        if (isActiveStagingMarker(markerPath, relativePath)) winnerRequired = true;
-        else recoverInterruptedMarker(markerPath, relativePath);
+        const markerObservation = observeStagingMarker(markerPath, relativePath);
+        if (markerObservation?.active) winnerRequired = true;
+        else recoverInterruptedMarker(markerPath, relativePath, markerObservation?.identity);
       } else if (lstatIfPresent(`${markerPath}.tmp`) !== undefined) {
-        if (isActiveStagingMarker(`${markerPath}.tmp`, relativePath)) winnerRequired = true;
-        else if (stagingMarkerMatches(`${markerPath}.tmp`, relativePath)) recoverInterruptedMarker(`${markerPath}.tmp`, relativePath);
+        const markerObservation = observeStagingMarker(`${markerPath}.tmp`, relativePath);
+        if (markerObservation?.active) winnerRequired = true;
+        else if (stagingMarkerMatches(`${markerPath}.tmp`, relativePath)) {
+          recoverInterruptedMarker(`${markerPath}.tmp`, relativePath, markerObservation?.identity);
+        }
         else moveOptionalPathToAttempt(`${markerPath}.tmp`);
       }
 
@@ -1653,9 +1658,21 @@ function assertPublicationPathWithinLimits(relativePath: string): void {
   }
 }
 
-function recoverInterruptedStaging(path: string, markerPath: string, relativePath: string): void {
+function recoverInterruptedStaging(
+  path: string,
+  markerPath: string,
+  relativePath: string,
+  expectedMarkerIdentity?: { dev: number; ino: number },
+): void {
   let descriptor: number | undefined;
   try {
+    const validatedMarker = expectedMarkerIdentity === undefined
+      ? undefined
+      : readValidatedStagingMarker(markerPath, relativePath);
+    if (expectedMarkerIdentity !== undefined
+        && (validatedMarker === undefined || !sameFileIdentity(validatedMarker.identity, expectedMarkerIdentity))) {
+      throw new Error(`Publication staging marker "${markerPath}" changed during recovery.`);
+    }
     descriptor = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const stat = fstatSync(descriptor);
     if (!stat.isFile() || !isRecoverableStagingLink(path, markerPath, relativePath, stat)
@@ -1673,13 +1690,20 @@ function recoverInterruptedStaging(path: string, markerPath: string, relativePat
       }
     }
     const stagingPath = readStagingPath(markerPath, relativePath);
+    if (expectedMarkerIdentity !== undefined && !markerIdentityMatches(markerPath, relativePath, expectedMarkerIdentity)) {
+      throw new Error(`Publication staging marker "${markerPath}" changed during recovery.`);
+    }
     const stagingIdentity = stagingPath === undefined ? undefined : lstatIfPresent(stagingPath);
     movePathToAttempt(path, descriptor);
     if (stagingPath !== undefined && stagingIdentity !== undefined
         && sameFileIdentity(stagingIdentity, stat)) {
       movePathToAttemptIfIdentity(stagingPath, stagingIdentity);
     }
-    moveMarkerToAttempt(markerPath, true);
+    if (expectedMarkerIdentity !== undefined && validatedMarker !== undefined) {
+      moveRecoveredMarkerToAttempt(markerPath, markerPath, relativePath, validatedMarker.marker, expectedMarkerIdentity);
+    } else {
+      moveMarkerToAttempt(markerPath, true);
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     if (error instanceof Error && error.message.includes("already occupied")) throw error;
@@ -1689,9 +1713,14 @@ function recoverInterruptedStaging(path: string, markerPath: string, relativePat
   }
 }
 
-function recoverInterruptedMarker(path: string, relativePath: string): void {
+function recoverInterruptedMarker(
+  path: string,
+  relativePath: string,
+  expectedMarkerIdentity?: { dev: number; ino: number },
+): void {
   const validated = readValidatedStagingMarker(path, relativePath);
-  if (validated === undefined) {
+  if (validated === undefined || (expectedMarkerIdentity !== undefined
+      && !sameFileIdentity(validated.identity, expectedMarkerIdentity))) {
     throw new Error(`Publication staging marker "${path}" is already occupied.`);
   }
   const { marker, identity } = validated;
@@ -1852,20 +1881,29 @@ function processStartIdentity(pid: number): string | null | undefined {
   }
 }
 
-function isActiveStagingMarker(path: string, relativePath: string): boolean {
-  try {
-    const marker = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    if (!isStagingMarker(marker, relativePath)) return false;
-    const currentStart = processStartIdentity(marker.ownerPid as number);
-    // Unknown ownership is potentially active. Recover only when the owner is
-    // proven absent or its start identity is known to differ.
-    return currentStart === undefined
-      || (marker.ownerStart === "unknown" && currentStart !== null)
-      || currentStart === marker.ownerStart;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    return false;
-  }
+function observeStagingMarker(
+  path: string,
+  relativePath: string,
+): { active: boolean; identity: Stats } | undefined {
+  const validated = readValidatedStagingMarker(path, relativePath);
+  if (validated === undefined) return undefined;
+  const marker = validated.marker;
+  const currentStart = processStartIdentity(marker.ownerPid as number);
+  // Unknown ownership is potentially active. Recover only when the owner is
+  // proven absent or its start identity is known to differ.
+  const active = currentStart === undefined
+    || (marker.ownerStart === "unknown" && currentStart !== null)
+    || currentStart === marker.ownerStart;
+  return { active, identity: validated.identity };
+}
+
+function markerIdentityMatches(
+  path: string,
+  relativePath: string,
+  expected: { dev: number; ino: number },
+): boolean {
+  const validated = readValidatedStagingMarker(path, relativePath);
+  return validated !== undefined && sameFileIdentity(validated.identity, expected);
 }
 
 function bindStagingMarker(path: string, relativePath: string, stagingDescriptor: number): boolean {
@@ -2064,7 +2102,7 @@ function moveRecoveredMarkerToAttempt(
   sourcePath: string,
   relativePath: string,
   marker: Record<string, unknown>,
-  markerIdentity: Stats,
+  markerIdentity: { dev: number; ino: number },
 ): void {
   const bindingPath = `${markerPath}.binding`;
   const bindingTemporaryPath = `${bindingPath}.tmp`;
@@ -2121,14 +2159,12 @@ function isOwnedMarkerBinding(
 ): { bindingIdentity: Stats; stagingIdentity: { dev: number; ino: number } } | undefined {
   const candidate = readMarkerMetadata(path);
   if (candidate === undefined || !isOwnedMarkerSidecarValue(candidate, relativePath, marker)
-      || !isRecord(candidate.stagingIdentity) || typeof marker.stagingPath !== "string") return undefined;
+      || !isRecord(candidate.stagingIdentity)) return undefined;
   const { dev, ino } = candidate.stagingIdentity;
-  const staging = lstatIfPresent(resolve(dirname(path), marker.stagingPath));
   const bindingIdentity = lstatIfPresent(path);
   if (bindingIdentity === undefined) return undefined;
   if (typeof dev !== "number" || typeof ino !== "number"
-      || !Number.isSafeInteger(dev) || !Number.isSafeInteger(ino)
-      || (staging !== undefined && !sameFileIdentity(staging, { dev, ino }))) return undefined;
+      || !Number.isSafeInteger(dev) || !Number.isSafeInteger(ino)) return undefined;
   return { bindingIdentity, stagingIdentity: { dev, ino } };
 }
 
