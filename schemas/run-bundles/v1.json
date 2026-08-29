@@ -426,6 +426,10 @@
         {
           "if": { "properties": { "status": { "enum": ["passed", "failed"] } }, "required": ["status"] },
           "then": { "not": { "required": ["error"] } }
+        },
+        {
+          "if": { "properties": { "status": { "const": "error" } }, "required": ["status"] },
+          "then": { "required": ["error"] }
         }
       ]
     },

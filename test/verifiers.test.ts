@@ -450,8 +450,15 @@ test("represents a pre-workspace verifier error without inventing a workspace", 
     schemaVersion: "verifier-result/v1",
     bundleId: "bundle-error",
     status: "error",
+    error: "verifier was not started",
     assertions: [],
   }));
+  assert.throws(() => serializeVerifierResult({
+    schemaVersion: "verifier-result/v1",
+    bundleId: "bundle-error",
+    status: "error",
+    assertions: [],
+  } as unknown as VerifierResult), /required property.*error|error/);
 });
 
 test("accepts existing v1 results without optional execution fields", () => {

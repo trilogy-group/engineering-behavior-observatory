@@ -215,13 +215,39 @@ test("validates nested verifier diagnostics against retained bundle bytes", asyn
       truncated: false,
     };
     verifier.diagnostics = [nestedDiagnostic];
-    const verifierBytes = Buffer.from(JSON.stringify(verifier));
-    await writeFile(verifierPath, verifierBytes);
     const verifierDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "verifier");
-    verifierDescriptor.digest = `sha256:${digestBytes(verifierBytes).value}`;
-    verifierDescriptor.sizeBytes = verifierBytes.length;
+    const retainVerifier = async (value: unknown) => {
+      const bytes = Buffer.from(JSON.stringify(value));
+      await writeFile(verifierPath, bytes);
+      verifierDescriptor.digest = `sha256:${digestBytes(bytes).value}`;
+      verifierDescriptor.sizeBytes = bytes.length;
+    };
+    await retainVerifier(verifier);
 
     assert.deepEqual(validateRunManifestEvidence("manifest.json", manifest, root), []);
+    const noDiagnosticsVerifier = { ...verifier };
+    delete noDiagnosticsVerifier.diagnostics;
+    await retainVerifier({ ...noDiagnosticsVerifier, bundleId: "another-bundle" });
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /bundleId.*containing run manifest/,
+    );
+    await retainVerifier({ ...verifier, bundleId: "another-bundle" });
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /bundleId.*containing run manifest/,
+    );
+    await retainVerifier({ ...verifier, workspace: { ...verifier.workspace, artifactId: "missing-workspace" } });
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /retained workspace evidence/,
+    );
+    await retainVerifier({ ...verifier, workspace: { ...verifier.workspace, digest: `sha256:${"f".repeat(64)}` } });
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /workspace digest.*retained workspace evidence/,
+    );
+    await retainVerifier(verifier);
     await writeFile(diagnosticPath, "tampered");
     assert.match(
       validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),

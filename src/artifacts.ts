@@ -197,6 +197,13 @@ export function validateRunManifestEvidence(
 ): ArtifactValidationError[] {
   if (!isRecord(manifest) || manifest.schemaVersion !== "run-manifest/v1" || !Array.isArray(manifest.evidence)) return [];
   const errors: ArtifactValidationError[] = [];
+  const expectedBundleId = typeof manifest.bundleId === "string" ? manifest.bundleId : undefined;
+  const workspaceEvidence = new Map<string, Record<string, unknown>>(
+    manifest.evidence
+      .filter((entry): entry is Record<string, unknown> => isRecord(entry)
+        && typeof entry.id === "string" && entry.kind === "workspace")
+      .map((entry) => [entry.id as string, entry]),
+  );
   const evidencePaths = new Set(
     manifest.evidence
       .filter((entry): entry is Record<string, unknown> => isRecord(entry) && typeof entry.relativePath === "string")
@@ -214,7 +221,16 @@ export function validateRunManifestEvidence(
       });
       if (bytes.length !== descriptor.sizeBytes) throw new Error("Artifact size does not match its manifest descriptor.");
       if (descriptor.kind === "verifier") {
-        errors.push(...nestedVerifierDiagnosticErrors(artifact, descriptor.id, bytes, bundleRoot, evidencePaths, nestedDiagnosticPaths));
+        errors.push(...nestedVerifierDiagnosticErrors(
+          artifact,
+          descriptor.id,
+          bytes,
+          bundleRoot,
+          expectedBundleId,
+          workspaceEvidence,
+          evidencePaths,
+          nestedDiagnosticPaths,
+        ));
       }
     } catch (error) {
       errors.push({
@@ -233,6 +249,8 @@ function nestedVerifierDiagnosticErrors(
   verifierId: string,
   bytes: Buffer,
   bundleRoot: string,
+  expectedBundleId: string | undefined,
+  workspaceEvidence: ReadonlyMap<string, Record<string, unknown>>,
   evidencePaths: ReadonlySet<string>,
   nestedDiagnosticPaths: Set<string>,
 ): ArtifactValidationError[] {
@@ -249,12 +267,44 @@ function nestedVerifierDiagnosticErrors(
   if (schemaErrors.length > 0) {
     return schemaErrors.map((error) => ({ ...error, artifact, schemaVersion: "run-manifest/v1", field: `${scope}${error.field}` }));
   }
-  if (!isRecord(result) || result.diagnostics === undefined) return [];
+  if (!isRecord(result)) return [];
+  const bindingErrors: ArtifactValidationError[] = [];
+  if (expectedBundleId !== undefined && result.bundleId !== expectedBundleId) {
+    bindingErrors.push({
+      artifact,
+      schemaVersion: "run-manifest/v1",
+      field: `${scope}/bundleId`,
+      message: "Verifier bundleId must match its containing run manifest.",
+    });
+  }
+  if (isRecord(result.workspace)) {
+    const workspaceArtifactId = result.workspace.artifactId;
+    const retainedWorkspace = typeof workspaceArtifactId === "string" ? workspaceEvidence.get(workspaceArtifactId) : undefined;
+    if (retainedWorkspace === undefined) {
+      bindingErrors.push({
+        artifact,
+        schemaVersion: "run-manifest/v1",
+        field: `${scope}/workspace/artifactId`,
+        message: "Verifier workspace must reference retained workspace evidence.",
+      });
+    } else if (retainedWorkspace.digest !== result.workspace.digest) {
+      bindingErrors.push({
+        artifact,
+        schemaVersion: "run-manifest/v1",
+        field: `${scope}/workspace/digest`,
+        message: "Verifier workspace digest must match retained workspace evidence.",
+      });
+    }
+  }
+  if (result.diagnostics === undefined) return bindingErrors;
   if (!Array.isArray(result.diagnostics)) {
-    return [{ artifact, schemaVersion: "run-manifest/v1", field: `${scope}/diagnostics`, message: "Verifier diagnostics must be an array." }];
+    return [
+      ...bindingErrors,
+      { artifact, schemaVersion: "run-manifest/v1", field: `${scope}/diagnostics`, message: "Verifier diagnostics must be an array." },
+    ];
   }
 
-  const errors: ArtifactValidationError[] = [];
+  const errors: ArtifactValidationError[] = [...bindingErrors];
   for (const [index, diagnostic] of result.diagnostics.entries()) {
     if (!isRecord(diagnostic) || Object.keys(diagnostic).length !== 5 || !Object.hasOwn(diagnostic, "stream")
         || !Object.hasOwn(diagnostic, "locator")

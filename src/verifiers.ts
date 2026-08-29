@@ -63,6 +63,7 @@ export type VerifierRunResult = VerifierPassedResult | VerifierFailedResult | Ve
 
 export type VerifierErrorResult = VerifierResultBase & {
   status: "error";
+  error: string;
   exitCode?: number;
   workspace?: VerifierWorkspace;
 };

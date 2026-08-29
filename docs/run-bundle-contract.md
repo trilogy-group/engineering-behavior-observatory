@@ -152,9 +152,10 @@ execution-specific diagnostic reference with a `stream` (`stdout` or `stderr`),
 bundle-relative `locator`, SHA-256 `digest`, retained `sizeBytes`, and a
 `truncated` flag. The result remains valid even when diagnostics are truncated.
 The `durationMs` and `diagnostics` fields are optional for older v1 records;
-new executor results include both. An `error` result may omit `workspace` when
-the verifier failed before a workspace was available; it must not invent a
-workspace binding. Coordinator failures such as timeout, launch, parse, or
+new executor results include both. An `error` result requires a nonempty
+explanation and may omit `workspace` when the verifier failed before a
+workspace was available; it must not invent a workspace binding. Coordinator
+failures such as timeout, launch, parse, or
 cleanup errors are recorded in the result's `error` field; the native stderr
 diagnostic remains byte-for-byte separate. `error` is not valid on passed or
 failed results. The process-group boundary cannot
@@ -165,7 +166,9 @@ The result serializer validates `verifier-result/v1` before writing it. The
 diagnostic references are read back and digest-checked before the result is
 saved, so a result cannot point at missing or changed diagnostic bytes. Result
 paths use no-clobber persistence: an existing result, manifest, or other
-retained evidence file is never replaced by a later verifier write.
+retained evidence file is never replaced by a later verifier write. Manifest
+validation also cross-checks each retained verifier's `bundleId` and workspace
+artifact ID/digest against the containing bundle's retained evidence.
 
 ## Sharing boundary
 
