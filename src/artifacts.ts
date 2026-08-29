@@ -14,7 +14,6 @@ import {
   readSync,
   realpathSync,
   renameSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import type { BigIntStats, Stats } from "node:fs";
@@ -1880,7 +1879,8 @@ function writeStagingMarker(path: string, relativePath: string, stagingPath: str
     if (!sameFileIdentity(expected, currentTemporary)) {
       throw new Error(`Publication staging marker "${path}" changed during installation.`);
     }
-    unlinkSync(temporaryPath);
+    // Keep the attempt alias: Node has no descriptor-bound unlink, and
+    // removing it by pathname could delete a concurrent replacement.
     try {
       linkSync(markerTemporaryPath, path);
       markerLinked = true;
@@ -2019,7 +2019,7 @@ function bindStagingMarker(
       if (!sameFileIdentity(expectedBinding, currentAttempt)) {
         throw new Error(`Publication staging binding "${bindingPath}" changed during installation.`);
       }
-      unlinkSync(bindingAttemptPath);
+      // Keep the attempt alias for the same reason as marker staging above.
     }
     const bindingIdentity = expectedBinding ?? lstatSync(bindingTemporaryPath);
     const currentBindingTemporary = lstatIfPresent(bindingTemporaryPath);
@@ -2093,8 +2093,11 @@ function stagingMarkerMatches(path: string, relativePath: string, expectedStagin
 
 function isAccountedStagingMarkerLink(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
   const sibling = path.endsWith(".tmp") ? path.slice(0, -4) : `${path}.tmp`;
-  return target.nlink === 1 || (target.nlink === 2
-    && (hasAliasIdentity(sibling, target) || hasMarkerStagingAlias(path, target)));
+  const hasSibling = hasAliasIdentity(sibling, target);
+  const hasAttempt = hasMarkerStagingAlias(path, target);
+  return target.nlink === 1
+    || (target.nlink === 2 && (hasSibling || hasAttempt))
+    || (target.nlink === 3 && hasSibling && hasAttempt);
 }
 
 function hasMarkerStagingAlias(path: string, target: { dev: number; ino: number }): boolean {

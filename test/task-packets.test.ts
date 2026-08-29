@@ -701,6 +701,64 @@ test("create-if-absent publication moves the marker sidecar after staging-open f
   }
 });
 
+test("create-if-absent publication retains a raced marker attempt", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-marker-attempt-race-"));
+  const originalLstatSync = fs.lstatSync;
+  const mutableFs = fs as unknown as { lstatSync: typeof originalLstatSync };
+  let attemptPath = "";
+  let replaced = false;
+  mutableFs.lstatSync = ((path: fs.PathLike, ...args: Parameters<typeof originalLstatSync> extends [fs.PathLike, ...infer Rest] ? Rest : never) => {
+    const result = originalLstatSync(path, ...args);
+    if (!replaced && typeof path === "string" && /^\.[0-9a-f-]{36}\.marker-tmp$/.test(path)) {
+      attemptPath = path;
+      replaced = true;
+      unlinkSync(path);
+      writeFileSync(path, "replacement marker attempt");
+    }
+    return result;
+  }) as typeof originalLstatSync;
+  syncBuiltinESMExports();
+  try {
+    const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
+    assert.equal(result.created, true);
+    assert.equal(replaced, true);
+    assert.equal(readFileSync(join(root, attemptPath), "utf8"), "replacement marker attempt");
+  } finally {
+    mutableFs.lstatSync = originalLstatSync;
+    syncBuiltinESMExports();
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("create-if-absent publication retains a raced binding attempt", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-binding-attempt-race-"));
+  const originalLstatSync = fs.lstatSync;
+  const mutableFs = fs as unknown as { lstatSync: typeof originalLstatSync };
+  let attemptPath = "";
+  let replaced = false;
+  mutableFs.lstatSync = ((path: fs.PathLike, ...args: Parameters<typeof originalLstatSync> extends [fs.PathLike, ...infer Rest] ? Rest : never) => {
+    const result = originalLstatSync(path, ...args);
+    if (!replaced && typeof path === "string" && /^\.[0-9a-f-]{36}\.binding-tmp$/.test(path)) {
+      attemptPath = path;
+      replaced = true;
+      unlinkSync(path);
+      writeFileSync(path, "replacement binding attempt");
+    }
+    return result;
+  }) as typeof originalLstatSync;
+  syncBuiltinESMExports();
+  try {
+    const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
+    assert.equal(result.created, true);
+    assert.equal(replaced, true);
+    assert.equal(readFileSync(join(root, attemptPath), "utf8"), "replacement binding attempt");
+  } finally {
+    mutableFs.lstatSync = originalLstatSync;
+    syncBuiltinESMExports();
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("create-if-absent publication rejects a raced binding inode", () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-binding-link-race-"));
   const originalLinkSync = fs.linkSync;
@@ -1086,6 +1144,38 @@ test("status preserves an existing recovered alias", () => {
     assert.equal(readFileSync(recoveredAlias, "utf8"), "preserve this alias");
     assert.equal(existsSync(temporaryLink), true);
   } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("status retains a raced recovered alias", () => {
+  const { root } = createBundle();
+  const freezePath = join(root, "packet.json.freeze.json");
+  const originalLinkSync = fs.linkSync;
+  let replaced = false;
+  fs.linkSync = ((existingPath: fs.PathLike, newPath: fs.PathLike) => {
+    const result = originalLinkSync(existingPath, newPath);
+    if (!replaced && typeof newPath === "string" && newPath.endsWith("packet.json.freeze.json.recovered")) {
+      replaced = true;
+      unlinkSync(newPath);
+      writeFileSync(newPath, "replacement recovered alias");
+    }
+    return result;
+  }) as typeof originalLinkSync;
+  syncBuiltinESMExports();
+  let temporaryLink = "";
+  try {
+    freezeTaskPacket(root, "packet.json");
+    const marker = JSON.parse(readFileSync(`${freezePath}.quarantine.marker`, "utf8")) as { stagingPath: string };
+    temporaryLink = join(root, marker.stagingPath);
+    unlinkSync(`${freezePath}.quarantine`);
+    const status = statusTaskPacket(root, "packet.json");
+    assert.equal(replaced, true);
+    assert.equal(readFileSync(`${freezePath}.recovered`, "utf8"), "replacement recovered alias");
+    assert.notEqual(status.status, "frozen");
+  } finally {
+    fs.linkSync = originalLinkSync;
+    syncBuiltinESMExports();
     rmSync(root, { force: true, recursive: true });
   }
 });
