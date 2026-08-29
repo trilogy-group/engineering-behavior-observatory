@@ -4,6 +4,8 @@ import { cp, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, utime
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import {
   assertNoDuplicateJsonKeys,
@@ -137,6 +139,7 @@ const MAX_TIMEOUT_MS = 2_147_483_647;
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const RESERVED_MANIFEST_PATHS = new Set(["manifest.json"]);
+const execFileAsync = promisify(execFile);
 
 export async function digestWorkspace(workspacePath: string): Promise<string> {
   const root = await realpath(workspacePath);
@@ -220,6 +223,19 @@ async function assertWorkspaceSnapshotContent(snapshotPath: string, expected: Wo
   }
 }
 
+async function copyWorkspaceSnapshot(source: string, destination: string): Promise<void> {
+  if (process.platform !== "win32") {
+    try {
+      await execFileAsync("/bin/cp", ["-a", source, destination]);
+      return;
+    } catch {
+      await rm(destination, { force: true, recursive: true }).catch(() => undefined);
+    }
+  }
+  await cp(source, destination, { recursive: true, force: false, preserveTimestamps: true });
+  await restoreWorkspaceTimestamps(source, destination);
+}
+
 async function restoreWorkspaceTimestamps(source: string, destination: string): Promise<void> {
   const entries = await readdir(source, { withFileTypes: true });
   for (const entry of entries) {
@@ -294,13 +310,15 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
         const workspaceContent = await captureWorkspaceContent(workspacePath);
         stagingRoot = await createStagingRoot(workspacePath);
         const evaluatedWorkspacePath = join(stagingRoot, "workspace");
-        await cp(workspacePath, evaluatedWorkspacePath, { recursive: true, force: false, preserveTimestamps: true });
-        await restoreWorkspaceTimestamps(workspacePath, evaluatedWorkspacePath);
+        await copyWorkspaceSnapshot(workspacePath, evaluatedWorkspacePath);
         await assertWorkspaceSnapshotContent(evaluatedWorkspacePath, workspaceContent);
         if (await digestWorkspace(workspacePath) !== options.workspaceFingerprint) {
           throw new Error("Workspace changed while its private evaluation snapshot was being created.");
         }
         evaluatedWorkspaceFingerprint = await digestWorkspace(evaluatedWorkspacePath);
+        if (evaluatedWorkspaceFingerprint !== options.workspaceFingerprint) {
+          throw new Error("Workspace snapshot metadata does not match the evaluated workspace.");
+        }
         const stagedVerifier = join(stagingRoot, "verifier");
         await writePrivateFile(stagedVerifier, verifierBytes);
 
@@ -580,24 +598,14 @@ async function runProcess(
   let timedOut = false;
   let termination: Promise<void> | undefined;
   const terminate = (): Promise<void> => termination ??= killProcessTree(child);
-  const timer = setTimeout(() => {
-    timedOut = true;
-    void terminate().catch(() => undefined);
-  }, timeoutMs);
-  timer.unref();
 
   return new Promise<ProcessResult>((resolveProcess) => {
     let error: string | undefined;
-    child.once("spawn", () => {
-      started = true;
-    });
-    child.once("error", (cause) => {
-      error = cause.message;
-    });
-    child.once("exit", () => {
-      void terminate().catch(() => undefined);
-    });
-    child.once("close", async (code, signal) => {
+    let settled = false;
+    let timer: NodeJS.Timeout;
+    const finish = async (code: number | null, signal: NodeJS.Signals | null): Promise<void> => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       await terminate();
       resolveProcess({
@@ -609,7 +617,27 @@ async function runProcess(
         timedOut,
         ...(error === undefined ? {} : { error }),
       });
+    };
+    child.once("spawn", () => {
+      started = true;
     });
+    child.once("error", (cause) => {
+      error = cause.message;
+    });
+    child.once("exit", () => {
+      void terminate().catch(() => undefined);
+    });
+    child.once("close", (code, signal) => {
+      void finish(code, signal);
+    });
+    timer = setTimeout(() => {
+      timedOut = true;
+      void terminate().catch(() => undefined);
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      void finish(null, null);
+    }, timeoutMs);
+    timer.unref();
   });
 }
 
@@ -658,6 +686,12 @@ function capture(stream: NodeJS.ReadableStream | null, limit: number, diagnostic
       }
     });
     stream.once("end", () => {
+      if (!settled) {
+        settled = true;
+        resolveCapture({ bytes: Buffer.concat(chunks), truncated });
+      }
+    });
+    stream.once("close", () => {
       if (!settled) {
         settled = true;
         resolveCapture({ bytes: Buffer.concat(chunks), truncated });

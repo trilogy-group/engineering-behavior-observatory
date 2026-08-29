@@ -438,6 +438,29 @@ test("classifies timeout, crash, and malformed output as verifier errors", async
   }
 });
 
+test("settles timeout when a detached descendant inherits verifier pipes", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      const { spawn } = require("node:child_process");
+      spawn(process.execPath, ["-e", "setTimeout(() => {}, 10000)"], {
+        stdio: ["ignore", "inherit", "inherit"],
+        detached: true,
+      }).unref();
+      process.exit(0);
+    `);
+    const result = await Promise.race([
+      run(root, verifier, { timeoutMs: 50 }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout did not settle")), 1_000)),
+    ]);
+
+    assert.equal(result.status, "error");
+    assert.match(result.error ?? "", /timed out/);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("bounds oversized diagnostics without losing a valid result", async () => {
   const root = await createRoots();
   try {
