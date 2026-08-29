@@ -87,19 +87,7 @@ export function validateArtifact(artifact: string, document: unknown): ArtifactV
     : (validate.errors ?? []).map((error) => validationError(artifact, schemaVersion, error));
 
   if (schemaVersion === "run-manifest/v1" && isRecord(document) && Array.isArray(document.evidence)) {
-    try {
-      assertUniqueArtifactIdentities(document.evidence.map((entry) => ({
-        id: isRecord(entry) && typeof entry.id === "string" ? entry.id : "",
-        relativePath: isRecord(entry) && typeof entry.relativePath === "string" ? entry.relativePath : "",
-      })));
-    } catch (error) {
-      errors.push({
-        artifact,
-        schemaVersion,
-        field: "/evidence",
-        message: error instanceof Error ? error.message : "Duplicate evidence identity.",
-      });
-    }
+    errors.push(...runManifestIntegrityErrors(artifact, schemaVersion, document));
   }
 
   return errors;
@@ -236,6 +224,46 @@ function validationError(artifact: string, schemaVersion: string, error: ErrorOb
     field: `${error.instancePath}${missing}` || "/",
     message: error.message ?? error.keyword,
   };
+}
+
+function runManifestIntegrityErrors(
+  artifact: string,
+  schemaVersion: string,
+  manifest: Record<string, unknown>,
+): ArtifactValidationError[] {
+  const errors: ArtifactValidationError[] = [];
+  const evidence = manifest.evidence as unknown[];
+
+  try {
+    assertUniqueArtifactIdentities(evidence.map((entry) => ({
+      id: isRecord(entry) && typeof entry.id === "string" ? entry.id : "",
+      relativePath: isRecord(entry) && typeof entry.relativePath === "string" ? entry.relativePath : "",
+    })));
+  } catch (error) {
+    errors.push({ artifact, schemaVersion, field: "/evidence", message: error instanceof Error ? error.message : "Duplicate evidence identity." });
+  }
+
+  const evidenceClasses = new Map<string, string>();
+  for (const descriptor of evidence) {
+    if (!isRecord(descriptor)) continue;
+    const { digest, kind, authority, relativePath } = descriptor;
+    if (typeof relativePath === "string" && (relativePath.toLowerCase() === "manifest.json" || relativePath.toLowerCase().startsWith("manifest.json/"))) {
+      errors.push({ artifact, schemaVersion, field: "/evidence", message: "Evidence cannot reuse the containing manifest path." });
+    }
+    if (typeof digest !== "string" || typeof kind !== "string" || typeof authority !== "string") continue;
+
+    const evidenceClass = `${kind}:${authority}`;
+    const existing = evidenceClasses.get(digest);
+    if (existing !== undefined && existing !== evidenceClass) {
+      errors.push({ artifact, schemaVersion, field: "/evidence", message: `Evidence reuses ${digest} across evidence classes.` });
+    }
+    evidenceClasses.set(digest, evidenceClass);
+  }
+
+  if (isRecord(manifest.attempt) && manifest.attempt.retryOf === manifest.attempt.id) {
+    errors.push({ artifact, schemaVersion, field: "/attempt/retryOf", message: "Retry lineage cannot reference the current attempt." });
+  }
+  return errors;
 }
 
 function escapeJsonPointer(value: string): string {

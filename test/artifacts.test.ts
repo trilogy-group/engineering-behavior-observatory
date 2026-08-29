@@ -100,6 +100,18 @@ test("validation reports schema versions, fields, duplicate identities, and fixt
   assert.throws(() => assertUniqueArtifactIdentities([{ id: "one", relativePath: "a.json" }, { id: "two", relativePath: "A.json" }]), /collides/);
   assert.throws(() => assertUniqueArtifactIdentities([{ id: "one", relativePath: "evidence" }, { id: "two", relativePath: "evidence/session.json" }]), /collides/);
 
+  const selfRetry = JSON.parse(readFileSync(runFixturePath("complete/manifest.json"), "utf8"));
+  selfRetry.attempt.retryOf = selfRetry.attempt.id;
+  assert.match(validateArtifact("run/manifest.json", selfRetry).map((error) => error.message).join("\n"), /Retry lineage/);
+  const reusedDigest = JSON.parse(readFileSync(runFixturePath("complete/manifest.json"), "utf8"));
+  const session = reusedDigest.evidence.find((entry: { kind: string }) => entry.kind === "session");
+  const telemetry = reusedDigest.evidence.find((entry: { kind: string }) => entry.kind === "telemetry");
+  telemetry.digest = session.digest;
+  assert.match(validateArtifact("run/manifest.json", reusedDigest).map((error) => error.message).join("\n"), /across evidence classes/);
+  const overwrittenManifest = JSON.parse(readFileSync(runFixturePath("complete/manifest.json"), "utf8"));
+  overwrittenManifest.evidence[0].relativePath = "manifest.json";
+  assert.match(validateArtifact("run/manifest.json", overwrittenManifest).map((error) => error.message).join("\n"), /containing manifest/);
+
   let output = "";
   assert.equal(main(["validate", fixturePath("task-packet.valid.v1.json"), runFixturePath("complete/manifest.json")], (message) => (output += message)), 0);
   assert.equal(output, "Validated 2 artifact(s).\n");
