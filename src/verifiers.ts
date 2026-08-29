@@ -116,7 +116,8 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
     throw new Error(`Diagnostic directory "${diagnosticDirectory}" is unsafe.`);
   }
   const executionDiagnosticDirectory = posix.join(diagnosticDirectory, randomUUID());
-  const diagnosticFiles = await openDiagnosticFiles(artifactRoot, executionDiagnosticDirectory);
+  const diagnosticSetup = await openDiagnosticFiles(artifactRoot, executionDiagnosticDirectory);
+  const diagnosticFiles = diagnosticSetup.files;
 
   try {
     let stdout: CapturedOutput = emptyOutput();
@@ -124,56 +125,58 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
     let exitCode: number | undefined;
     let status: CompleteVerifierResult["status"] = "error";
     let assertions: VerifierAssertion[] = [];
-    let internalError: string | undefined;
+    let internalError: string | undefined = diagnosticSetup.error;
     let stagingRoot: string | undefined;
 
     try {
-      const verifierBytes = await readVerifiedArtifact(verifierRoot, options.verifier.locator, options.verifier.digest);
-      stagingRoot = await createStagingRoot(workspacePath);
-      const stagedVerifier = join(stagingRoot, "verifier");
-      await writePrivateFile(stagedVerifier, verifierBytes);
-
-      const processResult = await runProcess(
-        options.command ?? process.execPath,
-        [...(options.args ?? []), stagedVerifier, workspacePath],
-        workspacePath,
-        options.env,
-        timeoutMs,
-        maxOutputBytes,
-        diagnosticFiles,
-      );
-      stdout = processResult.stdout;
-      stderr = processResult.stderr;
-      exitCode = processResult.exitCode;
-      if (processResult.error !== undefined) internalError = processResult.error;
-
       if (internalError === undefined) {
-        if (stdout.truncated) {
-          internalError = `Verifier stdout exceeded ${maxOutputBytes} bytes.`;
-        } else {
-          try {
-            assertions = parseAssertions(stdout.bytes);
-          } catch (error) {
-            internalError = error instanceof Error ? error.message : "Verifier output is invalid.";
-          }
-        }
-      }
+        const verifierBytes = await readVerifiedArtifact(verifierRoot, options.verifier.locator, options.verifier.digest);
+        stagingRoot = await createStagingRoot(workspacePath);
+        const stagedVerifier = join(stagingRoot, "verifier");
+        await writePrivateFile(stagedVerifier, verifierBytes);
 
-      if (internalError === undefined && processResult.signal === undefined && exitCode !== undefined) {
-        if (assertions.some((assertion) => assertion.status === "failed")) {
-          if (exitCode === 0) {
-            internalError = "Verifier exit status contradicts its failed assertions.";
+        const processResult = await runProcess(
+          options.command ?? process.execPath,
+          [...(options.args ?? []), stagedVerifier, workspacePath],
+          workspacePath,
+          options.env,
+          timeoutMs,
+          maxOutputBytes,
+          diagnosticFiles as [DiagnosticFile, DiagnosticFile],
+        );
+        stdout = processResult.stdout;
+        stderr = processResult.stderr;
+        exitCode = processResult.exitCode;
+        if (processResult.error !== undefined) internalError = processResult.error;
+
+        if (internalError === undefined) {
+          if (stdout.truncated) {
+            internalError = `Verifier stdout exceeded ${maxOutputBytes} bytes.`;
           } else {
-            status = "failed";
+            try {
+              assertions = parseAssertions(stdout.bytes);
+            } catch (error) {
+              internalError = error instanceof Error ? error.message : "Verifier output is invalid.";
+            }
           }
-        } else if (exitCode === 0 && assertions.every((assertion) => assertion.status === "passed")) {
-          status = "passed";
-        } else {
-          internalError = "Verifier exit status contradicts its assertions.";
         }
+
+        if (internalError === undefined && processResult.signal === undefined && exitCode !== undefined) {
+          if (assertions.some((assertion) => assertion.status === "failed")) {
+            if (exitCode === 0) {
+              internalError = "Verifier exit status contradicts its failed assertions.";
+            } else {
+              status = "failed";
+            }
+          } else if (exitCode === 0 && assertions.every((assertion) => assertion.status === "passed")) {
+            status = "passed";
+          } else {
+            internalError = "Verifier exit status contradicts its assertions.";
+          }
+        }
+        if (processResult.timedOut) internalError = combineErrors(internalError, `Verifier timed out after ${timeoutMs} ms.`);
+        else if (processResult.signal !== undefined) internalError = combineErrors(internalError, `Verifier terminated by ${processResult.signal}.`);
       }
-      if (processResult.timedOut) internalError = `Verifier timed out after ${timeoutMs} ms.`;
-      else if (processResult.signal !== undefined) internalError = `Verifier terminated by ${processResult.signal}.`;
     } catch (error) {
       internalError = error instanceof Error ? error.message : "Verifier could not be executed.";
     } finally {
@@ -559,7 +562,12 @@ type DiagnosticFile = {
   closed: boolean;
 };
 
-async function openDiagnosticFiles(root: string, directory: string): Promise<[DiagnosticFile, DiagnosticFile]> {
+type DiagnosticSetup = {
+  files: DiagnosticFile[];
+  error?: string;
+};
+
+async function openDiagnosticFiles(root: string, directory: string): Promise<DiagnosticSetup> {
   const files: DiagnosticFile[] = [];
   try {
     for (const stream of ["stdout", "stderr"]) {
@@ -569,11 +577,14 @@ async function openDiagnosticFiles(root: string, directory: string): Promise<[Di
       const { path } = await prepareDiagnosticPath(rootPath, locator);
       files.push({ locator, handle: await open(path, "wx", 0o600), writes: Promise.resolve(), closed: false });
     }
+    return { files };
   } catch (error) {
     await finalizeDiagnosticFiles(files);
-    throw error;
+    return {
+      files,
+      error: error instanceof Error ? error.message : "Verifier diagnostic setup failed.",
+    };
   }
-  return files as [DiagnosticFile, DiagnosticFile];
 }
 
 function queueDiagnosticWrite(file: DiagnosticFile, bytes: Uint8Array): void {

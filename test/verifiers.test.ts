@@ -204,6 +204,24 @@ test("rejects an artifact root inside the workspace before creating it", async (
   }
 });
 
+test("returns a structured error when diagnostic setup fails", async () => {
+  const root = await createRoots();
+  try {
+    const occupiedPath = join(root.artifact, "occupied");
+    await writeFile(occupiedPath, "not a directory");
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "should-not-run", status: "passed" }] }));
+    `);
+    const result = await run(root, verifier, { diagnosticDirectory: "occupied" });
+
+    assert.equal(result.status, "error");
+    assert.match(result.error ?? "", /directory|regular file|setup|exists/i);
+    assert.deepEqual(result.assertions, []);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("rejects overlong execution identifiers before starting", async () => {
   const root = await createRoots();
   try {
@@ -551,7 +569,7 @@ async function addVerifier(root: string, source: string): Promise<{ locator: str
 async function run(
   root: Roots,
   verifier: { locator: string; digest: ReturnType<typeof digestBytes> },
-  options: { timeoutMs?: number; maxOutputBytes?: number; command?: string } = {},
+  options: { timeoutMs?: number; maxOutputBytes?: number; command?: string; diagnosticDirectory?: string } = {},
 ): Promise<CompleteVerifierResult> {
   return executeVerifier({
     bundleId: "bundle-test",
