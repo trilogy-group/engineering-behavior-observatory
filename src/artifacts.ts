@@ -13,7 +13,6 @@ import {
   readFileSync,
   readSync,
   realpathSync,
-  renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -2282,10 +2281,18 @@ function movePathToAttempt(path: string, descriptor?: number): string {
     const target = `.${randomUUID()}.failed`;
     try {
       if (lstatIfPresent(target) !== undefined) continue;
-      renameSync(path, target);
+      linkSync(path, target);
       const moved = lstatSync(target);
       if (!sameFileIdentity(expected, moved)) {
+        unlinkPathIfIdentity(target, moved);
         throw new Error(`Publication path "${path}" changed during failure preservation.`);
+      }
+      const source = lstatIfPresent(path);
+      if (source === undefined || !sameFileIdentity(expected, source)) return target;
+      try {
+        unlinkSync(path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
       return target;
     } catch (error) {
@@ -2293,6 +2300,18 @@ function movePathToAttempt(path: string, descriptor?: number): string {
     }
   }
   throw new Error(`Could not preserve failed publication path "${path}".`);
+}
+
+function unlinkPathIfIdentity(path: string, expected: { dev: number; ino: number }): boolean {
+  const current = lstatIfPresent(path);
+  if (current === undefined || !sameFileIdentity(expected, current)) return false;
+  try {
+    unlinkSync(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
 }
 
 function isReadablePublishedFile(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
