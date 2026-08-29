@@ -170,6 +170,9 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
   if (!isSafeArtifactRelativePath(diagnosticDirectory)) {
     throw new Error(`Diagnostic directory "${diagnosticDirectory}" is unsafe.`);
   }
+  if (hasPortablePathCollision(diagnosticDirectory.toLowerCase(), new Set(["manifest.json"]))) {
+    throw new Error("Diagnostic directory collides with the reserved manifest path.");
+  }
   const executionDiagnosticDirectory = posix.join(diagnosticDirectory, randomUUID());
   const diagnosticSetup = await openDiagnosticFiles(artifactRoot, executionDiagnosticDirectory);
   const diagnosticFiles = diagnosticSetup.files;
@@ -303,6 +306,9 @@ export async function writeVerifierResult(
 ): Promise<{ algorithm: "sha256"; value: string }> {
   assertVerifierResult(result, relativePath);
   const resultLocator = relativePath.toLowerCase();
+  if (hasPortablePathCollision(resultLocator, new Set(["manifest.json"]))) {
+    throw new Error("Verifier result path collides with the reserved manifest path.");
+  }
   const diagnosticLocators = new Set((result.diagnostics ?? []).map((diagnostic) => diagnostic.locator.toLowerCase()));
   if (hasPortablePathCollision(resultLocator, diagnosticLocators)) {
     throw new Error("Verifier result path collides with a diagnostic locator.");

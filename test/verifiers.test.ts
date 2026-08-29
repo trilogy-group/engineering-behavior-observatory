@@ -581,6 +581,34 @@ test("rejects result paths that collide with diagnostics", async () => {
       }),
       /collides with a diagnostic/,
     );
+    await assert.rejects(
+      writeVerifierResult(root.artifact, "manifest.json", result),
+      /reserved manifest path/,
+    );
+    await assert.rejects(
+      writeVerifierResult(root.artifact, "manifest.json/verifier.json", result),
+      /reserved manifest path/,
+    );
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("rejects diagnostic directories in the reserved manifest namespace", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "reserved", status: "passed" }] }));
+    `);
+    await assert.rejects(
+      run(root, verifier, { diagnosticDirectory: "manifest.json" }),
+      /reserved manifest path/,
+    );
+    await assert.rejects(
+      run(root, verifier, { diagnosticDirectory: "Manifest.json/diagnostics" }),
+      /reserved manifest path/,
+    );
+    assert.equal(existsSync(join(root.artifact, "manifest.json")), false);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }

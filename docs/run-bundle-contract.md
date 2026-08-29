@@ -168,7 +168,9 @@ saved, so a result cannot point at missing or changed diagnostic bytes. Result
 paths use no-clobber persistence: an existing result, manifest, or other
 retained evidence file is never replaced by a later verifier write. Manifest
 validation also cross-checks each retained verifier's `bundleId` and workspace
-artifact ID/digest against the containing bundle's retained evidence.
+artifact ID/digest against the containing bundle's retained evidence. The
+`manifest.json` path and its descendants are reserved for the containing
+manifest and cannot be used for verifier results or diagnostic directories.
 
 ## Sharing boundary
 
