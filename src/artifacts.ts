@@ -2157,12 +2157,13 @@ function isOwnedMarkerBinding(
   relativePath: string,
   marker: Record<string, unknown>,
 ): { bindingIdentity: Stats; stagingIdentity: { dev: number; ino: number } } | undefined {
-  const candidate = readMarkerMetadata(path);
-  if (candidate === undefined || !isOwnedMarkerSidecarValue(candidate, relativePath, marker)
+  const metadata = readMarkerMetadataWithIdentity(path);
+  if (metadata === undefined) return undefined;
+  const candidate = metadata.value;
+  if (!isOwnedMarkerSidecarValue(candidate, relativePath, marker)
       || !isRecord(candidate.stagingIdentity)) return undefined;
   const { dev, ino } = candidate.stagingIdentity;
-  const bindingIdentity = lstatIfPresent(path);
-  if (bindingIdentity === undefined) return undefined;
+  const bindingIdentity = metadata.identity;
   if (typeof dev !== "number" || typeof ino !== "number"
       || !Number.isSafeInteger(dev) || !Number.isSafeInteger(ino)) return undefined;
   return { bindingIdentity, stagingIdentity: { dev, ino } };
@@ -2184,6 +2185,12 @@ function isOwnedMarkerSidecarValue(
 }
 
 function readMarkerMetadata(path: string): Record<string, unknown> | undefined {
+  return readMarkerMetadataWithIdentity(path)?.value;
+}
+
+function readMarkerMetadataWithIdentity(
+  path: string,
+): { value: Record<string, unknown>; identity: Stats } | undefined {
   try {
     const opened = lstatSync(path);
     if (!opened.isFile() || opened.isSymbolicLink() || (opened.mode & 0o777) !== 0o600
@@ -2191,7 +2198,7 @@ function readMarkerMetadata(path: string): Record<string, unknown> | undefined {
     const value = JSON.parse(readFileSync(path, "utf8")) as unknown;
     const completed = lstatSync(path);
     if (!sameFileIdentity(opened, completed) || completed.size !== opened.size) return undefined;
-    return isRecord(value) ? value : undefined;
+    return isRecord(value) ? { value, identity: opened } : undefined;
   } catch {
     return undefined;
   }
@@ -2240,8 +2247,8 @@ function hasAliasSync(path: string, target: { dev: number; ino: number }): boole
 
 function hasStagingAlias(path: string, target: { dev: number; ino: number }): boolean {
   try {
-    const marker = JSON.parse(readFileSync(`${path}.quarantine.marker`, "utf8")) as unknown;
-    if (!isRecord(marker) || typeof marker.stagingPath !== "string"
+    const marker = readMarkerMetadata(`${path}.quarantine.marker`);
+    if (marker === undefined || typeof marker.stagingPath !== "string"
         || !STAGING_ATTEMPT_PATTERN.test(marker.stagingPath.slice(1, -4))) return false;
     return sameFileIdentity(target, lstatSync(resolve(dirname(path), marker.stagingPath)));
   } catch (error) {
@@ -2251,13 +2258,8 @@ function hasStagingAlias(path: string, target: { dev: number; ino: number }): bo
 }
 
 function readStagingPath(path: string, relativePath: string): string | undefined {
-  try {
-    const marker = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    return isStagingMarker(marker, relativePath) ? marker.stagingPath as string : undefined;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    return undefined;
-  }
+  const marker = readValidatedStagingMarker(path, relativePath)?.marker;
+  return marker?.stagingPath as string | undefined;
 }
 
 async function isReadablePublishedArtifact(path: string, target: { dev: number; ino: number; nlink: number }): Promise<boolean> {

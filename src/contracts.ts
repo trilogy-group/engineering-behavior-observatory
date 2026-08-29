@@ -599,8 +599,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasStagingAlias(path: string, target: { dev: number; ino: number }): boolean {
   try {
-    const marker = JSON.parse(readFileSync(`${path}.quarantine.marker`, "utf8")) as unknown;
-    if (!isRecord(marker) || marker.schemaVersion !== "ebo.publication-staging/v1"
+    const marker = readPublicationMarker(`${path}.quarantine.marker`);
+    if (marker === undefined
+        || marker.schemaVersion !== "ebo.publication-staging/v1"
         || typeof marker.stagingPath !== "string"
         || !/^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(marker.stagingPath)) return false;
     return sameFileIdentity(target, lstatSync(resolve(dirname(path), marker.stagingPath)));
