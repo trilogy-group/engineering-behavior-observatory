@@ -552,7 +552,7 @@ export function openBundleRegularFile(
         || !isReadableBundleFile(resolve(currentPath, leaf), opened)) {
       throw new Error(`${label} "${locator}" is not an isolated regular file.`);
     }
-    assertBundleRootHandle(root, bundleRoot, locator);
+    assertBundleRootHandle(root, root.path, locator);
     return descriptor;
   } catch (error) {
     if (descriptor !== undefined) closeSync(descriptor);
