@@ -35,6 +35,7 @@ test("canonical metadata and binary payloads have stable, distinct digests", () 
   const cyclic: unknown[] = [];
   cyclic.push(cyclic);
   assert.throws(() => canonicalizeMetadata(cyclic), /cycles/);
+  assert.throws(() => canonicalizeMetadata(new Array(1)), /holes/);
 });
 
 test("artifact paths reject traversal and symlinks while preserving verified bytes", async () => {
@@ -96,7 +97,8 @@ test("validation reports schema versions, fields, duplicate identities, and fixt
   });
   runManifest.evidence.push({ ...runManifest.evidence[0] });
   assert.match(validateArtifact("run/manifest.json", runManifest).map((error) => error.message).join("\n"), /Duplicate artifact identity/);
-  assert.throws(() => assertUniqueArtifactIdentities([{ id: "one", relativePath: "a.json" }, { id: "two", relativePath: "A.json" }]), /Duplicate artifact path/);
+  assert.throws(() => assertUniqueArtifactIdentities([{ id: "one", relativePath: "a.json" }, { id: "two", relativePath: "A.json" }]), /collides/);
+  assert.throws(() => assertUniqueArtifactIdentities([{ id: "one", relativePath: "evidence" }, { id: "two", relativePath: "evidence/session.json" }]), /collides/);
 
   let output = "";
   assert.equal(main(["validate", fixturePath("task-packet.valid.v1.json"), runFixturePath("complete/manifest.json")], (message) => (output += message)), 0);

@@ -48,6 +48,7 @@ export function verifyDigest(bytes: Uint8Array, expected: Digest): boolean {
 export function assertUniqueArtifactIdentities(identities: readonly ArtifactIdentity[]): void {
   const ids = new Set<string>();
   const paths = new Set<string>();
+  const ancestorPaths = new Set<string>();
 
   for (const identity of identities) {
     if (identity.id.trim() === "" || ids.has(identity.id)) {
@@ -58,8 +59,15 @@ export function assertUniqueArtifactIdentities(identities: readonly ArtifactIden
     }
 
     const normalizedPath = identity.relativePath.toLowerCase();
-    if (paths.has(normalizedPath)) {
-      throw new Error(`Duplicate artifact path "${identity.relativePath}".`);
+    if (paths.has(normalizedPath) || ancestorPaths.has(normalizedPath)) {
+      throw new Error(`Artifact path "${identity.relativePath}" collides with another artifact path.`);
+    }
+    for (let boundary = normalizedPath.lastIndexOf("/"); boundary > 0; boundary = normalizedPath.lastIndexOf("/", boundary - 1)) {
+      const ancestor = normalizedPath.slice(0, boundary);
+      if (paths.has(ancestor)) {
+        throw new Error(`Artifact path "${identity.relativePath}" collides with another artifact path.`);
+      }
+      ancestorPaths.add(ancestor);
     }
     ids.add(identity.id);
     paths.add(normalizedPath);
@@ -185,9 +193,17 @@ function canonicalJson(value: unknown, ancestors: Set<object>): string {
   }
   if (Array.isArray(value)) {
     if (ancestors.has(value)) throw new Error("Metadata must not contain cycles.");
+    if (Object.keys(value).some((key) => !/^(?:0|[1-9][0-9]*)$/.test(key) || Number(key) >= value.length)) {
+      throw new Error("Metadata arrays must not contain non-index properties.");
+    }
     ancestors.add(value);
     try {
-      return `[${value.map((entry) => canonicalJson(entry, ancestors)).join(",")}]`;
+      const entries = [];
+      for (let index = 0; index < value.length; index += 1) {
+        if (!Object.hasOwn(value, index)) throw new Error("Metadata arrays must not contain holes.");
+        entries.push(canonicalJson(value[index], ancestors));
+      }
+      return `[${entries.join(",")}]`;
     } finally {
       ancestors.delete(value);
     }

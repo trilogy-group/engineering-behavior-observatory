@@ -57,6 +57,7 @@ npm ci
 npm run build
 npm run typecheck
 npm test
+node dist/src/cli.js --help
 node dist/src/cli.js validate tests/fixtures/task-packet.valid.v1.json \
   test/fixtures/run-bundles/complete/manifest.json
 ```
