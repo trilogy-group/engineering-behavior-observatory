@@ -9,9 +9,11 @@ import {
   digestBytes,
   executeVerifier,
   readVerifiedArtifact,
+  serializeVerifierResult,
   validateArtifact,
   writeVerifierResult,
   type VerifierResult,
+  type VerifierRunResult,
 } from "../src/index.js";
 
 const workspaceDigest = `sha256:${"a".repeat(64)}`;
@@ -84,12 +86,13 @@ test("classifies timeout, crash, and malformed output as verifier errors", async
   const cases = [
     {
       name: "timeout",
-      source: `setTimeout(() => {}, 10000);`,
-      options: { timeoutMs: 25 },
-      check: async (result: VerifierResult, root: Roots) => assert.match(
-        await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"),
-        /timed out/,
-      ),
+      source: `process.stderr.write("before-timeout"); setTimeout(() => {}, 10000);`,
+      options: { timeoutMs: 150 },
+      check: async (result: VerifierResult, root: Roots) => {
+        const diagnostic = await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8");
+        assert.match(diagnostic, /before-timeout/);
+        assert.match(diagnostic, /timed out/);
+      },
     },
     {
       name: "crash",
@@ -138,6 +141,50 @@ test("bounds oversized diagnostics without losing a valid result", async () => {
     assert.equal(stderr.sizeBytes, 128);
     assert.equal(stderr.truncated, true);
     assert.equal((await readFile(join(root.artifact, stderr.locator))).length, 128);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("rejects contradictory failed results in public serializers", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "serializable", status: "passed" }] }));
+    `);
+    const result = await run(root, verifier);
+    assert.throws(() => serializeVerifierResult({
+      ...result,
+      status: "failed",
+      exitCode: 0,
+      assertions: [{ id: "serializable", status: "failed" }],
+    }), /contradicts/);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("represents a not-run verifier without a workspace", () => {
+  const result = {
+    schemaVersion: "verifier-result/v1" as const,
+    bundleId: "bundle-test",
+    status: "not-run" as const,
+    durationMs: 0,
+    assertions: [{ id: "not-started", status: "not-run" as const }],
+    diagnostics: [],
+  };
+
+  assert.doesNotThrow(() => serializeVerifierResult(result));
+});
+
+test("uses POSIX separators in diagnostic locators", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "portable", status: "passed" }] }));
+    `);
+    const result = await run(root, verifier);
+    assert.ok(result.diagnostics.every((diagnostic) => !diagnostic.locator.includes("\\")));
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
@@ -223,7 +270,7 @@ async function run(
   root: Roots,
   verifier: { locator: string; digest: ReturnType<typeof digestBytes> },
   options: { timeoutMs?: number; maxOutputBytes?: number } = {},
-): Promise<VerifierResult> {
+): Promise<VerifierRunResult> {
   return executeVerifier({
     bundleId: "bundle-test",
     verifierRoot: root.verifier,

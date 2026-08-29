@@ -52,6 +52,8 @@ export type {
   ExecuteVerifierOptions,
   VerifierAssertion,
   VerifierAssertionStatus,
+  VerifierNotRunResult,
   VerifierResult,
+  VerifierRunResult,
   VerifierWorkspace,
 } from "./verifiers.js";
