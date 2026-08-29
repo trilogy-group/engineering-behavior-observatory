@@ -11,7 +11,7 @@ import {
   realpathSync,
   unlinkSync,
 } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import {
   digestBytes,
@@ -800,7 +800,7 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
       const opened = fstatSync(descriptor);
       const openedTimes = fstatSync(descriptor, { bigint: true });
       const openedHasQuarantine = opened.nlink > 1
-        && countQuarantineAliases(dirname(path), opened) === opened.nlink - 1;
+        && countQuarantineAliases(dirname(path), basename(path), opened) === opened.nlink - 1;
       if (!opened.isFile() || (opened.nlink > 1 && !openedHasQuarantine)) {
         throw new Error(`Artifact path "${locator}" is not an isolated regular file.`);
       }
@@ -820,7 +820,7 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
       const completed = fstatSync(descriptor);
       const completedTimes = fstatSync(descriptor, { bigint: true });
       const completedHasQuarantine = completed.nlink > 1
-        && countQuarantineAliases(dirname(path), completed) === completed.nlink - 1;
+        && countQuarantineAliases(dirname(path), basename(path), completed) === completed.nlink - 1;
       if (!completed.isFile() || (completed.nlink > 1 && !completedHasQuarantine)
           || completed.dev !== opened.dev || completed.ino !== opened.ino
           || completed.size !== opened.size || completedTimes.mtimeNs !== openedTimes.mtimeNs
@@ -842,7 +842,7 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
   }
 }
 
-function countQuarantineAliases(parent: string, target: { dev: number; ino: number }): number {
+function countQuarantineAliases(parent: string, destination: string, target: { dev: number; ino: number }): number {
   const directory = opendirSync(parent);
   let scanned = 0;
   let matches = 0;
@@ -850,6 +850,7 @@ function countQuarantineAliases(parent: string, target: { dev: number; ino: numb
     for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
       scanned += 1;
       if (scanned > MAX_FREEZE_RECOVERY_ENTRIES) return 0;
+      if (entry.name === destination) continue;
       if (!QUARANTINED_LINK_PATTERN.test(entry.name)) continue;
       try {
         if (sameFileIdentity(target, lstatSync(resolve(parent, entry.name)))) matches += 1;

@@ -335,6 +335,17 @@ test("recovery never removes a freeze destination that resembles a temporary nam
   }
 });
 
+test("quarantine-shaped freeze destinations remain readable", () => {
+  const { root } = createBundle();
+  const freezeLocator = "freeze.quarantine-77777777-7777-4777-8777-777777777777";
+  try {
+    freezeTaskPacket(root, "packet.json", freezeLocator);
+    assert.equal(statusTaskPacket(root, "packet.json", freezeLocator).status, "frozen");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("freeze publication rejects a symlinked ancestor", () => {
   const { root } = createBundle();
   const outside = mkdtempSync(join(tmpdir(), "ebo-freeze-outside-"));
