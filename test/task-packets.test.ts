@@ -691,7 +691,9 @@ test("create-if-absent publication moves the marker sidecar after staging-open f
     assert.equal(injected, true);
     assert.equal(existsSync(join(root, "metadata.json.quarantine.marker")), false);
     assert.equal(existsSync(join(root, "metadata.json.quarantine.marker.tmp")), false);
-    assert.equal(readdirSync(root).filter((name) => name.endsWith(".failed")).length, 2);
+    // Both the staged file and its marker sidecar retain their retirement
+    // aliases because source removal is not descriptor-bound in Node.
+    assert.equal(readdirSync(root).filter((name) => name.endsWith(".failed")).length, 4);
   } finally {
     fs.openSync = originalOpenSync;
     syncBuiltinESMExports();
@@ -751,7 +753,8 @@ test("create-if-absent publication preserves marker temp after installation iden
     assert.equal(markerUnlinked, true);
     assert.equal(existsSync(join(root, "metadata.json.quarantine.marker")), false);
     assert.equal(existsSync(join(root, "metadata.json.quarantine.marker.tmp")), false);
-    assert.equal(readdirSync(root).filter((name) => name.endsWith(".failed")).length, 1);
+    // The validated marker and its retirement alias remain explicit evidence.
+    assert.equal(readdirSync(root).filter((name) => name.endsWith(".failed")).length, 2);
   } finally {
     fs.linkSync = originalLinkSync;
     syncBuiltinESMExports();
@@ -1473,6 +1476,52 @@ test("failure preservation leaves a raced replacement at its source path", () =>
     assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), true);
   } finally {
     fs.renameSync = originalRenameSync;
+    syncBuiltinESMExports();
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("failure preservation retains a raced retirement alias", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-preservation-retirement-"));
+  const originalRenameSync = fs.renameSync;
+  const originalLstatSync = fs.lstatSync;
+  const mutableFs = fs as unknown as { lstatSync: typeof originalLstatSync };
+  let retirementPath = "";
+  let replaced = false;
+  fs.renameSync = ((oldPath: fs.PathLike, newPath: fs.PathLike) => {
+    const result = originalRenameSync(oldPath, newPath);
+    if (retirementPath === "" && oldPath === "published.json" && typeof newPath === "string"
+        && newPath.endsWith(".failed")) retirementPath = newPath;
+    return result;
+  }) as typeof originalRenameSync;
+  mutableFs.lstatSync = ((path: fs.PathLike, ...args: Parameters<typeof originalLstatSync> extends [fs.PathLike, ...infer Rest] ? Rest : never) => {
+    const result = originalLstatSync(path, ...args);
+    if (!replaced && retirementPath !== "" && path === retirementPath) {
+      replaced = true;
+      unlinkSync(path);
+      writeFileSync(path, "retirement replacement");
+    }
+    return result;
+  }) as typeof originalLstatSync;
+  syncBuiltinESMExports();
+  try {
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(
+        root,
+        "published.json",
+        { state: "ready" },
+        undefined,
+        undefined,
+        () => { throw new Error("injected post-publication failure"); },
+      ),
+      /injected post-publication failure/,
+    );
+    assert.equal(replaced, true);
+    assert.notEqual(retirementPath, "");
+    assert.equal(readFileSync(join(root, retirementPath), "utf8"), "retirement replacement");
+  } finally {
+    fs.renameSync = originalRenameSync;
+    mutableFs.lstatSync = originalLstatSync;
     syncBuiltinESMExports();
     rmSync(root, { force: true, recursive: true });
   }

@@ -2318,7 +2318,8 @@ function movePathToAttempt(path: string, descriptor?: number): string {
       linkSync(path, target);
       const moved = lstatSync(target);
       if (!sameFileIdentity(expected, moved)) {
-        unlinkSync(target);
+        // Keep the unexpected inode under failed evidence. Removing it by
+        // pathname could delete a replacement that won the race.
         throw new Error(`Publication path "${path}" changed during failure preservation.`);
       }
       // Node does not expose an unlinkat-style operation that binds removal to
@@ -2337,7 +2338,8 @@ function movePathToAttempt(path: string, descriptor?: number): string {
       }
       const retiredIdentity = lstatSync(retired);
       if (sameFileIdentity(expected, retiredIdentity)) {
-        unlinkSync(retired);
+        // Keep the retirement alias: Node has no descriptor-bound unlink, and
+        // removing it by pathname could delete a concurrent replacement.
         return target;
       }
       if (retiredIdentity.isDirectory()) {
@@ -2352,15 +2354,15 @@ function movePathToAttempt(path: string, descriptor?: number): string {
         }
         return target;
       }
-      let restored = false;
       try {
         linkSync(retired, path);
-        restored = sameFileIdentity(retiredIdentity, lstatSync(path));
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST"
             && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
-      if (restored) unlinkSync(retired);
+      // Preserve the retirement alias even after a successful restoration; it
+      // is safer to retain duplicate failed evidence than to unlink a path
+      // that another actor could have replaced.
       return target;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
