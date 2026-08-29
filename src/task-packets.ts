@@ -320,12 +320,14 @@ export function freezeTaskPacket(
     const candidateErrors = validateArtifact(freezeLocator, candidate);
     if (candidateErrors.length > 0) throw new Error(formatErrors(candidateErrors));
 
+    let validatedInspection: TaskPacketInspection | undefined;
     const validatePublication = () => {
-      const finalInspection = assertTaskPacketAdmittedWithRoot(root.path, packetLocator, root);
-      const mismatches = compareFreezeRecord(candidate, finalInspection);
+      const inspection = assertTaskPacketAdmittedWithRoot(root.path, packetLocator, root);
+      const mismatches = compareFreezeRecord(candidate, inspection);
       if (mismatches.length > 0) {
         throw new Error(`Task packet changed before freeze publication: ${mismatches.join(", ")}.`);
       }
+      validatedInspection = inspection;
     };
     const write = writeMetadataAtomicallyIfAbsentSync(
       bundleRoot,
@@ -354,7 +356,10 @@ export function freezeTaskPacket(
       return finalWinner as TaskPacketFreezeRecord;
     }
 
-    const finalInspection = assertTaskPacketAdmittedWithRoot(bundleRoot, packetLocator, root);
+    const finalInspection = validatedInspection;
+    if (finalInspection === undefined) {
+      throw new Error("Freeze publication did not complete its final validation.");
+    }
     const postPublicationMismatches = compareFreezeRecord(candidate, finalInspection);
     if (postPublicationMismatches.length > 0) {
       throw new Error(`Task packet changed after freeze publication: ${postPublicationMismatches.join(", ")}.`);

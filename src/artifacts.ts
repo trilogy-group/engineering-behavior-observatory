@@ -2320,13 +2320,7 @@ function movePathToAttempt(path: string, descriptor?: number): string {
         unlinkPathIfIdentity(target, moved);
         throw new Error(`Publication path "${path}" changed during failure preservation.`);
       }
-      const source = lstatIfPresent(path);
-      if (source === undefined || !sameFileIdentity(expected, source)) return target;
-      try {
-        unlinkSync(path);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
+      if (!unlinkPathIfIdentity(path, expected)) return target;
       return target;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -2336,14 +2330,19 @@ function movePathToAttempt(path: string, descriptor?: number): string {
 }
 
 function unlinkPathIfIdentity(path: string, expected: { dev: number; ino: number }): boolean {
-  const current = lstatIfPresent(path);
-  if (current === undefined || !sameFileIdentity(expected, current)) return false;
+  let descriptor: number | undefined;
   try {
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const opened = fstatSync(descriptor);
+    const current = lstatSync(path);
+    if (!sameFileIdentity(expected, opened) || !sameFileIdentity(expected, current)) return false;
     unlinkSync(path);
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
     throw error;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
