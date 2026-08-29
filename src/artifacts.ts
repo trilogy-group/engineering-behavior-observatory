@@ -53,7 +53,7 @@ const runBundleSchemaId = "urn:ebo:schema:run-bundle:v1";
 const MAX_EXISTING_DIGEST_RETRIES = 200;
 const STAGING_MARKER_SCHEMA_VERSION = "ebo.publication-staging/v1";
 const STAGING_ATTEMPT_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const MARKER_STAGING_PATH_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.marker-tmp$/;
+const PUBLICATION_ATTEMPT_PATH_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:marker|binding)-tmp$/;
 const FAILED_PUBLICATION_LINK_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.failed$/;
 const MAX_PUBLICATION_SCAN_ENTRIES = 4096;
 const CURRENT_PROCESS_START = processStartIdentity(process.pid);
@@ -885,13 +885,18 @@ function recoverInterruptedStaging(path: string, markerPath: string, relativePat
 }
 
 function recoverInterruptedMarker(path: string, relativePath: string): void {
-  if (!stagingMarkerMatches(path, relativePath)) {
+  const validated = readValidatedStagingMarker(path, relativePath);
+  if (validated === undefined) {
     throw new Error(`Publication staging marker "${path}" is already occupied.`);
   }
-  const marker = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  const { marker, identity } = validated;
   const markerPath = path.endsWith(".tmp") ? path.slice(0, -4) : path;
-  moveRecoveredMarkerToAttempt(markerPath, path, relativePath, marker);
-  if (typeof marker.stagingPath === "string") moveOptionalPathToAttempt(marker.stagingPath);
+  const stagingPath = typeof marker.stagingPath === "string" ? marker.stagingPath : undefined;
+  const stagingIdentity = stagingPath === undefined ? undefined : lstatIfPresent(stagingPath);
+  moveRecoveredMarkerToAttempt(markerPath, path, relativePath, marker, identity);
+  if (stagingPath !== undefined && stagingIdentity !== undefined) {
+    movePathToAttemptIfIdentity(stagingPath, stagingIdentity);
+  }
 }
 
 function isRecoverableStagingLink(
@@ -1058,6 +1063,8 @@ function bindStagingMarker(path: string, relativePath: string, stagingDescriptor
   let bindingTemporaryCreated = false;
   let bindingDescriptor: number | undefined;
   let expectedBinding: Stats | undefined;
+  let bindingAttemptPath: string | undefined;
+  let bindingAttemptPreserved = false;
   try {
     const opened = fstatSync(descriptor);
     if (!opened.isFile() || !isAccountedStagingMarkerLink(path, opened) || (opened.mode & 0o777) !== 0o600
@@ -1078,11 +1085,28 @@ function bindStagingMarker(path: string, relativePath: string, stagingDescriptor
       throw new Error(`Publication staging binding "${bindingPath}" is already occupied.`);
     }
     if (!stagingMarkerMatches(bindingTemporaryPath, relativePath, staging)) {
-      bindingDescriptor = openSync(bindingTemporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
-      bindingTemporaryCreated = true;
+      if (lstatIfPresent(bindingTemporaryPath) !== undefined && readMarkerMetadata(bindingTemporaryPath) === undefined) {
+        moveOptionalPathToAttempt(bindingTemporaryPath);
+      }
+      bindingAttemptPath = `.${randomUUID()}.binding-tmp`;
+      bindingDescriptor = openSync(bindingAttemptPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
       writeFileSync(bindingDescriptor, bytes);
       fsyncSync(bindingDescriptor);
       expectedBinding = fstatSync(bindingDescriptor);
+      try {
+        linkSync(bindingAttemptPath, bindingTemporaryPath);
+        bindingTemporaryCreated = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        movePathToAttempt(bindingAttemptPath, bindingDescriptor);
+        bindingAttemptPreserved = true;
+        throw error;
+      }
+      const currentAttempt = lstatSync(bindingAttemptPath);
+      if (!sameFileIdentity(expectedBinding, currentAttempt)) {
+        throw new Error(`Publication staging binding "${bindingPath}" changed during installation.`);
+      }
+      unlinkSync(bindingAttemptPath);
     }
     const bindingIdentity = expectedBinding ?? lstatSync(bindingTemporaryPath);
     const currentBindingTemporary = lstatIfPresent(bindingTemporaryPath);
@@ -1107,7 +1131,11 @@ function bindStagingMarker(path: string, relativePath: string, stagingDescriptor
     }
     return true;
   } catch (error) {
-    if (bindingTemporaryCreated) moveOptionalPathToAttempt(bindingTemporaryPath, bindingDescriptor);
+    if (bindingAttemptPath !== undefined && !bindingAttemptPreserved && !bindingTemporaryCreated) {
+      moveOptionalPathToAttempt(bindingAttemptPath, bindingDescriptor);
+    } else if (bindingTemporaryCreated) {
+      moveOptionalPathToAttempt(bindingTemporaryPath, bindingDescriptor);
+    }
     throw error;
   } finally {
     if (bindingDescriptor !== undefined) closeSync(bindingDescriptor);
@@ -1115,34 +1143,43 @@ function bindStagingMarker(path: string, relativePath: string, stagingDescriptor
   }
 }
 
-function stagingMarkerMatches(path: string, relativePath: string, expectedStaging?: { dev: number; ino: number }): boolean {
+function readValidatedStagingMarker(
+  path: string,
+  relativePath: string,
+  expectedStaging?: { dev: number; ino: number },
+): { marker: Record<string, unknown>; identity: Stats } | undefined {
   let descriptor: number | undefined;
   try {
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const opened = fstatSync(descriptor);
     if (!opened.isFile() || !isAccountedStagingMarkerLink(path, opened) || (opened.mode & 0o777) !== 0o600
-        || !Number.isSafeInteger(opened.size) || opened.size > 4096) return false;
-    const marker = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(descriptor)));
+        || !Number.isSafeInteger(opened.size) || opened.size > 4096) return undefined;
+    const marker = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(descriptor))) as unknown;
     const completed = fstatSync(descriptor);
-    return sameFileIdentity(opened, completed)
+    if (!(sameFileIdentity(opened, completed)
       && isAccountedStagingMarkerLink(path, completed)
       && completed.size === opened.size
-      && isStagingMarker(marker, relativePath)
-      && (expectedStaging === undefined
-        || (isRecord(marker.stagingIdentity)
-          && marker.stagingIdentity.dev === expectedStaging.dev
-          && marker.stagingIdentity.ino === expectedStaging.ino));
+      && isStagingMarker(marker, relativePath))) return undefined;
+    if (expectedStaging !== undefined
+        && (!isRecord(marker.stagingIdentity)
+          || marker.stagingIdentity.dev !== expectedStaging.dev
+          || marker.stagingIdentity.ino !== expectedStaging.ino)) return undefined;
+    return { marker, identity: opened };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    return false;
+    return undefined;
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
+function stagingMarkerMatches(path: string, relativePath: string, expectedStaging?: { dev: number; ino: number }): boolean {
+  return readValidatedStagingMarker(path, relativePath, expectedStaging) !== undefined;
+}
+
 function isAccountedStagingMarkerLink(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
+  const sibling = path.endsWith(".tmp") ? path.slice(0, -4) : `${path}.tmp`;
   return target.nlink === 1 || (target.nlink === 2
-    && (hasAliasIdentity(`${path}.tmp`, target) || hasMarkerStagingAlias(path, target)));
+    && (hasAliasIdentity(sibling, target) || hasMarkerStagingAlias(path, target)));
 }
 
 function hasMarkerStagingAlias(path: string, target: { dev: number; ino: number }): boolean {
@@ -1152,7 +1189,7 @@ function hasMarkerStagingAlias(path: string, target: { dev: number; ino: number 
     for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
       scanned += 1;
       if (scanned > MAX_PUBLICATION_SCAN_ENTRIES) return false;
-      if (MARKER_STAGING_PATH_PATTERN.test(entry.name)
+      if (PUBLICATION_ATTEMPT_PATH_PATTERN.test(entry.name)
           && hasAliasIdentity(resolve(dirname(path), entry.name), target)) return true;
     }
   } finally {
@@ -1218,6 +1255,7 @@ function moveRecoveredMarkerToAttempt(
   sourcePath: string,
   relativePath: string,
   marker: Record<string, unknown>,
+  markerIdentity: Stats,
 ): void {
   const bindingPath = `${markerPath}.binding`;
   const bindingTemporaryPath = `${bindingPath}.tmp`;
@@ -1236,12 +1274,28 @@ function moveRecoveredMarkerToAttempt(
 
   const markerTemporaryPath = `${markerPath}.tmp`;
   if (sourcePath === markerTemporaryPath) {
-    moveOptionalPathToAttempt(sourcePath);
+    movePathToAttemptIfIdentity(sourcePath, markerIdentity);
   } else {
     if (isOwnedMarkerSidecar(markerTemporaryPath, relativePath, marker)) {
       moveOptionalPathToAttempt(markerTemporaryPath);
     }
-    moveOptionalPathToAttempt(markerPath);
+    movePathToAttemptIfIdentity(markerPath, markerIdentity);
+  }
+}
+
+function movePathToAttemptIfIdentity(path: string, expected: Stats): boolean {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    if (!sameFileIdentity(expected, fstatSync(descriptor))) return false;
+    movePathToAttempt(path, descriptor);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT"
+        || (error instanceof Error && error.message.includes("changed during failure preservation"))) return false;
+    throw error;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 

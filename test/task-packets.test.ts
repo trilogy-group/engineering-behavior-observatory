@@ -329,6 +329,31 @@ test("create-if-absent publication recovers a partial marker sidecar", () => {
   }
 });
 
+test("create-if-absent publication recovers a partial binding sidecar", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-partial-binding-recovery-"));
+  const marker = join(root, "metadata.json.quarantine.marker");
+  const bindingTemporary = `${marker}.binding.tmp`;
+  try {
+    writeFileSync(marker, JSON.stringify({
+      schemaVersion: "ebo.publication-staging/v1",
+      relativePath: "metadata.json",
+      stagingPath: ".99999999-9999-4999-8999-999999999999.tmp",
+      attemptId: "99999999-9999-4999-8999-999999999999",
+      ownerPid: 999999999,
+      ownerStart: "dead",
+    }));
+    chmodSync(marker, 0o600);
+    writeFileSync(bindingTemporary, "{");
+    chmodSync(bindingTemporary, 0o600);
+    const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
+    assert.equal(result.created, true);
+    assert.equal(JSON.parse(readFileSync(bindingTemporary, "utf8")).schemaVersion, "ebo.publication-staging/v1");
+    assert.equal(readdirSync(root).filter((name) => name.endsWith(".failed")).length, 2);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("create-if-absent publication preserves unowned binding sidecars during marker recovery", () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-unowned-binding-recovery-"));
   const marker = join(root, "metadata.json.quarantine.marker");
