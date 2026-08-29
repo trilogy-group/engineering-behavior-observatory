@@ -130,6 +130,38 @@ test("returns a verifier error for a non-string assertion status", async () => {
   }
 });
 
+test("rejects duplicate JSON object keys in verifier output", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write('{"assertions":[{"id":"duplicate-key","status":"failed","status":"passed"}]}');
+    `);
+    const result = await run(root, verifier);
+
+    assert.equal(result.status, "error");
+    assert.deepEqual(result.assertions, []);
+    assert.match(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), /duplicate JSON/);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("preserves a subprocess launch error in diagnostics", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "unused", status: "passed" }] }));
+    `);
+    const result = await run(root, verifier, { command: join(root.parent, "missing-command") });
+
+    assert.equal(result.status, "error");
+    assert.match(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), /ENOENT|spawn/);
+    assert.doesNotMatch(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), /non-empty assertions/);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("classifies timeout, crash, and malformed output as verifier errors", async (t) => {
   const cases = [
     {
@@ -288,6 +320,20 @@ test("uses POSIX separators in diagnostic locators", async () => {
   }
 });
 
+test("counts Unicode assertion IDs by code point", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "🙂".repeat(200), status: "passed" }] }));
+    `);
+    const result = await run(root, verifier);
+    assert.equal(result.status, "passed");
+    assert.equal([...result.assertions[0]!.id].length, 200);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("terminates a verifier descendant on timeout", async () => {
   const root = await createRoots();
   try {
@@ -389,7 +435,7 @@ async function addVerifier(root: string, source: string): Promise<{ locator: str
 async function run(
   root: Roots,
   verifier: { locator: string; digest: ReturnType<typeof digestBytes> },
-  options: { timeoutMs?: number; maxOutputBytes?: number } = {},
+  options: { timeoutMs?: number; maxOutputBytes?: number; command?: string } = {},
 ): Promise<CompleteVerifierResult> {
   return executeVerifier({
     bundleId: "bundle-test",

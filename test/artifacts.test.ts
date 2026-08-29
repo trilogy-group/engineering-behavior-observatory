@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,6 +12,7 @@ import {
   digestMetadata,
   readVerifiedArtifact,
   validateArtifact,
+  validateRunManifestEvidence,
   verifyDigest,
   writeMetadataAtomically,
 } from "../src/artifacts.js";
@@ -193,4 +194,38 @@ test("validation reports schema versions, fields, duplicate identities, and fixt
   let output = "";
   assert.equal(main(["validate", fixturePath("task-packet.valid.v1.json"), runFixturePath("complete/manifest.json")], (message) => (output += message)), 0);
   assert.equal(output, "Validated 2 artifact(s).\n");
+});
+
+test("validates nested verifier diagnostics against retained bundle bytes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ebo-nested-diagnostics-"));
+  try {
+    await cp(runFixturePath("complete"), root, { recursive: true });
+    const manifestPath = join(root, "manifest.json");
+    const verifierPath = join(root, "verifier.json");
+    const diagnosticPath = join(root, "diagnostics.log");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const verifier = JSON.parse(readFileSync(verifierPath, "utf8"));
+    const diagnosticBytes = Buffer.from("nested verifier diagnostic");
+    await writeFile(diagnosticPath, diagnosticBytes);
+    verifier.diagnostics = [{
+      locator: "diagnostics.log",
+      digest: `sha256:${digestBytes(diagnosticBytes).value}`,
+      sizeBytes: diagnosticBytes.length,
+      truncated: false,
+    }];
+    const verifierBytes = Buffer.from(JSON.stringify(verifier));
+    await writeFile(verifierPath, verifierBytes);
+    const verifierDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "verifier");
+    verifierDescriptor.digest = `sha256:${digestBytes(verifierBytes).value}`;
+    verifierDescriptor.sizeBytes = verifierBytes.length;
+
+    assert.deepEqual(validateRunManifestEvidence("manifest.json", manifest, root), []);
+    await writeFile(diagnosticPath, "tampered");
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /Diagnostic|digest/,
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
 });

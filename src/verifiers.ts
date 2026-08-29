@@ -144,13 +144,15 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
       exitCode = processResult.exitCode;
       if (processResult.error !== undefined) internalError = processResult.error;
 
-      if (stdout.truncated) {
-        internalError = `Verifier stdout exceeded ${maxOutputBytes} bytes.`;
-      } else {
-        try {
-          assertions = parseAssertions(stdout.bytes);
-        } catch (error) {
-          internalError = error instanceof Error ? error.message : "Verifier output is invalid.";
+      if (internalError === undefined) {
+        if (stdout.truncated) {
+          internalError = `Verifier stdout exceeded ${maxOutputBytes} bytes.`;
+        } else {
+          try {
+            assertions = parseAssertions(stdout.bytes);
+          } catch (error) {
+            internalError = error instanceof Error ? error.message : "Verifier output is invalid.";
+          }
         }
       }
 
@@ -402,6 +404,7 @@ function appendDiagnostic(output: CapturedOutput, message: string, limit: number
 function parseAssertions(bytes: Buffer): VerifierAssertion[] {
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   const parsed: unknown = JSON.parse(text);
+  assertNoDuplicateJsonKeys(text);
   if (!isRecord(parsed) || !hasExactKeys(parsed, ["assertions"]) || !Array.isArray(parsed.assertions)
       || parsed.assertions.length === 0) {
     throw new Error("Verifier output must contain a non-empty assertions array.");
@@ -409,7 +412,7 @@ function parseAssertions(bytes: Buffer): VerifierAssertion[] {
   const identifiers = new Set<string>();
   return parsed.assertions.map((value) => {
     if (!isRecord(value) || !hasExactKeys(value, ["id", "status"]) || typeof value.id !== "string"
-        || value.id.trim() === "" || value.id.length > 256
+        || value.id.trim() === "" || [...value.id].length > 256
         || typeof value.status !== "string" || !["passed", "failed", "not-run"].includes(value.status)
         || identifiers.has(value.id)) {
       throw new Error("Verifier output contains an invalid or duplicate assertion.");
@@ -417,6 +420,83 @@ function parseAssertions(bytes: Buffer): VerifierAssertion[] {
     identifiers.add(value.id);
     return { id: value.id, status: value.status as VerifierAssertionStatus };
   });
+}
+
+function assertNoDuplicateJsonKeys(text: string): void {
+  let index = 0;
+
+  const skipWhitespace = () => {
+    while (/\s/.test(text[index] ?? "")) index += 1;
+  };
+
+  const readString = (): string => {
+    const start = index;
+    index += 1;
+    while (index < text.length) {
+      if (text[index] === "\\") index += 2;
+      else if (text[index++] === '"') return text.slice(start, index);
+      else continue;
+    }
+    throw new Error("Verifier output contains an unterminated JSON string.");
+  };
+
+  const readValue = (): void => {
+    skipWhitespace();
+    if (text[index] === "{") readObject();
+    else if (text[index] === "[") readArray();
+    else if (text[index] === '"') readString();
+    else {
+      while (index < text.length && !/[\s,\]}]/.test(text[index]!)) index += 1;
+    }
+  };
+
+  const readObject = (): void => {
+    index += 1;
+    skipWhitespace();
+    const keys = new Set<string>();
+    if (text[index] === "}") {
+      index += 1;
+      return;
+    }
+    while (index < text.length) {
+      skipWhitespace();
+      const key = JSON.parse(readString()) as string;
+      if (keys.has(key)) throw new Error("Verifier output contains duplicate JSON object keys.");
+      keys.add(key);
+      skipWhitespace();
+      index += 1;
+      readValue();
+      skipWhitespace();
+      if (text[index] === "}") {
+        index += 1;
+        return;
+      }
+      index += 1;
+    }
+    throw new Error("Verifier output contains an unterminated JSON object.");
+  };
+
+  const readArray = (): void => {
+    index += 1;
+    skipWhitespace();
+    if (text[index] === "]") {
+      index += 1;
+      return;
+    }
+    while (index < text.length) {
+      readValue();
+      skipWhitespace();
+      if (text[index] === "]") {
+        index += 1;
+        return;
+      }
+      index += 1;
+    }
+    throw new Error("Verifier output contains an unterminated JSON array.");
+  };
+
+  readValue();
+  skipWhitespace();
 }
 
 function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {

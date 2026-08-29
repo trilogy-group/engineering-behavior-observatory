@@ -118,12 +118,58 @@ export function validateRunManifestEvidence(
         digest: runDigest(descriptor.digest),
       });
       if (bytes.length !== descriptor.sizeBytes) throw new Error("Artifact size does not match its manifest descriptor.");
+      if (descriptor.kind === "verifier") {
+        errors.push(...nestedVerifierDiagnosticErrors(artifact, descriptor.id, descriptor.relativePath, bytes, bundleRoot));
+      }
     } catch (error) {
       errors.push({
         artifact,
         schemaVersion: "run-manifest/v1",
         field: `/evidence/${escapeJsonPointer(descriptor.id)}`,
         message: error instanceof Error ? error.message : "Evidence could not be verified.",
+      });
+    }
+  }
+  return errors;
+}
+
+function nestedVerifierDiagnosticErrors(
+  artifact: string,
+  verifierId: string,
+  verifierPath: string,
+  bytes: Buffer,
+  bundleRoot: string,
+): ArtifactValidationError[] {
+  let result: unknown;
+  try {
+    result = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    return [];
+  }
+  if (!isRecord(result) || !Array.isArray(result.diagnostics)) return [];
+
+  const errors: ArtifactValidationError[] = [];
+  for (const diagnostic of result.diagnostics) {
+    if (!isRecord(diagnostic) || typeof diagnostic.locator !== "string"
+        || typeof diagnostic.digest !== "string" || typeof diagnostic.sizeBytes !== "number") continue;
+    if (diagnostic.locator.toLowerCase() === verifierPath.toLowerCase()) {
+      errors.push({ artifact, schemaVersion: "run-manifest/v1", field: `/evidence/${escapeJsonPointer(verifierId)}/diagnostics`, message: "Verifier diagnostics cannot reuse the verifier result path." });
+      continue;
+    }
+    try {
+      const diagnosticBytes = resolveBundleArtifact(bundleRoot, {
+        locator: diagnostic.locator,
+        digest: runDigest(diagnostic.digest),
+      });
+      if (diagnosticBytes.length !== diagnostic.sizeBytes) {
+        throw new Error("Diagnostic size does not match its result reference.");
+      }
+    } catch (error) {
+      errors.push({
+        artifact,
+        schemaVersion: "run-manifest/v1",
+        field: `/evidence/${escapeJsonPointer(verifierId)}/diagnostics`,
+        message: error instanceof Error ? error.message : "Verifier diagnostic could not be verified.",
       });
     }
   }
