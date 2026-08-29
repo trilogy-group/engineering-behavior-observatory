@@ -163,7 +163,7 @@ export function assertNoSelectedSymlinks(
   for (const archiveEntry of authoritativeEntries) {
     const archivePath = canonicalArchiveMemberPath(archiveEntry.path);
 
-    if (!isSafeArchiveMemberPath(archiveEntry.path)
+    if (!isSafeArtifactRelativePath(archiveEntry.path)
         || (archiveEntry.kind === "file" && archiveEntry.path.endsWith("/"))
         || archiveByPath.has(archivePath)) {
       throw new Error(`Archive entry "${archiveEntry.path}" is unsafe or collides with another archive member.`);
@@ -175,7 +175,7 @@ export function assertNoSelectedSymlinks(
     const destination = canonicalArchiveMemberPath(entry.path);
     const collisionPath = destination.toLowerCase();
 
-    if (!["file", "directory"].includes(entry.kind) || !isSafeArchiveMemberPath(entry.path)
+    if (!["file", "directory"].includes(entry.kind) || !isSafeArtifactRelativePath(entry.path)
         || (entry.kind === "file" && entry.path.endsWith("/"))) {
       throw new Error(`Selected archive entry "${entry.path}" is unsafe.`);
     }
@@ -195,7 +195,7 @@ export function assertNoSelectedSymlinks(
 
   for (const includePath of includePaths) {
     const canonicalIncludePath = canonicalArchiveMemberPath(includePath);
-    if (!isSafeArchiveMemberPath(includePath) || !hasPathOrDescendant(archivePaths, canonicalIncludePath)) {
+    if (!isSafeArtifactRelativePath(includePath) || !hasPathOrDescendant(archivePaths, canonicalIncludePath)) {
       throw new Error(`Archive include path "${includePath}" selected no entries.`);
     }
     includePathSet.add(canonicalIncludePath);
@@ -290,7 +290,7 @@ function readVerifiedBundleFile(
 }
 
 function openBundleRegularFile(bundleRoot: string, locator: string, label: string): number {
-  if (!isSafeArchiveMemberPath(locator)) {
+  if (!isSafeArtifactRelativePath(locator)) {
     throw new Error(`${label} "${locator}" is unsafe.`);
   }
 
@@ -506,7 +506,7 @@ function digestIdentity(digest: Digest): string {
   return `${digest.algorithm}:${digest.value}`;
 }
 
-function isSafeArchiveMemberPath(path: string): boolean {
+export function isSafeArtifactRelativePath(path: string): boolean {
   const segments = path.split("/");
 
   return path === posix.normalize(path)

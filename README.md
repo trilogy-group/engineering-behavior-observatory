@@ -48,8 +48,8 @@ universal broker.
 
 ## Development
 
-EBO uses Node.js 24.19.0; `.nvmrc` pins the release. The runtime has no
-dependencies. Install the TypeScript toolchain and run the bootstrap checks:
+EBO uses Node.js 24.19.0; `.nvmrc` pins the release. Install dependencies and
+run the checks:
 
 ```sh
 nvm use
@@ -57,11 +57,14 @@ npm ci
 npm run build
 npm run typecheck
 npm test
-node dist/src/cli.js --help
+node dist/src/cli.js validate tests/fixtures/task-packet.valid.v1.json \
+  test/fixtures/run-bundles/complete/manifest.json
 ```
 
-`ebo` currently exposes only its help surface. Capture, runner, adapter,
-evaluation, and Atlas behavior are introduced by their separately scoped tasks.
+`ebo validate` checks the supported task-packet, experiment, and run-bundle
+artifact versions. On failure it identifies the artifact, schema version, and
+failing JSON field. Capture, runner, adapter, evaluation, and Atlas behavior
+are introduced by their separately scoped tasks.
 
 Start with [AGENTS.md](AGENTS.md) and the assigned Linear issue. `WORKFLOW.md`
 contains OpenSymphony orchestration configuration and should not be treated as
@@ -69,4 +72,3 @@ the EBO product specification.
 
 The versioned task-packet and experiment contract surfaces are documented in
 [docs/contracts.md](docs/contracts.md).
-
