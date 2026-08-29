@@ -300,9 +300,9 @@ export function writeMetadataAtomicallyIfAbsentSync(
         else recoverInterruptedMarker(`${markerPath}.tmp`, relativePath);
       }
 
-      // The deterministic quarantine sibling is also the staging inode. Keeping it as
-      // the final accounted link avoids a post-publication path deletion race.
-      const temporaryPath = quarantinePath;
+      // Stage in an attempt-specific inode, then retain it as an explicitly accounted
+      // hard link after publishing the deterministic quarantine sibling.
+      const temporaryPath = `.${randomUUID()}.tmp`;
       let descriptor: number | undefined;
       let markerCreated = false;
       let bindingCreated = false;
@@ -310,7 +310,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
       if (!winnerRequired) {
         try {
         try {
-          writeStagingMarker(markerPath, relativePath);
+          writeStagingMarker(markerPath, relativePath, temporaryPath);
           markerCreated = true;
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -345,8 +345,15 @@ export function writeMetadataAtomicallyIfAbsentSync(
           assertPublishRootHandle(root, rootDescriptor, relativePath);
           assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
           let linkedHere = false;
+          let stagingLinked = false;
           try {
-            linkSync(temporaryPath, destination);
+            linkSync(temporaryPath, quarantinePath);
+            stagingLinked = true;
+            const staged = lstatSync(quarantinePath);
+            if (!sameFileIdentity(openedTemporary, staged)) {
+              throw new Error(`Artifact path "${relativePath}" published a different staging entry.`);
+            }
+            linkSync(quarantinePath, destination);
             linkedHere = true;
             const published = lstatSync(destination);
             const currentTemporary = fstatSync(descriptor);
@@ -359,17 +366,23 @@ export function writeMetadataAtomicallyIfAbsentSync(
             if ((error as NodeJS.ErrnoException).code === "EEXIST") {
               linkedHere = false;
               winnerRequired = true;
-              const existingDestination = lstatSync(destination);
-              if (!sameFileIdentity(existingDestination, openedTemporary)) {
+              if (!stagingLinked) {
                 movePathToAttempt(temporaryPath, descriptor);
-                if (markerCreated) {
-                  moveMarkerToAttempt(markerPath, bindingCreated);
-                }
+                if (markerCreated) moveMarkerToAttempt(markerPath, bindingCreated);
                 closeSync(descriptor);
                 descriptor = undefined;
+              } else {
+                const existingDestination = lstatSync(destination);
+                if (!sameFileIdentity(existingDestination, openedTemporary)) {
+                  movePathToAttempt(quarantinePath, descriptor);
+                  movePathToAttempt(temporaryPath, descriptor);
+                  if (markerCreated) moveMarkerToAttempt(markerPath, bindingCreated);
+                  closeSync(descriptor);
+                  descriptor = undefined;
+                }
               }
             } else {
-              if (linkedHere) preserveFailedPublication(destination, temporaryPath, markerCreated ? markerPath : undefined, bindingCreated, descriptor);
+              if (linkedHere || stagingLinked) preserveFailedPublication(destination, quarantinePath, temporaryPath, markerCreated ? markerPath : undefined, bindingCreated, descriptor);
               else {
                 movePathToAttempt(temporaryPath, descriptor);
                 if (markerCreated) {
@@ -385,7 +398,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
             assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
           } catch (error) {
             if (created && descriptor !== undefined) {
-              preserveFailedPublication(destination, temporaryPath, markerCreated ? markerPath : undefined, bindingCreated, descriptor);
+              preserveFailedPublication(destination, quarantinePath, temporaryPath, markerCreated ? markerPath : undefined, bindingCreated, descriptor);
               closeSync(descriptor);
               descriptor = undefined;
             }
@@ -868,7 +881,9 @@ function recoverInterruptedMarker(path: string, relativePath: string): void {
   if (!stagingMarkerMatches(path, relativePath)) {
     throw new Error(`Publication staging marker "${path}" is already occupied.`);
   }
+  const marker = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
   moveMarkerToAttempt(path.endsWith(".tmp") ? path.slice(0, -4) : path, true);
+  if (typeof marker.stagingPath === "string") moveOptionalPathToAttempt(marker.stagingPath);
 }
 
 function isRecoverableStagingLink(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
@@ -898,13 +913,14 @@ function countFailedPublicationLinks(path: string, target: { dev: number; ino: n
   return matches;
 }
 
-function writeStagingMarker(path: string, relativePath: string): void {
+function writeStagingMarker(path: string, relativePath: string, stagingPath: string): void {
   const temporaryPath = `${path}.tmp`;
   const descriptor = openSync(temporaryPath, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o600);
   try {
     const bytes = Buffer.from(canonicalizeMetadata({
       schemaVersion: STAGING_MARKER_SCHEMA_VERSION,
       relativePath,
+      stagingPath,
       attemptId: randomUUID(),
       ownerPid: process.pid,
       ownerStart: CURRENT_PROCESS_START ?? "unknown",
@@ -931,6 +947,8 @@ function isStagingMarker(value: unknown, relativePath: string): value is Record<
   return isRecord(value)
     && value.schemaVersion === STAGING_MARKER_SCHEMA_VERSION
     && value.relativePath === relativePath
+    && typeof value.stagingPath === "string"
+    && /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(value.stagingPath)
     && typeof value.attemptId === "string"
     && STAGING_ATTEMPT_PATTERN.test(value.attemptId)
     && typeof value.ownerPid === "number"
@@ -1065,13 +1083,29 @@ function moveOptionalPathToAttempt(path: string): void {
   }
 }
 
-function preserveFailedPublication(destination: string, quarantine: string, marker: string | undefined, bindingCreated: boolean, descriptor: number): void {
+function preserveFailedPublication(
+  destination: string,
+  quarantine: string,
+  staging: string,
+  marker: string | undefined,
+  bindingCreated: boolean,
+  descriptor: number,
+): void {
   try {
     movePathToAttempt(destination, descriptor);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  movePathToAttempt(quarantine, descriptor);
+  try {
+    movePathToAttempt(quarantine, descriptor);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  try {
+    movePathToAttempt(staging, descriptor);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   if (marker !== undefined) moveMarkerToAttempt(marker, bindingCreated);
 }
 
@@ -1097,13 +1131,6 @@ function movePathToAttempt(path: string, descriptor?: number): string {
       renameSync(path, target);
       const moved = lstatSync(target);
       if (!sameFileIdentity(expected, moved)) {
-        if (lstatIfPresent(path) === undefined) {
-          try {
-            linkSync(target, path);
-          } catch (restoreError) {
-            if ((restoreError as NodeJS.ErrnoException).code !== "EEXIST") throw restoreError;
-          }
-        }
         throw new Error(`Publication path "${path}" changed during failure preservation.`);
       }
       return target;
@@ -1117,9 +1144,9 @@ function movePathToAttempt(path: string, descriptor?: number): string {
 function isReadablePublishedFile(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
   const quarantine = hasAliasSync(`${path}.quarantine`, target);
   const recovered = hasAliasSync(`${path}.recovered`, target);
-  return target.nlink === 1
-    || (target.nlink === 2 && (quarantine || recovered))
-    || (target.nlink === 3 && quarantine && recovered);
+  const staging = hasStagingAlias(path, target);
+  const accounted = Number(quarantine) + Number(recovered) + Number(staging);
+  return target.nlink === 1 || (accounted > 0 && target.nlink === 1 + accounted);
 }
 
 function hasAliasSync(path: string, target: { dev: number; ino: number }): boolean {
@@ -1131,12 +1158,25 @@ function hasAliasSync(path: string, target: { dev: number; ino: number }): boole
   }
 }
 
+function hasStagingAlias(path: string, target: { dev: number; ino: number }): boolean {
+  try {
+    const marker = JSON.parse(readFileSync(`${path}.quarantine.marker`, "utf8")) as unknown;
+    if (!isRecord(marker) || typeof marker.stagingPath !== "string"
+        || !STAGING_ATTEMPT_PATTERN.test(marker.stagingPath.slice(1, -4))) return false;
+    return sameFileIdentity(target, lstatSync(resolve(dirname(path), marker.stagingPath)));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    return false;
+  }
+}
+
 async function isReadablePublishedArtifact(path: string, target: { dev: number; ino: number; nlink: number }): Promise<boolean> {
   if (target.nlink === 1) return true;
   const quarantine = await hasAlias(`${path}.quarantine`, target);
   const recovered = await hasAlias(`${path}.recovered`, target);
-  return (target.nlink === 2 && (quarantine || recovered))
-    || (target.nlink === 3 && quarantine && recovered);
+  const staging = hasStagingAlias(path, target);
+  const accounted = Number(quarantine) + Number(recovered) + Number(staging);
+  return accounted > 0 && target.nlink === 1 + accounted;
 }
 
 async function hasAlias(path: string, target: { dev: number; ino: number }): Promise<boolean> {

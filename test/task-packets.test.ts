@@ -224,6 +224,7 @@ test("create-if-absent publication recovers interrupted quarantine staging", asy
     writeFileSync(marker, JSON.stringify({
       schemaVersion: "ebo.publication-staging/v1",
       relativePath: "metadata.json",
+      stagingPath: ".11111111-1111-4111-8111-111111111111.tmp",
       attemptId: "11111111-1111-4111-8111-111111111111",
       ownerPid: 999999999,
       ownerStart: "dead",
@@ -232,6 +233,7 @@ test("create-if-absent publication recovers interrupted quarantine staging", asy
     writeFileSync(binding, JSON.stringify({
       schemaVersion: "ebo.publication-staging/v1",
       relativePath: "metadata.json",
+      stagingPath: ".11111111-1111-4111-8111-111111111111.tmp",
       attemptId: "11111111-1111-4111-8111-111111111111",
       ownerPid: 999999999,
       ownerStart: "dead",
@@ -258,6 +260,7 @@ test("create-if-absent publication preserves unbound dead-owner staging", () => 
     writeFileSync(marker, JSON.stringify({
       schemaVersion: "ebo.publication-staging/v1",
       relativePath: "metadata.json",
+      stagingPath: ".55555555-5555-4555-8555-555555555555.tmp",
       attemptId: "55555555-5555-4555-8555-555555555555",
       ownerPid: 999999999,
       ownerStart: "dead",
@@ -281,6 +284,7 @@ test("create-if-absent publication recovers a marker-only interruption", async (
     writeFileSync(marker, JSON.stringify({
       schemaVersion: "ebo.publication-staging/v1",
       relativePath: "metadata.json",
+      stagingPath: ".22222222-2222-4222-8222-222222222222.tmp",
       attemptId: "22222222-2222-4222-8222-222222222222",
       ownerPid: 999999999,
       ownerStart: "dead",
@@ -302,6 +306,7 @@ test("create-if-absent publication does not recover a live staging marker", () =
     writeFileSync(marker, JSON.stringify({
       schemaVersion: "ebo.publication-staging/v1",
       relativePath: "metadata.json",
+      stagingPath: ".33333333-3333-4333-8333-333333333333.tmp",
       attemptId: "33333333-3333-4333-8333-333333333333",
       ownerPid: process.pid,
       ownerStart: currentProcessStart,
@@ -322,6 +327,7 @@ test("create-if-absent publication recovers a marker with a reused PID", () => {
     writeFileSync(marker, JSON.stringify({
       schemaVersion: "ebo.publication-staging/v1",
       relativePath: "metadata.json",
+      stagingPath: ".44444444-4444-4444-8444-444444444444.tmp",
       attemptId: "44444444-4444-4444-8444-444444444444",
       ownerPid: process.pid,
       ownerStart: "different-process-start",
@@ -539,19 +545,22 @@ mutate();`,
 test("status recovers an interrupted freeze-record hard link", () => {
   const { root } = createBundle();
   const freezePath = join(root, "packet.json.freeze.json");
-  const temporaryLink = join(root, ".11111111-1111-4111-8111-111111111111.tmp");
+  let temporaryLink = "";
   try {
     freezeTaskPacket(root, "packet.json");
+    const marker = JSON.parse(readFileSync(`${freezePath}.quarantine.marker`, "utf8")) as { stagingPath: string };
+    temporaryLink = join(root, marker.stagingPath);
     unlinkSync(`${freezePath}.quarantine`);
-    linkSync(freezePath, temporaryLink);
     assert.ok(lstatSync(freezePath).nlink >= 2);
     assert.equal(statusTaskPacket(root, "packet.json").status, "frozen");
     assert.equal(existsSync(temporaryLink), true);
   } finally {
-    try {
-      unlinkSync(temporaryLink);
-    } catch {
-      // The helper process may already have removed the transient link.
+    if (temporaryLink !== "") {
+      try {
+        unlinkSync(temporaryLink);
+      } catch {
+        // The helper process may already have removed the transient link.
+      }
     }
     rmSync(root, { force: true, recursive: true });
   }
@@ -579,18 +588,22 @@ test("status preserves an existing recovered alias", () => {
 test("status recovers an interrupted nested freeze link within its parent", () => {
   const { root } = createBundle();
   const freezeLocator = "nested/freeze.json";
-  const temporaryLink = join(root, "nested", ".22222222-2222-4222-8222-222222222222.tmp");
+  let temporaryLink = "";
   try {
     freezeTaskPacket(root, "packet.json", freezeLocator);
-    unlinkSync(`${join(root, freezeLocator)}.quarantine`);
-    linkSync(join(root, freezeLocator), temporaryLink);
+    const freezePath = join(root, freezeLocator);
+    const marker = JSON.parse(readFileSync(`${freezePath}.quarantine.marker`, "utf8")) as { stagingPath: string };
+    temporaryLink = join(root, "nested", marker.stagingPath);
+    unlinkSync(`${freezePath}.quarantine`);
     assert.equal(statusTaskPacket(root, "packet.json", freezeLocator).status, "frozen");
     assert.equal(existsSync(temporaryLink), true);
   } finally {
-    try {
-      unlinkSync(temporaryLink);
-    } catch {
-      // The helper process may already have removed the transient link.
+    if (temporaryLink !== "") {
+      try {
+        unlinkSync(temporaryLink);
+      } catch {
+        // The helper process may already have removed the transient link.
+      }
     }
     rmSync(root, { force: true, recursive: true });
   }

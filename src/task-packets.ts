@@ -11,7 +11,7 @@ import {
   readSync,
   realpathSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import {
   digestBytes,
@@ -743,6 +743,8 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHan
       if (hasAlias(`${relative(parent, destination)}.quarantine`, lstatSync(relative(parent, destination)))) return false;
       const destinationStat = lstatSync(relative(parent, destination));
       if (!hasPublicationOwnership(destination, locator, destinationStat)) return false;
+      const stagingName = readStagingPath(`${relative(parent, destination)}.quarantine.marker`, locator);
+      if (stagingName === undefined) return false;
 
       const directory = opendirSync(".");
       let scanned = 0;
@@ -753,11 +755,11 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHan
             throw new Error("Freeze recovery directory exceeds its entry limit.");
           }
           const name = entry.name;
-          if (name === relative(parent, destination)) continue;
-          if (!TEMPORARY_FREEZE_LINK_PATTERN.test(name)) continue;
+          if (name !== stagingName) continue;
           try {
             const temporaryStat = lstatSync(name);
-            if (temporaryStat.isFile() && temporaryStat.dev === destinationStat.dev && temporaryStat.ino === destinationStat.ino) {
+            if (temporaryStat.isFile() && TEMPORARY_FREEZE_LINK_PATTERN.test(name)
+                && temporaryStat.dev === destinationStat.dev && temporaryStat.ino === destinationStat.ino) {
               const targetDescriptor = openSync(name, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
               try {
                 const openedTarget = fstatSync(targetDescriptor);
@@ -874,11 +876,36 @@ function readBundleFile(
 function hasPublicationAliases(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
   const quarantine = hasAlias(`${path}.quarantine`, target);
   const recovered = hasAlias(`${path}.recovered`, target);
-  const temporaryLinks = !quarantine && hasPublicationOwnership(path, undefined, target) && target.nlink > 2
-    ? countTemporaryAliases(path, target)
-    : 0;
-  return (quarantine || recovered)
-    && target.nlink === 1 + Number(quarantine) + Number(recovered) + temporaryLinks;
+  const staging = hasStagingAlias(path, target);
+  if (staging && !quarantine && !recovered) return false;
+  const accounted = Number(quarantine) + Number(recovered) + Number(staging);
+  return accounted > 0 && target.nlink === 1 + accounted;
+}
+
+function hasStagingAlias(path: string, target: { dev: number; ino: number }): boolean {
+  try {
+    const marker = JSON.parse(readFileSync(`${path}.quarantine.marker`, "utf8")) as unknown;
+    if (!isRecord(marker) || marker.schemaVersion !== "ebo.publication-staging/v1"
+        || typeof marker.stagingPath !== "string"
+        || !/^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(marker.stagingPath)) return false;
+    return sameFileIdentity(target, lstatSync(resolve(dirname(path), marker.stagingPath)));
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) return false;
+    return false;
+  }
+}
+
+function readStagingPath(path: string, locator: string): string | undefined {
+  try {
+    const marker = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (!isRecord(marker) || marker.schemaVersion !== "ebo.publication-staging/v1"
+        || marker.relativePath !== locator || typeof marker.stagingPath !== "string"
+        || !/^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(marker.stagingPath)) return undefined;
+    return marker.stagingPath;
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) return undefined;
+    return undefined;
+  }
 }
 
 function hasPublicationOwnership(
@@ -902,30 +929,6 @@ function hasPublicationOwnership(
     if (isErrno(error, "ENOENT")) return false;
     return false;
   }
-}
-
-function countTemporaryAliases(path: string, target: { dev: number; ino: number }): number {
-  const parent = dirname(path);
-  const destination = basename(path);
-  const directory = opendirSync(parent);
-  let scanned = 0;
-  let matches = 0;
-  try {
-    for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
-      scanned += 1;
-      if (scanned > MAX_FREEZE_RECOVERY_ENTRIES) return -1;
-      if (entry.name === destination || entry.name === `${destination}.quarantine`
-          || entry.name === `${destination}.recovered` || !TEMPORARY_FREEZE_LINK_PATTERN.test(entry.name)) continue;
-      try {
-        if (sameFileIdentity(target, lstatSync(resolve(parent, entry.name)))) matches += 1;
-      } catch (error) {
-        if (!isErrno(error, "ENOENT")) throw error;
-      }
-    }
-  } finally {
-    directory.closeSync();
-  }
-  return matches;
 }
 
 function hasAlias(path: string, target: { dev: number; ino: number }): boolean {

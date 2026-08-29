@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
-import { isAbsolute, posix, relative, resolve, sep } from "node:path";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
 
 export type Digest = {
   algorithm: "sha256";
@@ -504,8 +504,9 @@ function isReadableBundleFile(path: string | undefined, target: { dev: number; i
   if (path === undefined) return false;
   const quarantine = hasAlias(path + ".quarantine", target);
   const recovered = hasAlias(path + ".recovered", target);
-  return (target.nlink === 2 && (quarantine || recovered))
-    || (target.nlink === 3 && quarantine && recovered);
+  const staging = hasStagingAlias(path, target);
+  const accounted = Number(quarantine) + Number(recovered) + Number(staging);
+  return accounted > 0 && target.nlink === 1 + accounted;
 }
 
 function hasAlias(path: string, target: { dev: number; ino: number }): boolean {
@@ -514,6 +515,23 @@ function hasAlias(path: string, target: { dev: number; ino: number }): boolean {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasStagingAlias(path: string, target: { dev: number; ino: number }): boolean {
+  try {
+    const marker = JSON.parse(readFileSync(`${path}.quarantine.marker`, "utf8")) as unknown;
+    if (!isRecord(marker) || marker.schemaVersion !== "ebo.publication-staging/v1"
+        || typeof marker.stagingPath !== "string"
+        || !/^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(marker.stagingPath)) return false;
+    return sameFileIdentity(target, lstatSync(resolve(dirname(path), marker.stagingPath)));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    return false;
   }
 }
 
