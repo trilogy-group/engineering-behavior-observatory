@@ -3,15 +3,15 @@ import {
   constants,
   fstatSync,
   fsyncSync,
+  linkSync,
   lstatSync,
   openSync,
   opendirSync,
   readFileSync,
   readSync,
   realpathSync,
-  renameSync,
 } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import {
   digestBytes,
@@ -803,10 +803,8 @@ function preserveRecoveredTemporaryLink(name: string, destination: string, descr
   try {
     const current = lstatSync(name);
     if (!sameFileIdentity(expected, current)) return false;
-    renameSync(name, recoveryName);
-    // If the pathname changed after the identity check, rename preserves the replacement
-    // under the recovery name rather than deleting it.
-    return true;
+    linkSync(name, recoveryName);
+    return sameFileIdentity(expected, lstatSync(recoveryName));
   } catch (error) {
     if (isErrno(error, "EEXIST")) return false;
     if (isErrno(error, "ENOENT")) return false;
@@ -874,8 +872,33 @@ function readBundleFile(
 function hasPublicationAliases(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
   const quarantine = hasAlias(`${path}.quarantine`, target);
   const recovered = hasAlias(`${path}.recovered`, target);
-  return (target.nlink === 2 && (quarantine || recovered))
-    || (target.nlink === 3 && quarantine && recovered);
+  const temporaryLinks = target.nlink > 2 ? countTemporaryAliases(path, target) : 0;
+  return (quarantine || recovered)
+    && target.nlink === 1 + Number(quarantine) + Number(recovered) + temporaryLinks;
+}
+
+function countTemporaryAliases(path: string, target: { dev: number; ino: number }): number {
+  const parent = dirname(path);
+  const destination = basename(path);
+  const directory = opendirSync(parent);
+  let scanned = 0;
+  let matches = 0;
+  try {
+    for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
+      scanned += 1;
+      if (scanned > MAX_FREEZE_RECOVERY_ENTRIES) return -1;
+      if (entry.name === destination || entry.name === `${destination}.quarantine`
+          || entry.name === `${destination}.recovered` || !TEMPORARY_FREEZE_LINK_PATTERN.test(entry.name)) continue;
+      try {
+        if (sameFileIdentity(target, lstatSync(resolve(parent, entry.name)))) matches += 1;
+      } catch (error) {
+        if (!isErrno(error, "ENOENT")) throw error;
+      }
+    }
+  } finally {
+    directory.closeSync();
+  }
+  return matches;
 }
 
 function hasAlias(path: string, target: { dev: number; ino: number }): boolean {

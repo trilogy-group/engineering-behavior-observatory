@@ -863,22 +863,29 @@ function recoverInterruptedMarker(path: string, relativePath: string): void {
 
 function writeStagingMarker(path: string, relativePath: string): void {
   const temporaryPath = `${path}.tmp`;
-  const descriptor = openSync(temporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+  const descriptor = openSync(temporaryPath, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o600);
   try {
-    writeFileSync(descriptor, Buffer.from(canonicalizeMetadata({
+    const bytes = Buffer.from(canonicalizeMetadata({
       schemaVersion: STAGING_MARKER_SCHEMA_VERSION,
       relativePath,
       attemptId: randomUUID(),
-    })));
+    }));
+    writeFileSync(descriptor, bytes);
     fsyncSync(descriptor);
+    const expected = fstatSync(descriptor);
+    try {
+      linkSync(temporaryPath, path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      movePathToAttempt(temporaryPath, descriptor);
+      throw error;
+    }
+    if (!sameFileIdentity(expected, lstatSync(path))) {
+      throw new Error(`Publication staging marker "${path}" changed during installation.`);
+    }
   } finally {
     closeSync(descriptor);
   }
-  if (lstatIfPresent(path) !== undefined) {
-    movePathToAttempt(temporaryPath);
-    throw new Error(`Publication staging marker "${path}" is already occupied.`);
-  }
-  renameSync(temporaryPath, path);
 }
 
 function isStagingMarker(value: unknown, relativePath: string): value is Record<string, unknown> {

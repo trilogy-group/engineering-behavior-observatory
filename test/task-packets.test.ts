@@ -473,7 +473,7 @@ test("status recovers an interrupted freeze-record hard link", () => {
     linkSync(freezePath, temporaryLink);
     assert.ok(lstatSync(freezePath).nlink >= 2);
     assert.equal(statusTaskPacket(root, "packet.json").status, "frozen");
-    assert.equal(existsSync(temporaryLink), false);
+    assert.equal(existsSync(temporaryLink), true);
   } finally {
     try {
       unlinkSync(temporaryLink);
@@ -512,7 +512,7 @@ test("status recovers an interrupted nested freeze link within its parent", () =
     unlinkSync(`${join(root, freezeLocator)}.quarantine`);
     linkSync(join(root, freezeLocator), temporaryLink);
     assert.equal(statusTaskPacket(root, "packet.json", freezeLocator).status, "frozen");
-    assert.equal(existsSync(temporaryLink), false);
+    assert.equal(existsSync(temporaryLink), true);
   } finally {
     try {
       unlinkSync(temporaryLink);
