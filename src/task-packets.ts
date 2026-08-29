@@ -127,7 +127,7 @@ const MAX_FREEZE_RECOVERY_ENTRIES = 4096;
 const TEMPORARY_FREEZE_LINK_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
 const TASK_PACKET_SCHEMA_VERSION = "ebo.task-packet/v1";
 const FREEZE_LOCATOR_SUFFIX = ".freeze.json";
-const FREEZE_QUARANTINE_SUFFIX = ".quarantine.marker";
+const FREEZE_QUARANTINE_SUFFIX = ".quarantine.marker.binding";
 
 export function inspectTaskPacket(bundleRoot: string, packetLocator: string): TaskPacketInspection {
   let root: BundleRootHandle | undefined;

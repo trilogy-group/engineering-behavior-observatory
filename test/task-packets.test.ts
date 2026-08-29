@@ -644,7 +644,7 @@ test("freeze validates its constructed record and bounds the default locator", (
     rmSync(root, { force: true, recursive: true });
   }
 
-  const validWithQuarantine = Array.from({ length: 5 }, () => "a".repeat(184)).join("/");
+  const validWithQuarantine = Array.from({ length: 5 }, () => "a".repeat(180)).join("/");
   assert.equal(defaultFreezeLocator(validWithQuarantine), `${validWithQuarantine}.freeze.json`);
 
   const nearLimit = Array.from({ length: 5 }, () => "a".repeat(188)).join("/");
