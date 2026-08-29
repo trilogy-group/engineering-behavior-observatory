@@ -323,6 +323,29 @@ test("strips Node preload options from the verifier environment", async () => {
   }
 });
 
+test("does not resolve verifier dependencies from staging ancestors", async () => {
+  const root = await createRoots();
+  const temporaryRoot = join(root.parent, "temporary");
+  const previousTempDirectory = process.env.TMPDIR;
+  try {
+    await mkdir(join(temporaryRoot, "node_modules", "escape"), { recursive: true });
+    await writeFile(join(temporaryRoot, "node_modules", "escape", "index.js"), "module.exports = true;");
+    process.env.TMPDIR = temporaryRoot;
+    const verifier = await addVerifier(root.verifier, `
+      let escaped = false;
+      try { require("escape"); escaped = true; } catch {}
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "private-resolution", status: escaped ? "failed" : "passed" }] }));
+    `);
+    const result = await run(root, verifier);
+
+    assert.equal(result.status, "passed");
+  } finally {
+    if (previousTempDirectory === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = previousTempDirectory;
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("keeps verifier staging outside a workspace-local temp directory", async () => {
   const root = await createRoots();
   const previousTempDirectory = process.env.TMPDIR;

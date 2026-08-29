@@ -148,7 +148,15 @@ const RESERVED_MANIFEST_PATHS = new Set(["manifest.json"]);
 const execFileAsync = promisify(execFile);
 const VERIFIER_COMPLETION_HOOK = `
 const fs = require("node:fs");
+const path = require("node:path");
+const Module = require("node:module");
 const marker = process.env.EBO_VERIFIER_COMPLETION;
+const stageRoot = process.env.EBO_VERIFIER_ROOT;
+if (stageRoot !== undefined) {
+  const nodeModulePaths = Module._nodeModulePaths;
+  Module._nodeModulePaths = (from) => nodeModulePaths(from)
+    .filter((candidate) => candidate === stageRoot || candidate.startsWith(stageRoot + path.sep));
+}
 let abnormal = false;
 const report = (error) => {
   abnormal = true;
@@ -165,6 +173,18 @@ process.on("exit", () => {
     try { fs.writeFileSync(marker, "completed", { flag: "wx" }); } catch {}
   }
 });
+`;
+const VERIFIER_DEPENDENCY_LOADER = `
+import { pathToFileURL } from "node:url";
+
+const stageRoot = pathToFileURL(process.env.EBO_VERIFIER_ROOT).href;
+export async function resolve(specifier, context, nextResolve) {
+  const result = await nextResolve(specifier, context);
+  if (result.url.startsWith("node:") || result.url.startsWith("data:") || result.url.startsWith(stageRoot)) {
+    return result;
+  }
+  throw new Error("Verifier dependency resolves outside its private staging root.");
+}
 `;
 
 export async function digestWorkspace(workspacePath: string): Promise<string> {
@@ -350,17 +370,20 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
         await writePrivateFile(stagedVerifier, verifierBytes);
         const completionHookPath = join(stagingRoot, "completion-hook.cjs");
         await writePrivateFile(completionHookPath, Buffer.from(VERIFIER_COMPLETION_HOOK));
+        const dependencyLoaderPath = join(stagingRoot, "dependency-loader.mjs");
+        await writePrivateFile(dependencyLoaderPath, Buffer.from(VERIFIER_DEPENDENCY_LOADER));
         const completionMarker = join(stagingRoot, "completed");
 
         const processResult = await runProcess(
           options.command ?? process.execPath,
-          ["--require", completionHookPath, stagedVerifier, evaluatedWorkspacePath],
+          ["--no-warnings", "--require", completionHookPath, "--loader", dependencyLoaderPath, stagedVerifier, evaluatedWorkspacePath],
           evaluatedWorkspacePath,
           options.env,
           timeoutMs,
           maxOutputBytes,
           diagnosticFiles as [DiagnosticFile, DiagnosticFile],
           completionMarker,
+          stagingRoot,
         );
         stdout = processResult.stdout;
         stderr = processResult.stderr;
@@ -635,9 +658,11 @@ async function runProcess(
   maxOutputBytes: number,
   diagnosticFiles: readonly DiagnosticFile[],
   completionMarker: string,
+  verifierRoot: string,
 ): Promise<ProcessResult> {
   const environment = overrides === undefined ? { PATH: process.env.PATH ?? "" } : cleanEnvironment(overrides);
   environment.EBO_VERIFIER_COMPLETION = completionMarker;
+  environment.EBO_VERIFIER_ROOT = verifierRoot;
   const child = spawn(command, args, {
     cwd,
     env: environment,
