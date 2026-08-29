@@ -391,6 +391,11 @@ test("inspection validates fixture archives before admission", () => {
       expected: /unsupported sparse PAX/,
       mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
     },
+    {
+      bytes: tarGzipArchive([{ path: "README.md\n", bytes: Buffer.from("safe") }]),
+      expected: /No archive entries were selected/,
+      mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
+    },
   ];
 
   for (const invalidCase of invalidCases) {
@@ -1516,6 +1521,38 @@ test("component resolution stays bound to its verified bundle root", () => {
     rmSync(alias, { force: true });
     rmSync(original.root, { force: true, recursive: true });
     rmSync(replacement.root, { force: true, recursive: true });
+  }
+});
+
+test("bundle reads reject an intermediate directory swap", () => {
+  const { root } = createBundle(packetFixture("task-packet.proposed.v1.json"));
+  const outside = mkdtempSync(join(tmpdir(), "ebo-read-outside-"));
+  const nested = join(root, "nested");
+  const originalLstatSync = fs.lstatSync;
+  const mutableFs = fs as unknown as { lstatSync: typeof originalLstatSync };
+  let swapped = false;
+  mkdirSync(nested);
+  renameSync(join(root, "packet.json"), join(nested, "packet.json"));
+  mutableFs.lstatSync = ((path: fs.PathLike, ...args: Parameters<typeof originalLstatSync> extends [fs.PathLike, ...infer Rest] ? Rest : never) => {
+    const result = originalLstatSync(path, ...args);
+    if (!swapped && path === "nested") {
+      swapped = true;
+      renameSync(nested, join(root, "nested-original"));
+      symlinkSync(outside, nested);
+    }
+    return result;
+  }) as typeof originalLstatSync;
+  syncBuiltinESMExports();
+  try {
+    const inspection = inspectTaskPacket(root, "nested/packet.json");
+    assert.equal(swapped, true);
+    assert.ok(inspection.errors.some((error) => /parent changed|symbolic link|escapes/.test(error.message)));
+    assert.equal(existsSync(join(outside, "packet.json")), false);
+  } finally {
+    mutableFs.lstatSync = originalLstatSync;
+    syncBuiltinESMExports();
+    rmSync(root, { force: true, recursive: true });
+    rmSync(outside, { force: true, recursive: true });
   }
 });
 

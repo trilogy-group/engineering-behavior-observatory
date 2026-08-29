@@ -22,6 +22,7 @@ import {
 } from "./artifacts.js";
 import {
   isSafeArtifactRelativePath,
+  openBundleRegularFile,
   isPublicationOwnershipCurrent,
   readPublicationOwnership,
   readPublicationStagingPath,
@@ -925,9 +926,8 @@ function readBundleFile(
   const root = rootIdentity.path;
   const rootDescriptor = rootIdentity.descriptor;
   try {
-    assertBundleRoot(root, rootDescriptor, locator);
-    const path = assertBundlePathWithoutLinks(root, locator);
-    const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const path = resolve(root, locator);
+    const descriptor = openBundleRegularFile(bundleRoot, locator, "Artifact path", rootIdentity);
     try {
       const opened = fstatSync(descriptor);
       const openedTimes = fstatSync(descriptor, { bigint: true });

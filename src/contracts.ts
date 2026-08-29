@@ -484,7 +484,7 @@ function readVerifiedBundleFile(
   }
 }
 
-function openBundleRegularFile(
+export function openBundleRegularFile(
   bundleRoot: string,
   locator: string,
   label: string,
@@ -495,24 +495,67 @@ function openBundleRegularFile(
   }
 
   assertBundleRootHandle(root, bundleRoot, locator);
-  const selectedPath = assertBundlePathWithoutLinks(root.path, locator, label);
-
   let descriptor: number | undefined;
+  const originalCwd = process.cwd();
+  let changedCwd = false;
   try {
-    descriptor = openSync(selectedPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    // Node does not expose openat. Keep the verified root/parent directory as
+    // the process cwd while opening each next component with O_NOFOLLOW; once
+    // chdir has entered a verified directory, later lookups are inode-relative.
+    process.chdir(root.path);
+    changedCwd = true;
+    let currentPath = root.path;
+    const segments = locator.split("/");
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      const segment = segments[index]!;
+      let childDescriptor: number;
+      try {
+        childDescriptor = openSync(segment, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+          throw new Error(`${label} "${locator}" escapes its declared root.`);
+        }
+        throw error;
+      }
+      try {
+        const openedDirectory = fstatSync(childDescriptor);
+        const namedDirectory = lstatSync(segment);
+        if (!openedDirectory.isDirectory() || namedDirectory.isSymbolicLink()
+            || !sameFileIdentity(openedDirectory, namedDirectory)) {
+          throw new Error(`${label} "${locator}" crosses a symbolic link.`);
+        }
+        process.chdir(segment);
+        const currentDirectory = lstatSync(".");
+        if (!sameFileIdentity(openedDirectory, currentDirectory)) {
+          throw new Error(`${label} "${locator}" parent changed during verification.`);
+        }
+        currentPath = resolve(currentPath, segment);
+      } finally {
+        closeSync(childDescriptor);
+      }
+    }
+    const leaf = segments[segments.length - 1]!;
+    try {
+      descriptor = openSync(leaf, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+        throw new Error(`${label} "${locator}" escapes its declared root.`);
+      }
+      throw error;
+    }
     const opened = fstatSync(descriptor);
-    if (!opened.isFile() || !isReadableBundleFile(selectedPath, opened)) {
+    const current = lstatSync(leaf);
+    if (!opened.isFile() || current.isSymbolicLink() || !sameFileIdentity(opened, current)
+        || !isReadableBundleFile(resolve(currentPath, leaf), opened)) {
       throw new Error(`${label} "${locator}" is not an isolated regular file.`);
     }
     assertBundleRootHandle(root, bundleRoot, locator);
-    const current = lstatSync(assertBundlePathWithoutLinks(root.path, locator, label));
-    if (opened.dev !== current.dev || opened.ino !== current.ino) {
-      throw new Error(`${label} "${locator}" changed after bundle-root verification.`);
-    }
     return descriptor;
   } catch (error) {
     if (descriptor !== undefined) closeSync(descriptor);
     throw error;
+  } finally {
+    if (changedCwd) process.chdir(originalCwd);
   }
 }
 
@@ -1009,8 +1052,7 @@ function parseTarOctal(field: Uint8Array, label: string): number {
 
 function readTarText(bytes: Uint8Array): string {
   const end = bytes.indexOf(0);
-  const value = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, end < 0 ? bytes.length : end));
-  return value.endsWith("\n") ? value.slice(0, -1) : value;
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, end < 0 ? bytes.length : end));
 }
 
 function parsePaxAttributes(bytes: Uint8Array): { path?: string; size?: number } {
