@@ -72,8 +72,11 @@ status to be `admitted` and a complete human review.
 [`ebo.task-packet-freeze/v1`](../schemas/task-packet-freeze.v1.schema.json)
 record. It records stable SHA-256 digests for the prompt, fixture, reference
 solution, verifier, review record, controlled perturbation, and canonical
-packet. The aggregate digest is derived only from those identities and the
-packet locator, so repeating a freeze for unchanged content is idempotent.
+packet. The review record binds the canonical packet content with its
+`admission` field omitted, using its `preAdmissionDigest` field and avoiding a
+circular reference. The aggregate digest is derived only from those identities
+and the packet locator, so repeating a freeze for unchanged content is
+idempotent.
 An existing freeze is never silently replaced after a component changes.
 
 `status` compares the current packet and resolved bytes with the freeze record

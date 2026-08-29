@@ -13,12 +13,13 @@ import {
   digestBytes,
   digestMetadata,
   validateArtifact,
-  writeMetadataAtomicallySync,
+  writeMetadataAtomicallyIfAbsentSync,
   type ArtifactValidationError,
 } from "./artifacts.js";
 import {
   isSafeArtifactRelativePath,
   resolveBundleArtifact,
+  resolveTaskArchive,
   type ArtifactReference,
   type Digest,
 } from "./contracts.js";
@@ -29,7 +30,15 @@ export type TaskPacket = {
   agentInput: {
     prompt: string;
     fixture: {
-      source: ArtifactReference;
+      source: ArtifactReference & {
+        kind: "sanitized-archive";
+        format: "tar-gzip-v1";
+        limits: {
+          maxCompressedBytes: number;
+          maxExpandedBytes: number;
+          maxMembers: number;
+        };
+      };
       materializer: {
         kind: "verified-archive-literal-paths-no-links-v1";
         destination: "workspace";
@@ -58,19 +67,24 @@ export type TaskPacket = {
   };
 };
 
+export type TaskPacketComponent =
+  | { status: "referenced"; digest: Digest | null }
+  | { status: "not-provided" | "unsupported" | "not-applied" };
+
 export type TaskPacketComponents = {
   prompt: Digest;
   fixture: Digest | null;
-  reference: Digest | null;
+  reference: TaskPacketComponent;
   verifier: Digest | null;
   reviewRecord: Digest | null;
-  controlledPerturbation: Digest | null;
+  controlledPerturbation: TaskPacketComponent;
 };
 
 export type TaskPacketFreezeRecord = {
   schemaVersion: "ebo.task-packet-freeze/v1";
   packetId: string;
   packetLocator: string;
+  preAdmissionDigest: Digest;
   packetDigest: Digest;
   components: TaskPacketComponents;
   aggregateDigest: Digest;
@@ -80,6 +94,7 @@ export type TaskPacketFreezeRecord = {
 export type TaskPacketInspection = {
   packetLocator: string;
   packet: TaskPacket | null;
+  preAdmissionDigest: Digest | null;
   packetDigest: Digest | null;
   components: TaskPacketComponents | null;
   modelVisible: TaskPacket["agentInput"] | null;
@@ -106,6 +121,7 @@ export function inspectTaskPacket(bundleRoot: string, packetLocator: string): Ta
     return {
       packetLocator,
       packet: null,
+      preAdmissionDigest: null,
       packetDigest: null,
       components: null,
       modelVisible: null,
@@ -115,28 +131,46 @@ export function inspectTaskPacket(bundleRoot: string, packetLocator: string): Ta
 
   const errors = validateArtifact(packetLocator, document);
   if (errors.length > 0) {
-    return { packetLocator, packet: null, packetDigest: null, components: null, modelVisible: null, errors };
+    return { packetLocator, packet: null, preAdmissionDigest: null, packetDigest: null, components: null, modelVisible: null, errors };
   }
 
   const packet = document as TaskPacket;
+  const preAdmissionPacket = structuredClone(packet) as unknown as Record<string, unknown>;
+  delete preAdmissionPacket.admission;
+  const preAdmissionDigest = digestMetadata(preAdmissionPacket);
   const components: TaskPacketComponents = {
     prompt: digestBytes(Buffer.from(packet.agentInput.prompt, "utf8")),
-    fixture: resolveComponent(bundleRoot, packet.agentInput.fixture.source, "/agentInput/fixture/source", packetLocator, errors),
+    fixture: resolveComponent(
+      bundleRoot,
+      packet.agentInput.fixture.source,
+      "/agentInput/fixture/source",
+      packetLocator,
+      errors,
+      packet.agentInput.fixture.source.limits.maxCompressedBytes,
+    ),
     reference: "locator" in packet.restricted.referenceSolution
-      ? resolveComponent(bundleRoot, packet.restricted.referenceSolution, "/restricted/referenceSolution", packetLocator, errors)
-      : null,
+      ? { status: "referenced", digest: resolveComponent(bundleRoot, packet.restricted.referenceSolution, "/restricted/referenceSolution", packetLocator, errors) }
+      : { status: packet.restricted.referenceSolution.status },
     verifier: resolveComponent(bundleRoot, packet.restricted.verifier, "/restricted/verifier", packetLocator, errors),
     reviewRecord: packet.admission.review === null
       ? null
-      : resolveComponent(bundleRoot, packet.admission.review.reviewRecord, "/admission/review/reviewRecord", packetLocator, errors),
+      : resolveReviewRecord(
+        bundleRoot,
+        packet.admission.review.reviewRecord,
+        preAdmissionDigest,
+        "/admission/review/reviewRecord",
+        packetLocator,
+        errors,
+      ),
     controlledPerturbation: "reference" in packet.controlledPerturbation
-      ? resolveComponent(bundleRoot, packet.controlledPerturbation.reference, "/controlledPerturbation/reference", packetLocator, errors)
-      : null,
+      ? { status: "referenced", digest: resolveComponent(bundleRoot, packet.controlledPerturbation.reference, "/controlledPerturbation/reference", packetLocator, errors) }
+      : { status: packet.controlledPerturbation.status },
   };
 
   return {
     packetLocator,
     packet,
+    preAdmissionDigest,
     packetDigest: digestMetadata(packet),
     components,
     modelVisible: modelVisibleTaskPacket(packet),
@@ -186,31 +220,31 @@ export function freezeTaskPacket(
 
   const inspection = assertTaskPacketAdmitted(bundleRoot, packetLocator);
   const packet = inspection.packet!;
+  const preAdmissionDigest = inspection.preAdmissionDigest!;
   const packetDigest = inspection.packetDigest!;
   const components = inspection.components!;
   const candidate: TaskPacketFreezeRecord = {
     schemaVersion: TASK_PACKET_FREEZE_SCHEMA_VERSION,
     packetId: packet.id,
     packetLocator,
+    preAdmissionDigest,
     packetDigest,
     components,
-    aggregateDigest: aggregateDigest(packet.id, packetLocator, packetDigest, components),
+    aggregateDigest: aggregateDigest(packet.id, packetLocator, preAdmissionDigest, packetDigest, components),
     frozenAt: new Date().toISOString(),
   };
 
-  const existing = readOptionalJson(bundleRoot, freezeLocator);
-  if (existing !== undefined) {
-    const errors = validateArtifact(freezeLocator, existing);
+  const write = writeMetadataAtomicallyIfAbsentSync(bundleRoot, freezeLocator, candidate);
+  if (!write.created) {
+    const winner = readOptionalJson(bundleRoot, freezeLocator);
+    if (winner === undefined) throw new Error("Freeze record disappeared after concurrent creation.");
+    const errors = validateArtifact(freezeLocator, winner);
     if (errors.length > 0) throw new Error(formatErrors(errors));
-    const record = existing as TaskPacketFreezeRecord;
-    const mismatches = compareFreezeRecord(record, inspection);
-    if (mismatches.length > 0) {
-      throw new Error(`Frozen task packet changed: ${mismatches.join(", ")}.`);
-    }
-    return record;
+    const mismatches = compareFreezeRecord(winner as TaskPacketFreezeRecord, inspection);
+    if (mismatches.length > 0) throw new Error(`Frozen task packet changed: ${mismatches.join(", ")}.`);
+    return winner as TaskPacketFreezeRecord;
   }
 
-  writeMetadataAtomicallySync(bundleRoot, freezeLocator, candidate);
   return candidate;
 }
 
@@ -274,9 +308,37 @@ function resolveComponent(
   field: string,
   artifact: string,
   errors: ArtifactValidationError[],
+  maxCompressedBytes?: number,
 ): Digest | null {
   try {
-    return digestBytes(resolveBundleArtifact(bundleRoot, reference));
+    const bytes = maxCompressedBytes === undefined
+      ? resolveBundleArtifact(bundleRoot, reference)
+      : resolveTaskArchive(bundleRoot, reference, maxCompressedBytes);
+    return digestBytes(bytes);
+  } catch (error) {
+    errors.push(packetError(artifact, field, errorMessage(error)));
+    return null;
+  }
+}
+
+function resolveReviewRecord(
+  bundleRoot: string,
+  reference: ArtifactReference,
+  expectedPreAdmissionDigest: Digest,
+  field: string,
+  artifact: string,
+  errors: ArtifactValidationError[],
+): Digest | null {
+  try {
+    const bytes = resolveBundleArtifact(bundleRoot, reference);
+    const record = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+    const bound = record !== null && typeof record === "object" && !Array.isArray(record)
+      ? (record as { preAdmissionDigest?: unknown }).preAdmissionDigest
+      : undefined;
+    if (!isDigest(bound) || !sameDigest(bound, expectedPreAdmissionDigest)) {
+      throw new Error("Review record does not bind the packet's pre-admission digest.");
+    }
+    return digestBytes(bytes);
   } catch (error) {
     errors.push(packetError(artifact, field, errorMessage(error)));
     return null;
@@ -286,16 +348,18 @@ function resolveComponent(
 function aggregateDigest(
   packetId: string,
   packetLocator: string,
+  preAdmissionDigest: Digest,
   packetDigest: Digest,
   components: TaskPacketComponents,
 ): Digest {
-  return digestMetadata({ packetId, packetLocator, packetDigest, components });
+  return digestMetadata({ packetId, packetLocator, preAdmissionDigest, packetDigest, components });
 }
 
 function compareFreezeRecord(record: TaskPacketFreezeRecord, inspection: TaskPacketInspection): string[] {
   const mismatches: string[] = [];
   if (record.packetId !== inspection.packet?.id) mismatches.push("packetId");
   if (record.packetLocator !== inspection.packetLocator) mismatches.push("packetLocator");
+  if (!sameDigest(record.preAdmissionDigest, inspection.preAdmissionDigest)) mismatches.push("pre-admission");
   if (!sameDigest(record.packetDigest, inspection.packetDigest)) mismatches.push("packet");
 
   const current = inspection.components;
@@ -303,11 +367,20 @@ function compareFreezeRecord(record: TaskPacketFreezeRecord, inspection: TaskPac
     mismatches.push("components");
     return mismatches;
   }
-  for (const component of ["prompt", "fixture", "reference", "verifier", "reviewRecord", "controlledPerturbation"] as const) {
+  for (const component of ["prompt", "fixture", "verifier", "reviewRecord"] as const) {
     if (!sameDigest(record.components[component], current[component])) mismatches.push(`components.${component}`);
   }
-  if (inspection.packetDigest !== null && inspection.packet !== null) {
-    const aggregate = aggregateDigest(inspection.packet.id, inspection.packetLocator, inspection.packetDigest, current);
+  for (const component of ["reference", "controlledPerturbation"] as const) {
+    if (!sameComponent(record.components[component], current[component])) mismatches.push(`components.${component}`);
+  }
+  if (inspection.packetDigest !== null && inspection.packet !== null && inspection.preAdmissionDigest !== null) {
+    const aggregate = aggregateDigest(
+      inspection.packet.id,
+      inspection.packetLocator,
+      inspection.preAdmissionDigest!,
+      inspection.packetDigest,
+      current,
+    );
     if (!sameDigest(record.aggregateDigest, aggregate)) mismatches.push("aggregate");
   } else {
     mismatches.push("aggregate");
@@ -318,6 +391,19 @@ function compareFreezeRecord(record: TaskPacketFreezeRecord, inspection: TaskPac
 function sameDigest(left: Digest | null, right: Digest | null): boolean {
   if (left === null || right === null) return left === right;
   return left.algorithm === right.algorithm && left.value === right.value;
+}
+
+function isDigest(value: unknown): value is Digest {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && (value as { algorithm?: unknown }).algorithm === "sha256"
+    && typeof (value as { value?: unknown }).value === "string"
+    && /^[a-f0-9]{64}$/.test((value as { value: string }).value);
+}
+
+function sameComponent(left: TaskPacketComponent, right: TaskPacketComponent): boolean {
+  if (left.status !== right.status) return false;
+  if (left.status !== "referenced" || right.status !== "referenced") return true;
+  return sameDigest(left.digest, right.digest);
 }
 
 function readOptionalJson(bundleRoot: string, locator: string): unknown | undefined {

@@ -8,6 +8,7 @@
     "schemaVersion",
     "packetId",
     "packetLocator",
+    "preAdmissionDigest",
     "packetDigest",
     "components",
     "aggregateDigest",
@@ -21,6 +22,7 @@
       "maxLength": 960,
       "pattern": "^(?!/)(?!(?:[^/]+/){64})(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*(?:^|/)\\.[Gg][Ii][Tt](?:/|$))(?!.*(?:^|/)[^/]{256})(?!.*(?:^|/)[^/]*\\.(?:/|$))(?!.*(?:^|/)(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.[^/]*)?(?:/|$))(?!.*/$)[A-Za-z0-9][A-Za-z0-9._/-]*$"
     },
+    "preAdmissionDigest": { "$ref": "#/$defs/digest" },
     "packetDigest": { "$ref": "#/$defs/digest" },
     "components": {
       "type": "object",
@@ -29,10 +31,10 @@
       "properties": {
         "prompt": { "$ref": "#/$defs/digest" },
         "fixture": { "$ref": "#/$defs/digest" },
-        "reference": { "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+        "reference": { "$ref": "#/$defs/referenceComponent" },
         "verifier": { "$ref": "#/$defs/digest" },
-        "reviewRecord": { "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
-        "controlledPerturbation": { "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] }
+        "reviewRecord": { "$ref": "#/$defs/digest" },
+        "controlledPerturbation": { "$ref": "#/$defs/controlledPerturbationComponent" }
       }
     },
     "aggregateDigest": { "$ref": "#/$defs/digest" },
@@ -51,6 +53,48 @@
         "algorithm": { "const": "sha256" },
         "value": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
       }
+    },
+    "referenceComponent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "digest"],
+          "properties": {
+            "status": { "const": "referenced" },
+            "digest": { "$ref": "#/$defs/digest" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": { "enum": ["not-provided", "unsupported"] }
+          }
+        }
+      ]
+    },
+    "controlledPerturbationComponent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "digest"],
+          "properties": {
+            "status": { "const": "referenced" },
+            "digest": { "$ref": "#/$defs/digest" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": { "enum": ["not-applied", "unsupported"] }
+          }
+        }
+      ]
     }
   }
 }

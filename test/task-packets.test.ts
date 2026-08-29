@@ -8,10 +8,12 @@ import { fileURLToPath } from "node:url";
 import {
   admitTaskPacket,
   digestBytes,
+  digestMetadata,
   freezeTaskPacket,
   main,
   modelVisibleTaskPacket,
   statusTaskPacket,
+  writeMetadataAtomicallyIfAbsentSync,
   type TaskPacket,
 } from "../src/index.js";
 
@@ -45,6 +47,9 @@ function createBundle(packet = packetFixture()): { root: string; packet: TaskPac
   packet.restricted.verifier.digest = digestBytes(components.verifier);
   if (packet.admission.review !== null) {
     packet.admission.review.reviewRecord.locator = "review.json";
+    const preAdmission = structuredClone(packet);
+    delete (preAdmission as unknown as Record<string, unknown>).admission;
+    components.review = Buffer.from(JSON.stringify({ preAdmissionDigest: digestMetadata(preAdmission) }));
     packet.admission.review.reviewRecord.digest = digestBytes(components.review);
   }
 
@@ -100,6 +105,21 @@ test("status identifies every frozen component mutation", () => {
   }
 });
 
+test("freeze preserves unavailable declaration states", () => {
+  const packet = packetFixture();
+  packet.restricted.referenceSolution = { status: "unsupported" };
+  packet.controlledPerturbation = { status: "not-applied" };
+  const { root } = createBundle(packet);
+  try {
+    const record = freezeTaskPacket(root, "packet.json");
+    assert.deepEqual(record.components.reference, { status: "unsupported" });
+    assert.deepEqual(record.components.controlledPerturbation, { status: "not-applied" });
+    assert.equal(statusTaskPacket(root, "packet.json").status, "frozen");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("admission requires a passing recorded human decision", () => {
   const proposed = createBundle(packetFixture("task-packet.proposed.v1.json"));
   try {
@@ -117,6 +137,46 @@ test("admission requires a passing recorded human decision", () => {
     assert.ok(admitTaskPacket(unknown.root, "packet.json").errors.some((error) => error.field.includes("classification")));
   } finally {
     rmSync(unknown.root, { force: true, recursive: true });
+  }
+});
+
+test("admission rejects a review record bound to another packet", () => {
+  const { root, packet } = createBundle();
+  try {
+    const foreign = structuredClone(packet);
+    foreign.id = "foreign-packet";
+    delete (foreign as unknown as Record<string, unknown>).admission;
+    const review = Buffer.from(JSON.stringify({ preAdmissionDigest: digestMetadata(foreign) }));
+    writeFileSync(join(root, "review.json"), review);
+    packet.admission.review!.reviewRecord.digest = digestBytes(review);
+    writeFileSync(join(root, "packet.json"), JSON.stringify(packet, null, 2));
+    const result = admitTaskPacket(root, "packet.json");
+    assert.ok(result.errors.some((error) => /pre-admission digest/.test(error.message)));
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("inspection enforces the fixture compressed-byte limit", () => {
+  const { root, packet } = createBundle();
+  try {
+    packet.agentInput.fixture.source.limits.maxCompressedBytes = 1;
+    writeFileSync(join(root, "packet.json"), JSON.stringify(packet, null, 2));
+    const result = admitTaskPacket(root, "packet.json");
+    assert.ok(result.errors.some((error) => /exceeds its maximum bytes/.test(error.message)));
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("create-if-absent metadata writes preserve the first freeze", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-freeze-race-"));
+  try {
+    assert.equal(writeMetadataAtomicallyIfAbsentSync(root, "freeze.json", { winner: "first" }).created, true);
+    assert.equal(writeMetadataAtomicallyIfAbsentSync(root, "freeze.json", { winner: "second" }).created, false);
+    assert.deepEqual(JSON.parse(readFileSync(join(root, "freeze.json"), "utf8")), { winner: "first" });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
   }
 });
 

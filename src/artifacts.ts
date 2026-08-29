@@ -3,12 +3,12 @@ import {
   closeSync,
   constants,
   fsyncSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
   realpathSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -224,15 +224,19 @@ export async function writeMetadataAtomically(
   return digest;
 }
 
-export function writeMetadataAtomicallySync(
+export function writeMetadataAtomicallyIfAbsentSync(
   artifactRoot: string,
   relativePath: string,
   metadata: unknown,
-): Digest {
+): { created: boolean; digest: Digest } {
   const bytes = Buffer.from(canonicalizeMetadata(metadata));
   const { parent, path } = prepareArtifactPathSync(artifactRoot, relativePath);
+  const digest = digestBytes(bytes);
+  if (lstatIfPresent(path) !== undefined) return { created: false, digest };
+
   const temporaryPath = resolve(parent, `.${randomUUID()}.tmp`);
   let descriptor: number | undefined;
+  let created = false;
 
   try {
     descriptor = openSync(temporaryPath, "wx", 0o600);
@@ -240,23 +244,26 @@ export function writeMetadataAtomicallySync(
     fsyncSync(descriptor);
     closeSync(descriptor);
     descriptor = undefined;
-    renameSync(temporaryPath, path);
-    const directory = openSync(parent, constants.O_RDONLY);
     try {
-      fsyncSync(directory);
-    } finally {
-      closeSync(directory);
+      linkSync(temporaryPath, path);
+      created = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    if (created) {
+      const directory = openSync(parent, constants.O_RDONLY);
+      try {
+        fsyncSync(directory);
+      } finally {
+        closeSync(directory);
+      }
     }
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
     rmSync(temporaryPath, { force: true });
   }
 
-  const digest = digestBytes(bytes);
-  if (!verifyDigest(readFileSync(path), digest)) {
-    throw new Error(`Artifact "${relativePath}" digest does not match its written bytes.`);
-  }
-  return digest;
+  return { created, digest };
 }
 
 function loadValidators(): Map<string, ValidateFunction> {
@@ -561,6 +568,15 @@ function prepareArtifactPathSync(artifactRoot: string, relativePath: string): { 
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   return { parent, path };
+}
+
+function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
 }
 
 async function syncDirectory(path: string): Promise<void> {

@@ -11,7 +11,7 @@ export {
   validateRunManifestEvidence,
   verifyDigest,
   writeMetadataAtomically,
-  writeMetadataAtomicallySync,
+  writeMetadataAtomicallyIfAbsentSync,
 } from "./artifacts.js";
 export type { ArtifactIdentity, ArtifactValidationError } from "./artifacts.js";
 export {
@@ -39,7 +39,7 @@ export {
   statusTaskPacket,
   TASK_PACKET_FREEZE_SCHEMA_VERSION,
 } from "./task-packets.js";
-export type { TaskPacket, TaskPacketComponents, TaskPacketFreezeRecord, TaskPacketInspection, TaskPacketStatus } from "./task-packets.js";
+export type { TaskPacket, TaskPacketComponent, TaskPacketComponents, TaskPacketFreezeRecord, TaskPacketInspection, TaskPacketStatus } from "./task-packets.js";
 export type {
   ArtifactReference,
   ArchiveEntry,
