@@ -295,6 +295,17 @@ export function statusTaskPacket(
   }
 
   const record = freeze as TaskPacketFreezeRecord;
+  if (inspection.errors.length === 0 && inspection.packet?.admission.status !== "admitted") {
+    return {
+      status: "unadmitted",
+      packetId,
+      packetDigest,
+      aggregateDigest: null,
+      freezeLocator,
+      mismatches: ["admission"],
+      errors: inspection.errors,
+    };
+  }
   const mismatches = compareFreezeRecord(record, inspection);
   return {
     status: inspection.errors.length > 0 ? "invalid" : mismatches.length > 0 ? "changed" : "frozen",

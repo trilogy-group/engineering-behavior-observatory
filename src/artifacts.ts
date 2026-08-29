@@ -234,37 +234,35 @@ export function writeMetadataAtomicallyIfAbsentSync(
   const root = realpathSync(artifactRoot);
   const { parent, path } = prepareArtifactPathSync(root, relativePath);
   const digest = digestBytes(bytes);
-  assertPublishParent(root, parent, relativePath);
-  if (lstatIfPresent(path) !== undefined) return { created: false, digest };
-
-  const temporaryPath = resolve(parent, `.${randomUUID()}.tmp`);
-  let descriptor: number | undefined;
+  const parentDescriptor = openPublishParent(root, parent, relativePath);
   let created = false;
-
   try {
-    descriptor = openSync(temporaryPath, "wx", 0o600);
-    writeFileSync(descriptor, bytes);
-    fsyncSync(descriptor);
-    closeSync(descriptor);
-    descriptor = undefined;
-    assertPublishParent(root, parent, relativePath);
+    if (lstatIfPresent(path) !== undefined) return { created: false, digest };
+
+    const temporaryPath = resolve(parent, `.${randomUUID()}.tmp`);
+    let descriptor: number | undefined;
+
     try {
-      linkSync(temporaryPath, path);
-      created = true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    }
-    if (created) {
-      const directory = openSync(parent, constants.O_RDONLY);
+      descriptor = openSync(temporaryPath, "wx", 0o600);
+      assertPublishParent(root, parent, relativePath, parentDescriptor);
+      writeFileSync(descriptor, bytes);
+      fsyncSync(descriptor);
+      closeSync(descriptor);
+      descriptor = undefined;
+      assertPublishParent(root, parent, relativePath, parentDescriptor);
       try {
-        fsyncSync(directory);
-      } finally {
-        closeSync(directory);
+        linkSync(temporaryPath, path);
+        created = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       }
+      if (created) fsyncSync(parentDescriptor);
+    } finally {
+      if (descriptor !== undefined) closeSync(descriptor);
+      rmSync(temporaryPath, { force: true });
     }
   } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-    rmSync(temporaryPath, { force: true });
+    closeSync(parentDescriptor);
   }
 
   return { created, digest };
@@ -583,7 +581,7 @@ function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined 
   }
 }
 
-function assertPublishParent(root: string, parent: string, relativePath: string): void {
+function openPublishParent(root: string, parent: string, relativePath: string): number {
   const segments = relative(root, parent) === "" ? [] : relative(root, parent).split(sep);
   let current = root;
   for (const segment of segments) {
@@ -601,8 +599,29 @@ function assertPublishParent(root: string, parent: string, relativePath: string)
     if (!opened.isDirectory() || current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino) {
       throw new Error(`Artifact path "${relativePath}" parent changed during publication.`);
     }
-  } finally {
+    return descriptor;
+  } catch (error) {
     closeSync(descriptor);
+    throw error;
+  }
+}
+
+function assertPublishParent(root: string, parent: string, relativePath: string, descriptor: number): void {
+  const segments = relative(root, parent) === "" ? [] : relative(root, parent).split(sep);
+  let current = root;
+  for (const segment of segments) {
+    current = resolve(current, segment);
+    const entry = lstatSync(current);
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      throw new Error(`Artifact path "${relativePath}" crosses a symbolic link.`);
+    }
+  }
+
+  const opened = fstatSync(descriptor);
+  const currentStat = lstatSync(parent);
+  if (!opened.isDirectory() || currentStat.isSymbolicLink()
+      || opened.dev !== currentStat.dev || opened.ino !== currentStat.ino) {
+    throw new Error(`Artifact path "${relativePath}" parent changed during publication.`);
   }
 }
 

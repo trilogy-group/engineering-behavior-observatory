@@ -230,6 +230,20 @@ test("freeze validates its constructed record and bounds the default locator", (
   assert.throws(() => defaultFreezeLocator(nearLimit), /exceeds safe path limits/);
 });
 
+test("status never reports an unadmitted packet as frozen", () => {
+  const { root, packet } = createBundle();
+  try {
+    freezeTaskPacket(root, "packet.json");
+    packet.admission.status = "rejected";
+    writeFileSync(join(root, "packet.json"), JSON.stringify(packet, null, 2));
+    const status = statusTaskPacket(root, "packet.json");
+    assert.equal(status.status, "unadmitted");
+    assert.deepEqual(status.mismatches, ["admission"]);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("task-packet CLI exposes validate, freeze, and status", () => {
   const { root } = createBundle();
   try {
