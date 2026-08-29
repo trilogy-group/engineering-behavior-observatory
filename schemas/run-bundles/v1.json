@@ -39,6 +39,19 @@
         "digest": { "$ref": "#/$defs/digest" }
       }
     },
+    "diagnosticSourceBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verifierId", "stream", "locator", "digest", "sizeBytes", "truncated"],
+      "properties": {
+        "verifierId": { "$ref": "#/$defs/identifier" },
+        "stream": { "enum": ["stdout", "stderr"] },
+        "locator": { "$ref": "#/$defs/relativePath" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "sizeBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "truncated": { "type": "boolean" }
+      }
+    },
     "evidenceDescriptor": {
       "type": "object",
       "additionalProperties": false,
@@ -76,6 +89,7 @@
         "sharingClass": { "$ref": "#/$defs/sharingClass" },
         "relativePath": { "$ref": "#/$defs/relativePath" },
         "nativeReference": { "$ref": "#/$defs/nativeReference" },
+        "diagnosticSource": { "$ref": "#/$defs/diagnosticSourceBinding" },
         "sanitizedFrom": {
           "type": "object",
           "additionalProperties": false,

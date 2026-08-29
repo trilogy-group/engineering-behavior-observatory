@@ -103,6 +103,14 @@ type CompleteResultFields = {
   diagnostics: DiagnosticReference[];
 };
 
+type WorkspaceContentEntry = {
+  kind: "directory" | "file";
+  mode: bigint;
+  bytes?: Buffer;
+};
+
+type WorkspaceContent = ReadonlyMap<string, WorkspaceContentEntry>;
+
 export type CompleteVerifierResult =
   | (VerifierPassedResult & CompleteResultFields)
   | (VerifierFailedResult & CompleteResultFields)
@@ -163,6 +171,51 @@ async function hashWorkspaceDirectory(
       hash.update(bytes);
     } else {
       throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
+    }
+  }
+}
+
+async function captureWorkspaceContent(workspacePath: string): Promise<WorkspaceContent> {
+  const root = await realpath(workspacePath);
+  const metadata = await lstat(root, { bigint: true });
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("Workspace root is not a directory.");
+  const entries = new Map<string, WorkspaceContentEntry>([["", { kind: "directory", mode: metadata.mode & 0o7777n }]]);
+  await captureWorkspaceDirectory(root, "", entries);
+  return entries;
+}
+
+async function captureWorkspaceDirectory(
+  directory: string,
+  relativeDirectory: string,
+  entries: Map<string, WorkspaceContentEntry>,
+): Promise<void> {
+  const children = await readdir(directory, { withFileTypes: true });
+  children.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+  for (const child of children) {
+    const path = join(directory, child.name);
+    const relativePath = posix.join(relativeDirectory, child.name);
+    const metadata = await lstat(path, { bigint: true });
+    if (metadata.isSymbolicLink()) throw new Error(`Workspace contains a symbolic link at "${relativePath}".`);
+    if (metadata.isDirectory()) {
+      entries.set(relativePath, { kind: "directory", mode: metadata.mode & 0o7777n });
+      await captureWorkspaceDirectory(path, relativePath, entries);
+    } else if (metadata.isFile()) {
+      if (metadata.nlink > 1n) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
+      entries.set(relativePath, { kind: "file", mode: metadata.mode & 0o7777n, bytes: await readFile(path) });
+    } else {
+      throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
+    }
+  }
+}
+
+async function assertWorkspaceSnapshotContent(snapshotPath: string, expected: WorkspaceContent): Promise<void> {
+  const actual = await captureWorkspaceContent(snapshotPath);
+  if (actual.size !== expected.size) throw new Error("Workspace changed while its private evaluation snapshot was being created.");
+  for (const [relativePath, expectedEntry] of expected) {
+    const actualEntry = actual.get(relativePath);
+    if (actualEntry === undefined || actualEntry.kind !== expectedEntry.kind || actualEntry.mode !== expectedEntry.mode
+        || (expectedEntry.kind === "file" && !actualEntry.bytes!.equals(expectedEntry.bytes!))) {
+      throw new Error("Workspace changed while its private evaluation snapshot was being created.");
     }
   }
 }
@@ -240,8 +293,10 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
         const verifierBytes = await readVerifiedArtifact(verifierRoot, options.verifier.locator, options.verifier.digest);
         stagingRoot = await createStagingRoot(workspacePath);
         const evaluatedWorkspacePath = join(stagingRoot, "workspace");
+        const workspaceContent = await captureWorkspaceContent(workspacePath);
         await cp(workspacePath, evaluatedWorkspacePath, { recursive: true, force: false, preserveTimestamps: true });
         await restoreWorkspaceTimestamps(workspacePath, evaluatedWorkspacePath);
+        await assertWorkspaceSnapshotContent(evaluatedWorkspacePath, workspaceContent);
         if (await digestWorkspace(workspacePath) !== options.workspaceFingerprint) {
           throw new Error("Workspace changed while its private evaluation snapshot was being created.");
         }
@@ -395,7 +450,7 @@ function validateOptions(options: ExecuteVerifierOptions, timeoutMs: number, max
   if (options.command !== undefined && options.command !== process.execPath) {
     throw new Error("Verifier command must be the pinned Node runtime.");
   }
-  if (options.args?.some((argument) => /^(?:-[epcmr]|--(?:eval|print|command|module|input-type|require|import|loader)(?:=|$))/.test(argument))) {
+  if (options.args !== undefined && options.args.length > 0) {
     throw new Error("Verifier launcher arguments cannot replace the staged verifier.");
   }
   if (!isValidIdentifier(options.workspace.artifactId) || !/^sha256:[a-f0-9]{64}$/.test(options.workspace.digest)) {

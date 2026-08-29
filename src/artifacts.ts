@@ -242,6 +242,9 @@ export function validateRunManifestEvidence(
           expectedVerifier,
           workspaceEvidence,
           descriptor.sanitizedFrom !== undefined,
+          isRecord(descriptor.sanitizedFrom) && typeof descriptor.sanitizedFrom.artifactId === "string"
+            ? descriptor.sanitizedFrom.artifactId
+            : undefined,
           evidenceByPath,
           evidencePaths,
           nestedDiagnosticPaths,
@@ -403,6 +406,14 @@ function isNestedVerifierDiagnosticOrigin(value: unknown): value is NestedVerifi
     && (value.sizeBytes as number) >= 0 && typeof value.truncated === "boolean";
 }
 
+function isDiagnosticSourceBinding(value: unknown): value is NestedVerifierDiagnosticOrigin & { verifierId: string } {
+  return isRecord(value) && Object.keys(value).length === 6
+    && typeof value.verifierId === "string"
+    && isNestedVerifierDiagnosticOrigin(Object.fromEntries(
+      Object.entries(value).filter(([key]) => key !== "verifierId"),
+    ));
+}
+
 function sameDiagnosticOrigin(left: NestedVerifierDiagnosticOrigin, right: NestedVerifierDiagnosticOrigin): boolean {
   return left.stream === right.stream
     && left.locator === right.locator
@@ -487,6 +498,7 @@ function nestedVerifierDiagnosticErrors(
   expectedVerifier: Record<string, unknown> | undefined,
   workspaceEvidence: ReadonlyMap<string, Record<string, unknown>>,
   sanitized: boolean,
+  sanitizedSourceVerifierId: string | undefined,
   evidenceByPath: ReadonlyMap<string, Record<string, unknown>>,
   evidencePaths: ReadonlySet<string>,
   nestedDiagnosticPaths: Set<string>,
@@ -562,9 +574,20 @@ function nestedVerifierDiagnosticErrors(
     }
     const normalizedLocator = diagnostic.locator.toLowerCase();
     const retainedEvidence = evidenceByPath.get(normalizedLocator);
+    const sourceOrigin = diagnostic.source;
+    const sourceBinding = retainedEvidence !== undefined && isDiagnosticSourceBinding(retainedEvidence.diagnosticSource)
+      ? retainedEvidence.diagnosticSource
+      : undefined;
+    const sourceBindingMatches = sourceBinding !== undefined
+      && sourceOrigin !== undefined
+      && sourceBinding.verifierId === sanitizedSourceVerifierId
+      && sameDiagnosticOrigin(sourceBinding, sourceOrigin);
+    const byteIdentical = sanitized && sourceOrigin !== undefined && diagnostic.digest === sourceOrigin.digest;
     const isSanitizedSidecar = retainedEvidence !== undefined
       && (retainedEvidence.sharingClass === "partner" || retainedEvidence.sharingClass === "public")
-      && isRecord(retainedEvidence.sanitizedFrom);
+      && isRecord(retainedEvidence.sanitizedFrom)
+      && sourceBindingMatches
+      && !byteIdentical;
     const invalidSanitizedReference = sanitized && !isSanitizedSidecar;
     const aliasesRetainedEvidence = !sanitized && hasPortablePathCollision(normalizedLocator, evidencePaths);
     if (hasPortablePathCollision(normalizedLocator, RESERVED_MANIFEST_PATHS)
@@ -576,7 +599,7 @@ function nestedVerifierDiagnosticErrors(
         schemaVersion: "run-manifest/v1",
         field: `${scope}/diagnostics`,
         message: invalidSanitizedReference
-          ? "Sanitized verifier diagnostics require separately classified sanitized sidecars."
+          ? "Sanitized verifier diagnostics require classified, source-bound sidecars with changed bytes."
           : "Verifier diagnostics cannot alias retained evidence paths.",
       });
       continue;
@@ -711,6 +734,9 @@ function validateExportedVerifierDiagnostics(
     expectedVerifier,
     workspaceEvidence,
     true,
+    isRecord(descriptor.sanitizedFrom) && typeof descriptor.sanitizedFrom.artifactId === "string"
+      ? descriptor.sanitizedFrom.artifactId
+      : undefined,
     evidenceByPath,
     evidencePaths,
     new Set(),

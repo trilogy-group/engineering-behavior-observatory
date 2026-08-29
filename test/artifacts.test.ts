@@ -507,28 +507,31 @@ test("requires classified sidecars for sanitized verifier diagnostics", async ()
 
     assert.match(
       validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
-      /separately classified sanitized sidecars/,
+      /classified, source-bound sidecars/,
     );
     assert.match(
       validateExportManifest("export/manifest.json", exportManifest, manifest, root).map((error) => error.message).join("\n"),
-      /separately classified sanitized sidecars/,
+      /classified, source-bound sidecars/,
     );
 
+    const sanitizedDiagnostic = Buffer.from("sanitized diagnostic");
     const sidecar = {
       ...workspaceDescriptor,
       id: "sanitized-diagnostic",
       relativePath: "sanitized/diagnostic.log",
-      digest: `sha256:${digestBytes(rawDiagnostic).value}`,
-      sizeBytes: rawDiagnostic.length,
+      digest: `sha256:${digestBytes(sanitizedDiagnostic).value}`,
+      sizeBytes: sanitizedDiagnostic.length,
       sharingClass: "partner",
+      diagnosticSource: { verifierId: verifierDescriptor.id, ...sourceDiagnostic },
       sanitizedFrom: { artifactId: workspaceDescriptor.id, digest: workspaceDescriptor.digest },
     };
-    await writeFile(join(root, sidecar.relativePath), rawDiagnostic);
+    await writeFile(join(root, sidecar.relativePath), sanitizedDiagnostic);
     manifest.evidence.push(sidecar);
     sanitizedVerifier.diagnostics[0] = {
       ...sourceDiagnostic,
       locator: sidecar.relativePath,
       digest: sidecar.digest,
+      sizeBytes: sidecar.sizeBytes,
       source: sourceDiagnostic,
     };
     const sidecarVerifierBytes = Buffer.from(JSON.stringify(sanitizedVerifier));
