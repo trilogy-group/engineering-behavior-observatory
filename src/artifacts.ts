@@ -46,6 +46,7 @@ export type ArtifactIdentity = {
 const addFormats = formats.default as unknown as (instance: Ajv2020) => void;
 const schemaDirectory = fileURLToPath(new URL("../../schemas/", import.meta.url));
 const runBundleSchemaId = "urn:ebo:schema:run-bundle:v1";
+const MAX_EXISTING_DIGEST_RETRIES = 20;
 const validators = loadValidators();
 
 export const SUPPORTED_ARTIFACT_SCHEMA_VERSIONS = [...validators.keys()];
@@ -253,13 +254,16 @@ export function writeMetadataAtomicallyIfAbsentSync(
   const digest = digestBytes(bytes);
   const rootDescriptor = rootIdentity.descriptor;
   let created = false;
+  let winnerRequired = false;
+  let publicationPath: string | undefined;
   try {
     assertPublishRootHandle(root, rootDescriptor, relativePath);
     const { createdDirectories, parent, path } = prepareArtifactPathSync(root, relativePath, rootDescriptor);
+    publicationPath = path;
     assertPublishRootHandle(root, rootDescriptor, relativePath);
     const parentDescriptor = openPublishParent(root, parent, relativePath, rootDescriptor);
     const destination = relative(parent, path);
-    const quarantineBase = destination;
+    let quarantineBase = destination;
     const originalCwd = process.cwd();
     let changedCwd = false;
     try {
@@ -310,6 +314,9 @@ export function writeMetadataAtomicallyIfAbsentSync(
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === "EEXIST") {
             linkedHere = false;
+            winnerRequired = true;
+            const existingDestination = lstatSync(destination);
+            quarantineBase = sameFileIdentity(existingDestination, openedTemporary) ? destination : temporaryPath;
           } else {
             if (linkedHere) removeOwnedPath(destination, descriptor, quarantineBase, true);
             throw error;
@@ -342,7 +349,12 @@ export function writeMetadataAtomicallyIfAbsentSync(
     if (ownsRoot) closeBundleRoot(rootIdentity);
   }
 
-  return { created, digest };
+  return {
+    created,
+    digest: winnerRequired && publicationPath !== undefined
+      ? digestExistingPathWithRetry(publicationPath, relativePath)
+      : digest,
+  };
 }
 
 function loadValidators(): Map<string, ValidateFunction> {
@@ -730,6 +742,18 @@ function digestExistingPath(path: string, relativePath: string): Digest {
     return { algorithm: "sha256", value: hash.digest("hex") };
   } finally {
     closeSync(descriptor);
+  }
+}
+
+function digestExistingPathWithRetry(path: string, relativePath: string): Digest {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return digestExistingPath(path, relativePath);
+    } catch (error) {
+      if (attempt >= MAX_EXISTING_DIGEST_RETRIES || !(error instanceof Error)
+          || !error.message.includes("not an isolated regular file")) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+    }
   }
 }
 

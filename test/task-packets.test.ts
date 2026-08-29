@@ -204,6 +204,53 @@ test("create-if-absent metadata writes remain readable through the artifact API"
   }
 });
 
+test("create-if-absent publication returns the winner after a link-time race", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-link-winner-race-"));
+  const payload = "x".repeat(8 * 1024 * 1024);
+  const expectedBytes = Buffer.from(JSON.stringify({ payload }));
+  const winner = spawn(
+    process.execPath,
+    [
+      "-e",
+      `const fs = require("node:fs");
+const path = require("node:path");
+const root = process.argv[1];
+const destination = path.join(root, "metadata.json");
+const pattern = /^\\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.tmp$/;
+process.stdout.write("ready\\n");
+function race() {
+  for (const name of fs.readdirSync(root)) {
+    if (!pattern.test(name)) continue;
+    try {
+      const source = path.join(root, name);
+      fs.linkSync(source, destination);
+      fs.linkSync(source, destination + ".quarantine");
+      process.stdout.write("linked\\n");
+      return;
+    } catch {}
+  }
+  setImmediate(race);
+}
+race();`,
+      root,
+    ],
+    { stdio: ["ignore", "pipe", "ignore"] },
+  );
+  try {
+    await once(winner.stdout!, "data");
+    const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { payload });
+    assert.equal(result.created, false);
+    assert.deepEqual(result.digest, digestBytes(expectedBytes));
+    assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", result.digest), expectedBytes);
+  } finally {
+    if (winner.exitCode === null) {
+      winner.kill();
+      await once(winner, "exit").catch(() => undefined);
+    }
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("publication never overwrites an existing quarantine artifact", () => {
   const { root } = createBundle();
   const quarantine = join(root, "packet.json.freeze.json.quarantine");
