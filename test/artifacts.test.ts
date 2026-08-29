@@ -383,3 +383,43 @@ test("binds terminal verifier outcomes to the named workspace", async () => {
     await rm(root, { force: true, recursive: true });
   }
 });
+
+test("does not qualify terminal outcomes from sanitized verifier copies", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ebo-sanitized-verifier-"));
+  try {
+    await cp(runFixturePath("complete"), root, { recursive: true });
+    const manifestPath = join(root, "manifest.json");
+    const verifierPath = join(root, "verifier.json");
+    const sanitizedVerifierPath = join(root, "sanitized-verifier.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const sourceVerifierDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "verifier");
+    const sourceVerifier = JSON.parse(readFileSync(verifierPath, "utf8"));
+    sourceVerifier.status = "error";
+    sourceVerifier.error = "verifier infrastructure failed";
+    sourceVerifier.assertions = [];
+    const sourceBytes = Buffer.from(JSON.stringify(sourceVerifier));
+    await writeFile(verifierPath, sourceBytes);
+    sourceVerifierDescriptor.digest = `sha256:${digestBytes(sourceBytes).value}`;
+    sourceVerifierDescriptor.sizeBytes = sourceBytes.length;
+
+    const sanitizedVerifier = JSON.parse(readFileSync(runFixturePath("complete/verifier.json"), "utf8"));
+    const sanitizedBytes = Buffer.from(JSON.stringify(sanitizedVerifier));
+    await writeFile(sanitizedVerifierPath, sanitizedBytes);
+    manifest.evidence.push({
+      ...sourceVerifierDescriptor,
+      id: "sanitized-verifier",
+      relativePath: "sanitized-verifier.json",
+      digest: `sha256:${digestBytes(sanitizedBytes).value}`,
+      sizeBytes: sanitizedBytes.length,
+      sharingClass: "partner",
+      sanitizedFrom: { artifactId: sourceVerifierDescriptor.id, digest: sourceVerifierDescriptor.digest },
+    });
+
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /passed verifier bound to the terminal workspace/,
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});

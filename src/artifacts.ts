@@ -234,7 +234,7 @@ export function validateRunManifestEvidence(
           nestedDiagnosticPaths,
         );
         errors.push(...verifierErrors);
-        if (verifierErrors.length === 0) {
+        if (verifierErrors.length === 0 && descriptor.sanitizedFrom === undefined) {
           const outcome = nestedVerifierOutcome(bytes);
           if (outcome !== undefined) verifierOutcomes.push(outcome);
         }

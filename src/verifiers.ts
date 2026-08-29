@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { cp, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, utimes } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
@@ -124,9 +124,9 @@ export async function digestWorkspace(workspacePath: string): Promise<string> {
   const root = await realpath(workspacePath);
   const hash = createHash("sha256");
   hash.update("ebo.workspace/v1\0");
-  const metadata = await lstat(root);
+  const metadata = await lstat(root, { bigint: true });
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("Workspace root is not a directory.");
-  hash.update(`root\0${metadata.mode & 0o7777}\0`);
+  hash.update(`root\0${metadata.mode & 0o7777n}\0${metadata.mtimeMs / 1000n}\0`);
   await hashWorkspaceDirectory(root, "", hash);
   return `sha256:${hash.digest("hex")}`;
 }
@@ -141,20 +141,42 @@ async function hashWorkspaceDirectory(
   for (const entry of entries) {
     const path = join(directory, entry.name);
     const relativePath = posix.join(relativeDirectory, entry.name);
-    const metadata = await lstat(path);
+    const metadata = await lstat(path, { bigint: true });
     if (metadata.isSymbolicLink()) throw new Error(`Workspace contains a symbolic link at "${relativePath}".`);
     if (metadata.isDirectory()) {
-      hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777}\0`);
+      hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777n}\0${metadata.mtimeMs / 1000n}\0`);
       await hashWorkspaceDirectory(path, relativePath, hash);
     } else if (metadata.isFile()) {
-      if (metadata.nlink > 1) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
+      if (metadata.nlink > 1n) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
       const bytes = await readFile(path);
-      hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777}\0${bytes.length}\0`);
+      hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777n}\0${metadata.mtimeMs}\0${bytes.length}\0`);
       hash.update(bytes);
     } else {
       throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
     }
   }
+}
+
+async function restoreWorkspaceTimestamps(source: string, destination: string): Promise<void> {
+  const entries = await readdir(source, { withFileTypes: true });
+  for (const entry of entries) {
+    const sourcePath = join(source, entry.name);
+    const destinationPath = join(destination, entry.name);
+    const metadata = await lstat(sourcePath, { bigint: true });
+    if (metadata.isSymbolicLink()) throw new Error(`Workspace contains a symbolic link at "${entry.name}".`);
+    if (metadata.isDirectory()) {
+      await restoreWorkspaceTimestamps(sourcePath, destinationPath);
+    } else if (!metadata.isFile()) {
+      throw new Error(`Workspace contains an unsupported entry at "${entry.name}".`);
+    }
+    await utimes(destinationPath, timestampSeconds(metadata.atimeMs), timestampSeconds(metadata.mtimeMs));
+  }
+  const metadata = await lstat(source, { bigint: true });
+  await utimes(destination, timestampSeconds(metadata.atimeMs), timestampSeconds(metadata.mtimeMs));
+}
+
+function timestampSeconds(milliseconds: bigint): number {
+  return Number(milliseconds) / 1_000 + 0.000001;
 }
 
 /**
@@ -208,7 +230,8 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
         const verifierBytes = await readVerifiedArtifact(verifierRoot, options.verifier.locator, options.verifier.digest);
         stagingRoot = await createStagingRoot(workspacePath);
         const evaluatedWorkspacePath = join(stagingRoot, "workspace");
-        await cp(workspacePath, evaluatedWorkspacePath, { recursive: true, force: false });
+        await cp(workspacePath, evaluatedWorkspacePath, { recursive: true, force: false, preserveTimestamps: true });
+        await restoreWorkspaceTimestamps(workspacePath, evaluatedWorkspacePath);
         evaluatedWorkspaceFingerprint = await digestWorkspace(evaluatedWorkspacePath);
         if (evaluatedWorkspaceFingerprint !== options.workspaceFingerprint) {
           throw new Error("Workspace changed while its private evaluation snapshot was being created.");

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { chmod, link, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, link, mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -85,10 +85,14 @@ test("includes executable modes in workspace fingerprints", async () => {
     const readableFingerprint = await digestWorkspace(root.workspace);
     await chmod(executable, 0o755);
     const executableFingerprint = await digestWorkspace(root.workspace);
+    const timestamp = new Date(Date.now() - 60_000);
+    await utimes(executable, timestamp, timestamp);
+    const timestampFingerprint = await digestWorkspace(root.workspace);
     await chmod(root.workspace, 0o555);
     const rootModeFingerprint = await digestWorkspace(root.workspace);
 
     assert.notEqual(executableFingerprint, readableFingerprint);
+    assert.notEqual(timestampFingerprint, executableFingerprint);
     assert.notEqual(rootModeFingerprint, executableFingerprint);
   } finally {
     await chmod(root.workspace, 0o755);
