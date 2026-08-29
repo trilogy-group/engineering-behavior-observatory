@@ -245,9 +245,11 @@ function nestedVerifierDiagnosticErrors(
 
   const errors: ArtifactValidationError[] = [];
   for (const [index, diagnostic] of result.diagnostics.entries()) {
-    if (!isRecord(diagnostic) || Object.keys(diagnostic).length !== 4 || !Object.hasOwn(diagnostic, "locator")
+    if (!isRecord(diagnostic) || Object.keys(diagnostic).length !== 5 || !Object.hasOwn(diagnostic, "stream")
+        || !Object.hasOwn(diagnostic, "locator")
         || !Object.hasOwn(diagnostic, "digest") || !Object.hasOwn(diagnostic, "sizeBytes")
-        || !Object.hasOwn(diagnostic, "truncated") || typeof diagnostic.locator !== "string"
+        || !Object.hasOwn(diagnostic, "truncated") || typeof diagnostic.stream !== "string"
+        || !["stdout", "stderr"].includes(diagnostic.stream) || typeof diagnostic.locator !== "string"
         || typeof diagnostic.digest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(diagnostic.digest)
         || !Number.isSafeInteger(diagnostic.sizeBytes) || (diagnostic.sizeBytes as number) < 0
         || typeof diagnostic.truncated !== "boolean") {

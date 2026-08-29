@@ -28,6 +28,7 @@ export type VerifierWorkspace = {
 };
 
 export type DiagnosticReference = {
+  stream: "stdout" | "stderr";
   locator: string;
   digest: string;
   sizeBytes: number;
@@ -208,7 +209,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
       }
     } else {
       const references = await Promise.all(diagnosticFiles.map((file, index) =>
-        diagnosticReference(artifactRoot, file, index === 0 ? stdout : stderr)));
+        diagnosticReference(artifactRoot, file, index === 0 ? "stdout" : "stderr", index === 0 ? stdout : stderr)));
       if (references.some((reference) => reference === undefined)) {
         status = "error";
         internalError = combineErrors(internalError, "Verifier diagnostics could not be verified.");
@@ -249,7 +250,8 @@ export async function writeVerifierResult(
 ): Promise<{ algorithm: "sha256"; value: string }> {
   assertVerifierResult(result, relativePath);
   const resultLocator = relativePath.toLowerCase();
-  if ((result.diagnostics ?? []).some((diagnostic) => diagnostic.locator.toLowerCase() === resultLocator)) {
+  const diagnosticLocators = new Set((result.diagnostics ?? []).map((diagnostic) => diagnostic.locator.toLowerCase()));
+  if (hasPortablePathCollision(resultLocator, diagnosticLocators)) {
     throw new Error("Verifier result path collides with a diagnostic locator.");
   }
   for (const diagnostic of result.diagnostics ?? []) {
@@ -563,12 +565,14 @@ async function finalizeDiagnosticFiles(files: readonly DiagnosticFile[]): Promis
 async function diagnosticReference(
   root: string,
   file: DiagnosticFile,
+  stream: "stdout" | "stderr",
   output: CapturedOutput,
 ): Promise<DiagnosticReference | undefined> {
   const digest = digestBytes(output.bytes);
   try {
     const bytes = await readVerifiedArtifact(root, file.locator, digest);
     return {
+      stream,
       locator: file.locator,
       digest: `sha256:${digest.value}`,
       sizeBytes: bytes.length,
@@ -577,6 +581,10 @@ async function diagnosticReference(
   } catch {
     return undefined;
   }
+}
+
+function hasPortablePathCollision(path: string, existingPaths: ReadonlySet<string>): boolean {
+  return [...existingPaths].some((existing) => existing === path || existing.startsWith(`${path}/`) || path.startsWith(`${existing}/`));
 }
 
 async function prepareDiagnosticPath(root: string, locator: string): Promise<{ parent: string; path: string }> {

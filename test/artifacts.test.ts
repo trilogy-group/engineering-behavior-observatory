@@ -208,6 +208,7 @@ test("validates nested verifier diagnostics against retained bundle bytes", asyn
     const diagnosticBytes = Buffer.from("nested verifier diagnostic");
     await writeFile(diagnosticPath, diagnosticBytes);
     const nestedDiagnostic = {
+      stream: "stderr",
       locator: "diagnostics.log",
       digest: `sha256:${digestBytes(diagnosticBytes).value}`,
       sizeBytes: diagnosticBytes.length,
@@ -256,6 +257,7 @@ test("validates nested verifier diagnostics against retained bundle bytes", asyn
     const workspaceDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "workspace");
     const workspaceBytes = readFileSync(join(root, workspaceDescriptor.relativePath));
     verifier.diagnostics[0] = {
+      stream: "stderr",
       locator: workspaceDescriptor.relativePath,
       digest: workspaceDescriptor.digest,
       sizeBytes: workspaceBytes.length,

@@ -39,6 +39,8 @@ test("executes a verifier outside the agent workspace and preserves diagnostics"
     assert.equal(result.assertions[0]?.id, "workspace-isolation");
     assert.equal(result.assertions[0]?.status, "passed");
     assert.equal(result.diagnostics.length, 2);
+    assert.equal(result.diagnostics[0]?.stream, "stdout");
+    assert.equal(result.diagnostics[1]?.stream, "stderr");
     assert.equal(result.diagnostics[1]?.truncated, false);
     assert.equal((await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8")), "a useful diagnostic");
   } finally {
@@ -523,6 +525,13 @@ test("rejects result paths that collide with diagnostics", async () => {
     );
     await assert.rejects(
       writeVerifierResult(root.artifact, diagnostic.locator.toUpperCase(), result),
+      /collides with a diagnostic/,
+    );
+    await assert.rejects(
+      writeVerifierResult(root.artifact, "Logs", {
+        ...result,
+        diagnostics: [{ ...diagnostic, locator: "logs/stdout.log" }],
+      }),
       /collides with a diagnostic/,
     );
   } finally {

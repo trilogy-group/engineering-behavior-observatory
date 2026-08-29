@@ -327,8 +327,9 @@
     "diagnosticReference": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["locator", "digest", "sizeBytes", "truncated"],
+      "required": ["stream", "locator", "digest", "sizeBytes", "truncated"],
       "properties": {
+        "stream": { "enum": ["stdout", "stderr"] },
         "locator": { "$ref": "#/$defs/relativePath" },
         "digest": { "$ref": "#/$defs/digest" },
         "sizeBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },

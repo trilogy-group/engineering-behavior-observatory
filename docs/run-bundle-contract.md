@@ -139,7 +139,7 @@ and stderr are drained without an unbounded buffer and persisted to private
 files while the process runs, so a partial attempt retains output even when
 execution ends abnormally. A timeout terminates the verifier process group (or
 process tree on Windows). Each retained stream is represented by an
-execution-specific diagnostic reference with a
+execution-specific diagnostic reference with a `stream` (`stdout` or `stderr`),
 bundle-relative `locator`, SHA-256 `digest`, retained `sizeBytes`, and a
 `truncated` flag. The result remains valid even when diagnostics are truncated.
 The `durationMs` and `diagnostics` fields are optional for older v1 records;
