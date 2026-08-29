@@ -872,8 +872,12 @@ function recoverInterruptedStaging(path: string, markerPath: string, relativePat
       }
     }
     const stagingPath = readStagingPath(markerPath, relativePath);
+    const stagingIdentity = stagingPath === undefined ? undefined : lstatIfPresent(stagingPath);
     movePathToAttempt(path, descriptor);
-    if (stagingPath !== undefined) moveOptionalPathToAttempt(stagingPath);
+    if (stagingPath !== undefined && stagingIdentity !== undefined
+        && sameFileIdentity(stagingIdentity, stat)) {
+      movePathToAttemptIfIdentity(stagingPath, stagingIdentity);
+    }
     moveMarkerToAttempt(markerPath, true);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
@@ -1305,9 +1309,9 @@ function isOwnedMarkerBinding(path: string, relativePath: string, marker: Record
       || !isRecord(candidate.stagingIdentity) || typeof marker.stagingPath !== "string") return false;
   const { dev, ino } = candidate.stagingIdentity;
   const staging = lstatIfPresent(resolve(dirname(path), marker.stagingPath));
-  return staging !== undefined && typeof dev === "number" && typeof ino === "number"
+  return typeof dev === "number" && typeof ino === "number"
     && Number.isSafeInteger(dev) && Number.isSafeInteger(ino)
-    && sameFileIdentity(staging, { dev, ino });
+    && (staging === undefined || sameFileIdentity(staging, { dev, ino }));
 }
 
 function isOwnedMarkerSidecar(path: string, relativePath: string, marker: Record<string, unknown>): boolean {

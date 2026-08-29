@@ -286,6 +286,47 @@ test("create-if-absent publication recovers interrupted quarantine staging", asy
   }
 });
 
+test("create-if-absent publication preserves a replacement staging path during recovery", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-replaced-staging-recovery-"));
+  const quarantine = join(root, "metadata.json.quarantine");
+  const marker = `${quarantine}.marker`;
+  const staging = join(root, ".cccccccc-cccc-4ccc-8ccc-cccccccccccc.tmp");
+  const binding = `${marker}.binding`;
+  const bindingTemporary = `${binding}.tmp`;
+  try {
+    writeFileSync(quarantine, "old staging bytes");
+    chmodSync(quarantine, 0o600);
+    const quarantineIdentity = lstatSync(quarantine);
+    writeFileSync(marker, JSON.stringify({
+      schemaVersion: "ebo.publication-staging/v1",
+      relativePath: "metadata.json",
+      stagingPath: ".cccccccc-cccc-4ccc-8ccc-cccccccccccc.tmp",
+      attemptId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      ownerPid: 999999999,
+      ownerStart: "dead",
+    }));
+    chmodSync(marker, 0o600);
+    writeFileSync(bindingTemporary, JSON.stringify({
+      schemaVersion: "ebo.publication-staging/v1",
+      relativePath: "metadata.json",
+      stagingPath: ".cccccccc-cccc-4ccc-8ccc-cccccccccccc.tmp",
+      attemptId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      ownerPid: 999999999,
+      ownerStart: "dead",
+      stagingIdentity: { dev: quarantineIdentity.dev, ino: quarantineIdentity.ino },
+    }));
+    chmodSync(bindingTemporary, 0o600);
+    linkSync(bindingTemporary, binding);
+    writeFileSync(staging, "unrelated replacement");
+    chmodSync(staging, 0o600);
+    const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
+    assert.equal(result.created, true);
+    assert.equal(readFileSync(staging, "utf8"), "unrelated replacement");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("create-if-absent publication preserves unbound dead-owner staging", () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-unbound-staging-recovery-"));
   const staging = join(root, "metadata.json.quarantine");
