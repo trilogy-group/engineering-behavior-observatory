@@ -312,6 +312,7 @@ test("strips Node preload options from the verifier environment", async () => {
         PATH: process.env.PATH ?? "",
         NODE_OPTIONS: "--eval=process.exit(1)",
         NODE_PATH: "/missing/modules",
+        BASH_ENV: "/missing/bash-env",
         LD_PRELOAD: "/missing/preload.dylib",
         DYLD_INSERT_LIBRARIES: "/missing/injected.dylib",
       },

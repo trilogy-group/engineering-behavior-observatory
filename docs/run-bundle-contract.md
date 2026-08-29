@@ -126,11 +126,12 @@ manifest workspace descriptors may carry it for later terminal binding checks.
 
 Verifier execution uses a small subprocess boundary. The executor resolves the
 digest-pinned restricted verifier from its task-bundle root, stages it in a
-private directory, and invokes the pinned Node runtime with the staged verifier
-path followed by the snapshot workspace path. Launcher options cannot replace
-the staged entry point, and `PATH`, Node preload, and POSIX dynamic-loader
-injection variables are removed from the child environment; verifier tools must
-be invoked by absolute pinned paths. The restricted implementation and any
+private trusted subdirectory separate from the snapshot, and invokes the pinned
+Node runtime with the staged verifier path followed by the snapshot workspace
+path. Launcher options cannot replace the staged entry point, and `PATH`, Node
+preload, POSIX dynamic-loader, and shell-startup injection variables are removed
+from the child environment; verifier tools must be invoked by absolute pinned
+paths. The restricted implementation and any
 reference solution remain outside that workspace. `.mjs`/`.cjs` locators retain
 their module semantics; ambiguous `.js` artifacts require an explicit module
 format. The verifier writes one JSON object to stdout:

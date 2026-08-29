@@ -374,13 +374,15 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
         if (evaluatedWorkspaceFingerprint !== options.workspaceFingerprint) {
           throw new Error("Workspace snapshot metadata does not match the evaluated workspace.");
         }
-        const stagedVerifier = join(stagingRoot, stagedVerifierName(verifierFormat));
+        const trustedRoot = join(stagingRoot, "trusted");
+        await mkdir(trustedRoot, { recursive: true });
+        const stagedVerifier = join(trustedRoot, stagedVerifierName(verifierFormat));
         await writePrivateFile(stagedVerifier, verifierBytes);
-        const completionHookPath = join(stagingRoot, "completion-hook.cjs");
+        const completionHookPath = join(trustedRoot, "completion-hook.cjs");
         await writePrivateFile(completionHookPath, Buffer.from(VERIFIER_COMPLETION_HOOK));
-        const dependencyLoaderPath = join(stagingRoot, "dependency-loader.mjs");
+        const dependencyLoaderPath = join(trustedRoot, "dependency-loader.mjs");
         await writePrivateFile(dependencyLoaderPath, Buffer.from(VERIFIER_DEPENDENCY_LOADER));
-        const completionMarker = join(stagingRoot, "completed");
+        const completionMarker = join(trustedRoot, "completed");
 
         const processResult = await runProcess(
           options.command ?? process.execPath,
@@ -391,7 +393,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
           maxOutputBytes,
           diagnosticFiles as [DiagnosticFile, DiagnosticFile],
           completionMarker,
-          stagingRoot,
+          trustedRoot,
         );
         stdout = processResult.stdout;
         stderr = processResult.stderr;
@@ -961,7 +963,7 @@ function assertVerifierResult(result: VerifierResult, artifact: string): void {
 }
 
 function cleanEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const blocked = /^(?:PATH|NODE_OPTIONS|NODE_PATH|LD_PRELOAD|LD_AUDIT|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|DYLD_LIBRARY_PATH|DYLD_FRAMEWORK_PATH|DYLD_FALLBACK_LIBRARY_PATH|DYLD_FALLBACK_FRAMEWORK_PATH|DYLD_FORCE_FLAT_NAMESPACE)$/i;
+  const blocked = /^(?:PATH|NODE_OPTIONS|NODE_PATH|LD_PRELOAD|LD_AUDIT|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|DYLD_LIBRARY_PATH|DYLD_FRAMEWORK_PATH|DYLD_FALLBACK_LIBRARY_PATH|DYLD_FALLBACK_FRAMEWORK_PATH|DYLD_FORCE_FLAT_NAMESPACE|BASH_ENV|ENV|KSH_ENV|ZDOTDIR|SHELLOPTS|BASHOPTS)$/i;
   return Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] =>
     entry[1] !== undefined && !blocked.test(entry[0])));
 }
