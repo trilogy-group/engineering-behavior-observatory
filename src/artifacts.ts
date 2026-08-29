@@ -288,6 +288,8 @@ export function writeMetadataAtomicallyIfAbsentSync(
         recoverInterruptedStaging(quarantinePath, markerPath, relativePath);
       } else if (lstatIfPresent(markerPath) !== undefined) {
         recoverInterruptedMarker(markerPath, relativePath);
+      } else if (lstatIfPresent(`${markerPath}.tmp`) !== undefined) {
+        recoverInterruptedMarker(`${markerPath}.tmp`, relativePath);
       }
 
       // The deterministic quarantine sibling is also the staging inode. Keeping it as
@@ -856,11 +858,12 @@ function recoverInterruptedMarker(path: string, relativePath: string): void {
   if (!stagingMarkerMatches(path, relativePath)) {
     throw new Error(`Publication staging marker "${path}" is already occupied.`);
   }
-  moveMarkerToAttempt(path, true);
+  moveMarkerToAttempt(path.endsWith(".tmp") ? path.slice(0, -4) : path, true);
 }
 
 function writeStagingMarker(path: string, relativePath: string): void {
-  const descriptor = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+  const temporaryPath = `${path}.tmp`;
+  const descriptor = openSync(temporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
   try {
     writeFileSync(descriptor, Buffer.from(canonicalizeMetadata({
       schemaVersion: STAGING_MARKER_SCHEMA_VERSION,
@@ -871,6 +874,11 @@ function writeStagingMarker(path: string, relativePath: string): void {
   } finally {
     closeSync(descriptor);
   }
+  if (lstatIfPresent(path) !== undefined) {
+    movePathToAttempt(temporaryPath);
+    throw new Error(`Publication staging marker "${path}" is already occupied.`);
+  }
+  renameSync(temporaryPath, path);
 }
 
 function isStagingMarker(value: unknown, relativePath: string): value is Record<string, unknown> {
@@ -993,11 +1001,12 @@ function preserveFailedPublication(destination: string, quarantine: string, mark
 }
 
 function moveMarkerToAttempt(marker: string, bindingCreated: boolean): void {
-  moveOptionalPathToAttempt(marker);
   if (bindingCreated) {
-    moveOptionalPathToAttempt(`${marker}.binding`);
     moveOptionalPathToAttempt(`${marker}.binding.tmp`);
+    moveOptionalPathToAttempt(`${marker}.binding`);
   }
+  moveOptionalPathToAttempt(`${marker}.tmp`);
+  moveOptionalPathToAttempt(marker);
 }
 
 function movePathToAttempt(path: string, descriptor?: number): string {
