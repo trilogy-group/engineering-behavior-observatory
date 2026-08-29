@@ -1085,9 +1085,6 @@ function bindStagingMarker(path: string, relativePath: string, stagingDescriptor
       throw new Error(`Publication staging binding "${bindingPath}" is already occupied.`);
     }
     if (!stagingMarkerMatches(bindingTemporaryPath, relativePath, staging)) {
-      if (lstatIfPresent(bindingTemporaryPath) !== undefined && readMarkerMetadata(bindingTemporaryPath) === undefined) {
-        moveOptionalPathToAttempt(bindingTemporaryPath);
-      }
       bindingAttemptPath = `.${randomUUID()}.binding-tmp`;
       bindingDescriptor = openSync(bindingAttemptPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
       writeFileSync(bindingDescriptor, bytes);
