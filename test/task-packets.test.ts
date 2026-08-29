@@ -283,6 +283,9 @@ test("status rejects a freeze with an unaccounted hard link", () => {
 
 test("publication rejects a synchronized temporary-file mutation", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-publication-race-"));
+  const payload = "x".repeat(8 * 1024 * 1024);
+  const metadata = { payload };
+  const expectedBytes = Buffer.from(JSON.stringify(metadata));
   const mutator = spawn(
     process.execPath,
     [
@@ -310,17 +313,37 @@ mutate();`,
     ],
     { stdio: ["ignore", "pipe", "ignore"] },
   );
+  const stopMutator = async (): Promise<void> => {
+    if (mutator.exitCode !== null) return;
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => {
+        if (mutator.exitCode === null) mutator.kill("SIGKILL");
+        resolve();
+      }, 1_000);
+      mutator.once("exit", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      mutator.kill();
+    });
+    mutator.stdout?.destroy();
+  };
   try {
     await once(mutator.stdout!, "data");
     writeFileSync(join(root, "unrelated.txt"), "keep");
     assert.throws(
-      () => writeMetadataAtomicallyIfAbsentSync(root, "published.json", { payload: "x".repeat(8 * 1024 * 1024) }),
+      () => writeMetadataAtomicallyIfAbsentSync(root, "published.json", metadata),
       /changed while it was being published/,
     );
     assert.equal(readFileSync(join(root, "unrelated.txt"), "utf8"), "keep");
+    assert.equal(existsSync(join(root, "published.json")), false);
+    assert.equal(existsSync(join(root, "published.json.quarantine")), false);
+    await stopMutator();
+    const retry = writeMetadataAtomicallyIfAbsentSync(root, "published.json", metadata);
+    assert.equal(retry.created, true);
+    assert.deepEqual(await readVerifiedArtifact(root, "published.json", retry.digest), expectedBytes);
   } finally {
-    if (mutator.exitCode === null) mutator.kill();
-    await once(mutator, "exit").catch(() => undefined);
+    await stopMutator();
     rmSync(root, { force: true, recursive: true });
   }
 });

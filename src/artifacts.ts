@@ -318,14 +318,20 @@ export function writeMetadataAtomicallyIfAbsentSync(
             const existingDestination = lstatSync(destination);
             quarantineBase = sameFileIdentity(existingDestination, openedTemporary) ? destination : temporaryPath;
           } else {
-            if (linkedHere) removeOwnedPath(destination, descriptor, quarantineBase, true);
+            if (linkedHere) {
+              quarantineBase = temporaryPath;
+              removeOwnedPath(destination, descriptor, quarantineBase, true);
+            }
             throw error;
           }
         }
         try {
           assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
         } catch (error) {
-          if (linkedHere) removeOwnedPath(destination, descriptor, quarantineBase, true);
+          if (linkedHere) {
+            quarantineBase = temporaryPath;
+            removeOwnedPath(destination, descriptor, quarantineBase, true);
+          }
           created = false;
           throw error;
         }
