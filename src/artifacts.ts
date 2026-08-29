@@ -321,8 +321,9 @@ export function validateRunManifestEvidence(
         message: "Sanitized verifier must preserve its source duration.",
       });
     }
-    const sameError = source.error === derivative.error
-      || (source.status === "error" && derivative.errorRedacted === true && derivative.error === "[redacted]");
+    const sameError = derivative.errorRedacted === true
+      ? source.status === "error" && derivative.error === "[redacted]"
+      : source.error === derivative.error && source.errorRedacted !== true;
     if (!sameError) {
       errors.push({
         artifact,
@@ -367,7 +368,9 @@ export function validateRunManifestEvidence(
       && terminalWorkspace !== undefined
       && outcome.workspace.artifactId === terminalWorkspace.id
       && outcome.workspace.digest === terminalWorkspace.digest
-      && (terminalWorkspace.fingerprint === undefined || outcome.workspace.fingerprint === terminalWorkspace.fingerprint);
+      && (outcome.workspace.fingerprint === undefined
+        ? terminalWorkspace.fingerprint === undefined
+        : terminalWorkspace.fingerprint !== undefined && outcome.workspace.fingerprint === terminalWorkspace.fingerprint);
   if (terminal?.state === "completed" && !verifierOutcomes.some((outcome) => matchesTerminalWorkspace(outcome, "passed"))) {
     errors.push({
       artifact,
@@ -578,7 +581,9 @@ function nestedVerifierDiagnosticErrors(
         message: "Verifier workspace must reference retained workspace evidence.",
       });
     } else if (retainedWorkspace.digest !== result.workspace.digest
-        || (retainedWorkspace.fingerprint !== undefined && retainedWorkspace.fingerprint !== result.workspace.fingerprint)) {
+        || (result.workspace.fingerprint === undefined
+          ? retainedWorkspace.fingerprint !== undefined
+          : retainedWorkspace.fingerprint === undefined || retainedWorkspace.fingerprint !== result.workspace.fingerprint)) {
       bindingErrors.push({
         artifact,
         schemaVersion: "run-manifest/v1",
@@ -610,6 +615,8 @@ function nestedVerifierDiagnosticErrors(
     const sourceBindingMatches = sourceBinding !== undefined
       && sourceOrigin !== undefined
       && sourceBinding.verifierId === sanitizedSourceVerifierId
+      && sourceBinding.stream === diagnostic.stream
+      && sourceOrigin.stream === diagnostic.stream
       && sameDiagnosticOrigin(sourceBinding, sourceOrigin);
     const byteIdentical = sanitized && sourceOrigin !== undefined && diagnostic.digest === sourceOrigin.digest;
     const isSanitizedSidecar = retainedEvidence !== undefined
