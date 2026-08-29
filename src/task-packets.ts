@@ -321,6 +321,7 @@ export function freezeTaskPacket(
     if (candidateErrors.length > 0) throw new Error(formatErrors(candidateErrors));
 
     let validatedInspection: TaskPacketInspection | undefined;
+    let validatedPublished: TaskPacketFreezeRecord | undefined;
     const validatePublication = () => {
       const inspection = assertTaskPacketAdmittedWithRoot(root.path, packetLocator, root);
       const mismatches = compareFreezeRecord(candidate, inspection);
@@ -328,6 +329,18 @@ export function freezeTaskPacket(
         throw new Error(`Task packet changed before freeze publication: ${mismatches.join(", ")}.`);
       }
       validatedInspection = inspection;
+      const published = readOptionalJson(root.path, freezeLocator, true, root);
+      if (published === undefined) return;
+      const publishedErrors = validateFreezeRecord(freezeLocator, published);
+      if (publishedErrors.length > 0) throw new Error(formatErrors(publishedErrors));
+      const publishedMismatches = compareFreezeRecord(published as TaskPacketFreezeRecord, inspection);
+      if (publishedMismatches.length > 0) {
+        throw new Error(`Published freeze record changed: ${publishedMismatches.join(", ")}.`);
+      }
+      if (!sameDigest(digestMetadata(published), digestMetadata(candidate))) {
+        throw new Error("Published freeze record bytes do not match the candidate.");
+      }
+      validatedPublished = published as TaskPacketFreezeRecord;
     };
     const write = writeMetadataAtomicallyIfAbsentSync(
       bundleRoot,
@@ -356,26 +369,10 @@ export function freezeTaskPacket(
       return finalWinner as TaskPacketFreezeRecord;
     }
 
-    const finalInspection = validatedInspection;
-    if (finalInspection === undefined) {
+    if (validatedInspection === undefined || validatedPublished === undefined) {
       throw new Error("Freeze publication did not complete its final validation.");
     }
-    const postPublicationMismatches = compareFreezeRecord(candidate, finalInspection);
-    if (postPublicationMismatches.length > 0) {
-      throw new Error(`Task packet changed after freeze publication: ${postPublicationMismatches.join(", ")}.`);
-    }
-    const published = readOptionalJson(bundleRoot, freezeLocator, true, root);
-    if (published === undefined) throw new Error("Freeze record disappeared after final inspection.");
-    const publishedErrors = validateFreezeRecord(freezeLocator, published);
-    if (publishedErrors.length > 0) throw new Error(formatErrors(publishedErrors));
-    const publishedMismatches = compareFreezeRecord(published as TaskPacketFreezeRecord, finalInspection);
-    if (publishedMismatches.length > 0) {
-      throw new Error(`Published freeze record changed: ${publishedMismatches.join(", ")}.`);
-    }
-    if (!sameDigest(write.digest, digestMetadata(published))) {
-      throw new Error("Published freeze record bytes do not match the candidate.");
-    }
-    return published as TaskPacketFreezeRecord;
+    return validatedPublished;
   } finally {
     closeBundleRoot(root);
   }

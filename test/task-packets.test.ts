@@ -1443,6 +1443,41 @@ test("freeze preserves only failed evidence when inputs drift after publication"
   }
 });
 
+test("failure preservation leaves a raced replacement at its source path", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-preservation-replacement-"));
+  const originalRenameSync = fs.renameSync;
+  let replaced = false;
+  fs.renameSync = ((oldPath: fs.PathLike, newPath: fs.PathLike) => {
+    if (!replaced && oldPath === "published.json") {
+      replaced = true;
+      unlinkSync(oldPath);
+      writeFileSync(oldPath, "newer replacement");
+    }
+    return originalRenameSync(oldPath, newPath);
+  }) as typeof originalRenameSync;
+  syncBuiltinESMExports();
+  try {
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(
+        root,
+        "published.json",
+        { state: "ready" },
+        undefined,
+        undefined,
+        () => { throw new Error("injected post-publication failure"); },
+      ),
+      /injected post-publication failure/,
+    );
+    assert.equal(replaced, true);
+    assert.equal(readFileSync(join(root, "published.json"), "utf8"), "newer replacement");
+    assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), true);
+  } finally {
+    fs.renameSync = originalRenameSync;
+    syncBuiltinESMExports();
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("task-packet CLI exposes validate, freeze, and status", () => {
   const { root } = createBundle();
   try {

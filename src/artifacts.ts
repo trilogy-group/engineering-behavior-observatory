@@ -13,6 +13,7 @@ import {
   readFileSync,
   readSync,
   realpathSync,
+  renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -2317,33 +2318,41 @@ function movePathToAttempt(path: string, descriptor?: number): string {
       linkSync(path, target);
       const moved = lstatSync(target);
       if (!sameFileIdentity(expected, moved)) {
-        unlinkPathIfIdentity(target, moved);
+        unlinkSync(target);
         throw new Error(`Publication path "${path}" changed during failure preservation.`);
       }
-      if (!unlinkPathIfIdentity(path, expected)) return target;
+      // Node does not expose an unlinkat-style operation that binds removal to
+      // the already-validated descriptor. Rename the source out of its public
+      // pathname atomically, then remove only the private alias after checking
+      // the inode. If another actor replaced the source, restore that inode
+      // with a no-replace link and leave it untouched when restoration races.
+      const retired = `.${randomUUID()}.failed`;
+      try {
+        renameSync(path, retired);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return target;
+        throw error;
+      }
+      const retiredIdentity = lstatSync(retired);
+      if (sameFileIdentity(expected, retiredIdentity)) {
+        unlinkSync(retired);
+        return target;
+      }
+      let restored = false;
+      try {
+        linkSync(retired, path);
+        restored = sameFileIdentity(retiredIdentity, lstatSync(path));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST"
+            && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      if (restored) unlinkSync(retired);
       return target;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
   }
   throw new Error(`Could not preserve failed publication path "${path}".`);
-}
-
-function unlinkPathIfIdentity(path: string, expected: { dev: number; ino: number }): boolean {
-  let descriptor: number | undefined;
-  try {
-    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    const opened = fstatSync(descriptor);
-    const current = lstatSync(path);
-    if (!sameFileIdentity(expected, opened) || !sameFileIdentity(expected, current)) return false;
-    unlinkSync(path);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
-    throw error;
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-  }
 }
 
 function isReadablePublishedFile(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
