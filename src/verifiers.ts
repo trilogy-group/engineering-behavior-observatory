@@ -131,11 +131,11 @@ async function hashWorkspaceDirectory(
     const metadata = await lstat(path);
     if (metadata.isSymbolicLink()) throw new Error(`Workspace contains a symbolic link at "${relativePath}".`);
     if (metadata.isDirectory()) {
-      hash.update(`directory\0${relativePath}\0`);
+      hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777}\0`);
       await hashWorkspaceDirectory(path, relativePath, hash);
     } else if (metadata.isFile()) {
       const bytes = await readFile(path);
-      hash.update(`file\0${relativePath}\0${bytes.length}\0`);
+      hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777}\0${bytes.length}\0`);
       hash.update(bytes);
     } else {
       throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);

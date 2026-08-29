@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -72,6 +72,21 @@ test("evaluates a private workspace snapshot", async () => {
     assert.equal(result.workspace.fingerprint, workspaceFingerprint);
     assert.equal(await readFile(sourceFile, "utf8"), "after");
     assert.notEqual(await digestWorkspace(root.workspace), workspaceFingerprint);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("includes executable modes in workspace fingerprints", async () => {
+  const root = await createRoots();
+  const executable = join(root.workspace, "tool.sh");
+  try {
+    await writeFile(executable, "#!/bin/sh\n");
+    const readableFingerprint = await digestWorkspace(root.workspace);
+    await chmod(executable, 0o755);
+    const executableFingerprint = await digestWorkspace(root.workspace);
+
+    assert.notEqual(executableFingerprint, readableFingerprint);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }

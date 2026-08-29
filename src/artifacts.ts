@@ -204,7 +204,7 @@ export function validateRunManifestEvidence(
         && typeof entry.id === "string" && entry.kind === "workspace")
       .map((entry) => [entry.id as string, entry]),
   );
-  const verifierStatuses = new Set<string>();
+  const verifierOutcomes: NestedVerifierOutcome[] = [];
   const evidencePaths = new Set(
     manifest.evidence
       .filter((entry): entry is Record<string, unknown> => isRecord(entry) && typeof entry.relativePath === "string")
@@ -234,8 +234,8 @@ export function validateRunManifestEvidence(
         );
         errors.push(...verifierErrors);
         if (verifierErrors.length === 0) {
-          const status = nestedVerifierStatus(bytes);
-          if (status !== undefined) verifierStatuses.add(status);
+          const outcome = nestedVerifierOutcome(bytes);
+          if (outcome !== undefined) verifierOutcomes.push(outcome);
         }
       }
     } catch (error) {
@@ -248,29 +248,50 @@ export function validateRunManifestEvidence(
     }
   }
   const terminal = isRecord(manifest.terminal) ? manifest.terminal : undefined;
-  if (terminal?.state === "completed" && !verifierStatuses.has("passed")) {
+  const terminalWorkspace = typeof terminal?.workspaceArtifactId === "string"
+    ? workspaceEvidence.get(terminal.workspaceArtifactId)
+    : undefined;
+  const matchesTerminalWorkspace = (outcome: NestedVerifierOutcome, status: "passed" | "failed") =>
+    outcome.status === status
+      && outcome.workspace !== undefined
+      && terminalWorkspace !== undefined
+      && outcome.workspace.artifactId === terminalWorkspace.id
+      && outcome.workspace.digest === terminalWorkspace.digest;
+  if (terminal?.state === "completed" && !verifierOutcomes.some((outcome) => matchesTerminalWorkspace(outcome, "passed"))) {
     errors.push({
       artifact,
       schemaVersion: "run-manifest/v1",
       field: "/terminal/state",
-      message: "Completed runs require a retained passed verifier result.",
+      message: "Completed runs require a passed verifier bound to the terminal workspace.",
     });
   }
-  if (terminal?.state === "failed" && terminal.failureClass === "task" && !verifierStatuses.has("failed")) {
+  if (terminal?.state === "failed" && terminal.failureClass === "task"
+      && !verifierOutcomes.some((outcome) => matchesTerminalWorkspace(outcome, "failed"))) {
     errors.push({
       artifact,
       schemaVersion: "run-manifest/v1",
       field: "/terminal/state",
-      message: "Task-failed runs require a retained failed verifier result.",
+      message: "Task-failed runs require a failed verifier bound to the terminal workspace.",
     });
   }
   return errors;
 }
 
-function nestedVerifierStatus(bytes: Buffer): string | undefined {
+type NestedVerifierOutcome = {
+  status: string;
+  workspace?: { artifactId: string; digest: string };
+};
+
+function nestedVerifierOutcome(bytes: Buffer): NestedVerifierOutcome | undefined {
   try {
     const result: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-    return isRecord(result) && typeof result.status === "string" ? result.status : undefined;
+    if (!isRecord(result) || typeof result.status !== "string") return undefined;
+    const workspace = isRecord(result.workspace)
+      && typeof result.workspace.artifactId === "string"
+      && typeof result.workspace.digest === "string"
+      ? { artifactId: result.workspace.artifactId, digest: result.workspace.digest }
+      : undefined;
+    return { status: result.status, ...(workspace === undefined ? {} : { workspace }) };
   } catch {
     return undefined;
   }

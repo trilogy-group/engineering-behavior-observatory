@@ -267,13 +267,13 @@ test("validates nested verifier diagnostics against retained bundle bytes", asyn
     manifest.terminal = { ...originalTerminal, state: "completed" };
     assert.match(
       validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
-      /Completed runs require a retained passed verifier/,
+      /Completed runs require a passed verifier bound to the terminal workspace/,
     );
     await retainVerifier(verifier);
     manifest.terminal = { ...originalTerminal, state: "failed", failureClass: "task" };
     assert.match(
       validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
-      /Task-failed runs require a retained failed verifier/,
+      /Task-failed runs require a failed verifier bound to the terminal workspace/,
     );
     manifest.terminal = originalTerminal;
     await writeFile(diagnosticPath, "tampered");
@@ -336,6 +336,39 @@ test("validates nested verifier diagnostics against retained bundle bytes", asyn
     assert.match(
       validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
       /alias retained evidence/,
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("binds terminal verifier outcomes to the named workspace", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ebo-terminal-binding-"));
+  try {
+    await cp(runFixturePath("complete"), root, { recursive: true });
+    const manifestPath = join(root, "manifest.json");
+    const verifierPath = join(root, "verifier.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const verifier = JSON.parse(readFileSync(verifierPath, "utf8"));
+    const workspace = manifest.evidence.find((entry: { kind: string }) => entry.kind === "workspace");
+    const verifierDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "verifier");
+    const workspaceBytes = readFileSync(join(root, workspace.relativePath));
+    const secondWorkspace = {
+      ...workspace,
+      id: "workspace-b",
+      relativePath: "workspace-b.patch",
+    };
+    await writeFile(join(root, secondWorkspace.relativePath), workspaceBytes);
+    manifest.evidence.push(secondWorkspace);
+    verifier.workspace = { artifactId: secondWorkspace.id, digest: secondWorkspace.digest };
+    const verifierBytes = Buffer.from(JSON.stringify(verifier));
+    await writeFile(verifierPath, verifierBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(verifierBytes).value}`;
+    verifierDescriptor.sizeBytes = verifierBytes.length;
+
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /terminal workspace/,
     );
   } finally {
     await rm(root, { force: true, recursive: true });
