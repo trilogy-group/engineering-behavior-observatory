@@ -20,7 +20,14 @@ import { fileURLToPath } from "node:url";
 import { Ajv2020, type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
 import * as formats from "ajv-formats";
 
-import { isSafeArtifactRelativePath, resolveBundleArtifact, type Digest } from "./contracts.js";
+import {
+  closeBundleRoot,
+  isSafeArtifactRelativePath,
+  openBundleRoot,
+  resolveBundleArtifact,
+  type BundleRootHandle,
+  type Digest,
+} from "./contracts.js";
 
 export type ArtifactValidationError = {
   artifact: string;
@@ -229,11 +236,14 @@ export function writeMetadataAtomicallyIfAbsentSync(
   artifactRoot: string,
   relativePath: string,
   metadata: unknown,
+  rootHandle?: BundleRootHandle,
 ): { created: boolean; digest: Digest } {
   const bytes = Buffer.from(canonicalizeMetadata(metadata));
-  const root = realpathSync(artifactRoot);
+  const rootIdentity = rootHandle ?? openBundleRoot(artifactRoot);
+  const ownsRoot = rootHandle === undefined;
+  const root = rootIdentity.path;
   const digest = digestBytes(bytes);
-  const rootDescriptor = openSync(root, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const rootDescriptor = rootIdentity.descriptor;
   let created = false;
   try {
     assertPublishRootHandle(root, rootDescriptor, relativePath);
@@ -249,7 +259,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
       process.chdir(parent);
       changedCwd = true;
       assertPublishRootHandle(root, rootDescriptor, relativePath);
-      assertPublishParentHandle(parentDescriptor, relativePath);
+      assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
       if (lstatIfPresent(destination) !== undefined) {
         syncCreatedDirectories(root, createdDirectories, parentDescriptor);
         return { created: false, digest };
@@ -261,18 +271,29 @@ export function writeMetadataAtomicallyIfAbsentSync(
       try {
         descriptor = openSync(temporaryPath, "wx", 0o600);
         assertPublishRootHandle(root, rootDescriptor, relativePath);
-        assertPublishParentHandle(parentDescriptor, relativePath);
+        assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
         writeFileSync(descriptor, bytes);
         fsyncSync(descriptor);
         closeSync(descriptor);
         descriptor = undefined;
         assertPublishRootHandle(root, rootDescriptor, relativePath);
-        assertPublishParentHandle(parentDescriptor, relativePath);
+        assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
+        let linkedHere = false;
         try {
           linkSync(temporaryPath, destination);
+          linkedHere = true;
           created = true;
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        }
+        try {
+          assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
+        } catch (error) {
+          if (linkedHere) {
+            rmSync(destination, { force: true });
+            created = false;
+          }
+          throw error;
         }
       } finally {
         if (descriptor !== undefined) closeSync(descriptor);
@@ -285,7 +306,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
       closeSync(parentDescriptor);
     }
   } finally {
-    closeSync(rootDescriptor);
+    if (ownsRoot) closeBundleRoot(rootIdentity);
   }
 
   return { created, digest };
@@ -571,37 +592,65 @@ function prepareArtifactPathSync(
   const root = realpathSync(artifactRoot);
   const segments = relativePath.split("/");
   let parent = root;
+  let parentDescriptor = rootDescriptor;
   const createdDirectories: string[] = [];
+  const originalCwd = process.cwd();
+  let changedCwd = false;
 
-  for (const segment of segments.slice(0, -1)) {
-    const next = resolve(parent, segment);
-    if (!isContained(root, next)) throw new Error(`Artifact path "${relativePath}" escapes its declared root.`);
-    assertPublishRootHandle(root, rootDescriptor, relativePath);
-    try {
-      mkdirSync(next);
-      createdDirectories.push(next);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    }
-    parent = next;
-    assertPublishRootHandle(root, rootDescriptor, relativePath);
-    const entry = lstatSync(parent);
-    if (!entry.isDirectory() || entry.isSymbolicLink()) {
-      throw new Error(`Artifact path "${relativePath}" crosses a symbolic link.`);
-    }
-  }
-
-  assertPublishRootHandle(root, rootDescriptor, relativePath);
-  const path = resolve(parent, segments.at(-1)!);
   try {
-    const entry = lstatSync(path);
-    if (!entry.isFile() || entry.isSymbolicLink()) {
-      throw new Error(`Artifact path "${relativePath}" is not an isolated regular file.`);
+    for (const segment of segments.slice(0, -1)) {
+      assertPublishDirectoryHandle(root, parent, parentDescriptor, rootDescriptor, relativePath);
+      process.chdir(parent);
+      changedCwd = true;
+      assertPublishDirectoryHandle(root, parent, parentDescriptor, rootDescriptor, relativePath);
+
+      const next = resolve(parent, segment);
+      if (!isContained(root, next)) throw new Error(`Artifact path "${relativePath}" escapes its declared root.`);
+      try {
+        mkdirSync(segment);
+        createdDirectories.push(next);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+      assertPublishDirectoryHandle(root, parent, parentDescriptor, rootDescriptor, relativePath);
+
+      let childDescriptor: number | undefined;
+      try {
+        const current = lstatSync(next);
+        if (current.isSymbolicLink() || !current.isDirectory()) {
+          throw new Error(`Artifact path "${relativePath}" crosses a symbolic link.`);
+        }
+        childDescriptor = openSync(segment, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY);
+        const child = fstatSync(childDescriptor);
+        if (!child.isDirectory() || current.isSymbolicLink() || !current.isDirectory()
+            || child.dev !== current.dev || child.ino !== current.ino) {
+          throw new Error(`Artifact path "${relativePath}" crosses a symbolic link.`);
+        }
+      } catch (error) {
+        if (childDescriptor !== undefined) closeSync(childDescriptor);
+        throw error;
+      }
+
+      if (parentDescriptor !== rootDescriptor) closeSync(parentDescriptor);
+      parentDescriptor = childDescriptor;
+      parent = next;
     }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+
+    assertPublishDirectoryHandle(root, parent, parentDescriptor, rootDescriptor, relativePath);
+    const path = resolve(parent, segments.at(-1)!);
+    try {
+      const entry = lstatSync(path);
+      if (!entry.isFile() || entry.isSymbolicLink()) {
+        throw new Error(`Artifact path "${relativePath}" is not an isolated regular file.`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    return { createdDirectories, parent, path };
+  } finally {
+    if (parentDescriptor !== rootDescriptor) closeSync(parentDescriptor);
+    if (changedCwd) process.chdir(originalCwd);
   }
-  return { createdDirectories, parent, path };
 }
 
 function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined {
@@ -615,15 +664,7 @@ function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined 
 
 function openPublishParent(root: string, parent: string, relativePath: string, rootDescriptor: number): number {
   assertPublishRootHandle(root, rootDescriptor, relativePath);
-  const segments = relative(root, parent) === "" ? [] : relative(root, parent).split(sep);
-  let current = root;
-  for (const segment of segments) {
-    current = resolve(current, segment);
-    const entry = lstatSync(current);
-    if (!entry.isDirectory() || entry.isSymbolicLink()) {
-      throw new Error(`Artifact path "${relativePath}" crosses a symbolic link.`);
-    }
-  }
+  assertPublishParentPath(root, parent, relativePath);
 
   const descriptor = openSync(parent, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
@@ -639,11 +680,45 @@ function openPublishParent(root: string, parent: string, relativePath: string, r
   }
 }
 
-function assertPublishParentHandle(descriptor: number, relativePath: string): void {
+function assertPublishParentHandle(root: string, parent: string, descriptor: number, relativePath: string): void {
+  assertPublishParentPath(root, parent, relativePath);
   const opened = fstatSync(descriptor);
-  const current = lstatSync(".");
-  if (!opened.isDirectory() || current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino) {
+  const current = lstatSync(parent);
+  const cwd = lstatSync(".");
+  if (!opened.isDirectory() || current.isSymbolicLink() || cwd.isSymbolicLink()
+      || opened.dev !== current.dev || opened.ino !== current.ino
+      || opened.dev !== cwd.dev || opened.ino !== cwd.ino) {
     throw new Error(`Artifact path "${relativePath}" parent changed during publication.`);
+  }
+}
+
+function assertPublishDirectoryHandle(
+  root: string,
+  parent: string,
+  descriptor: number,
+  rootDescriptor: number,
+  relativePath: string,
+): void {
+  assertPublishRootHandle(root, rootDescriptor, relativePath);
+  assertPublishParentPath(root, parent, relativePath);
+  const opened = fstatSync(descriptor);
+  const current = lstatSync(parent);
+  if (!opened.isDirectory() || current.isSymbolicLink() || !current.isDirectory()
+      || opened.dev !== current.dev || opened.ino !== current.ino) {
+    throw new Error(`Artifact path "${relativePath}" parent changed during publication.`);
+  }
+}
+
+function assertPublishParentPath(root: string, parent: string, relativePath: string): void {
+  if (!isContained(root, parent)) throw new Error(`Artifact path "${relativePath}" escapes its declared root.`);
+  const segments = relative(root, parent) === "" ? [] : relative(root, parent).split(sep);
+  let current = root;
+  for (const segment of segments) {
+    current = resolve(current, segment);
+    const entry = lstatSync(current);
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      throw new Error(`Artifact path "${relativePath}" crosses a symbolic link.`);
+    }
   }
 }
 

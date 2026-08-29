@@ -12,6 +12,11 @@ export type ArtifactReference = {
   digest: Digest;
 };
 
+export type BundleRootHandle = {
+  path: string;
+  descriptor: number;
+};
+
 export type ArchiveEntry = {
   path: string;
   kind: string;
@@ -237,39 +242,85 @@ export function resolveBundleConfiguration(
   bundleRoot: string,
   reference: ArtifactReference,
   maxBytes = MAX_CONFIGURATION_BYTES,
+  rootHandle?: BundleRootHandle,
 ): Buffer {
   assertPositiveSafeInteger(maxBytes, "Configuration maximum bytes");
-  return readVerifiedBundleFile(
-    openBundleRegularFile(bundleRoot, reference.locator, "Configuration locator"),
-    reference,
-    "Configuration",
-    maxBytes,
-  );
-}
-
-export function resolveTaskArchive(bundleRoot: string, source: ArtifactReference, maxCompressedBytes: number): Buffer {
-  assertPositiveSafeInteger(maxCompressedBytes, "Task archive maximum compressed bytes");
-  return readVerifiedBundleFile(
-    openBundleRegularFile(bundleRoot, source.locator, "Task archive locator"),
-    source,
-    "Task archive",
-    maxCompressedBytes,
-  );
-}
-
-export function resolveBundleArtifact(bundleRoot: string, reference: ArtifactReference, maxBytes?: number): Buffer {
-  return readVerifiedBundleFile(
-    openBundleRegularFile(bundleRoot, reference.locator, "Artifact locator"),
-    reference,
-    "Artifact",
-    maxBytes,
-  );
-}
-
-export function resolveBundleArtifactDigest(bundleRoot: string, reference: ArtifactReference): Digest {
-  const descriptor = openBundleRegularFile(bundleRoot, reference.locator, "Artifact locator");
+  const root = rootHandle ?? openBundleRoot(bundleRoot);
+  const ownsRoot = rootHandle === undefined;
   try {
-    const size = fstatSync(descriptor).size;
+    return readVerifiedBundleFile(
+      openBundleRegularFile(bundleRoot, reference.locator, "Configuration locator", root),
+      reference,
+      "Configuration",
+      maxBytes,
+      root,
+      bundleRoot,
+    );
+  } finally {
+    if (ownsRoot) closeBundleRoot(root);
+  }
+}
+
+export function resolveTaskArchive(
+  bundleRoot: string,
+  source: ArtifactReference,
+  maxCompressedBytes: number,
+  rootHandle?: BundleRootHandle,
+): Buffer {
+  assertPositiveSafeInteger(maxCompressedBytes, "Task archive maximum compressed bytes");
+  const root = rootHandle ?? openBundleRoot(bundleRoot);
+  const ownsRoot = rootHandle === undefined;
+  try {
+    return readVerifiedBundleFile(
+      openBundleRegularFile(bundleRoot, source.locator, "Task archive locator", root),
+      source,
+      "Task archive",
+      maxCompressedBytes,
+      root,
+      bundleRoot,
+    );
+  } finally {
+    if (ownsRoot) closeBundleRoot(root);
+  }
+}
+
+export function resolveBundleArtifact(
+  bundleRoot: string,
+  reference: ArtifactReference,
+  maxBytes?: number,
+  rootHandle?: BundleRootHandle,
+): Buffer {
+  const root = rootHandle ?? openBundleRoot(bundleRoot);
+  const ownsRoot = rootHandle === undefined;
+  try {
+    return readVerifiedBundleFile(
+      openBundleRegularFile(bundleRoot, reference.locator, "Artifact locator", root),
+      reference,
+      "Artifact",
+      maxBytes,
+      root,
+      bundleRoot,
+    );
+  } finally {
+    if (ownsRoot) closeBundleRoot(root);
+  }
+}
+
+export function resolveBundleArtifactDigest(
+  bundleRoot: string,
+  reference: ArtifactReference,
+  rootHandle?: BundleRootHandle,
+): Digest {
+  const root = rootHandle ?? openBundleRoot(bundleRoot);
+  const ownsRoot = rootHandle === undefined;
+  let descriptor: number | undefined;
+  try {
+    descriptor = openBundleRegularFile(bundleRoot, reference.locator, "Artifact locator", root);
+    const opened = fstatSync(descriptor);
+    const size = opened.size;
+    if (!opened.isFile() || opened.nlink > 1 || !Number.isSafeInteger(size) || size < 0) {
+      throw new Error("Artifact is not an isolated regular file.");
+    }
     const hash = createHash("sha256");
     const chunk = Buffer.allocUnsafe(64 * 1024);
     for (let offset = 0; offset < size;) {
@@ -278,14 +329,46 @@ export function resolveBundleArtifactDigest(bundleRoot: string, reference: Artif
       hash.update(chunk.subarray(0, read));
       offset += read;
     }
+    const trailing = Buffer.allocUnsafe(1);
+    if (readSync(descriptor, trailing, 0, 1, size) !== 0) {
+      throw new Error("Artifact changed while its digest was being read.");
+    }
+    const completed = fstatSync(descriptor);
+    if (!completed.isFile() || completed.nlink > 1 || completed.dev !== opened.dev || completed.ino !== opened.ino
+        || completed.size !== size) {
+      throw new Error("Artifact changed while its digest was being read.");
+    }
+    assertBundleRootHandle(root, bundleRoot, reference.locator);
+    const current = lstatSync(assertBundlePathWithoutLinks(root.path, reference.locator, "Artifact locator"));
+    if (current.dev !== completed.dev || current.ino !== completed.ino) {
+      throw new Error("Artifact changed after bundle-root verification.");
+    }
     const resolvedDigest: Digest = { algorithm: "sha256", value: hash.digest("hex") };
     if (reference.digest.algorithm !== resolvedDigest.algorithm || reference.digest.value !== resolvedDigest.value) {
       throw new Error("Artifact digest does not match its source reference.");
     }
     return resolvedDigest;
   } finally {
-    closeSync(descriptor);
+    if (descriptor !== undefined) closeSync(descriptor);
+    if (ownsRoot) closeBundleRoot(root);
   }
+}
+
+export function openBundleRoot(bundleRoot: string): BundleRootHandle {
+  const path = realpathSync(bundleRoot);
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const root = { path, descriptor };
+  try {
+    assertBundleRootHandle(root, bundleRoot, "bundle root");
+    return root;
+  } catch (error) {
+    closeSync(descriptor);
+    throw error;
+  }
+}
+
+export function closeBundleRoot(root: BundleRootHandle): void {
+  closeSync(root.descriptor);
 }
 
 function readVerifiedBundleFile(
@@ -293,10 +376,14 @@ function readVerifiedBundleFile(
   reference: ArtifactReference,
   label: string,
   maxBytes?: number,
+  root?: BundleRootHandle,
+  bundleRoot?: string,
 ): Buffer {
   try {
-    const size = fstatSync(descriptor).size;
-    if (!Number.isSafeInteger(size) || size < 0 || (maxBytes !== undefined && size > maxBytes)) {
+    const opened = fstatSync(descriptor);
+    const size = opened.size;
+    if (!opened.isFile() || opened.nlink > 1 || !Number.isSafeInteger(size) || size < 0
+        || (maxBytes !== undefined && size > maxBytes)) {
       throw new Error(`${label} exceeds its maximum bytes.`);
     }
     const bytes = Buffer.alloc(size);
@@ -304,6 +391,22 @@ function readVerifiedBundleFile(
       const read = readSync(descriptor, bytes, offset, size - offset, offset);
       if (read === 0) throw new Error(`${label} changed while it was being read.`);
       offset += read;
+    }
+    const trailing = Buffer.allocUnsafe(1);
+    if (readSync(descriptor, trailing, 0, 1, size) !== 0) {
+      throw new Error(`${label} changed while it was being read.`);
+    }
+    const completed = fstatSync(descriptor);
+    if (!completed.isFile() || completed.nlink > 1 || completed.dev !== opened.dev || completed.ino !== opened.ino
+        || completed.size !== size || (maxBytes !== undefined && completed.size > maxBytes)) {
+      throw new Error(`${label} changed while it was being read.`);
+    }
+    if (root !== undefined && bundleRoot !== undefined) {
+      assertBundleRootHandle(root, bundleRoot, reference.locator);
+      const current = lstatSync(assertBundlePathWithoutLinks(root.path, reference.locator, `${label} locator`));
+      if (current.dev !== completed.dev || current.ino !== completed.ino) {
+        throw new Error(`${label} changed after bundle-root verification.`);
+      }
     }
     const resolvedDigest: Digest = {
       algorithm: "sha256",
@@ -320,13 +423,18 @@ function readVerifiedBundleFile(
   }
 }
 
-function openBundleRegularFile(bundleRoot: string, locator: string, label: string): number {
+function openBundleRegularFile(
+  bundleRoot: string,
+  locator: string,
+  label: string,
+  root: BundleRootHandle,
+): number {
   if (!isSafeArtifactRelativePath(locator)) {
     throw new Error(`${label} "${locator}" is unsafe.`);
   }
 
-  const resolvedRoot = realpathSync(bundleRoot);
-  const selectedPath = assertBundlePathWithoutLinks(resolvedRoot, locator, label);
+  assertBundleRootHandle(root, bundleRoot, locator);
+  const selectedPath = assertBundlePathWithoutLinks(root.path, locator, label);
 
   let descriptor: number | undefined;
   try {
@@ -335,7 +443,8 @@ function openBundleRegularFile(bundleRoot: string, locator: string, label: strin
     if (!opened.isFile() || opened.nlink > 1) {
       throw new Error(`${label} "${locator}" is not an isolated regular file.`);
     }
-    const current = lstatSync(assertBundlePathWithoutLinks(resolvedRoot, locator, label));
+    assertBundleRootHandle(root, bundleRoot, locator);
+    const current = lstatSync(assertBundlePathWithoutLinks(root.path, locator, label));
     if (opened.dev !== current.dev || opened.ino !== current.ino) {
       throw new Error(`${label} "${locator}" changed after bundle-root verification.`);
     }
@@ -343,6 +452,21 @@ function openBundleRegularFile(bundleRoot: string, locator: string, label: strin
   } catch (error) {
     if (descriptor !== undefined) closeSync(descriptor);
     throw error;
+  }
+}
+
+function assertBundleRootHandle(root: BundleRootHandle, bundleRoot: string, locator: string): void {
+  let requestedRoot: string;
+  try {
+    requestedRoot = realpathSync(bundleRoot);
+  } catch {
+    throw new Error(`Artifact path "${locator}" bundle root changed during verification.`);
+  }
+  const opened = fstatSync(root.descriptor);
+  const current = lstatSync(root.path);
+  if (requestedRoot !== root.path || !opened.isDirectory() || current.isSymbolicLink()
+      || opened.dev !== current.dev || opened.ino !== current.ino) {
+    throw new Error(`Artifact path "${locator}" bundle root changed during verification.`);
   }
 }
 

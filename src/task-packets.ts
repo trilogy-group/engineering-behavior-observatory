@@ -7,6 +7,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  readSync,
   realpathSync,
   unlinkSync,
 } from "node:fs";
@@ -25,7 +26,10 @@ import {
   resolveBundleArtifact,
   resolveBundleArtifactDigest,
   resolveTaskArchive,
+  closeBundleRoot,
+  openBundleRoot,
   type ArtifactReference,
+  type BundleRootHandle,
   type Digest,
 } from "./contracts.js";
 
@@ -122,9 +126,33 @@ const MAX_TRANSIENT_LINK_READ_RETRIES = 20;
 const FREEZE_LOCATOR_SUFFIX = ".freeze.json";
 
 export function inspectTaskPacket(bundleRoot: string, packetLocator: string): TaskPacketInspection {
+  let root: BundleRootHandle | undefined;
+  try {
+    root = openBundleRoot(bundleRoot);
+    return inspectTaskPacketWithRoot(bundleRoot, packetLocator, root);
+  } catch (error) {
+    return {
+      packetLocator,
+      packet: null,
+      preAdmissionDigest: null,
+      packetDigest: null,
+      components: null,
+      modelVisible: null,
+      errors: [packetError(packetLocator, "/", errorMessage(error))],
+    };
+  } finally {
+    if (root !== undefined) closeBundleRoot(root);
+  }
+}
+
+function inspectTaskPacketWithRoot(
+  bundleRoot: string,
+  packetLocator: string,
+  root: BundleRootHandle,
+): TaskPacketInspection {
   let document: unknown;
   try {
-    document = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readBundleFile(bundleRoot, packetLocator)));
+    document = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readBundleFile(bundleRoot, packetLocator, root)));
   } catch (error) {
     return {
       packetLocator,
@@ -154,12 +182,13 @@ export function inspectTaskPacket(bundleRoot: string, packetLocator: string): Ta
       "/agentInput/fixture/source",
       packetLocator,
       errors,
+      root,
       packet.agentInput.fixture.source.limits.maxCompressedBytes,
     ),
     reference: "locator" in packet.restricted.referenceSolution
-      ? { status: "referenced", digest: resolveComponent(bundleRoot, packet.restricted.referenceSolution, "/restricted/referenceSolution", packetLocator, errors) }
+      ? { status: "referenced", digest: resolveComponent(bundleRoot, packet.restricted.referenceSolution, "/restricted/referenceSolution", packetLocator, errors, root) }
       : { status: packet.restricted.referenceSolution.status },
-    verifier: resolveComponent(bundleRoot, packet.restricted.verifier, "/restricted/verifier", packetLocator, errors),
+    verifier: resolveComponent(bundleRoot, packet.restricted.verifier, "/restricted/verifier", packetLocator, errors, root),
     reviewRecord: packet.admission.review === null
       ? null
       : resolveReviewRecord(
@@ -169,9 +198,10 @@ export function inspectTaskPacket(bundleRoot: string, packetLocator: string): Ta
         "/admission/review/reviewRecord",
         packetLocator,
         errors,
+        root,
       ),
     controlledPerturbation: "reference" in packet.controlledPerturbation
-      ? { status: "referenced", digest: resolveComponent(bundleRoot, packet.controlledPerturbation.reference, "/controlledPerturbation/reference", packetLocator, errors) }
+      ? { status: "referenced", digest: resolveComponent(bundleRoot, packet.controlledPerturbation.reference, "/controlledPerturbation/reference", packetLocator, errors, root) }
       : { status: packet.controlledPerturbation.status },
   };
 
@@ -187,7 +217,31 @@ export function inspectTaskPacket(bundleRoot: string, packetLocator: string): Ta
 }
 
 export function admitTaskPacket(bundleRoot: string, packetLocator: string): TaskPacketInspection {
-  const inspection = inspectTaskPacket(bundleRoot, packetLocator);
+  let root: BundleRootHandle | undefined;
+  try {
+    root = openBundleRoot(bundleRoot);
+    return admitTaskPacketWithRoot(bundleRoot, packetLocator, root);
+  } catch (error) {
+    return {
+      packetLocator,
+      packet: null,
+      preAdmissionDigest: null,
+      packetDigest: null,
+      components: null,
+      modelVisible: null,
+      errors: [packetError(packetLocator, "/", errorMessage(error))],
+    };
+  } finally {
+    if (root !== undefined) closeBundleRoot(root);
+  }
+}
+
+function admitTaskPacketWithRoot(
+  bundleRoot: string,
+  packetLocator: string,
+  root: BundleRootHandle,
+): TaskPacketInspection {
+  const inspection = inspectTaskPacketWithRoot(bundleRoot, packetLocator, root);
   if (inspection.packet === null) return inspection;
 
   if (inspection.packet.admission.status === "proposed") {
@@ -203,6 +257,18 @@ export function admitTaskPacket(bundleRoot: string, packetLocator: string): Task
 
 export function assertTaskPacketAdmitted(bundleRoot: string, packetLocator: string): TaskPacketInspection {
   const inspection = admitTaskPacket(bundleRoot, packetLocator);
+  if (inspection.errors.length > 0) {
+    throw new Error(formatErrors(inspection.errors));
+  }
+  return inspection;
+}
+
+function assertTaskPacketAdmittedWithRoot(
+  bundleRoot: string,
+  packetLocator: string,
+  root: BundleRootHandle,
+): TaskPacketInspection {
+  const inspection = admitTaskPacketWithRoot(bundleRoot, packetLocator, root);
   if (inspection.errors.length > 0) {
     throw new Error(formatErrors(inspection.errors));
   }
@@ -231,36 +297,41 @@ export function freezeTaskPacket(
     throw new Error("Freeze record must use a path distinct from the task packet.");
   }
 
-  const inspection = assertTaskPacketAdmitted(bundleRoot, packetLocator);
-  const packet = inspection.packet!;
-  const preAdmissionDigest = inspection.preAdmissionDigest!;
-  const packetDigest = inspection.packetDigest!;
-  const components = inspection.components!;
-  const candidate: TaskPacketFreezeRecord = {
-    schemaVersion: TASK_PACKET_FREEZE_SCHEMA_VERSION,
-    packetId: packet.id,
-    packetLocator,
-    preAdmissionDigest,
-    packetDigest,
-    components,
-    aggregateDigest: aggregateDigest(packet.id, packetLocator, preAdmissionDigest, packetDigest, components),
-    frozenAt: new Date().toISOString(),
-  };
-  const candidateErrors = validateArtifact(freezeLocator, candidate);
-  if (candidateErrors.length > 0) throw new Error(formatErrors(candidateErrors));
+  const root = openBundleRoot(bundleRoot);
+  try {
+    const inspection = assertTaskPacketAdmittedWithRoot(bundleRoot, packetLocator, root);
+    const packet = inspection.packet!;
+    const preAdmissionDigest = inspection.preAdmissionDigest!;
+    const packetDigest = inspection.packetDigest!;
+    const components = inspection.components!;
+    const candidate: TaskPacketFreezeRecord = {
+      schemaVersion: TASK_PACKET_FREEZE_SCHEMA_VERSION,
+      packetId: packet.id,
+      packetLocator,
+      preAdmissionDigest,
+      packetDigest,
+      components,
+      aggregateDigest: aggregateDigest(packet.id, packetLocator, preAdmissionDigest, packetDigest, components),
+      frozenAt: new Date().toISOString(),
+    };
+    const candidateErrors = validateArtifact(freezeLocator, candidate);
+    if (candidateErrors.length > 0) throw new Error(formatErrors(candidateErrors));
 
-  const write = writeMetadataAtomicallyIfAbsentSync(bundleRoot, freezeLocator, candidate);
-  if (!write.created) {
-    const winner = readOptionalJson(bundleRoot, freezeLocator, true);
-    if (winner === undefined) throw new Error("Freeze record disappeared after concurrent creation.");
-    const errors = validateArtifact(freezeLocator, winner);
-    if (errors.length > 0) throw new Error(formatErrors(errors));
-    const mismatches = compareFreezeRecord(winner as TaskPacketFreezeRecord, inspection);
-    if (mismatches.length > 0) throw new Error(`Frozen task packet changed: ${mismatches.join(", ")}.`);
-    return winner as TaskPacketFreezeRecord;
+    const write = writeMetadataAtomicallyIfAbsentSync(bundleRoot, freezeLocator, candidate, root);
+    if (!write.created) {
+      const winner = readOptionalJson(bundleRoot, freezeLocator, true, root);
+      if (winner === undefined) throw new Error("Freeze record disappeared after concurrent creation.");
+      const errors = validateArtifact(freezeLocator, winner);
+      if (errors.length > 0) throw new Error(formatErrors(errors));
+      const mismatches = compareFreezeRecord(winner as TaskPacketFreezeRecord, inspection);
+      if (mismatches.length > 0) throw new Error(`Frozen task packet changed: ${mismatches.join(", ")}.`);
+      return winner as TaskPacketFreezeRecord;
+    }
+
+    return candidate;
+  } finally {
+    closeBundleRoot(root);
   }
-
-  return candidate;
 }
 
 export function statusTaskPacket(
@@ -268,12 +339,26 @@ export function statusTaskPacket(
   packetLocator: string,
   freezeLocator = defaultFreezeLocator(packetLocator),
 ): TaskPacketStatus {
-  const inspection = inspectTaskPacket(bundleRoot, packetLocator);
+  const root = openBundleRoot(bundleRoot);
+  try {
+    return statusTaskPacketWithRoot(bundleRoot, packetLocator, freezeLocator, root);
+  } finally {
+    closeBundleRoot(root);
+  }
+}
+
+function statusTaskPacketWithRoot(
+  bundleRoot: string,
+  packetLocator: string,
+  freezeLocator: string,
+  root: BundleRootHandle,
+): TaskPacketStatus {
+  const inspection = inspectTaskPacketWithRoot(bundleRoot, packetLocator, root);
   const packetId = inspection.packet?.id ?? null;
   const packetDigest = inspection.packetDigest;
   let freeze: unknown | undefined;
   try {
-    freeze = readOptionalJson(bundleRoot, freezeLocator, true);
+    freeze = readOptionalJson(bundleRoot, freezeLocator, true, root);
   } catch (error) {
     return {
       status: "invalid",
@@ -347,12 +432,13 @@ function resolveComponent(
   field: string,
   artifact: string,
   errors: ArtifactValidationError[],
+  root: BundleRootHandle,
   maxCompressedBytes?: number,
 ): Digest | null {
   try {
     return maxCompressedBytes === undefined
-      ? resolveBundleArtifactDigest(bundleRoot, reference)
-      : digestBytes(resolveTaskArchive(bundleRoot, reference, maxCompressedBytes));
+      ? resolveBundleArtifactDigest(bundleRoot, reference, root)
+      : digestBytes(resolveTaskArchive(bundleRoot, reference, maxCompressedBytes, root));
   } catch (error) {
     errors.push(packetError(artifact, field, errorMessage(error)));
     return null;
@@ -366,9 +452,10 @@ function resolveReviewRecord(
   field: string,
   artifact: string,
   errors: ArtifactValidationError[],
+  root: BundleRootHandle,
 ): Digest | null {
   try {
-    const bytes = resolveBundleArtifact(bundleRoot, reference, MAX_TASK_PACKET_METADATA_BYTES);
+    const bytes = resolveBundleArtifact(bundleRoot, reference, MAX_TASK_PACKET_METADATA_BYTES, root);
     const record = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
     const bound = record !== null && typeof record === "object" && !Array.isArray(record)
       ? (record as { preAdmissionDigest?: unknown }).preAdmissionDigest
@@ -444,23 +531,30 @@ function sameComponent(left: TaskPacketComponent, right: TaskPacketComponent): b
   return sameDigest(left.digest, right.digest);
 }
 
-function readOptionalJson(bundleRoot: string, locator: string, retryTransientLink = false): unknown | undefined {
+function readOptionalJson(
+  bundleRoot: string,
+  locator: string,
+  retryTransientLink = false,
+  rootHandle?: BundleRootHandle,
+): unknown | undefined {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readBundleFile(bundleRoot, locator)));
+      return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readBundleFile(bundleRoot, locator, rootHandle)));
     } catch (error) {
       if (isErrno(error, "ENOENT")) return undefined;
       if (!retryTransientLink || attempt >= MAX_TRANSIENT_LINK_READ_RETRIES || !(error instanceof Error)
           || !error.message.includes("not an isolated regular file")) throw error;
-      if (removeTemporaryFreezeLinks(bundleRoot, locator)) continue;
+      if (removeTemporaryFreezeLinks(bundleRoot, locator, rootHandle)) continue;
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
     }
   }
 }
 
-function removeTemporaryFreezeLinks(bundleRoot: string, locator: string): boolean {
-  const root = realpathSync(bundleRoot);
-  const rootDescriptor = openSync(root, constants.O_RDONLY | constants.O_NOFOLLOW);
+function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHandle?: BundleRootHandle): boolean {
+  const rootIdentity = rootHandle ?? openBundleRoot(bundleRoot);
+  const ownsRoot = rootHandle === undefined;
+  const root = rootIdentity.path;
+  const rootDescriptor = rootIdentity.descriptor;
   let removed = false;
   try {
     assertBundleRoot(root, rootDescriptor, locator);
@@ -495,15 +589,17 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string): boolea
       closeSync(parentDescriptor);
     }
   } finally {
-    closeSync(rootDescriptor);
+    if (ownsRoot) closeBundleRoot(rootIdentity);
   }
   return removed;
 }
 
-function readBundleFile(bundleRoot: string, locator: string): Buffer {
+function readBundleFile(bundleRoot: string, locator: string, rootHandle?: BundleRootHandle): Buffer {
   if (!isSafeArtifactRelativePath(locator)) throw new Error(`Artifact path "${locator}" is unsafe.`);
-  const root = realpathSync(bundleRoot);
-  const rootDescriptor = openSync(root, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const rootIdentity = rootHandle ?? openBundleRoot(bundleRoot);
+  const ownsRoot = rootHandle === undefined;
+  const root = rootIdentity.path;
+  const rootDescriptor = rootIdentity.descriptor;
   try {
     assertBundleRoot(root, rootDescriptor, locator);
     const path = assertBundlePathWithoutLinks(root, locator);
@@ -519,12 +615,27 @@ function readBundleFile(bundleRoot: string, locator: string): Buffer {
       if (opened.dev !== current.dev || opened.ino !== current.ino) {
         throw new Error(`Artifact path "${locator}" changed after bundle-root verification.`);
       }
-      return readFileSync(descriptor);
+      const bytes = readFileSync(descriptor);
+      const trailing = Buffer.allocUnsafe(1);
+      if (readSync(descriptor, trailing, 0, 1, opened.size) !== 0) {
+        throw new Error(`Artifact path "${locator}" changed while it was being read.`);
+      }
+      const completed = fstatSync(descriptor);
+      if (!completed.isFile() || completed.nlink > 1 || completed.dev !== opened.dev || completed.ino !== opened.ino
+          || completed.size !== opened.size || completed.size > MAX_TASK_PACKET_METADATA_BYTES || bytes.length !== opened.size) {
+        throw new Error(`Artifact path "${locator}" changed while it was being read.`);
+      }
+      assertBundleRoot(root, rootDescriptor, locator);
+      const finalPath = lstatSync(assertBundlePathWithoutLinks(root, locator));
+      if (finalPath.dev !== completed.dev || finalPath.ino !== completed.ino) {
+        throw new Error(`Artifact path "${locator}" changed after bundle-root verification.`);
+      }
+      return bytes;
     } finally {
       closeSync(descriptor);
     }
   } finally {
-    closeSync(rootDescriptor);
+    if (ownsRoot) closeBundleRoot(rootIdentity);
   }
 }
 

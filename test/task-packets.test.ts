@@ -19,6 +19,7 @@ import {
   writeMetadataAtomicallyIfAbsentSync,
   type TaskPacket,
 } from "../src/index.js";
+import { closeBundleRoot, openBundleRoot } from "../src/contracts.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const fixturePath = (name: string) => join(repositoryRoot, "tests", "fixtures", name);
@@ -212,6 +213,40 @@ test("freeze publication rejects a symlinked ancestor", () => {
     symlinkSync(outside, join(root, "nested"));
     assert.throws(() => freezeTaskPacket(root, "packet.json", "nested/freeze.json"), /symbolic link/);
     assert.equal(existsSync(join(outside, "freeze.json")), false);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(outside, { force: true, recursive: true });
+  }
+});
+
+test("component resolution stays bound to its verified bundle root", () => {
+  const original = createBundle();
+  const replacement = createBundle();
+  const alias = join(tmpdir(), `ebo-root-alias-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  symlinkSync(original.root, alias);
+  const root = openBundleRoot(alias);
+  try {
+    rmSync(alias, { force: true });
+    symlinkSync(replacement.root, alias);
+    assert.throws(
+      () => resolveBundleArtifactDigest(alias, { locator: "verifier.sh", digest: original.packet.restricted.verifier.digest }, root),
+      /bundle root changed/,
+    );
+  } finally {
+    closeBundleRoot(root);
+    rmSync(alias, { force: true });
+    rmSync(original.root, { force: true, recursive: true });
+    rmSync(replacement.root, { force: true, recursive: true });
+  }
+});
+
+test("nested freeze-directory preparation does not follow an ancestor link", () => {
+  const { root } = createBundle();
+  const outside = mkdtempSync(join(tmpdir(), "ebo-freeze-nested-outside-"));
+  try {
+    symlinkSync(outside, join(root, "nested"));
+    assert.throws(() => freezeTaskPacket(root, "packet.json", "nested/inner/freeze.json"), /symbolic link/);
+    assert.equal(existsSync(join(outside, "inner", "freeze.json")), false);
   } finally {
     rmSync(root, { force: true, recursive: true });
     rmSync(outside, { force: true, recursive: true });
