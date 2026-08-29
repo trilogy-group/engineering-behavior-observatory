@@ -712,6 +712,8 @@ export function validateExportManifest(
   if (bundleRoot !== undefined) {
     errors.push(...validateRunManifestEvidence(artifact, containingManifest, bundleRoot));
   }
+  const referencedDiagnosticPaths = new Set<string>();
+  const exportedDiagnosticDescriptors: Record<string, unknown>[] = [];
   let hasNonExportArtifact = false;
   for (const id of Array.isArray(exportManifest.artifactIds) ? exportManifest.artifactIds : []) {
     const descriptor = typeof id === "string" ? evidenceById.get(id) : undefined;
@@ -732,11 +734,98 @@ export function validateExportManifest(
           evidenceByPath,
           exportedIds,
         ));
+        for (const locator of exportedVerifierDiagnosticLocators(bundleRoot, descriptor)) {
+          referencedDiagnosticPaths.add(locator);
+        }
+      }
+      if (descriptor.kind === "diagnostic" && descriptor.sanitizedFrom !== undefined) {
+        errors.push(...validateExportedDiagnosticSidecar(artifact, descriptor, bundleRoot, evidenceById));
+        exportedDiagnosticDescriptors.push(descriptor);
       }
     }
     hasNonExportArtifact ||= descriptor.kind !== "export-manifest";
   }
+  for (const descriptor of exportedDiagnosticDescriptors) {
+    if (typeof descriptor.relativePath === "string" && !referencedDiagnosticPaths.has(descriptor.relativePath.toLowerCase())) {
+      errors.push({
+        artifact,
+        schemaVersion: "export-manifest/v1",
+        field: `/artifactIds/${escapeJsonPointer(String(descriptor.id))}`,
+        message: "Exported diagnostic sidecars must be referenced by an exported sanitized verifier.",
+      });
+    }
+  }
   if (!hasNonExportArtifact) errors.push({ artifact, schemaVersion: "export-manifest/v1", field: "/artifactIds", message: "Ready exports must include non-export evidence." });
+  return errors;
+}
+
+function exportedVerifierDiagnosticLocators(
+  bundleRoot: string | undefined,
+  descriptor: Record<string, unknown>,
+): string[] {
+  if (bundleRoot === undefined || typeof descriptor.relativePath !== "string" || typeof descriptor.digest !== "string") return [];
+  try {
+    const bytes = resolveBundleArtifact(bundleRoot, {
+      locator: descriptor.relativePath,
+      digest: runDigest(descriptor.digest),
+    });
+    const result: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    return isRecord(result) && Array.isArray(result.diagnostics)
+      ? result.diagnostics.flatMap((diagnostic) => isRecord(diagnostic) && typeof diagnostic.locator === "string"
+        ? [diagnostic.locator.toLowerCase()]
+        : [])
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function validateExportedDiagnosticSidecar(
+  artifact: string,
+  descriptor: Record<string, unknown>,
+  bundleRoot: string | undefined,
+  evidenceById: ReadonlyMap<string, Record<string, unknown>>,
+): ArtifactValidationError[] {
+  const scope = `/artifactIds/${escapeJsonPointer(String(descriptor.id))}`;
+  if (bundleRoot === undefined) {
+    return [{ artifact, schemaVersion: "export-manifest/v1", field: scope, message: "Exported diagnostic sidecars require a bundle root." }];
+  }
+  const sourceBinding = isDiagnosticSourceBinding(descriptor.diagnosticSource) ? descriptor.diagnosticSource : undefined;
+  if (sourceBinding === undefined) {
+    return [{ artifact, schemaVersion: "export-manifest/v1", field: `${scope}/diagnosticSource`, message: "Exported diagnostic sidecars require source-specific provenance." }];
+  }
+  const sourceDescriptor = evidenceById.get(sourceBinding.verifierId);
+  if (sourceDescriptor === undefined || sourceDescriptor.kind !== "verifier"
+      || typeof sourceDescriptor.relativePath !== "string" || typeof sourceDescriptor.digest !== "string") {
+    return [{ artifact, schemaVersion: "export-manifest/v1", field: `${scope}/diagnosticSource/verifierId`, message: "Diagnostic source provenance must reference a retained verifier." }];
+  }
+  let sourceOutcome: NestedVerifierOutcome | undefined;
+  try {
+    const sourceBytes = resolveBundleArtifact(bundleRoot, {
+      locator: sourceDescriptor.relativePath,
+      digest: runDigest(sourceDescriptor.digest),
+    });
+    sourceOutcome = nestedVerifierOutcome(sourceBytes);
+  } catch {
+    sourceOutcome = undefined;
+  }
+  if (sourceOutcome === undefined || !sourceOutcome.diagnostics.some((diagnostic) => sameDiagnosticOrigin(diagnostic, sourceBinding))) {
+    return [{ artifact, schemaVersion: "export-manifest/v1", field: `${scope}/diagnosticSource`, message: "Diagnostic source provenance must match a retained source diagnostic." }];
+  }
+  const errors: ArtifactValidationError[] = [];
+  if (typeof descriptor.relativePath !== "string" || typeof descriptor.digest !== "string" || typeof descriptor.sizeBytes !== "number") return errors;
+  try {
+    const sidecarBytes = resolveBundleArtifact(bundleRoot, {
+      locator: descriptor.relativePath,
+      digest: runDigest(descriptor.digest),
+    });
+    if (sidecarBytes.length !== descriptor.sizeBytes) throw new Error("Diagnostic sidecar size does not match its descriptor.");
+  } catch (error) {
+    errors.push({ artifact, schemaVersion: "export-manifest/v1", field: scope, message: error instanceof Error ? error.message : "Diagnostic sidecar could not be verified." });
+  }
+  if (descriptor.digest === sourceBinding.digest) {
+    errors.push({ artifact, schemaVersion: "export-manifest/v1", field: `${scope}/digest`, message: "Diagnostic sidecar bytes must differ from the source diagnostic." });
+  }
   return errors;
 }
 
