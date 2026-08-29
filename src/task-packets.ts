@@ -581,6 +581,7 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHan
             throw new Error("Freeze recovery directory exceeds its entry limit.");
           }
           const name = entry.name;
+          if (name === relative(parent, destination)) continue;
           if (!TEMPORARY_FREEZE_LINK_PATTERN.test(name)) continue;
           try {
             const temporaryStat = lstatSync(name);

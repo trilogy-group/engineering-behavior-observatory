@@ -256,6 +256,22 @@ test("status does not remove an unrelated dot-tmp hard link", () => {
   }
 });
 
+test("recovery never removes a freeze destination that resembles a temporary name", () => {
+  const { root } = createBundle();
+  const freezeLocator = ".44444444-4444-4444-8444-444444444444.tmp";
+  const freezePath = join(root, freezeLocator);
+  const extraLink = join(root, "freeze-durable-link");
+  try {
+    freezeTaskPacket(root, "packet.json", freezeLocator);
+    linkSync(freezePath, extraLink);
+    const status = statusTaskPacket(root, "packet.json", freezeLocator);
+    assert.equal(status.status, "invalid");
+    assert.equal(existsSync(freezePath), true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("freeze publication rejects a symlinked ancestor", () => {
   const { root } = createBundle();
   const outside = mkdtempSync(join(tmpdir(), "ebo-freeze-outside-"));
