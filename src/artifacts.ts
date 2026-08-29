@@ -247,6 +247,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
   metadata: unknown,
   rootHandle?: BundleRootHandle,
 ): { created: boolean; digest: Digest } {
+  assertPublicationPathWithinLimits(relativePath);
   const bytes = Buffer.from(canonicalizeMetadata(metadata));
   const rootIdentity = rootHandle ?? openBundleRoot(artifactRoot);
   const ownsRoot = rootHandle === undefined;
@@ -279,13 +280,14 @@ export function writeMetadataAtomicallyIfAbsentSync(
         syncCreatedDirectories(root, createdDirectories, parentDescriptor);
         return { created: false, digest: winnerDigest };
       }
-      if (lstatIfPresent(`${destination}.quarantine`) !== undefined) {
-        throw new Error(`Publication quarantine "${destination}.quarantine" is already occupied.`);
+      const quarantinePath = `${destination}.quarantine`;
+      if (lstatIfPresent(quarantinePath) !== undefined) {
+        recoverInterruptedStaging(quarantinePath);
       }
 
       // The deterministic quarantine sibling is also the staging inode. Keeping it as
       // the final accounted link avoids a post-publication path deletion race.
-      const temporaryPath = `${destination}.quarantine`;
+      const temporaryPath = quarantinePath;
       let descriptor: number | undefined;
 
       try {
@@ -774,6 +776,30 @@ function digestExistingPathWithRetry(path: string, relativePath: string): Digest
           || (code !== "ENOENT" && !error.message.includes("not an isolated regular file"))) throw error;
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
     }
+  }
+}
+
+function assertPublicationPathWithinLimits(relativePath: string): void {
+  if (isSafeArtifactRelativePath(relativePath) && !isSafeArtifactRelativePath(`${relativePath}.quarantine`)) {
+    throw new Error(`Publication path "${relativePath}" exceeds safe path limits including quarantine staging.`);
+  }
+}
+
+function recoverInterruptedStaging(path: string): void {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600) {
+      throw new Error(`Publication quarantine "${path}" is already occupied.`);
+    }
+    movePathToAttempt(path, descriptor);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    if (error instanceof Error && error.message.includes("already occupied")) throw error;
+    throw new Error(`Publication quarantine "${path}" is already occupied.`);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 

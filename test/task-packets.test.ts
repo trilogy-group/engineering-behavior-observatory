@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, linkSync, lstatSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, lstatSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -199,6 +199,37 @@ test("create-if-absent metadata writes remain readable through the artifact API"
     const written = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
     assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", written.digest), Buffer.from('{"state":"ready"}'));
     assert.deepEqual(resolveBundleArtifact(root, { locator: "metadata.json", digest: written.digest }), Buffer.from('{"state":"ready"}'));
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("create-if-absent publication recovers interrupted quarantine staging", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-staging-recovery-"));
+  const staging = join(root, "metadata.json.quarantine");
+  const metadata = { state: "ready" };
+  try {
+    writeFileSync(staging, "partial");
+    chmodSync(staging, 0o600);
+    const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", metadata);
+    assert.equal(result.created, true);
+    assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", result.digest), Buffer.from('{"state":"ready"}'));
+    assert.equal(existsSync(staging), true);
+    assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("generic publication reserves space for quarantine staging", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-publication-path-limit-"));
+  const locator = "a".repeat(250);
+  try {
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, locator, { state: "ready" }),
+      /including quarantine staging/,
+    );
+    assert.deepEqual(readdirSync(root), []);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
