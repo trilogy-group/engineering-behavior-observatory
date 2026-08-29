@@ -54,8 +54,10 @@ export type VerifierErrorResult = VerifierResultBase & {
   workspace?: VerifierWorkspace;
 };
 
-export type VerifierNotRunResult = VerifierResultBase & {
+export type VerifierNotRunResult = Omit<VerifierResultBase, "durationMs" | "diagnostics"> & {
   status: "not-run";
+  durationMs?: never;
+  diagnostics?: never;
   workspace?: never;
   exitCode?: never;
 };

@@ -14,6 +14,8 @@ import {
   validateArtifact,
   writeVerifierResult,
   type CompleteVerifierResult,
+  type VerifierNotRunResult,
+  type VerifierResult,
 } from "../src/index.js";
 
 const workspaceDigest = `sha256:${"a".repeat(64)}`;
@@ -380,16 +382,15 @@ test("rejects contradictory failed results in public serializers", async () => {
 });
 
 test("represents a not-run verifier without a workspace", () => {
-  const result = {
+  const result: VerifierNotRunResult = {
     schemaVersion: "verifier-result/v1" as const,
     bundleId: "bundle-test",
     status: "not-run" as const,
     assertions: [{ id: "not-started", status: "not-run" as const }],
-    diagnostics: [],
   };
 
   assert.doesNotThrow(() => serializeVerifierResult(result));
-  assert.throws(() => serializeVerifierResult({ ...result, durationMs: 0 }), /must NOT be valid|durationMs/);
+  assert.throws(() => serializeVerifierResult({ ...result, durationMs: 0 } as unknown as VerifierResult), /must NOT be valid|durationMs/);
   assert.throws(() => serializeVerifierResult({
     ...result,
     diagnostics: [{
@@ -398,7 +399,7 @@ test("represents a not-run verifier without a workspace", () => {
       sizeBytes: 0,
       truncated: false,
     }],
-  }), /more than 0|must NOT be valid/);
+  } as unknown as VerifierResult), /more than 0|must NOT be valid/);
 });
 
 test("represents a pre-workspace verifier error without inventing a workspace", () => {

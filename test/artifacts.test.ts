@@ -234,7 +234,15 @@ test("validates nested verifier diagnostics against retained bundle bytes", asyn
     verifierDescriptor.sizeBytes = malformedVerifierBytes.length;
     assert.match(
       validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
-      /diagnostic reference is malformed/,
+      /required property|must be string/,
+    );
+    const unreadableVerifierBytes = Buffer.from("{");
+    await writeFile(verifierPath, unreadableVerifierBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(unreadableVerifierBytes).value}`;
+    verifierDescriptor.sizeBytes = unreadableVerifierBytes.length;
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /Verifier artifact could not be parsed/,
     );
     await writeFile(diagnosticPath, diagnosticBytes);
     const workspaceDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "workspace");

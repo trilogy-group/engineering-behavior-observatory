@@ -155,15 +155,20 @@ function nestedVerifierDiagnosticErrors(
   evidencePaths: ReadonlySet<string>,
   nestedDiagnosticPaths: Set<string>,
 ): ArtifactValidationError[] {
+  const scope = `/evidence/${escapeJsonPointer(verifierId)}`;
   let result: unknown;
   try {
     result = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-  } catch {
-    return [];
+  } catch (error) {
+    return [{ artifact, schemaVersion: "run-manifest/v1", field: scope, message: `Verifier artifact could not be parsed: ${error instanceof Error ? error.message : "invalid UTF-8 or JSON."}` }];
+  }
+  const schemaErrors = validateArtifact(`${artifact}/${verifierId}`, result);
+  if (schemaErrors.length > 0) {
+    return schemaErrors.map((error) => ({ ...error, artifact, schemaVersion: "run-manifest/v1", field: `${scope}${error.field}` }));
   }
   if (!isRecord(result) || result.diagnostics === undefined) return [];
   if (!Array.isArray(result.diagnostics)) {
-    return [{ artifact, schemaVersion: "run-manifest/v1", field: `/evidence/${escapeJsonPointer(verifierId)}/diagnostics`, message: "Verifier diagnostics must be an array." }];
+    return [{ artifact, schemaVersion: "run-manifest/v1", field: `${scope}/diagnostics`, message: "Verifier diagnostics must be an array." }];
   }
 
   const errors: ArtifactValidationError[] = [];
@@ -174,13 +179,13 @@ function nestedVerifierDiagnosticErrors(
         || typeof diagnostic.digest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(diagnostic.digest)
         || !Number.isSafeInteger(diagnostic.sizeBytes) || (diagnostic.sizeBytes as number) < 0
         || typeof diagnostic.truncated !== "boolean") {
-      errors.push({ artifact, schemaVersion: "run-manifest/v1", field: `/evidence/${escapeJsonPointer(verifierId)}/diagnostics/${index}`, message: "Verifier diagnostic reference is malformed." });
+      errors.push({ artifact, schemaVersion: "run-manifest/v1", field: `${scope}/diagnostics/${index}`, message: "Verifier diagnostic reference is malformed." });
       continue;
     }
     const normalizedLocator = diagnostic.locator.toLowerCase();
     if (normalizedLocator === "manifest.json" || evidencePaths.has(normalizedLocator)
         || nestedDiagnosticPaths.has(normalizedLocator)) {
-      errors.push({ artifact, schemaVersion: "run-manifest/v1", field: `/evidence/${escapeJsonPointer(verifierId)}/diagnostics`, message: "Verifier diagnostics cannot alias retained evidence paths." });
+      errors.push({ artifact, schemaVersion: "run-manifest/v1", field: `${scope}/diagnostics`, message: "Verifier diagnostics cannot alias retained evidence paths." });
       continue;
     }
     nestedDiagnosticPaths.add(normalizedLocator);
@@ -196,7 +201,7 @@ function nestedVerifierDiagnosticErrors(
       errors.push({
         artifact,
         schemaVersion: "run-manifest/v1",
-        field: `/evidence/${escapeJsonPointer(verifierId)}/diagnostics`,
+        field: `${scope}/diagnostics`,
         message: error instanceof Error ? error.message : "Verifier diagnostic could not be verified.",
       });
     }
