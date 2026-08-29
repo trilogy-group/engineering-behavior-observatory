@@ -353,7 +353,8 @@
           "required": ["artifactId", "digest"],
           "properties": {
             "artifactId": { "$ref": "#/$defs/identifier" },
-            "digest": { "$ref": "#/$defs/digest" }
+            "digest": { "$ref": "#/$defs/digest" },
+            "fingerprint": { "$ref": "#/$defs/digest" }
           }
         },
         "assertions": {

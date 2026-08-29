@@ -36,6 +36,8 @@ test("executes a verifier outside the agent workspace and preserves diagnostics"
 
     assert.equal(result.status, "passed");
     assert.equal(result.exitCode, 0);
+    assert.equal(result.workspace.digest, workspaceDigest);
+    assert.equal(result.workspace.fingerprint, await digestWorkspace(root.workspace));
     assert.equal(Number.isSafeInteger(result.durationMs), true);
     assert.equal(result.assertions[0]?.id, "workspace-isolation");
     assert.equal(result.assertions[0]?.status, "passed");
@@ -153,7 +155,7 @@ test("rejects duplicate JSON object keys in verifier output", async () => {
   }
 });
 
-test("preserves a subprocess launch error in diagnostics", async () => {
+test("preserves a subprocess launch error without native diagnostics", async () => {
   const root = await createRoots();
   try {
     const verifier = await addVerifier(root.verifier, `
@@ -163,7 +165,7 @@ test("preserves a subprocess launch error in diagnostics", async () => {
 
     assert.equal(result.status, "error");
     assert.match(result.error ?? "", /ENOENT|spawn/);
-    assert.equal(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), "");
+    assert.deepEqual(result.diagnostics, []);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
@@ -200,6 +202,7 @@ test("rejects an artifact root inside the workspace before creating it", async (
       verifierRoot: root.verifier,
       verifier,
       workspacePath: root.workspace,
+      workspaceFingerprint: workspaceDigest,
       workspace: { artifactId: "workspace", digest: workspaceDigest },
       artifactRoot,
     }), /Artifact and workspace roots/);
@@ -209,7 +212,7 @@ test("rejects an artifact root inside the workspace before creating it", async (
   }
 });
 
-test("rejects a workspace digest that does not match evaluated bytes", async () => {
+test("rejects a workspace fingerprint that does not match evaluated bytes", async () => {
   const root = await createRoots();
   try {
     const verifier = await addVerifier(root.verifier, `
@@ -220,6 +223,7 @@ test("rejects a workspace digest that does not match evaluated bytes", async () 
       verifierRoot: root.verifier,
       verifier,
       workspacePath: root.workspace,
+      workspaceFingerprint: workspaceDigest,
       workspace: { artifactId: "workspace", digest: workspaceDigest },
       artifactRoot: root.artifact,
     }), /does not match the evaluated workspace/);
@@ -259,6 +263,7 @@ test("rejects overlong execution identifiers before starting", async () => {
       verifierRoot: root.verifier,
       verifier,
       workspacePath: root.workspace,
+      workspaceFingerprint: workspaceDigest,
       workspace: { artifactId: "workspace", digest: workspaceDigest },
       artifactRoot: root.artifact,
     }), /Bundle ID/);
@@ -267,6 +272,7 @@ test("rejects overlong execution identifiers before starting", async () => {
       verifierRoot: root.verifier,
       verifier,
       workspacePath: root.workspace,
+      workspaceFingerprint: workspaceDigest,
       workspace: { artifactId: "x".repeat(257), digest: workspaceDigest },
       artifactRoot: root.artifact,
     }), /Workspace reference/);
@@ -275,6 +281,7 @@ test("rejects overlong execution identifiers before starting", async () => {
       verifierRoot: root.verifier,
       verifier,
       workspacePath: root.workspace,
+      workspaceFingerprint: workspaceDigest,
       workspace: { artifactId: "workspace", digest: workspaceDigest },
       artifactRoot: root.artifact,
       timeoutMs: 2_147_483_648,
@@ -611,15 +618,17 @@ async function run(
   verifier: { locator: string; digest: ReturnType<typeof digestBytes> },
   options: { timeoutMs?: number; maxOutputBytes?: number; command?: string; diagnosticDirectory?: string } = {},
 ): Promise<CompleteVerifierResult> {
+  const workspaceFingerprint = await digestWorkspace(root.workspace);
   const workspace = {
     artifactId: "workspace",
-    digest: await digestWorkspace(root.workspace),
+    digest: workspaceDigest,
   };
   return executeVerifier({
     bundleId: "bundle-test",
     verifierRoot: root.verifier,
     verifier,
     workspacePath: root.workspace,
+    workspaceFingerprint,
     workspace,
     artifactRoot: root.artifact,
     ...options,

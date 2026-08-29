@@ -25,6 +25,7 @@ export type VerifierAssertion = {
 export type VerifierWorkspace = {
   artifactId: string;
   digest: string;
+  fingerprint?: string;
 };
 
 export type DiagnosticReference = {
@@ -91,6 +92,7 @@ export type ExecuteVerifierOptions = {
   verifierRoot: string;
   verifier: ArtifactReference;
   workspacePath: string;
+  workspaceFingerprint: string;
   workspace: VerifierWorkspace;
   artifactRoot: string;
   command?: string;
@@ -158,8 +160,8 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
   assertDisjointRoots(workspacePath, verifierRoot, "Verifier and workspace roots");
   assertDisjointRoots(workspacePath, artifactCandidate, "Artifact and workspace roots");
   assertDisjointRoots(verifierRoot, artifactCandidate, "Verifier and artifact roots");
-  if (options.workspace.digest !== await digestWorkspace(workspacePath)) {
-    throw new Error("Workspace reference digest does not match the evaluated workspace.");
+  if (options.workspaceFingerprint !== await digestWorkspace(workspacePath)) {
+    throw new Error("Workspace fingerprint does not match the evaluated workspace.");
   }
   const artifactRoot = await prepareRoot(artifactCandidate);
 
@@ -188,7 +190,6 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
         const stagedVerifier = join(stagingRoot, "verifier");
         await writePrivateFile(stagedVerifier, verifierBytes);
 
-        spawnAttempted = true;
         const processResult = await runProcess(
           options.command ?? process.execPath,
           [...(options.args ?? []), stagedVerifier, workspacePath],
@@ -201,7 +202,10 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
         stdout = processResult.stdout;
         stderr = processResult.stderr;
         exitCode = processResult.exitCode;
+        spawnAttempted = processResult.started;
         if (processResult.error !== undefined) internalError = processResult.error;
+        if (stdout.error !== undefined) internalError = combineErrors(internalError, `stdout capture failed: ${stdout.error}`);
+        if (stderr.error !== undefined) internalError = combineErrors(internalError, `stderr capture failed: ${stderr.error}`);
 
         if (internalError === undefined) {
           if (stdout.truncated) {
@@ -271,7 +275,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
       durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
       ...(internalError === undefined ? {} : { error: internalError }),
       ...(exitCode === undefined ? {} : { exitCode }),
-      workspace: options.workspace,
+      workspace: { ...options.workspace, fingerprint: options.workspaceFingerprint },
       assertions,
       diagnostics,
     } as CompleteVerifierResult;
@@ -318,6 +322,9 @@ function validateOptions(options: ExecuteVerifierOptions, timeoutMs: number, max
   if (!isValidIdentifier(options.bundleId)) throw new Error("Bundle ID is invalid.");
   if (!isValidIdentifier(options.workspace.artifactId) || !/^sha256:[a-f0-9]{64}$/.test(options.workspace.digest)) {
     throw new Error("Workspace reference is invalid.");
+  }
+  if (!/^sha256:[a-f0-9]{64}$/.test(options.workspaceFingerprint)) {
+    throw new Error("Workspace fingerprint is invalid.");
   }
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS) {
     throw new Error(`Verifier timeout must be between 1 and ${MAX_TIMEOUT_MS} ms.`);
@@ -401,9 +408,11 @@ async function writePrivateFile(path: string, bytes: Uint8Array): Promise<void> 
 type CapturedOutput = {
   bytes: Buffer;
   truncated: boolean;
+  error?: string;
 };
 
 type ProcessResult = {
+  started: boolean;
   stdout: CapturedOutput;
   stderr: CapturedOutput;
   exitCode?: number;
@@ -430,6 +439,7 @@ async function runProcess(
   });
   const stdout = capture(child.stdout, maxOutputBytes, diagnosticFiles[0]);
   const stderr = capture(child.stderr, maxOutputBytes, diagnosticFiles[1]);
+  let started = false;
   let timedOut = false;
   let termination: Promise<void> | undefined;
   const terminate = (): Promise<void> => termination ??= killProcessTree(child);
@@ -441,6 +451,9 @@ async function runProcess(
 
   return new Promise<ProcessResult>((resolveProcess) => {
     let error: string | undefined;
+    child.once("spawn", () => {
+      started = true;
+    });
     child.once("error", (cause) => {
       error = cause.message;
     });
@@ -451,6 +464,7 @@ async function runProcess(
       clearTimeout(timer);
       await terminate();
       resolveProcess({
+        started,
         stdout: await stdout,
         stderr: await stderr,
         ...(code === null ? {} : { exitCode: code }),
@@ -496,10 +510,14 @@ function capture(stream: NodeJS.ReadableStream | null, limit: number, diagnostic
       }
       truncated ||= retained.length < bytes.length;
     });
-    stream.once("error", () => {
+    stream.once("error", (error: unknown) => {
       if (!settled) {
         settled = true;
-        resolveCapture({ bytes: Buffer.concat(chunks), truncated: true });
+        resolveCapture({
+          bytes: Buffer.concat(chunks),
+          truncated,
+          error: error instanceof Error ? error.message : "unknown stream error",
+        });
       }
     });
     stream.once("end", () => {
