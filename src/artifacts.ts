@@ -1093,8 +1093,21 @@ export function writeMetadataAtomicallyIfAbsentSync(
       const markerPath = `${quarantinePath}.marker`;
       if (lstatIfPresent(quarantinePath) !== undefined) {
         const markerObservation = observeStagingMarker(markerPath, relativePath);
-        if (markerObservation?.active) winnerRequired = true;
-        else recoverInterruptedStaging(quarantinePath, markerPath, relativePath, markerObservation?.identity);
+        if (markerObservation?.active) {
+          const quarantine = lstatIfPresent(quarantinePath);
+          if (quarantine !== undefined
+              && isOwnedPublicationAlias(destination, quarantine, relativePath)
+              && matchesPublishedDigest(quarantinePath, digest, relativePath)) {
+            try {
+              linkSync(quarantinePath, destination);
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+            }
+          }
+          winnerRequired = true;
+        } else {
+          recoverInterruptedStaging(quarantinePath, markerPath, relativePath, markerObservation?.identity);
+        }
       } else if (lstatIfPresent(markerPath) !== undefined) {
         const markerObservation = observeStagingMarker(markerPath, relativePath);
         if (markerObservation?.active) winnerRequired = true;
@@ -1939,7 +1952,11 @@ function bindStagingMarker(path: string, relativePath: string, stagingDescriptor
         || !Number.isSafeInteger(opened.size) || opened.size > 4096) {
       throw new Error(`Publication staging marker "${path}" changed during binding.`);
     }
-    const marker = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(descriptor)));
+    const markerBytes = readBoundedDescriptor(descriptor, opened.size);
+    if (markerBytes === undefined) {
+      throw new Error(`Publication staging marker "${path}" changed during binding.`);
+    }
+    const marker = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(markerBytes));
     if (!isStagingMarker(marker, relativePath)) {
       throw new Error(`Publication staging marker "${path}" is invalid.`);
     }
@@ -2019,7 +2036,9 @@ function readValidatedStagingMarker(
     const opened = fstatSync(descriptor);
     if (!opened.isFile() || !isAccountedStagingMarkerLink(path, opened) || (opened.mode & 0o777) !== 0o600
         || !Number.isSafeInteger(opened.size) || opened.size > 4096) return undefined;
-    const marker = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(descriptor))) as unknown;
+    const bytes = readBoundedDescriptor(descriptor, opened.size);
+    if (bytes === undefined) return undefined;
+    const marker = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
     const completed = fstatSync(descriptor);
     if (!(sameFileIdentity(opened, completed)
       && isAccountedStagingMarkerLink(path, completed)
@@ -2222,14 +2241,8 @@ function readMarkerMetadataWithIdentity(
     const opened = fstatSync(descriptor);
     if (!opened.isFile() || (opened.mode & 0o777) !== 0o600
         || !Number.isSafeInteger(opened.size) || opened.size > 4096) return undefined;
-    const bytes = Buffer.alloc(opened.size);
-    for (let offset = 0; offset < opened.size;) {
-      const read = readSync(descriptor, bytes, offset, opened.size - offset, offset);
-      if (read === 0) return undefined;
-      offset += read;
-    }
-    const trailing = Buffer.allocUnsafe(1);
-    if (readSync(descriptor, trailing, 0, 1, opened.size) !== 0) return undefined;
+    const bytes = readBoundedDescriptor(descriptor, opened.size);
+    if (bytes === undefined) return undefined;
     const completed = fstatSync(descriptor);
     if (!completed.isFile() || !sameFileIdentity(opened, completed) || completed.size !== opened.size) return undefined;
     const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
@@ -2239,6 +2252,17 @@ function readMarkerMetadataWithIdentity(
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
+}
+
+function readBoundedDescriptor(descriptor: number, size: number): Buffer | undefined {
+  const bytes = Buffer.alloc(size);
+  for (let offset = 0; offset < size;) {
+    const read = readSync(descriptor, bytes, offset, size - offset, offset);
+    if (read === 0) return undefined;
+    offset += read;
+  }
+  const trailing = Buffer.allocUnsafe(1);
+  return readSync(descriptor, trailing, 0, 1, size) === 0 ? bytes : undefined;
 }
 
 function movePathToAttempt(path: string, descriptor?: number): string {
@@ -2345,6 +2369,21 @@ function assertPublishedDigest(
       || completedTimes.mtimeNs !== openedTimes.mtimeNs || completedTimes.ctimeNs !== openedTimes.ctimeNs
       || hash.digest("hex") !== expected.value) {
     throw new Error(`Artifact path "${relativePath}" changed while it was being published.`);
+  }
+}
+
+function matchesPublishedDigest(path: string, expected: Digest, relativePath: string): boolean {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile() || (opened.mode & 0o777) !== 0o600) return false;
+    assertPublishedDigest(descriptor, expected, opened, fstatSync(descriptor, { bigint: true }), relativePath);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 

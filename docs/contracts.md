@@ -74,9 +74,9 @@ record. It records stable SHA-256 digests for the prompt, fixture, reference
 solution, verifier, review record, controlled perturbation, and canonical
 packet. The review record binds the canonical packet content with its
 `admission` field omitted, using its `preAdmissionDigest` field and avoiding a
-circular reference. The aggregate digest is derived only from those identities
-and the packet locator, so repeating a freeze for unchanged content is
-idempotent.
+circular reference. The aggregate digest is derived from those identities, the
+packet locator, and the recorded `frozenAt` timestamp. Repeating a freeze for
+unchanged content retains the first published record and its timestamp.
 An existing freeze is never silently replaced after a component changes.
 
 `status` compares the current packet and resolved bytes with the freeze record

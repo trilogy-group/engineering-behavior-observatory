@@ -896,6 +896,20 @@ test("create-if-absent publication preserves its attempt when a raced winner dis
   }
 });
 
+test("create-if-absent publication restores a deleted completed destination", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-deleted-destination-"));
+  try {
+    const first = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
+    unlinkSync(join(root, "metadata.json"));
+    const retry = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
+    assert.equal(retry.created, false);
+    assert.deepEqual(retry.digest, first.digest);
+    assert.deepEqual(readFileSync(join(root, "metadata.json"), "utf8"), '{"state":"ready"}');
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("publication never overwrites an existing quarantine artifact", () => {
   const { root } = createBundle();
   const quarantine = join(root, "packet.json.freeze.json.quarantine");
