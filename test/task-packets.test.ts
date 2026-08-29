@@ -314,6 +314,21 @@ test("create-if-absent publication recovers a marker-only interruption", async (
   }
 });
 
+test("create-if-absent publication recovers a partial marker sidecar", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-partial-marker-recovery-"));
+  const markerTemporary = join(root, "metadata.json.quarantine.marker.tmp");
+  try {
+    writeFileSync(markerTemporary, "{");
+    chmodSync(markerTemporary, 0o600);
+    const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
+    assert.equal(result.created, true);
+    assert.equal(JSON.parse(readFileSync(markerTemporary, "utf8")).schemaVersion, "ebo.publication-staging/v1");
+    assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("create-if-absent publication preserves unowned binding sidecars during marker recovery", () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-unowned-binding-recovery-"));
   const marker = join(root, "metadata.json.quarantine.marker");
@@ -464,6 +479,36 @@ test("create-if-absent publication moves the marker sidecar after staging-open f
     assert.equal(readdirSync(root).filter((name) => name.endsWith(".failed")).length, 2);
   } finally {
     fs.openSync = originalOpenSync;
+    syncBuiltinESMExports();
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("create-if-absent publication rejects a raced binding inode", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-binding-link-race-"));
+  const originalLinkSync = fs.linkSync;
+  let replaced = false;
+  fs.linkSync = ((existingPath: fs.PathLike, newPath: fs.PathLike) => {
+    if (!replaced && typeof existingPath === "string" && existingPath === "metadata.json.quarantine.marker.binding.tmp"
+        && typeof newPath === "string" && newPath === "metadata.json.quarantine.marker.binding") {
+      fs.unlinkSync(existingPath);
+      writeFileSync(existingPath, "replacement binding");
+      chmodSync(existingPath, 0o600);
+      replaced = true;
+    }
+    return originalLinkSync(existingPath, newPath);
+  }) as typeof originalLinkSync;
+  syncBuiltinESMExports();
+  try {
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }),
+      /changed during linking|changed during failure preservation/,
+    );
+    assert.equal(replaced, true);
+    assert.equal(readFileSync(join(root, "metadata.json.quarantine.marker.binding"), "utf8"), "replacement binding");
+    assert.equal(existsSync(join(root, "metadata.json")), false);
+  } finally {
+    fs.linkSync = originalLinkSync;
     syncBuiltinESMExports();
     rmSync(root, { force: true, recursive: true });
   }

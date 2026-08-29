@@ -14,6 +14,7 @@ import {
   readSync,
   realpathSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import type { BigIntStats, Stats } from "node:fs";
@@ -52,6 +53,7 @@ const runBundleSchemaId = "urn:ebo:schema:run-bundle:v1";
 const MAX_EXISTING_DIGEST_RETRIES = 200;
 const STAGING_MARKER_SCHEMA_VERSION = "ebo.publication-staging/v1";
 const STAGING_ATTEMPT_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const MARKER_STAGING_PATH_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.marker-tmp$/;
 const FAILED_PUBLICATION_LINK_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.failed$/;
 const MAX_PUBLICATION_SCAN_ENTRIES = 4096;
 const CURRENT_PROCESS_START = processStartIdentity(process.pid);
@@ -298,7 +300,8 @@ export function writeMetadataAtomicallyIfAbsentSync(
         else recoverInterruptedMarker(markerPath, relativePath);
       } else if (lstatIfPresent(`${markerPath}.tmp`) !== undefined) {
         if (isActiveStagingMarker(`${markerPath}.tmp`, relativePath)) winnerRequired = true;
-        else recoverInterruptedMarker(`${markerPath}.tmp`, relativePath);
+        else if (stagingMarkerMatches(`${markerPath}.tmp`, relativePath)) recoverInterruptedMarker(`${markerPath}.tmp`, relativePath);
+        else moveOptionalPathToAttempt(`${markerPath}.tmp`);
       }
 
       // Stage in an attempt-specific inode, then retain it as an explicitly accounted
@@ -945,9 +948,12 @@ function countFailedPublicationLinks(path: string, target: { dev: number; ino: n
 }
 
 function writeStagingMarker(path: string, relativePath: string, stagingPath: string): void {
-  const temporaryPath = `${path}.tmp`;
+  const temporaryPath = `.${randomUUID()}.marker-tmp`;
+  const markerTemporaryPath = `${path}.tmp`;
   const descriptor = openSync(temporaryPath, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o600);
-  let temporaryPreserved = false;
+  let temporaryLinked = false;
+  let markerLinked = false;
+  let markerTemporaryPreserved = false;
   try {
     const bytes = Buffer.from(canonicalizeMetadata({
       schemaVersion: STAGING_MARKER_SCHEMA_VERSION,
@@ -961,18 +967,37 @@ function writeStagingMarker(path: string, relativePath: string, stagingPath: str
     fsyncSync(descriptor);
     const expected = fstatSync(descriptor);
     try {
-      linkSync(temporaryPath, path);
+      linkSync(temporaryPath, markerTemporaryPath);
+      temporaryLinked = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       movePathToAttempt(temporaryPath, descriptor);
-      temporaryPreserved = true;
+      markerTemporaryPreserved = true;
+      throw error;
+    }
+    const currentTemporary = lstatSync(temporaryPath);
+    if (!sameFileIdentity(expected, currentTemporary)) {
+      throw new Error(`Publication staging marker "${path}" changed during installation.`);
+    }
+    unlinkSync(temporaryPath);
+    try {
+      linkSync(markerTemporaryPath, path);
+      markerLinked = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      movePathToAttempt(markerTemporaryPath, descriptor);
+      markerTemporaryPreserved = true;
       throw error;
     }
     if (!sameFileIdentity(expected, lstatSync(path))) {
       throw new Error(`Publication staging marker "${path}" changed during installation.`);
     }
   } catch (error) {
-    if (!temporaryPreserved) moveOptionalPathToAttempt(temporaryPath, descriptor);
+    if (markerLinked && !markerTemporaryPreserved) {
+      moveOptionalPathToAttempt(markerTemporaryPath, descriptor);
+    } else if (!temporaryLinked && !markerTemporaryPreserved) {
+      moveOptionalPathToAttempt(temporaryPath, descriptor);
+    }
     throw error;
   } finally {
     closeSync(descriptor);
@@ -1031,6 +1056,8 @@ function bindStagingMarker(path: string, relativePath: string, stagingDescriptor
   const bindingPath = `${path}.binding`;
   const bindingTemporaryPath = `${bindingPath}.tmp`;
   let bindingTemporaryCreated = false;
+  let bindingDescriptor: number | undefined;
+  let expectedBinding: Stats | undefined;
   try {
     const opened = fstatSync(descriptor);
     if (!opened.isFile() || !isAccountedStagingMarkerLink(path, opened) || (opened.mode & 0o777) !== 0o600
@@ -1051,14 +1078,16 @@ function bindStagingMarker(path: string, relativePath: string, stagingDescriptor
       throw new Error(`Publication staging binding "${bindingPath}" is already occupied.`);
     }
     if (!stagingMarkerMatches(bindingTemporaryPath, relativePath, staging)) {
-      const bindingDescriptor = openSync(bindingTemporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+      bindingDescriptor = openSync(bindingTemporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
       bindingTemporaryCreated = true;
-      try {
-        writeFileSync(bindingDescriptor, bytes);
-        fsyncSync(bindingDescriptor);
-      } finally {
-        closeSync(bindingDescriptor);
-      }
+      writeFileSync(bindingDescriptor, bytes);
+      fsyncSync(bindingDescriptor);
+      expectedBinding = fstatSync(bindingDescriptor);
+    }
+    const bindingIdentity = expectedBinding ?? lstatSync(bindingTemporaryPath);
+    const currentBindingTemporary = lstatIfPresent(bindingTemporaryPath);
+    if (currentBindingTemporary === undefined || !sameFileIdentity(bindingIdentity, currentBindingTemporary)) {
+      throw new Error(`Publication staging binding "${bindingPath}" changed before linking.`);
     }
     const current = lstatSync(path);
     if (!sameFileIdentity(opened, current)) {
@@ -1068,15 +1097,20 @@ function bindStagingMarker(path: string, relativePath: string, stagingDescriptor
       if (!stagingMarkerMatches(bindingPath, relativePath, staging)) {
         throw new Error(`Publication staging binding "${bindingPath}" is already occupied.`);
       }
-      if (bindingTemporaryCreated) moveOptionalPathToAttempt(bindingTemporaryPath);
+      if (bindingTemporaryCreated) moveOptionalPathToAttempt(bindingTemporaryPath, bindingDescriptor);
       return false;
     }
     linkSync(bindingTemporaryPath, bindingPath);
+    const linkedBinding = lstatSync(bindingPath);
+    if (!sameFileIdentity(bindingIdentity, linkedBinding)) {
+      throw new Error(`Publication staging binding "${bindingPath}" changed during linking.`);
+    }
     return true;
   } catch (error) {
-    if (bindingTemporaryCreated) moveOptionalPathToAttempt(bindingTemporaryPath);
+    if (bindingTemporaryCreated) moveOptionalPathToAttempt(bindingTemporaryPath, bindingDescriptor);
     throw error;
   } finally {
+    if (bindingDescriptor !== undefined) closeSync(bindingDescriptor);
     closeSync(descriptor);
   }
 }
@@ -1107,7 +1141,24 @@ function stagingMarkerMatches(path: string, relativePath: string, expectedStagin
 }
 
 function isAccountedStagingMarkerLink(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
-  return target.nlink === 1 || (target.nlink === 2 && hasAliasIdentity(`${path}.tmp`, target));
+  return target.nlink === 1 || (target.nlink === 2
+    && (hasAliasIdentity(`${path}.tmp`, target) || hasMarkerStagingAlias(path, target)));
+}
+
+function hasMarkerStagingAlias(path: string, target: { dev: number; ino: number }): boolean {
+  const directory = opendirSync(dirname(path));
+  let scanned = 0;
+  try {
+    for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
+      scanned += 1;
+      if (scanned > MAX_PUBLICATION_SCAN_ENTRIES) return false;
+      if (MARKER_STAGING_PATH_PATTERN.test(entry.name)
+          && hasAliasIdentity(resolve(dirname(path), entry.name), target)) return true;
+    }
+  } finally {
+    directory.closeSync();
+  }
+  return false;
 }
 
 function hasAliasIdentity(path: string, target: { dev: number; ino: number }): boolean {
