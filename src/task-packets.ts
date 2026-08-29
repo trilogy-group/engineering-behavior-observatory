@@ -465,6 +465,19 @@ function statusTaskPacketWithRoot(
         };
       }
       record = refreshed as TaskPacketFreezeRecord;
+      const pairedInspection = admitTaskPacketWithRoot(bundleRoot, packetLocator, root);
+      if (pairedInspection.errors.length > 0 || pairedInspection.packet?.admission.status !== "admitted") {
+        return {
+          status: pairedInspection.errors.length > 0 ? "invalid" : "unadmitted",
+          packetId: pairedInspection.packet?.id ?? packetId,
+          packetDigest: pairedInspection.packetDigest,
+          aggregateDigest: record.aggregateDigest,
+          freezeLocator,
+          mismatches: ["admission"],
+          errors: pairedInspection.errors,
+        };
+      }
+      currentInspection = pairedInspection;
       mismatches = compareFreezeRecord(record, currentInspection);
     } catch (error) {
       return {
