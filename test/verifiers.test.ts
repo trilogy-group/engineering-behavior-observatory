@@ -541,6 +541,27 @@ test("settles timeout when a detached descendant inherits verifier pipes", async
   }
 });
 
+test("does not expose verifier completion capabilities to descendants", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      const { spawnSync } = require("node:child_process");
+      const childCode = "process.stdout.write(JSON.stringify({ completion: process.env.EBO_VERIFIER_COMPLETION, root: process.env.EBO_VERIFIER_ROOT }));";
+      const child = spawnSync(process.execPath, ["-e", childCode], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+      const visible = JSON.parse(child.stdout);
+      const hidden = visible.completion === undefined && visible.root === undefined;
+      process.stdout.write(JSON.stringify({ assertions: [
+        { id: "descendant-cannot-forge-completion", status: hidden ? "passed" : "failed" },
+      ] }));
+    `);
+    const result = await run(root, verifier);
+
+    assert.equal(result.status, "passed");
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("bounds oversized diagnostics without losing a valid result", async () => {
   const root = await createRoots();
   try {

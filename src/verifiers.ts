@@ -146,49 +146,42 @@ const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const RESERVED_MANIFEST_PATHS = new Set(["manifest.json"]);
 const execFileAsync = promisify(execFile);
+const COMPLETION_MESSAGE = "ebo-verifier-complete/v1\n";
 const VERIFIER_COMPLETION_HOOK = `
 const fs = require("node:fs");
 const path = require("node:path");
 const Module = require("node:module");
-const marker = process.env.EBO_VERIFIER_COMPLETION;
-const stageRoot = process.env.EBO_VERIFIER_ROOT;
-if (stageRoot !== undefined) {
-  const nodeModulePaths = Module._nodeModulePaths;
-  Module._nodeModulePaths = (from) => nodeModulePaths(from)
-    .filter((candidate) => candidate === stageRoot || candidate.startsWith(stageRoot + path.sep));
-  const resolveFilename = Module._resolveFilename;
-  Module._resolveFilename = function (request, parent, isMain, options) {
-    const resolved = resolveFilename.call(this, request, parent, isMain, options);
-    if (typeof resolved === "string"
-        && (resolved.startsWith("node:") || Module.builtinModules.includes(resolved)
-          || resolved === stageRoot || resolved.startsWith(stageRoot + path.sep))) return resolved;
-    throw new Error("Verifier dependency resolves outside its private staging root.");
-  };
-}
+const stageRoot = __dirname;
+const nodeModulePaths = Module._nodeModulePaths;
+Module._nodeModulePaths = (from) => nodeModulePaths(from)
+  .filter((candidate) => candidate === stageRoot || candidate.startsWith(stageRoot + path.sep));
+const resolveFilename = Module._resolveFilename;
+Module._resolveFilename = function (request, parent, isMain, options) {
+  const resolved = resolveFilename.call(this, request, parent, isMain, options);
+  if (typeof resolved === "string"
+      && (resolved.startsWith("node:") || Module.builtinModules.includes(resolved)
+        || resolved === stageRoot || resolved.startsWith(stageRoot + path.sep))) return resolved;
+  throw new Error("Verifier dependency resolves outside its private staging root.");
+};
 let abnormal = false;
 const report = (error) => {
   abnormal = true;
-  if (marker !== undefined) {
-    try { fs.unlinkSync(marker); } catch {}
-  }
   console.error(error instanceof Error ? error.stack ?? error.message : String(error));
   process.exitCode = 1;
 };
 process.on("uncaughtException", report);
 process.on("unhandledRejection", report);
 process.on("exit", () => {
-  if (!abnormal && marker !== undefined) {
-    try { fs.writeFileSync(marker, "completed", { flag: "wx" }); } catch {}
+  if (!abnormal) {
+    try { fs.writeSync(3, ${JSON.stringify(COMPLETION_MESSAGE)}); } catch {}
   }
 });
 `;
 const VERIFIER_DEPENDENCY_LOADER = `
-import { pathToFileURL } from "node:url";
-
-const stageRoot = pathToFileURL(process.env.EBO_VERIFIER_ROOT).href;
+const stageRoot = new URL(".", import.meta.url).href;
 export async function resolve(specifier, context, nextResolve) {
   const result = await nextResolve(specifier, context);
-  if (result.url.startsWith("node:") || result.url === stageRoot || result.url.startsWith(stageRoot + "/")) {
+  if (result.url.startsWith("node:") || result.url.startsWith(stageRoot)) {
     return result;
   }
   throw new Error("Verifier dependency resolves outside its private staging root.");
@@ -383,7 +376,6 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
         await writePrivateFile(completionHookPath, Buffer.from(VERIFIER_COMPLETION_HOOK));
         const dependencyLoaderPath = join(trustedRoot, "dependency-loader.mjs");
         await writePrivateFile(dependencyLoaderPath, Buffer.from(VERIFIER_DEPENDENCY_LOADER));
-        const completionMarker = join(trustedRoot, "completed");
 
         const processResult = await runProcess(
           options.command ?? process.execPath,
@@ -393,7 +385,6 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
           timeoutMs,
           maxOutputBytes,
           diagnosticFiles as [DiagnosticFile, DiagnosticFile],
-          completionMarker,
           trustedRoot,
         );
         stdout = processResult.stdout;
@@ -679,22 +670,21 @@ async function runProcess(
   timeoutMs: number,
   maxOutputBytes: number,
   diagnosticFiles: readonly DiagnosticFile[],
-  completionMarker: string,
   verifierRoot: string,
 ): Promise<ProcessResult> {
   const environment = overrides === undefined ? { PATH: "" } : cleanEnvironment(overrides);
   environment.PATH = join(verifierRoot, "bin");
-  environment.EBO_VERIFIER_COMPLETION = completionMarker;
-  environment.EBO_VERIFIER_ROOT = verifierRoot;
   const child = spawn(command, args, {
     cwd,
     env: environment,
     detached: process.platform !== "win32",
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe", "pipe"],
     windowsHide: true,
   });
   const stdout = capture(child.stdout, maxOutputBytes, diagnosticFiles[0]);
   const stderr = capture(child.stderr, maxOutputBytes, diagnosticFiles[1]);
+  const completionStream = child.stdio[3] as (NodeJS.ReadableStream & { destroy?: () => void }) | null;
+  const completion = capture(completionStream, COMPLETION_MESSAGE.length);
   let started = false;
   let timedOut = false;
   let termination: Promise<void> | undefined;
@@ -711,7 +701,7 @@ async function runProcess(
       await terminate();
       resolveProcess({
         started,
-        completed: await fileExists(completionMarker),
+        completed: (await completion).bytes.equals(Buffer.from(COMPLETION_MESSAGE)),
         stdout: await stdout,
         stderr: await stderr,
         ...(code === null ? {} : { exitCode: code }),
@@ -737,19 +727,11 @@ async function runProcess(
       void terminate().catch(() => undefined);
       child.stdout?.destroy();
       child.stderr?.destroy();
+      completionStream?.destroy?.();
       void finish(null, null);
     }, timeoutMs);
     timer.unref();
   });
-}
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    return (await lstat(path)).isFile();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    return false;
-  }
 }
 
 async function killProcessTree(child: ReturnType<typeof spawn>): Promise<void> {

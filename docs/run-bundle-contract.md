@@ -132,7 +132,9 @@ path. Launcher options cannot replace the staged entry point, and the child
 environment contains only fixed coordinator variables; `PATH` points to a
 dedicated empty trusted-stage directory, while Node preload, POSIX dynamic-loader,
 shell-startup, and interpreter module-path injection are unavailable. Verifier
-tools must be invoked by absolute pinned paths. The
+tools must be invoked by absolute pinned paths. Normal completion is reported
+over a parent-owned extra stdio channel rather than a marker file or inherited
+environment variable, so ordinary workspace descendants cannot recreate it. The
 restricted implementation and any
 reference solution remain outside that workspace. `.mjs`/`.cjs` locators retain
 their module semantics; ambiguous `.js` or extensionless artifacts default to
