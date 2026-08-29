@@ -282,7 +282,9 @@ export function validateRunManifestEvidence(
       });
     }
     const sourceAssertions = new Map(source.assertions.map((assertion) => [assertion.id, assertion.status]));
-    if (derivative.assertions.some((assertion) => sourceAssertions.get(assertion.id) !== assertion.status)) {
+    const derivativeAssertions = new Map(derivative.assertions.map((assertion) => [assertion.id, assertion.status]));
+    if (sourceAssertions.size !== derivativeAssertions.size
+        || [...sourceAssertions].some(([id, status]) => derivativeAssertions.get(id) !== status)) {
       errors.push({
         artifact,
         schemaVersion: "run-manifest/v1",
@@ -290,7 +292,7 @@ export function validateRunManifestEvidence(
         message: "Sanitized verifier must preserve source assertion outcomes.",
       });
     }
-    if (derivative.exitCode !== undefined && derivative.exitCode !== source.exitCode) {
+    if (derivative.exitCode !== source.exitCode) {
       errors.push({
         artifact,
         schemaVersion: "run-manifest/v1",

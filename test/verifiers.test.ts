@@ -53,6 +53,22 @@ test("executes a verifier outside the agent workspace and preserves diagnostics"
   }
 });
 
+test("preserves ESM verifier module semantics", async () => {
+  const root = await createRoots();
+  try {
+    const bytes = Buffer.from(`
+      import process from "node:process";
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "esm", status: "passed" }] }));
+    `);
+    await writeFile(join(root.verifier, "verifier.mjs"), bytes, { mode: 0o600 });
+    const result = await run(root, { locator: "verifier.mjs", digest: digestBytes(bytes) });
+
+    assert.equal(result.status, "passed");
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("evaluates a private workspace snapshot", async () => {
   const root = await createRoots();
   const sourceFile = join(root.workspace, "candidate.txt");

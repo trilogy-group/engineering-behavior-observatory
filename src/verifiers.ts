@@ -346,7 +346,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
         if (evaluatedWorkspaceFingerprint !== options.workspaceFingerprint) {
           throw new Error("Workspace snapshot metadata does not match the evaluated workspace.");
         }
-        const stagedVerifier = join(stagingRoot, "verifier.cjs");
+        const stagedVerifier = join(stagingRoot, stagedVerifierName(options.verifier.locator));
         await writePrivateFile(stagedVerifier, verifierBytes);
         const wrapperPath = join(stagingRoot, "run-verifier.mjs");
         await writePrivateFile(wrapperPath, Buffer.from(VERIFIER_WRAPPER));
@@ -523,6 +523,13 @@ function validateOptions(options: ExecuteVerifierOptions, timeoutMs: number, max
 
 function isValidIdentifier(value: unknown): value is string {
   return typeof value === "string" && value.trim() !== "" && [...value].length <= 256;
+}
+
+function stagedVerifierName(locator: string): string {
+  const lowerLocator = locator.toLowerCase();
+  if (lowerLocator.endsWith(".mjs")) return "verifier.mjs";
+  if (lowerLocator.endsWith(".cjs")) return "verifier.cjs";
+  return "verifier";
 }
 
 async function prepareRoot(root: string): Promise<string> {
