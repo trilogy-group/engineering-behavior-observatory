@@ -114,6 +114,22 @@ test("returns a verifier error for undeclared assertion fields", async () => {
   }
 });
 
+test("returns a verifier error for a non-string assertion status", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "bad-status", status: ["passed"] }] }));
+    `);
+    const result = await run(root, verifier);
+
+    assert.equal(result.status, "error");
+    assert.deepEqual(result.assertions, []);
+    assert.match(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), /invalid.*assertion/);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("classifies timeout, crash, and malformed output as verifier errors", async (t) => {
   const cases = [
     {

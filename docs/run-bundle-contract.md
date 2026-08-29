@@ -124,6 +124,10 @@ remain outside that workspace. The verifier writes one JSON object to stdout:
 }
 ```
 
+Each assertion object contains exactly `id` and `status`; undeclared fields,
+non-string statuses, duplicate IDs, and IDs longer than 256 characters are
+verifier errors rather than silently normalized away.
+
 The executor records the assertion list, `durationMs`, observed `exitCode`
 when the process exits normally, and a `status` of `passed`, `failed`, or
 `error`. A valid assertion failure is a task failure; timeout, crash, invalid

@@ -172,7 +172,11 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
     } catch (error) {
       internalError = error instanceof Error ? error.message : "Verifier could not be executed.";
     } finally {
-      if (stagingRoot !== undefined) await rm(stagingRoot, { force: true, recursive: true });
+      if (stagingRoot !== undefined) {
+        await rm(stagingRoot, { force: true, recursive: true }).catch((error: unknown) => {
+          internalError ??= error instanceof Error ? error.message : "Verifier staging cleanup failed.";
+        });
+      }
     }
 
     if (internalError !== undefined) {
@@ -406,7 +410,8 @@ function parseAssertions(bytes: Buffer): VerifierAssertion[] {
   return parsed.assertions.map((value) => {
     if (!isRecord(value) || !hasExactKeys(value, ["id", "status"]) || typeof value.id !== "string"
         || value.id.trim() === "" || value.id.length > 256
-        || !["passed", "failed", "not-run"].includes(String(value.status)) || identifiers.has(value.id)) {
+        || typeof value.status !== "string" || !["passed", "failed", "not-run"].includes(value.status)
+        || identifiers.has(value.id)) {
       throw new Error("Verifier output contains an invalid or duplicate assertion.");
     }
     identifiers.add(value.id);
