@@ -113,6 +113,7 @@ export type TaskPacketStatus = {
 
 export const TASK_PACKET_FREEZE_SCHEMA_VERSION = "ebo.task-packet-freeze/v1";
 const MAX_TRANSIENT_LINK_READ_RETRIES = 20;
+const FREEZE_LOCATOR_SUFFIX = ".freeze.json";
 
 export function inspectTaskPacket(bundleRoot: string, packetLocator: string): TaskPacketInspection {
   let document: unknown;
@@ -207,7 +208,12 @@ export function modelVisibleTaskPacket(packet: TaskPacket): TaskPacket["agentInp
 }
 
 export function defaultFreezeLocator(packetLocator: string): string {
-  return `${packetLocator}.freeze.json`;
+  const leafLength = packetLocator.slice(packetLocator.lastIndexOf("/") + 1).length;
+  if (packetLocator.length + FREEZE_LOCATOR_SUFFIX.length > 960
+      || leafLength + FREEZE_LOCATOR_SUFFIX.length > 255) {
+    throw new Error(`Default freeze locator for "${packetLocator}" exceeds safe path limits.`);
+  }
+  return `${packetLocator}${FREEZE_LOCATOR_SUFFIX}`;
 }
 
 export function freezeTaskPacket(
@@ -234,6 +240,8 @@ export function freezeTaskPacket(
     aggregateDigest: aggregateDigest(packet.id, packetLocator, preAdmissionDigest, packetDigest, components),
     frozenAt: new Date().toISOString(),
   };
+  const candidateErrors = validateArtifact(freezeLocator, candidate);
+  if (candidateErrors.length > 0) throw new Error(formatErrors(candidateErrors));
 
   const write = writeMetadataAtomicallyIfAbsentSync(bundleRoot, freezeLocator, candidate);
   if (!write.created) {

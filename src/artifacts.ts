@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
   constants,
+  fstatSync,
   fsyncSync,
   linkSync,
   lstatSync,
@@ -230,8 +231,10 @@ export function writeMetadataAtomicallyIfAbsentSync(
   metadata: unknown,
 ): { created: boolean; digest: Digest } {
   const bytes = Buffer.from(canonicalizeMetadata(metadata));
-  const { parent, path } = prepareArtifactPathSync(artifactRoot, relativePath);
+  const root = realpathSync(artifactRoot);
+  const { parent, path } = prepareArtifactPathSync(root, relativePath);
   const digest = digestBytes(bytes);
+  assertPublishParent(root, parent, relativePath);
   if (lstatIfPresent(path) !== undefined) return { created: false, digest };
 
   const temporaryPath = resolve(parent, `.${randomUUID()}.tmp`);
@@ -244,6 +247,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
     fsyncSync(descriptor);
     closeSync(descriptor);
     descriptor = undefined;
+    assertPublishParent(root, parent, relativePath);
     try {
       linkSync(temporaryPath, path);
       created = true;
@@ -576,6 +580,29 @@ function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined 
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
+  }
+}
+
+function assertPublishParent(root: string, parent: string, relativePath: string): void {
+  const segments = relative(root, parent) === "" ? [] : relative(root, parent).split(sep);
+  let current = root;
+  for (const segment of segments) {
+    current = resolve(current, segment);
+    const entry = lstatSync(current);
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      throw new Error(`Artifact path "${relativePath}" crosses a symbolic link.`);
+    }
+  }
+
+  const descriptor = openSync(parent, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const opened = fstatSync(descriptor);
+    const current = lstatSync(parent);
+    if (!opened.isDirectory() || current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino) {
+      throw new Error(`Artifact path "${relativePath}" parent changed during publication.`);
+    }
+  } finally {
+    closeSync(descriptor);
   }
 }
 

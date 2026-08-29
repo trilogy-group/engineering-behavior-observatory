@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { linkSync, lstatSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   admitTaskPacket,
+  defaultFreezeLocator,
   digestBytes,
   digestMetadata,
   freezeTaskPacket,
@@ -200,6 +201,33 @@ test("status tolerates a transient extra freeze-record hard link", () => {
     }
     rmSync(root, { force: true, recursive: true });
   }
+});
+
+test("freeze publication rejects a symlinked ancestor", () => {
+  const { root } = createBundle();
+  const outside = mkdtempSync(join(tmpdir(), "ebo-freeze-outside-"));
+  try {
+    symlinkSync(outside, join(root, "nested"));
+    assert.throws(() => freezeTaskPacket(root, "packet.json", "nested/freeze.json"), /symbolic link/);
+    assert.equal(existsSync(join(outside, "freeze.json")), false);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(outside, { force: true, recursive: true });
+  }
+});
+
+test("freeze validates its constructed record and bounds the default locator", () => {
+  const { root } = createBundle();
+  try {
+    writeFileSync(join(root, ".packet.json"), readFileSync(join(root, "packet.json")));
+    assert.throws(() => freezeTaskPacket(root, ".packet.json", "freeze.json"), /packetLocator/);
+    assert.equal(existsSync(join(root, "freeze.json")), false);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+
+  const nearLimit = Array.from({ length: 4 }, () => "a".repeat(239)).join("/");
+  assert.throws(() => defaultFreezeLocator(nearLimit), /exceeds safe path limits/);
 });
 
 test("task-packet CLI exposes validate, freeze, and status", () => {
