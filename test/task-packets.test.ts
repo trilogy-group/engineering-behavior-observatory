@@ -275,14 +275,24 @@ test("status recovers an interrupted quarantine alias", () => {
   const { root } = createBundle();
   const freezePath = join(root, "packet.json.freeze.json");
   const temporaryName = ".55555555-5555-4555-8555-555555555555.tmp";
-  const quarantineName = `${temporaryName}.quarantine-66666666-6666-4666-8666-666666666666`;
-  const quarantinePath = join(root, quarantineName);
+  const quarantinePath = `${freezePath}.quarantine`;
   try {
     freezeTaskPacket(root, "packet.json");
     linkSync(freezePath, join(root, temporaryName));
     renameSync(join(root, temporaryName), quarantinePath);
     assert.equal(statusTaskPacket(root, "packet.json").status, "frozen");
     assert.equal(existsSync(quarantinePath), true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("status reads a valid freeze in a large parent directory", () => {
+  const { root } = createBundle();
+  try {
+    freezeTaskPacket(root, "packet.json");
+    for (let index = 0; index < 4_097; index += 1) writeFileSync(join(root, `valid-entry-${index}`), "");
+    assert.equal(statusTaskPacket(root, "packet.json").status, "frozen");
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

@@ -11,7 +11,7 @@ import {
   realpathSync,
   unlinkSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import {
   digestBytes,
@@ -125,7 +125,6 @@ export const MAX_TASK_PACKET_METADATA_BYTES = MAX_CONFIGURATION_BYTES;
 const MAX_TRANSIENT_LINK_READ_RETRIES = 20;
 const MAX_FREEZE_RECOVERY_ENTRIES = 4096;
 const TEMPORARY_FREEZE_LINK_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
-const QUARANTINED_LINK_PATTERN = /^[A-Za-z0-9._-]+\.quarantine-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const TASK_PACKET_SCHEMA_VERSION = "ebo.task-packet/v1";
 const FREEZE_LOCATOR_SUFFIX = ".freeze.json";
 
@@ -800,7 +799,7 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
       const opened = fstatSync(descriptor);
       const openedTimes = fstatSync(descriptor, { bigint: true });
       const openedHasQuarantine = opened.nlink > 1
-        && countQuarantineAliases(dirname(path), basename(path), opened) === opened.nlink - 1;
+        && hasQuarantineAlias(path, opened) && opened.nlink === 2;
       if (!opened.isFile() || (opened.nlink > 1 && !openedHasQuarantine)) {
         throw new Error(`Artifact path "${locator}" is not an isolated regular file.`);
       }
@@ -820,7 +819,7 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
       const completed = fstatSync(descriptor);
       const completedTimes = fstatSync(descriptor, { bigint: true });
       const completedHasQuarantine = completed.nlink > 1
-        && countQuarantineAliases(dirname(path), basename(path), completed) === completed.nlink - 1;
+        && hasQuarantineAlias(path, completed) && completed.nlink === 2;
       if (!completed.isFile() || (completed.nlink > 1 && !completedHasQuarantine)
           || completed.dev !== opened.dev || completed.ino !== opened.ino
           || completed.size !== opened.size || completedTimes.mtimeNs !== openedTimes.mtimeNs
@@ -842,26 +841,13 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
   }
 }
 
-function countQuarantineAliases(parent: string, destination: string, target: { dev: number; ino: number }): number {
-  const directory = opendirSync(parent);
-  let scanned = 0;
-  let matches = 0;
+function hasQuarantineAlias(path: string, target: { dev: number; ino: number }): boolean {
   try {
-    for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
-      scanned += 1;
-      if (scanned > MAX_FREEZE_RECOVERY_ENTRIES) return 0;
-      if (entry.name === destination) continue;
-      if (!QUARANTINED_LINK_PATTERN.test(entry.name)) continue;
-      try {
-        if (sameFileIdentity(target, lstatSync(resolve(parent, entry.name)))) matches += 1;
-      } catch (error) {
-        if (!isErrno(error, "ENOENT")) throw error;
-      }
-    }
-  } finally {
-    directory.closeSync();
+    return sameFileIdentity(target, lstatSync(`${path}.quarantine`));
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) return false;
+    throw error;
   }
-  return matches;
 }
 
 function assertBundlePathWithoutLinks(bundleRoot: string, locator: string): string {

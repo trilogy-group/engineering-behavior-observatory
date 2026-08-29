@@ -313,7 +313,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
       } finally {
         if (descriptor !== undefined) {
           try {
-            removeOwnedPath(temporaryPath, descriptor);
+            removeOwnedPath(temporaryPath, descriptor, destination);
           } finally {
             closeSync(descriptor);
             descriptor = undefined;
@@ -683,15 +683,20 @@ function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined 
   }
 }
 
-function removeOwnedPath(path: string, descriptor: number): void {
-  const quarantine = `${path}.quarantine-${randomUUID()}`;
+function removeOwnedPath(path: string, descriptor: number, quarantineBase = path): void {
+  const quarantine = `${quarantineBase}.quarantine`;
   try {
     const opened = fstatSync(descriptor);
     const current = lstatSync(path);
     if (!sameFileIdentity(opened, current)) {
       throw new Error(`Publication path "${path}" changed before cleanup.`);
     }
-    renameSync(path, quarantine);
+    try {
+      renameSync(path, quarantine);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return;
+      throw error;
+    }
     const quarantined = lstatSync(quarantine);
     if (!sameFileIdentity(opened, quarantined)) {
       throw new Error(`Publication path "${path}" changed during quarantine.`);
