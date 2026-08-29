@@ -458,32 +458,38 @@ function readOptionalJson(bundleRoot: string, locator: string, retryTransientLin
 
 function removeTemporaryFreezeLinks(bundleRoot: string, locator: string): boolean {
   const root = realpathSync(bundleRoot);
-  const destination = assertBundlePathWithoutLinks(root, locator);
-  const parent = dirname(destination);
-  const destinationStat = lstatSync(destination);
+  const rootDescriptor = openSync(root, constants.O_RDONLY | constants.O_NOFOLLOW);
   let removed = false;
+  try {
+    assertBundleRoot(root, rootDescriptor, locator);
+    const destination = assertBundlePathWithoutLinks(root, locator);
+    const parent = dirname(destination);
+    const destinationStat = lstatSync(destination);
 
-  for (const name of readdirSync(parent)) {
-    if (!/^\.[0-9a-f-]+\.tmp$/.test(name)) continue;
-    const temporary = resolve(parent, name);
-    try {
-      const temporaryStat = lstatSync(temporary);
-      if (temporaryStat.isFile() && temporaryStat.dev === destinationStat.dev && temporaryStat.ino === destinationStat.ino) {
-        unlinkSync(temporary);
-        removed = true;
+    for (const name of readdirSync(parent)) {
+      if (!/^\.[0-9a-f-]+\.tmp$/.test(name)) continue;
+      const temporary = resolve(parent, name);
+      try {
+        const temporaryStat = lstatSync(temporary);
+        if (temporaryStat.isFile() && temporaryStat.dev === destinationStat.dev && temporaryStat.ino === destinationStat.ino) {
+          unlinkSync(temporary);
+          removed = true;
+        }
+      } catch (error) {
+        if (!isErrno(error, "ENOENT")) throw error;
       }
-    } catch (error) {
-      if (!isErrno(error, "ENOENT")) throw error;
     }
-  }
 
-  if (removed) {
-    const descriptor = openSync(parent, constants.O_RDONLY | constants.O_NOFOLLOW);
-    try {
-      fsyncSync(descriptor);
-    } finally {
-      closeSync(descriptor);
+    if (removed) {
+      const descriptor = openSync(parent, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try {
+        fsyncSync(descriptor);
+      } finally {
+        closeSync(descriptor);
+      }
     }
+  } finally {
+    closeSync(rootDescriptor);
   }
   return removed;
 }
@@ -491,19 +497,25 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string): boolea
 function readBundleFile(bundleRoot: string, locator: string): Buffer {
   if (!isSafeArtifactRelativePath(locator)) throw new Error(`Artifact path "${locator}" is unsafe.`);
   const root = realpathSync(bundleRoot);
-  const path = assertBundlePathWithoutLinks(root, locator);
-
-  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const rootDescriptor = openSync(root, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    const opened = fstatSync(descriptor);
-    if (!opened.isFile() || opened.nlink > 1) throw new Error(`Artifact path "${locator}" is not an isolated regular file.`);
-    const current = lstatSync(assertBundlePathWithoutLinks(root, locator));
-    if (opened.dev !== current.dev || opened.ino !== current.ino) {
-      throw new Error(`Artifact path "${locator}" changed after bundle-root verification.`);
+    assertBundleRoot(root, rootDescriptor, locator);
+    const path = assertBundlePathWithoutLinks(root, locator);
+    const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const opened = fstatSync(descriptor);
+      if (!opened.isFile() || opened.nlink > 1) throw new Error(`Artifact path "${locator}" is not an isolated regular file.`);
+      assertBundleRoot(root, rootDescriptor, locator);
+      const current = lstatSync(assertBundlePathWithoutLinks(root, locator));
+      if (opened.dev !== current.dev || opened.ino !== current.ino) {
+        throw new Error(`Artifact path "${locator}" changed after bundle-root verification.`);
+      }
+      return readFileSync(descriptor);
+    } finally {
+      closeSync(descriptor);
     }
-    return readFileSync(descriptor);
   } finally {
-    closeSync(descriptor);
+    closeSync(rootDescriptor);
   }
 }
 
@@ -521,6 +533,14 @@ function assertBundlePathWithoutLinks(bundleRoot: string, locator: string): stri
     }
   }
   return path;
+}
+
+function assertBundleRoot(root: string, descriptor: number, locator: string): void {
+  const opened = fstatSync(descriptor);
+  const current = lstatSync(root);
+  if (!opened.isDirectory() || current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino) {
+    throw new Error(`Artifact path "${locator}" bundle root changed during verification.`);
+  }
 }
 
 function packetError(artifact: string, field: string, message: string): ArtifactValidationError {

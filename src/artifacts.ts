@@ -232,49 +232,60 @@ export function writeMetadataAtomicallyIfAbsentSync(
 ): { created: boolean; digest: Digest } {
   const bytes = Buffer.from(canonicalizeMetadata(metadata));
   const root = realpathSync(artifactRoot);
-  const { createdDirectories, parent, path } = prepareArtifactPathSync(root, relativePath);
   const digest = digestBytes(bytes);
-  const parentDescriptor = openPublishParent(root, parent, relativePath);
+  const rootDescriptor = openSync(root, constants.O_RDONLY | constants.O_NOFOLLOW);
   let created = false;
-  const destination = relative(parent, path);
-  const originalCwd = process.cwd();
-  let changedCwd = false;
   try {
-    // ponytail: synchronous cwd critical section anchors relative operations;
-    // replace with descriptor-relative fs calls if Node exposes openat/linkat.
-    process.chdir(parent);
-    changedCwd = true;
-    assertPublishParentHandle(parentDescriptor, relativePath);
-    if (lstatIfPresent(destination) !== undefined) {
-      syncCreatedDirectories(root, createdDirectories, parentDescriptor);
-      return { created: false, digest };
-    }
-
-    const temporaryPath = `.${randomUUID()}.tmp`;
-    let descriptor: number | undefined;
-
+    assertPublishRootHandle(root, rootDescriptor, relativePath);
+    const { createdDirectories, parent, path } = prepareArtifactPathSync(root, relativePath);
+    assertPublishRootHandle(root, rootDescriptor, relativePath);
+    const parentDescriptor = openPublishParent(root, parent, relativePath, rootDescriptor);
+    const destination = relative(parent, path);
+    const originalCwd = process.cwd();
+    let changedCwd = false;
     try {
-      descriptor = openSync(temporaryPath, "wx", 0o600);
+      // ponytail: synchronous cwd critical section anchors relative operations;
+      // replace with descriptor-relative fs calls if Node exposes openat/linkat.
+      process.chdir(parent);
+      changedCwd = true;
+      assertPublishRootHandle(root, rootDescriptor, relativePath);
       assertPublishParentHandle(parentDescriptor, relativePath);
-      writeFileSync(descriptor, bytes);
-      fsyncSync(descriptor);
-      closeSync(descriptor);
-      descriptor = undefined;
-      assertPublishParentHandle(parentDescriptor, relativePath);
+      if (lstatIfPresent(destination) !== undefined) {
+        syncCreatedDirectories(root, createdDirectories, parentDescriptor);
+        return { created: false, digest };
+      }
+
+      const temporaryPath = `.${randomUUID()}.tmp`;
+      let descriptor: number | undefined;
+
       try {
-        linkSync(temporaryPath, destination);
-        created = true;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        descriptor = openSync(temporaryPath, "wx", 0o600);
+        assertPublishRootHandle(root, rootDescriptor, relativePath);
+        assertPublishParentHandle(parentDescriptor, relativePath);
+        writeFileSync(descriptor, bytes);
+        fsyncSync(descriptor);
+        closeSync(descriptor);
+        descriptor = undefined;
+        assertPublishRootHandle(root, rootDescriptor, relativePath);
+        assertPublishParentHandle(parentDescriptor, relativePath);
+        try {
+          linkSync(temporaryPath, destination);
+          created = true;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        }
+      } finally {
+        if (descriptor !== undefined) closeSync(descriptor);
+        rmSync(temporaryPath, { force: true });
+        assertPublishRootHandle(root, rootDescriptor, relativePath);
+        syncCreatedDirectories(root, createdDirectories, parentDescriptor);
       }
     } finally {
-      if (descriptor !== undefined) closeSync(descriptor);
-      rmSync(temporaryPath, { force: true });
-      syncCreatedDirectories(root, createdDirectories, parentDescriptor);
+      if (changedCwd) process.chdir(originalCwd);
+      closeSync(parentDescriptor);
     }
   } finally {
-    if (changedCwd) process.chdir(originalCwd);
-    closeSync(parentDescriptor);
+    closeSync(rootDescriptor);
   }
 
   return { created, digest };
@@ -598,7 +609,8 @@ function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined 
   }
 }
 
-function openPublishParent(root: string, parent: string, relativePath: string): number {
+function openPublishParent(root: string, parent: string, relativePath: string, rootDescriptor: number): number {
+  assertPublishRootHandle(root, rootDescriptor, relativePath);
   const segments = relative(root, parent) === "" ? [] : relative(root, parent).split(sep);
   let current = root;
   for (const segment of segments) {
@@ -628,6 +640,14 @@ function assertPublishParentHandle(descriptor: number, relativePath: string): vo
   const current = lstatSync(".");
   if (!opened.isDirectory() || current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino) {
     throw new Error(`Artifact path "${relativePath}" parent changed during publication.`);
+  }
+}
+
+function assertPublishRootHandle(root: string, descriptor: number, relativePath: string): void {
+  const opened = fstatSync(descriptor);
+  const current = lstatSync(root);
+  if (!opened.isDirectory() || current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino) {
+    throw new Error(`Artifact path "${relativePath}" bundle root changed during publication.`);
   }
 }
 
