@@ -11,6 +11,7 @@ import {
   digestBytes,
   digestMetadata,
   freezeTaskPacket,
+  MAX_TASK_PACKET_METADATA_BYTES,
   main,
   modelVisibleTaskPacket,
   statusTaskPacket,
@@ -254,6 +255,29 @@ test("status reports a malformed freeze record as invalid", () => {
     assert.equal(status.errors[0]?.schemaVersion, "ebo.task-packet-freeze/v1");
   } finally {
     rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("packet and freeze JSON reads enforce the metadata size limit", () => {
+  const { root, packet } = createBundle();
+  try {
+    packet.agentInput.prompt = "x".repeat(MAX_TASK_PACKET_METADATA_BYTES);
+    writeFileSync(join(root, "packet.json"), JSON.stringify(packet));
+    assert.ok(admitTaskPacket(root, "packet.json").errors.some((error) => /metadata size limit/.test(error.message)));
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+
+  const frozen = createBundle();
+  try {
+    freezeTaskPacket(frozen.root, "packet.json");
+    const freezePath = join(frozen.root, "packet.json.freeze.json");
+    writeFileSync(freezePath, `${readFileSync(freezePath, "utf8")}${" ".repeat(MAX_TASK_PACKET_METADATA_BYTES)}`);
+    const status = statusTaskPacket(frozen.root, "packet.json");
+    assert.equal(status.status, "invalid");
+    assert.ok(status.errors.some((error) => /metadata size limit/.test(error.message)));
+  } finally {
+    rmSync(frozen.root, { force: true, recursive: true });
   }
 });
 

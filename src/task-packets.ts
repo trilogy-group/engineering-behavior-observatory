@@ -21,6 +21,7 @@ import {
 } from "./artifacts.js";
 import {
   isSafeArtifactRelativePath,
+  MAX_CONFIGURATION_BYTES,
   resolveBundleArtifact,
   resolveTaskArchive,
   type ArtifactReference,
@@ -115,6 +116,7 @@ export type TaskPacketStatus = {
 };
 
 export const TASK_PACKET_FREEZE_SCHEMA_VERSION = "ebo.task-packet-freeze/v1";
+export const MAX_TASK_PACKET_METADATA_BYTES = MAX_CONFIGURATION_BYTES;
 const MAX_TRANSIENT_LINK_READ_RETRIES = 20;
 const FREEZE_LOCATOR_SUFFIX = ".freeze.json";
 
@@ -464,29 +466,33 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string): boolea
     assertBundleRoot(root, rootDescriptor, locator);
     const destination = assertBundlePathWithoutLinks(root, locator);
     const parent = dirname(destination);
-    const destinationStat = lstatSync(destination);
+    const parentDescriptor = openFreezeParent(root, parent, locator, rootDescriptor);
+    const originalCwd = process.cwd();
+    let changedCwd = false;
+    try {
+      process.chdir(parent);
+      changedCwd = true;
+      assertBundleRoot(root, rootDescriptor, locator);
+      assertFreezeParent(parentDescriptor, locator);
+      const destinationStat = lstatSync(relative(parent, destination));
 
-    for (const name of readdirSync(parent)) {
-      if (!/^\.[0-9a-f-]+\.tmp$/.test(name)) continue;
-      const temporary = resolve(parent, name);
-      try {
-        const temporaryStat = lstatSync(temporary);
-        if (temporaryStat.isFile() && temporaryStat.dev === destinationStat.dev && temporaryStat.ino === destinationStat.ino) {
-          unlinkSync(temporary);
-          removed = true;
+      for (const name of readdirSync(".")) {
+        if (!/^\.[0-9a-f-]+\.tmp$/.test(name)) continue;
+        try {
+          const temporaryStat = lstatSync(name);
+          if (temporaryStat.isFile() && temporaryStat.dev === destinationStat.dev && temporaryStat.ino === destinationStat.ino) {
+            unlinkSync(name);
+            removed = true;
+          }
+        } catch (error) {
+          if (!isErrno(error, "ENOENT")) throw error;
         }
-      } catch (error) {
-        if (!isErrno(error, "ENOENT")) throw error;
       }
-    }
 
-    if (removed) {
-      const descriptor = openSync(parent, constants.O_RDONLY | constants.O_NOFOLLOW);
-      try {
-        fsyncSync(descriptor);
-      } finally {
-        closeSync(descriptor);
-      }
+      if (removed) fsyncSync(parentDescriptor);
+    } finally {
+      if (changedCwd) process.chdir(originalCwd);
+      closeSync(parentDescriptor);
     }
   } finally {
     closeSync(rootDescriptor);
@@ -505,6 +511,9 @@ function readBundleFile(bundleRoot: string, locator: string): Buffer {
     try {
       const opened = fstatSync(descriptor);
       if (!opened.isFile() || opened.nlink > 1) throw new Error(`Artifact path "${locator}" is not an isolated regular file.`);
+      if (!Number.isSafeInteger(opened.size) || opened.size > MAX_TASK_PACKET_METADATA_BYTES) {
+        throw new Error(`Artifact path "${locator}" exceeds its metadata size limit.`);
+      }
       assertBundleRoot(root, rootDescriptor, locator);
       const current = lstatSync(assertBundlePathWithoutLinks(root, locator));
       if (opened.dev !== current.dev || opened.ino !== current.ino) {
@@ -540,6 +549,42 @@ function assertBundleRoot(root: string, descriptor: number, locator: string): vo
   const current = lstatSync(root);
   if (!opened.isDirectory() || current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino) {
     throw new Error(`Artifact path "${locator}" bundle root changed during verification.`);
+  }
+}
+
+function openFreezeParent(root: string, parent: string, locator: string, rootDescriptor: number): number {
+  assertBundleRoot(root, rootDescriptor, locator);
+  if (!isContained(root, parent)) throw new Error(`Artifact path "${locator}" escapes its declared root.`);
+  let current = root;
+  const segments = relative(root, parent) === "" ? [] : relative(root, parent).split(sep);
+  for (const segment of segments) {
+    current = resolve(current, segment);
+    const entry = lstatSync(current);
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      throw new Error(`Artifact path "${locator}" crosses a symbolic link.`);
+    }
+  }
+
+  const descriptor = openSync(parent, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const opened = fstatSync(descriptor);
+    const currentStat = lstatSync(parent);
+    if (!opened.isDirectory() || currentStat.isSymbolicLink()
+        || opened.dev !== currentStat.dev || opened.ino !== currentStat.ino) {
+      throw new Error(`Artifact path "${locator}" parent changed during recovery.`);
+    }
+    return descriptor;
+  } catch (error) {
+    closeSync(descriptor);
+    throw error;
+  }
+}
+
+function assertFreezeParent(descriptor: number, locator: string): void {
+  const opened = fstatSync(descriptor);
+  const current = lstatSync(".");
+  if (!opened.isDirectory() || current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino) {
+    throw new Error(`Artifact path "${locator}" parent changed during recovery.`);
   }
 }
 

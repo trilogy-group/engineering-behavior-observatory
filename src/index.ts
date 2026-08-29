@@ -37,6 +37,7 @@ export {
   inspectTaskPacket,
   modelVisibleTaskPacket,
   statusTaskPacket,
+  MAX_TASK_PACKET_METADATA_BYTES,
   TASK_PACKET_FREEZE_SCHEMA_VERSION,
 } from "./task-packets.js";
 export type { TaskPacket, TaskPacketComponent, TaskPacketComponents, TaskPacketFreezeRecord, TaskPacketInspection, TaskPacketStatus } from "./task-packets.js";
