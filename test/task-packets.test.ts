@@ -375,6 +375,22 @@ test("inspection validates fixture archives before admission", () => {
       expected: /unsupported sparse PAX/,
       mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
     },
+    {
+      bytes: tarGzipArchive([
+        { path: "PaxHeader", bytes: Buffer.from("30 SCHILY.realsize=1000000000\n"), type: "x" },
+        { path: "README.md", bytes: Buffer.from("safe") },
+      ]),
+      expected: /unsupported sparse PAX/,
+      mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
+    },
+    {
+      bytes: tarGzipArchive([
+        { path: "PaxHeader", bytes: Buffer.from("21 SUN.holesdata=0,1\n"), type: "x" },
+        { path: "README.md", bytes: Buffer.from("safe") },
+      ]),
+      expected: /unsupported sparse PAX/,
+      mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
+    },
   ];
 
   for (const invalidCase of invalidCases) {

@@ -1029,7 +1029,7 @@ function parsePaxAttributes(bytes: Uint8Array): { path?: string; size?: number }
     if (equals <= 0 || !record.endsWith("\n")) throw new Error("Sanitized task archive contains an invalid PAX record.");
     const key = record.slice(0, equals);
     const value = record.slice(equals + 1, -1);
-    if (/^(?:GNU|SCHILY)\.sparse(?:\.|$)/.test(key)) {
+    if (/^(?:GNU\.sparse(?:\.|$)|SCHILY\.(?:sparse(?:\.|$)|realsize$)|SUN\.holesdata$)/.test(key)) {
       throw new Error("Sanitized task archive contains unsupported sparse PAX metadata.");
     }
     if (key === "path") attributes.path = value;
