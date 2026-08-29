@@ -4,7 +4,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { validateArtifact, validateExportManifest, validateRunManifestEvidence } from "./artifacts.js";
+import { assertNoDuplicateJsonKeys, validateArtifact, validateExportManifest, validateRunManifestEvidence } from "./artifacts.js";
 import {
   admitTaskPacket,
   formatErrors,
@@ -43,7 +43,9 @@ export function main(
 
     const artifacts = args.slice(1).map((artifact) => {
       try {
-        return { artifact, document: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(artifact))) };
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(artifact));
+        assertNoDuplicateJsonKeys(text);
+        return { artifact, document: JSON.parse(text) };
       } catch (error) {
         return {
           artifact,
@@ -63,10 +65,15 @@ export function main(
       if (document === undefined || typeof document !== "object" || document === null
           || (document as { schemaVersion?: unknown }).schemaVersion !== "export-manifest/v1") continue;
       const bundleId = (document as { bundleId?: unknown }).bundleId;
-      const containing = artifacts.find(({ document: candidate }) => candidate !== undefined && typeof candidate === "object" && candidate !== null
+      const containingEntry = artifacts.find(({ document: candidate }) => candidate !== undefined && typeof candidate === "object" && candidate !== null
         && (candidate as { schemaVersion?: unknown }).schemaVersion === "run-manifest/v1"
-        && (candidate as { bundleId?: unknown }).bundleId === bundleId)?.document;
-      errors.push(...validateExportManifest(artifact, document, containing));
+        && (candidate as { bundleId?: unknown }).bundleId === bundleId);
+      errors.push(...validateExportManifest(
+        artifact,
+        document,
+        containingEntry?.document,
+        containingEntry === undefined ? undefined : dirname(containingEntry.artifact),
+      ));
     }
 
     if (errors.length === 0) {

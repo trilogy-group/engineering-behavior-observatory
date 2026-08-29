@@ -766,6 +766,7 @@ test("rejects contradictory and incomplete contract records", () => {
 
   const verifierError = structuredClone(completeVerifier);
   verifierError.status = "error";
+  verifierError.error = "verifier infrastructure failed";
   verifierError.assertions = [];
   delete verifierError.exitCode;
   assert.deepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, verifierError), []);
@@ -1081,6 +1082,7 @@ test("rejects contradictory and incomplete contract records", () => {
 
   const sourceErrorVerifier = structuredClone(taskFailedArtifacts.get("verifier")!);
   sourceErrorVerifier.status = "error";
+  sourceErrorVerifier.error = "verifier infrastructure failed";
   sourceErrorVerifier.assertions = [];
   const redactedPartnerWorkspace = structuredClone(sourceErrorVerifier);
   delete redactedPartnerWorkspace.workspace;

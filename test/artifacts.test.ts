@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,6 +12,8 @@ import {
   digestMetadata,
   readVerifiedArtifact,
   validateArtifact,
+  validateExportManifest,
+  validateRunManifestEvidence,
   verifyDigest,
   writeMetadataAtomically,
 } from "../src/artifacts.js";
@@ -75,6 +77,11 @@ test("atomic metadata writes retain the previous valid file when interrupted", a
     await assert.rejects(writing, /interrupted/);
     assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", previous), Buffer.from('{"state":"previous"}'));
 
+    const interruptedLink = join(root, ".00000000-0000-4000-8000-000000000000.tmp");
+    await link(join(root, "metadata.json"), interruptedLink);
+    assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", previous), Buffer.from('{"state":"previous"}'));
+    await assert.rejects(readFile(interruptedLink), /ENOENT/);
+
     const current = await writeMetadataAtomically(root, "metadata.json", { state: "next" });
     assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", current), Buffer.from('{"state":"next"}'));
   } finally {
@@ -94,6 +101,20 @@ test("CLI rejects non-UTF-8 JSON bytes", async () => {
     let output = "";
     assert.equal(main(["validate", artifact], (message) => (output += message)), 1);
     assert.match(output, /encoded data/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("CLI rejects duplicate keys in a standalone verifier result", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ebo-duplicate-verifier-"));
+  const artifact = join(root, "verifier.json");
+
+  try {
+    await writeFile(artifact, Buffer.from('{"schemaVersion":"verifier-result/v1","bundleId":"bundle-test","status":"failed","status":"passed","assertions":[]}'));
+    let output = "";
+    assert.equal(main(["validate", artifact], (message) => (output += message)), 1);
+    assert.match(output, /duplicate JSON object keys/);
   } finally {
     await rm(root, { force: true, recursive: true });
   }
@@ -130,6 +151,14 @@ test("validation reports schema versions, fields, duplicate identities, and fixt
 
   assert.deepEqual(validateArtifact("packet.json", packet), []);
   assert.deepEqual(validateArtifact("run/manifest.json", runManifest), []);
+  const failedVerifier = JSON.parse(readFileSync(runFixturePath("task-failed/verifier.json"), "utf8"));
+  delete failedVerifier.exitCode;
+  assert.notDeepEqual(validateArtifact("verifier.json", failedVerifier), []);
+  failedVerifier.exitCode = 0;
+  assert.notDeepEqual(validateArtifact("verifier.json", failedVerifier), []);
+  failedVerifier.exitCode = 1;
+  failedVerifier.assertions.push({ id: "example-check", status: "failed" });
+  assert.match(validateArtifact("verifier.json", failedVerifier).map((error) => error.message).join("\n"), /assertion IDs must be unique/);
   packet.agentInput.prompt = " ";
   assert.deepEqual(validateArtifact("packet.json", packet)[0], {
     artifact: "packet.json",
@@ -185,4 +214,358 @@ test("validation reports schema versions, fields, duplicate identities, and fixt
   let output = "";
   assert.equal(main(["validate", fixturePath("task-packet.valid.v1.json"), runFixturePath("complete/manifest.json")], (message) => (output += message)), 0);
   assert.equal(output, "Validated 2 artifact(s).\n");
+});
+
+test("validates nested verifier diagnostics against retained bundle bytes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ebo-nested-diagnostics-"));
+  try {
+    await cp(runFixturePath("complete"), root, { recursive: true });
+    const manifestPath = join(root, "manifest.json");
+    const verifierPath = join(root, "verifier.json");
+    const diagnosticPath = join(root, "diagnostics.log");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const verifier = JSON.parse(readFileSync(verifierPath, "utf8"));
+    const diagnosticBytes = Buffer.from("nested verifier diagnostic");
+    await writeFile(diagnosticPath, diagnosticBytes);
+    const nestedDiagnostic = {
+      stream: "stderr",
+      locator: "diagnostics.log",
+      digest: `sha256:${digestBytes(diagnosticBytes).value}`,
+      sizeBytes: diagnosticBytes.length,
+      truncated: false,
+    };
+    verifier.diagnostics = [nestedDiagnostic];
+    const verifierDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "verifier");
+    const retainVerifier = async (value: unknown) => {
+      const bytes = Buffer.from(JSON.stringify(value));
+      await writeFile(verifierPath, bytes);
+      verifierDescriptor.digest = `sha256:${digestBytes(bytes).value}`;
+      verifierDescriptor.sizeBytes = bytes.length;
+    };
+    await retainVerifier(verifier);
+
+    assert.deepEqual(validateRunManifestEvidence("manifest.json", manifest, root), []);
+    await retainVerifier({
+      ...verifier,
+      diagnostics: [{ ...nestedDiagnostic, locator: "Manifest.json/stdout.log" }],
+    });
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /alias retained evidence paths/,
+    );
+    await retainVerifier(verifier);
+    const noDiagnosticsVerifier = { ...verifier };
+    delete noDiagnosticsVerifier.diagnostics;
+    await retainVerifier({ ...noDiagnosticsVerifier, bundleId: "another-bundle" });
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /bundleId.*containing run manifest/,
+    );
+    await retainVerifier({ ...verifier, bundleId: "another-bundle" });
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /bundleId.*containing run manifest/,
+    );
+    await retainVerifier({ ...verifier, workspace: { ...verifier.workspace, artifactId: "missing-workspace" } });
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /retained workspace evidence/,
+    );
+    await retainVerifier({ ...verifier, workspace: { ...verifier.workspace, digest: `sha256:${"f".repeat(64)}` } });
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /workspace digest.*retained workspace evidence/,
+    );
+    await retainVerifier(verifier);
+    const originalTerminal = manifest.terminal;
+    await retainVerifier({ ...verifier, status: "error", error: "verifier infrastructure failed", assertions: [] });
+    manifest.terminal = { ...originalTerminal, state: "completed" };
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /Completed runs require a passed verifier bound to the terminal workspace/,
+    );
+    await retainVerifier(verifier);
+    manifest.terminal = { ...originalTerminal, state: "failed", failureClass: "task" };
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /Task-failed runs require a failed verifier bound to the terminal workspace/,
+    );
+    manifest.terminal = originalTerminal;
+    await writeFile(diagnosticPath, "tampered");
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /Diagnostic|digest/,
+    );
+    await writeFile(diagnosticPath, diagnosticBytes);
+    const duplicateVerifierBytes = Buffer.from('{"schemaVersion":"verifier-result/v1","status":"failed","status":"passed"}');
+    await writeFile(verifierPath, duplicateVerifierBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(duplicateVerifierBytes).value}`;
+    verifierDescriptor.sizeBytes = duplicateVerifierBytes.length;
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /duplicate JSON object keys/,
+    );
+    verifier.diagnostics = [{ locator: 42 }];
+    const malformedVerifierBytes = Buffer.from(JSON.stringify(verifier));
+    await writeFile(verifierPath, malformedVerifierBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(malformedVerifierBytes).value}`;
+    verifierDescriptor.sizeBytes = malformedVerifierBytes.length;
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /required property|must be string/,
+    );
+    const unreadableVerifierBytes = Buffer.from("{");
+    await writeFile(verifierPath, unreadableVerifierBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(unreadableVerifierBytes).value}`;
+    verifierDescriptor.sizeBytes = unreadableVerifierBytes.length;
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /Verifier artifact could not be parsed/,
+    );
+    await writeFile(diagnosticPath, diagnosticBytes);
+    const workspaceDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "workspace");
+    const workspaceBytes = readFileSync(join(root, workspaceDescriptor.relativePath));
+    verifier.diagnostics[0] = {
+      stream: "stderr",
+      locator: workspaceDescriptor.relativePath,
+      digest: workspaceDescriptor.digest,
+      sizeBytes: workspaceBytes.length,
+      truncated: false,
+    };
+    const aliasedVerifierBytes = Buffer.from(JSON.stringify(verifier));
+    await writeFile(verifierPath, aliasedVerifierBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(aliasedVerifierBytes).value}`;
+    verifierDescriptor.sizeBytes = aliasedVerifierBytes.length;
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /alias retained evidence/,
+    );
+    await writeFile(diagnosticPath, diagnosticBytes);
+    verifier.diagnostics = [nestedDiagnostic];
+    const firstVerifierBytes = Buffer.from(JSON.stringify(verifier));
+    await writeFile(verifierPath, firstVerifierBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(firstVerifierBytes).value}`;
+    verifierDescriptor.sizeBytes = firstVerifierBytes.length;
+    await writeFile(join(root, "second-verifier.json"), firstVerifierBytes);
+    manifest.evidence.push({ ...verifierDescriptor, id: "second-verifier", relativePath: "second-verifier.json" });
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /alias retained evidence/,
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("binds terminal verifier outcomes to the named workspace", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ebo-terminal-binding-"));
+  try {
+    await cp(runFixturePath("complete"), root, { recursive: true });
+    const manifestPath = join(root, "manifest.json");
+    const verifierPath = join(root, "verifier.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const verifier = JSON.parse(readFileSync(verifierPath, "utf8"));
+    const workspace = manifest.evidence.find((entry: { kind: string }) => entry.kind === "workspace");
+    const verifierDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "verifier");
+    const workspaceBytes = readFileSync(join(root, workspace.relativePath));
+    const secondWorkspace = {
+      ...workspace,
+      id: "workspace-b",
+      relativePath: "workspace-b.patch",
+    };
+    await writeFile(join(root, secondWorkspace.relativePath), workspaceBytes);
+    manifest.evidence.push(secondWorkspace);
+    verifier.workspace = { artifactId: secondWorkspace.id, digest: secondWorkspace.digest };
+    const verifierBytes = Buffer.from(JSON.stringify(verifier));
+    await writeFile(verifierPath, verifierBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(verifierBytes).value}`;
+    verifierDescriptor.sizeBytes = verifierBytes.length;
+
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /terminal workspace/,
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("does not qualify terminal outcomes from sanitized verifier copies", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ebo-sanitized-verifier-"));
+  try {
+    await cp(runFixturePath("complete"), root, { recursive: true });
+    const manifestPath = join(root, "manifest.json");
+    const verifierPath = join(root, "verifier.json");
+    const sanitizedVerifierPath = join(root, "sanitized-verifier.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const sourceVerifierDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "verifier");
+    const sourceVerifier = JSON.parse(readFileSync(verifierPath, "utf8"));
+    sourceVerifier.status = "error";
+    sourceVerifier.error = "verifier infrastructure failed";
+    sourceVerifier.assertions = [];
+    const sourceBytes = Buffer.from(JSON.stringify(sourceVerifier));
+    await writeFile(verifierPath, sourceBytes);
+    sourceVerifierDescriptor.digest = `sha256:${digestBytes(sourceBytes).value}`;
+    sourceVerifierDescriptor.sizeBytes = sourceBytes.length;
+
+    const sanitizedVerifier = JSON.parse(readFileSync(runFixturePath("complete/verifier.json"), "utf8"));
+    const sanitizedBytes = Buffer.from(JSON.stringify(sanitizedVerifier));
+    await writeFile(sanitizedVerifierPath, sanitizedBytes);
+    manifest.evidence.push({
+      ...sourceVerifierDescriptor,
+      id: "sanitized-verifier",
+      relativePath: "sanitized-verifier.json",
+      digest: `sha256:${digestBytes(sanitizedBytes).value}`,
+      sizeBytes: sanitizedBytes.length,
+      sharingClass: "partner",
+      sanitizedFrom: { artifactId: sourceVerifierDescriptor.id, digest: sourceVerifierDescriptor.digest },
+    });
+
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /passed verifier bound to the terminal workspace/,
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("binds verifier results to the configured verifier reference", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ebo-verifier-binding-"));
+  try {
+    await cp(runFixturePath("complete"), root, { recursive: true });
+    const manifestPath = join(root, "manifest.json");
+    const verifierPath = join(root, "verifier.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const verifierDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "verifier");
+    const workspaceDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "workspace");
+    const verifierReference = {
+      locator: "restricted/verifier.js",
+      digest: `sha256:${"a".repeat(64)}`,
+      format: "commonjs",
+    };
+    const workspaceFingerprint = `sha256:${"c".repeat(64)}`;
+    workspaceDescriptor.fingerprint = workspaceFingerprint;
+    manifest.run.verifier = verifierReference;
+    const verifier = JSON.parse(readFileSync(verifierPath, "utf8"));
+    verifier.verifier = verifierReference;
+    verifier.workspace.fingerprint = workspaceFingerprint;
+    const verifierBytes = Buffer.from(JSON.stringify(verifier));
+    await writeFile(verifierPath, verifierBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(verifierBytes).value}`;
+    verifierDescriptor.sizeBytes = verifierBytes.length;
+
+    assert.deepEqual(validateRunManifestEvidence("manifest.json", manifest, root), []);
+    verifier.verifier = { ...verifierReference, digest: `sha256:${"b".repeat(64)}` };
+    const mismatchedBytes = Buffer.from(JSON.stringify(verifier));
+    await writeFile(verifierPath, mismatchedBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(mismatchedBytes).value}`;
+    verifierDescriptor.sizeBytes = mismatchedBytes.length;
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /Verifier execution reference must match the run configuration/,
+    );
+    verifier.verifier = verifierReference;
+    verifier.workspace.fingerprint = `sha256:${"d".repeat(64)}`;
+    const mismatchedWorkspaceBytes = Buffer.from(JSON.stringify(verifier));
+    await writeFile(verifierPath, mismatchedWorkspaceBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(mismatchedWorkspaceBytes).value}`;
+    verifierDescriptor.sizeBytes = mismatchedWorkspaceBytes.length;
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /workspace digest must match retained workspace evidence/,
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("requires classified sidecars for sanitized verifier diagnostics", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ebo-sanitized-diagnostics-"));
+  try {
+    await cp(runFixturePath("complete"), root, { recursive: true });
+    const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8"));
+    const exportManifest = JSON.parse(readFileSync(join(root, "export/manifest.json"), "utf8"));
+    exportManifest.status = "ready";
+    const verifierDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "verifier");
+    const workspaceDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "workspace");
+    const sourceVerifier = JSON.parse(readFileSync(join(root, "verifier.json"), "utf8"));
+    const rawDiagnostic = Buffer.from("restricted diagnostic");
+    const sourceDiagnostic = {
+      stream: "stderr",
+      locator: "raw-diagnostic.log",
+      digest: `sha256:${digestBytes(rawDiagnostic).value}`,
+      sizeBytes: rawDiagnostic.length,
+      truncated: false,
+    };
+    sourceVerifier.diagnostics = [sourceDiagnostic];
+    await writeFile(join(root, sourceDiagnostic.locator), rawDiagnostic);
+    const sourceVerifierBytes = Buffer.from(JSON.stringify(sourceVerifier));
+    await writeFile(join(root, "verifier.json"), sourceVerifierBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(sourceVerifierBytes).value}`;
+    verifierDescriptor.sizeBytes = sourceVerifierBytes.length;
+    const sanitizedVerifierDescriptor = {
+      ...verifierDescriptor,
+      id: "sanitized-verifier",
+      relativePath: "sanitized/verifier.json",
+      sharingClass: "partner",
+      sanitizedFrom: { artifactId: verifierDescriptor.id, digest: verifierDescriptor.digest },
+    };
+    manifest.evidence.push(sanitizedVerifierDescriptor);
+    exportManifest.artifactIds = ["sanitized-verifier"];
+    const sanitizedVerifier = structuredClone(sourceVerifier);
+    await mkdir(join(root, "sanitized"));
+    const sanitizedVerifierBytes = Buffer.from(JSON.stringify(sanitizedVerifier));
+    await writeFile(join(root, "sanitized/verifier.json"), sanitizedVerifierBytes);
+    sanitizedVerifierDescriptor.digest = `sha256:${digestBytes(sanitizedVerifierBytes).value}`;
+    sanitizedVerifierDescriptor.sizeBytes = sanitizedVerifierBytes.length;
+
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /classified, source-bound sidecars/,
+    );
+    assert.match(
+      validateExportManifest("export/manifest.json", exportManifest, manifest, root).map((error) => error.message).join("\n"),
+      /classified, source-bound sidecars/,
+    );
+
+    const sanitizedDiagnostic = Buffer.from("sanitized diagnostic");
+    const sidecar = {
+      ...workspaceDescriptor,
+      id: "sanitized-diagnostic",
+      source: verifierDescriptor.source,
+      kind: "diagnostic",
+      authority: "outcome",
+      mediaType: "text/plain",
+      relativePath: "sanitized/diagnostic.log",
+      digest: `sha256:${digestBytes(sanitizedDiagnostic).value}`,
+      sizeBytes: sanitizedDiagnostic.length,
+      sharingClass: "partner",
+      diagnosticSource: { verifierId: verifierDescriptor.id, ...sourceDiagnostic },
+      sanitizedFrom: { artifactId: verifierDescriptor.id, digest: verifierDescriptor.digest },
+    };
+    await writeFile(join(root, sidecar.relativePath), sanitizedDiagnostic);
+    manifest.evidence.push(sidecar);
+    sanitizedVerifier.diagnostics[0] = {
+      ...sourceDiagnostic,
+      locator: sidecar.relativePath,
+      digest: sidecar.digest,
+      sizeBytes: sidecar.sizeBytes,
+      source: sourceDiagnostic,
+    };
+    const sidecarVerifierBytes = Buffer.from(JSON.stringify(sanitizedVerifier));
+    await writeFile(join(root, sanitizedVerifierDescriptor.relativePath), sidecarVerifierBytes);
+    sanitizedVerifierDescriptor.digest = `sha256:${digestBytes(sidecarVerifierBytes).value}`;
+    sanitizedVerifierDescriptor.sizeBytes = sidecarVerifierBytes.length;
+
+    assert.deepEqual(validateRunManifestEvidence("manifest.json", manifest, root), []);
+    assert.match(
+      validateExportManifest("export/manifest.json", exportManifest, manifest, root).map((error) => error.message).join("\n"),
+      /sidecars must be included in the export/,
+    );
+    exportManifest.artifactIds.push(sidecar.id);
+    assert.deepEqual(validateExportManifest("export/manifest.json", exportManifest, manifest, root), []);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
 });
