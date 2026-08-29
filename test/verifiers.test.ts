@@ -548,6 +548,12 @@ test("rejects contradictory failed results in public serializers", async () => {
       ...result,
       error: "unexpected coordinator error",
     } as unknown as VerifierResult), /must NOT be valid/);
+    assert.throws(() => serializeVerifierResult({
+      ...result,
+      status: "error",
+      error: "raw coordinator error",
+      errorRedacted: true,
+    } as unknown as VerifierResult), /must be equal to constant|must be valid/);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }

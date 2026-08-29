@@ -482,6 +482,13 @@
         {
           "if": { "properties": { "status": { "enum": ["passed", "failed", "not-run"] } }, "required": ["status"] },
           "then": { "not": { "required": ["errorRedacted"] } }
+        },
+        {
+          "if": { "properties": { "errorRedacted": { "const": true } }, "required": ["errorRedacted"] },
+          "then": {
+            "required": ["error"],
+            "properties": { "error": { "const": "[redacted]" } }
+          }
         }
       ]
     },
