@@ -14,6 +14,7 @@ import {
   MAX_TASK_PACKET_METADATA_BYTES,
   main,
   modelVisibleTaskPacket,
+  resolveBundleArtifactDigest,
   statusTaskPacket,
   writeMetadataAtomicallyIfAbsentSync,
   type TaskPacket,
@@ -278,6 +279,18 @@ test("packet and freeze JSON reads enforce the metadata size limit", () => {
     assert.ok(status.errors.some((error) => /metadata size limit/.test(error.message)));
   } finally {
     rmSync(frozen.root, { force: true, recursive: true });
+  }
+});
+
+test("unrestricted component digests stream without buffering the file", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-streaming-digest-"));
+  const bytes = Buffer.alloc(2 * 1024 * 1024, 7);
+  const expected = digestBytes(bytes);
+  try {
+    writeFileSync(join(root, "large-verifier.bin"), bytes);
+    assert.deepEqual(resolveBundleArtifactDigest(root, { locator: "large-verifier.bin", digest: expected }), expected);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
   }
 });
 

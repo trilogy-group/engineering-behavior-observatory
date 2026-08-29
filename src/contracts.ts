@@ -257,12 +257,35 @@ export function resolveTaskArchive(bundleRoot: string, source: ArtifactReference
   );
 }
 
-export function resolveBundleArtifact(bundleRoot: string, reference: ArtifactReference): Buffer {
+export function resolveBundleArtifact(bundleRoot: string, reference: ArtifactReference, maxBytes?: number): Buffer {
   return readVerifiedBundleFile(
     openBundleRegularFile(bundleRoot, reference.locator, "Artifact locator"),
     reference,
     "Artifact",
+    maxBytes,
   );
+}
+
+export function resolveBundleArtifactDigest(bundleRoot: string, reference: ArtifactReference): Digest {
+  const descriptor = openBundleRegularFile(bundleRoot, reference.locator, "Artifact locator");
+  try {
+    const size = fstatSync(descriptor).size;
+    const hash = createHash("sha256");
+    const chunk = Buffer.allocUnsafe(64 * 1024);
+    for (let offset = 0; offset < size;) {
+      const read = readSync(descriptor, chunk, 0, Math.min(chunk.length, size - offset), offset);
+      if (read === 0) throw new Error("Artifact changed while its digest was being read.");
+      hash.update(chunk.subarray(0, read));
+      offset += read;
+    }
+    const resolvedDigest: Digest = { algorithm: "sha256", value: hash.digest("hex") };
+    if (reference.digest.algorithm !== resolvedDigest.algorithm || reference.digest.value !== resolvedDigest.value) {
+      throw new Error("Artifact digest does not match its source reference.");
+    }
+    return resolvedDigest;
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function readVerifiedBundleFile(

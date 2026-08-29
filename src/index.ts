@@ -26,6 +26,7 @@ export {
   MAX_CONFIGURATION_BYTES,
   resolveBundleConfiguration,
   resolveBundleArtifact,
+  resolveBundleArtifactDigest,
   resolveTaskArchive,
 } from "./contracts.js";
 export {

@@ -23,6 +23,7 @@ import {
   isSafeArtifactRelativePath,
   MAX_CONFIGURATION_BYTES,
   resolveBundleArtifact,
+  resolveBundleArtifactDigest,
   resolveTaskArchive,
   type ArtifactReference,
   type Digest,
@@ -349,10 +350,9 @@ function resolveComponent(
   maxCompressedBytes?: number,
 ): Digest | null {
   try {
-    const bytes = maxCompressedBytes === undefined
-      ? resolveBundleArtifact(bundleRoot, reference)
-      : resolveTaskArchive(bundleRoot, reference, maxCompressedBytes);
-    return digestBytes(bytes);
+    return maxCompressedBytes === undefined
+      ? resolveBundleArtifactDigest(bundleRoot, reference)
+      : digestBytes(resolveTaskArchive(bundleRoot, reference, maxCompressedBytes));
   } catch (error) {
     errors.push(packetError(artifact, field, errorMessage(error)));
     return null;
@@ -368,7 +368,7 @@ function resolveReviewRecord(
   errors: ArtifactValidationError[],
 ): Digest | null {
   try {
-    const bytes = resolveBundleArtifact(bundleRoot, reference);
+    const bytes = resolveBundleArtifact(bundleRoot, reference, MAX_TASK_PACKET_METADATA_BYTES);
     const record = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
     const bound = record !== null && typeof record === "object" && !Array.isArray(record)
       ? (record as { preAdmissionDigest?: unknown }).preAdmissionDigest
