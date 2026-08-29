@@ -504,6 +504,9 @@ export function openBundleRegularFile(
     // chdir has entered a verified directory, later lookups are inode-relative.
     process.chdir(root.path);
     changedCwd = true;
+    if (!sameFileIdentity(fstatSync(root.descriptor), lstatSync("."))) {
+      throw new Error(`${label} "${locator}" bundle root changed during verification.`);
+    }
     let currentPath = root.path;
     const segments = locator.split("/");
     for (let index = 0; index < segments.length - 1; index += 1) {

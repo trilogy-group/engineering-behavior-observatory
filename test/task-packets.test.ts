@@ -1524,6 +1524,42 @@ test("component resolution stays bound to its verified bundle root", () => {
   }
 });
 
+test("bundle reads reject a root replacement during initial CWD setup", () => {
+  const original = createBundle();
+  const outside = mkdtempSync(join(tmpdir(), "ebo-root-cwd-outside-"));
+  const rootHandle = openBundleRoot(original.root);
+  const originalLstatSync = fs.lstatSync;
+  const mutableFs = fs as unknown as { lstatSync: typeof originalLstatSync };
+  let swapped = false;
+  mutableFs.lstatSync = ((path: fs.PathLike, ...args: Parameters<typeof originalLstatSync> extends [fs.PathLike, ...infer Rest] ? Rest : never) => {
+    const result = originalLstatSync(path, ...args);
+    if (!swapped && path === rootHandle.path) {
+      swapped = true;
+      renameSync(original.root, `${original.root}-original`);
+      symlinkSync(outside, original.root);
+    }
+    return result;
+  }) as typeof originalLstatSync;
+  syncBuiltinESMExports();
+  try {
+    assert.throws(
+      () => resolveBundleArtifactDigest(original.root, {
+        locator: "verifier.sh",
+        digest: original.packet.restricted.verifier.digest,
+      }, rootHandle),
+      /bundle root changed/,
+    );
+    assert.equal(swapped, true);
+  } finally {
+    mutableFs.lstatSync = originalLstatSync;
+    syncBuiltinESMExports();
+    closeBundleRoot(rootHandle);
+    rmSync(original.root, { force: true });
+    rmSync(`${original.root}-original`, { force: true, recursive: true });
+    rmSync(outside, { force: true, recursive: true });
+  }
+});
+
 test("bundle reads reject an intermediate directory swap", () => {
   const { root } = createBundle(packetFixture("task-packet.proposed.v1.json"));
   const outside = mkdtempSync(join(tmpdir(), "ebo-read-outside-"));
