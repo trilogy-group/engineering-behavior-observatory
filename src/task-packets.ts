@@ -331,6 +331,12 @@ export function freezeTaskPacket(
     if (postPublicationMismatches.length > 0) {
       throw new Error(`Task packet changed after freeze publication: ${postPublicationMismatches.join(", ")}.`);
     }
+    resolveBundleArtifact(
+      bundleRoot,
+      { locator: freezeLocator, digest: write.digest },
+      MAX_TASK_PACKET_METADATA_BYTES,
+      root,
+    );
     return candidate;
   } finally {
     closeBundleRoot(root);

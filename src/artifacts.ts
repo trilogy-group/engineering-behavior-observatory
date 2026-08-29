@@ -9,11 +9,13 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readSync,
   realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import type { BigIntStats, Stats } from "node:fs";
 import { lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -270,7 +272,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
       let descriptor: number | undefined;
 
       try {
-        descriptor = openSync(temporaryPath, "wx", 0o600);
+        descriptor = openSync(temporaryPath, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o600);
         assertPublishRootHandle(root, rootDescriptor, relativePath);
         assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
         writeFileSync(descriptor, bytes);
@@ -291,6 +293,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
           if (!sameFileIdentity(currentTemporary, published)) {
             throw new Error(`Artifact path "${relativePath}" published a different temporary entry.`);
           }
+          assertPublishedDigest(descriptor, digest, currentTemporary, fstatSync(descriptor, { bigint: true }), relativePath);
           created = true;
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === "EEXIST") {
@@ -696,6 +699,35 @@ function removeOwnedPath(path: string, descriptor: number): void {
     rmSync(quarantine, { force: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function assertPublishedDigest(
+  descriptor: number,
+  expected: Digest,
+  opened: Stats,
+  openedTimes: BigIntStats,
+  relativePath: string,
+): void {
+  const size = opened.size;
+  const hash = createHash("sha256");
+  const chunk = Buffer.allocUnsafe(64 * 1024);
+  for (let offset = 0; offset < size;) {
+    const read = readSync(descriptor, chunk, 0, Math.min(chunk.length, size - offset), offset);
+    if (read === 0) throw new Error(`Artifact path "${relativePath}" changed while it was being published.`);
+    hash.update(chunk.subarray(0, read));
+    offset += read;
+  }
+  const trailing = Buffer.allocUnsafe(1);
+  if (readSync(descriptor, trailing, 0, 1, size) !== 0) {
+    throw new Error(`Artifact path "${relativePath}" changed while it was being published.`);
+  }
+  const completed = fstatSync(descriptor);
+  const completedTimes = fstatSync(descriptor, { bigint: true });
+  if (!sameFileIdentity(opened, completed) || completed.size !== size
+      || completedTimes.mtimeNs !== openedTimes.mtimeNs || completedTimes.ctimeNs !== openedTimes.ctimeNs
+      || hash.digest("hex") !== expected.value) {
+    throw new Error(`Artifact path "${relativePath}" changed while it was being published.`);
   }
 }
 
