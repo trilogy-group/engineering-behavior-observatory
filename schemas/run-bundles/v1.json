@@ -30,6 +30,29 @@
         "id": { "$ref": "#/$defs/identifier" }
       }
     },
+    "verifierReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["locator", "digest"],
+      "properties": {
+        "locator": { "$ref": "#/$defs/relativePath" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "format": { "enum": ["commonjs", "module"] }
+      }
+    },
+    "diagnosticSourceBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verifierId", "stream", "locator", "digest", "sizeBytes", "truncated"],
+      "properties": {
+        "verifierId": { "$ref": "#/$defs/identifier" },
+        "stream": { "enum": ["stdout", "stderr"] },
+        "locator": { "$ref": "#/$defs/relativePath" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "sizeBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "truncated": { "type": "boolean" }
+      }
+    },
     "evidenceDescriptor": {
       "type": "object",
       "additionalProperties": false,
@@ -54,6 +77,7 @@
             "telemetry",
             "workspace",
             "verifier",
+            "diagnostic",
             "capture-report",
             "export-manifest"
           ]
@@ -66,7 +90,9 @@
         "sizeBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
         "sharingClass": { "$ref": "#/$defs/sharingClass" },
         "relativePath": { "$ref": "#/$defs/relativePath" },
+        "fingerprint": { "$ref": "#/$defs/digest" },
         "nativeReference": { "$ref": "#/$defs/nativeReference" },
+        "diagnosticSource": { "$ref": "#/$defs/diagnosticSourceBinding" },
         "sanitizedFrom": {
           "type": "object",
           "additionalProperties": false,
@@ -105,6 +131,13 @@
         {
           "if": {
             "properties": { "kind": { "enum": ["workspace", "verifier"] } },
+            "required": ["kind"]
+          },
+          "then": { "properties": { "authority": { "const": "outcome" } } }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "diagnostic" } },
             "required": ["kind"]
           },
           "then": { "properties": { "authority": { "const": "outcome" } } }
@@ -257,6 +290,7 @@
               "uniqueItems": true,
               "items": { "$ref": "#/$defs/runtimeComponent" }
             },
+            "verifier": { "$ref": "#/$defs/verifierReference" },
             "native": {
               "type": "object",
               "additionalProperties": false,
@@ -324,6 +358,31 @@
         "version": { "$ref": "#/$defs/identifier" }
       }
     },
+    "diagnosticOrigin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stream", "locator", "digest", "sizeBytes", "truncated"],
+      "properties": {
+        "stream": { "enum": ["stdout", "stderr"] },
+        "locator": { "$ref": "#/$defs/relativePath" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "sizeBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "diagnosticReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stream", "locator", "digest", "sizeBytes", "truncated"],
+      "properties": {
+        "stream": { "enum": ["stdout", "stderr"] },
+        "locator": { "$ref": "#/$defs/relativePath" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "sizeBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "truncated": { "type": "boolean" },
+        "source": { "$ref": "#/$defs/diagnosticOrigin" }
+      }
+    },
     "verifierResult": {
       "type": "object",
       "additionalProperties": false,
@@ -332,6 +391,10 @@
         "schemaVersion": { "const": "verifier-result/v1" },
         "bundleId": { "$ref": "#/$defs/identifier" },
         "status": { "enum": ["passed", "failed", "error", "not-run"] },
+        "durationMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "error": { "type": "string", "maxLength": 4096, "pattern": ".*\\S.*" },
+        "errorRedacted": { "type": "boolean" },
+        "verifier": { "$ref": "#/$defs/verifierReference" },
         "exitCode": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
         "workspace": {
           "type": "object",
@@ -339,7 +402,8 @@
           "required": ["artifactId", "digest"],
           "properties": {
             "artifactId": { "$ref": "#/$defs/identifier" },
-            "digest": { "$ref": "#/$defs/digest" }
+            "digest": { "$ref": "#/$defs/digest" },
+            "fingerprint": { "$ref": "#/$defs/digest" }
           }
         },
         "assertions": {
@@ -353,6 +417,12 @@
               "status": { "enum": ["passed", "failed", "not-run"] }
             }
           }
+        },
+        "diagnostics": {
+          "type": "array",
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/diagnosticReference" },
+          "uniqueItems": true
         }
       },
       "allOf": [
@@ -375,8 +445,9 @@
         {
           "if": { "properties": { "status": { "const": "failed" } }, "required": ["status"] },
           "then": {
-            "required": ["workspace"],
+            "required": ["workspace", "exitCode"],
             "properties": {
+              "exitCode": { "not": { "const": 0 } },
               "assertions": {
                 "contains": {
                   "properties": { "status": { "const": "failed" } },
@@ -389,8 +460,9 @@
         {
           "if": { "properties": { "status": { "const": "not-run" } }, "required": ["status"] },
           "then": {
-            "not": { "anyOf": [{ "required": ["exitCode"] }, { "required": ["workspace"] }] },
+            "not": { "anyOf": [{ "required": ["durationMs"] }, { "required": ["exitCode"] }, { "required": ["workspace"] }] },
             "properties": {
+              "diagnostics": { "maxItems": 0 },
               "assertions": {
                 "items": {
                   "properties": { "status": { "const": "not-run" } },
@@ -398,6 +470,25 @@
                 }
               }
             }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["passed", "failed"] } }, "required": ["status"] },
+          "then": { "not": { "required": ["error"] } }
+        },
+        {
+          "if": { "properties": { "status": { "const": "error" } }, "required": ["status"] },
+          "then": { "required": ["error"] }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["passed", "failed", "not-run"] } }, "required": ["status"] },
+          "then": { "not": { "required": ["errorRedacted"] } }
+        },
+        {
+          "if": { "properties": { "errorRedacted": { "const": true } }, "required": ["errorRedacted"] },
+          "then": {
+            "required": ["error"],
+            "properties": { "error": { "const": "[redacted]" } }
           }
         }
       ]

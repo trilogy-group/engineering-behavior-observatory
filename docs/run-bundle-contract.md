@@ -109,6 +109,105 @@ result contains only passed assertions and, when retained, an exit code of zero.
 Every passed or failed verifier also names the retained workspace artifact and
 digest it evaluated.
 
+The executor receives both the retained workspace artifact reference and a
+separate live-workspace fingerprint; the executor options require the retained
+workspace reference to carry that same fingerprint. The v1 live-workspace fingerprint hashes
+the root and sorted descendant relative paths, entry kinds, permission mode
+bits, reproducible modification times, and file bytes; hard-linked files,
+symbolic links, and unsupported entry kinds are rejected. POSIX snapshots use
+the metadata-preserving system copy path with nanosecond modification times;
+the Windows fallback uses Node's reproducible millisecond precision. The
+fingerprint must
+match the live workspace before and after its private snapshot is created. The
+executor then evaluates that detached snapshot, while the artifact digest
+remains the digest of the retained workspace evidence. The complete executor
+result records the snapshot fingerprint alongside the workspace reference, and
+manifest workspace descriptors may carry it for later terminal binding checks.
+
+Verifier execution uses a small subprocess boundary. The executor resolves the
+digest-pinned restricted verifier from its task-bundle root, stages it in a
+private trusted subdirectory separate from the snapshot, and invokes the pinned
+Node runtime with the staged verifier path followed by the snapshot workspace
+path. Launcher options cannot replace the staged entry point, and the child
+environment contains only fixed coordinator variables; `PATH` points to a
+dedicated empty trusted-stage directory, while Node preload, POSIX dynamic-loader,
+shell-startup, and interpreter module-path injection are unavailable. Verifier
+tools must be invoked by absolute pinned paths. Normal completion is reported
+over a parent-owned extra stdio channel rather than a marker file or inherited
+environment variable, so ordinary workspace descendants cannot recreate it. The
+restricted implementation and any
+reference solution remain outside that workspace. `.mjs`/`.cjs` locators retain
+their module semantics; ambiguous `.js` or extensionless artifacts default to
+CommonJS unless the caller supplies `moduleFormat: "module"`, and explicit
+formats cannot contradict an unambiguous suffix. The verifier writes one JSON
+object to stdout:
+
+```json
+{
+  "assertions": [
+    { "id": "unit-tests", "status": "passed" },
+    { "id": "lint", "status": "failed" }
+  ]
+}
+```
+
+Each assertion object contains exactly `id` and `status`; undeclared fields,
+non-string statuses, duplicate IDs, and IDs longer than 256 characters are
+verifier errors rather than silently normalized away.
+
+The executor records the selected verifier's locator, digest, and module format, the assertion
+list, `durationMs`, observed `exitCode` when the process exits normally, and a
+`status` of `passed`, `failed`, or `error`. A run manifest may declare the
+task-bound verifier reference under `run.verifier`; manifest validation then
+requires each retained unsanitized verifier result to identify that same
+reference. A valid assertion failure is a task failure; timeout, crash, invalid
+UTF-8/JSON, duplicate or invalid assertion, and an exit/assertion contradiction
+are verifier errors. A failed assertion therefore requires a nonzero verifier
+exit; a zero exit paired with a failure is not a task result. `not-run` remains
+available for a caller that records a verifier which was never started, and its
+assertions must all be `not-run`. Stdout
+and stderr are drained without an unbounded buffer and persisted to private
+files while the process runs, so a partial attempt retains output even when
+execution ends abnormally. A timeout terminates the verifier process group (or
+process tree on Windows). Each retained stream is represented by an
+execution-specific diagnostic reference with a `stream` (`stdout` or `stderr`),
+bundle-relative `locator`, SHA-256 `digest`, retained `sizeBytes`, and a
+`truncated` flag. Sanitized verifier results may retain diagnostics only when
+each one carries a source diagnostic origin and points to a separately
+classified `diagnostic` evidence sidecar. The sidecar's path, digest, and size
+must match exactly, and it must be included in the export. The result remains
+valid even when diagnostics are truncated.
+The `durationMs` and `diagnostics` fields are optional for older v1 records;
+new executor results include both. An `error` result requires a nonempty
+explanation and may omit `workspace` when the verifier failed before a
+workspace was available; it must not invent a workspace binding. Coordinator
+failures such as timeout, launch, parse, or
+cleanup errors are recorded in the result's `error` field; the native stderr
+diagnostic remains byte-for-byte separate. `error` is not valid on passed or
+failed results. Sanitized verifier derivatives preserve `durationMs` and
+`error`; sensitive error text may use `errorRedacted: true` with the literal
+`[redacted]`, but cannot be replaced by an unmarked claim. The process-group boundary cannot
+contain a verifier that deliberately creates a new POSIX session; callers that
+run untrusted verifiers need an OS sandbox or equivalent isolation boundary.
+
+The result serializer validates `verifier-result/v1` before writing it. The
+diagnostic references are read back and digest-checked before the result is
+saved, so a result cannot point at missing or changed diagnostic bytes. Result
+paths use no-clobber persistence: an existing result, manifest, or other
+retained evidence file is never replaced by a later verifier write, and a
+crash between the no-clobber link and temporary-name cleanup is recovered on
+the next verified read. Manifest
+validation also cross-checks each retained verifier's `bundleId` and workspace
+artifact ID/digest against the containing bundle's retained evidence. The
+`manifest.json` path and its descendants are reserved for the containing
+manifest and cannot be used for verifier results or diagnostic directories.
+The CLI applies duplicate-key detection to standalone verifier JSON before
+parsing, just as manifest-nested verifier artifacts and subprocess output are
+checked before interpretation. Manifest validation also requires a retained
+passed verifier for a completed run and a retained failed verifier for a
+task-failed run, and checks each verifier's status against that terminal
+outcome before the bundle is accepted.
+
 ## Sharing boundary
 
 A partner export that lists restricted native artifacts is `blocked`. A `ready`

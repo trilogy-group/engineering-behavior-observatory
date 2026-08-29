@@ -42,3 +42,27 @@ export type {
   TaskCondition,
   TaskConditionSet,
 } from "./contracts.js";
+export {
+  digestWorkspace,
+  executeVerifier,
+  serializeVerifierResult,
+  writeVerifierResult,
+} from "./verifiers.js";
+export type {
+  CompleteVerifierResult,
+  DiagnosticOrigin,
+  DiagnosticReference,
+  ExecuteVerifierOptions,
+  VerifierAssertion,
+  VerifierAssertionStatus,
+  VerifierErrorResult,
+  VerifierExecutionReference,
+  VerifierFailedResult,
+  VerifierNotRunResult,
+  VerifierNotRunAssertion,
+  VerifierPassedAssertion,
+  VerifierPassedResult,
+  VerifierResult,
+  VerifierRunResult,
+  VerifierWorkspace,
+} from "./verifiers.js";
