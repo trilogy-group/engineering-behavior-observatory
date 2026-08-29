@@ -229,12 +229,8 @@ async function assertWorkspaceSnapshotContent(snapshotPath: string, expected: Wo
 
 async function copyWorkspaceSnapshot(source: string, destination: string): Promise<void> {
   if (process.platform !== "win32") {
-    try {
-      await execFileAsync("/bin/cp", ["-a", source, destination]);
-      return;
-    } catch {
-      await rm(destination, { force: true, recursive: true }).catch(() => undefined);
-    }
+    await execFileAsync("/bin/cp", ["-a", source, destination]);
+    return;
   }
   await cp(source, destination, { recursive: true, force: false, preserveTimestamps: true });
   await restoreWorkspaceTimestamps(source, destination);

@@ -115,8 +115,9 @@ workspace reference to carry that same fingerprint. The v1 live-workspace finger
 the root and sorted descendant relative paths, entry kinds, permission mode
 bits, reproducible modification times, and file bytes; hard-linked files,
 symbolic links, and unsupported entry kinds are rejected. POSIX snapshots use
-nanosecond modification times; the Windows fallback uses Node's reproducible
-millisecond precision. The fingerprint must
+the metadata-preserving system copy path with nanosecond modification times;
+the Windows fallback uses Node's reproducible millisecond precision. The
+fingerprint must
 match the live workspace before and after its private snapshot is created. The
 executor then evaluates that detached snapshot, while the artifact digest
 remains the digest of the retained workspace evidence. The complete executor
