@@ -2342,8 +2342,14 @@ function movePathToAttempt(path: string, descriptor?: number): string {
       }
       if (retiredIdentity.isDirectory()) {
         // Directories cannot be hard-linked and Node has no no-replace
-        // directory rename. Keep a raced directory under failed evidence
-        // rather than risk replacing a newer source entry.
+        // directory rename. Keep a raced directory under failed evidence and
+        // reserve the vacant source pathname with a blocking directory rather
+        // than risk allowing a retry to publish over displaced evidence.
+        try {
+          mkdirSync(path, 0o700);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        }
         return target;
       }
       let restored = false;
