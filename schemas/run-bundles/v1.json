@@ -411,6 +411,7 @@
           "then": {
             "not": { "anyOf": [{ "required": ["durationMs"] }, { "required": ["exitCode"] }, { "required": ["workspace"] }] },
             "properties": {
+              "diagnostics": { "maxItems": 0 },
               "assertions": {
                 "items": {
                   "properties": { "status": { "const": "not-run" } },

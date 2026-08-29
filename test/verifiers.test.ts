@@ -183,6 +183,27 @@ test("keeps verifier staging outside a workspace-local temp directory", async ()
   }
 });
 
+test("rejects an artifact root inside the workspace before creating it", async () => {
+  const root = await createRoots();
+  const artifactRoot = join(root.workspace, "bundle-output");
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "should-not-run", status: "passed" }] }));
+    `);
+    await assert.rejects(() => executeVerifier({
+      bundleId: "bundle-test",
+      verifierRoot: root.verifier,
+      verifier,
+      workspacePath: root.workspace,
+      workspace: { artifactId: "workspace", digest: workspaceDigest },
+      artifactRoot,
+    }), /Artifact and workspace roots/);
+    assert.equal(existsSync(artifactRoot), false);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("rejects overlong execution identifiers before starting", async () => {
   const root = await createRoots();
   try {
@@ -351,6 +372,15 @@ test("represents a not-run verifier without a workspace", () => {
 
   assert.doesNotThrow(() => serializeVerifierResult(result));
   assert.throws(() => serializeVerifierResult({ ...result, durationMs: 0 }), /must NOT be valid|durationMs/);
+  assert.throws(() => serializeVerifierResult({
+    ...result,
+    diagnostics: [{
+      locator: "diagnostics.log",
+      digest: `sha256:${"a".repeat(64)}`,
+      sizeBytes: 0,
+      truncated: false,
+    }],
+  }), /more than 0|must NOT be valid/);
 });
 
 test("represents a pre-workspace verifier error without inventing a workspace", () => {

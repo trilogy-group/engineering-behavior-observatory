@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
-import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
 
@@ -105,10 +105,11 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
 
   const workspacePath = await realpath(options.workspacePath);
   const verifierRoot = await realpath(options.verifierRoot);
-  const artifactRoot = await prepareRoot(options.artifactRoot);
+  const artifactCandidate = await resolveRootPath(options.artifactRoot);
   assertDisjointRoots(workspacePath, verifierRoot, "Verifier and workspace roots");
-  assertDisjointRoots(workspacePath, artifactRoot, "Artifact and workspace roots");
-  assertDisjointRoots(verifierRoot, artifactRoot, "Verifier and artifact roots");
+  assertDisjointRoots(workspacePath, artifactCandidate, "Artifact and workspace roots");
+  assertDisjointRoots(verifierRoot, artifactCandidate, "Verifier and artifact roots");
+  const artifactRoot = await prepareRoot(artifactCandidate);
 
   const diagnosticDirectory = options.diagnosticDirectory ?? "diagnostics";
   if (!isSafeArtifactRelativePath(diagnosticDirectory)) {
@@ -266,6 +267,18 @@ function isValidIdentifier(value: unknown): value is string {
 async function prepareRoot(root: string): Promise<string> {
   await mkdir(root, { recursive: true });
   return realpath(root);
+}
+
+async function resolveRootPath(root: string): Promise<string> {
+  const absoluteRoot = resolve(root);
+  try {
+    return await realpath(absoluteRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const parent = dirname(absoluteRoot);
+    if (parent === absoluteRoot) return absoluteRoot;
+    return resolve(await resolveRootPath(parent), basename(absoluteRoot));
+  }
 }
 
 async function createStagingRoot(workspacePath: string): Promise<string> {

@@ -161,12 +161,22 @@ function nestedVerifierDiagnosticErrors(
   } catch {
     return [];
   }
-  if (!isRecord(result) || !Array.isArray(result.diagnostics)) return [];
+  if (!isRecord(result) || result.diagnostics === undefined) return [];
+  if (!Array.isArray(result.diagnostics)) {
+    return [{ artifact, schemaVersion: "run-manifest/v1", field: `/evidence/${escapeJsonPointer(verifierId)}/diagnostics`, message: "Verifier diagnostics must be an array." }];
+  }
 
   const errors: ArtifactValidationError[] = [];
-  for (const diagnostic of result.diagnostics) {
-    if (!isRecord(diagnostic) || typeof diagnostic.locator !== "string"
-        || typeof diagnostic.digest !== "string" || typeof diagnostic.sizeBytes !== "number") continue;
+  for (const [index, diagnostic] of result.diagnostics.entries()) {
+    if (!isRecord(diagnostic) || Object.keys(diagnostic).length !== 4 || !Object.hasOwn(diagnostic, "locator")
+        || !Object.hasOwn(diagnostic, "digest") || !Object.hasOwn(diagnostic, "sizeBytes")
+        || !Object.hasOwn(diagnostic, "truncated") || typeof diagnostic.locator !== "string"
+        || typeof diagnostic.digest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(diagnostic.digest)
+        || !Number.isSafeInteger(diagnostic.sizeBytes) || (diagnostic.sizeBytes as number) < 0
+        || typeof diagnostic.truncated !== "boolean") {
+      errors.push({ artifact, schemaVersion: "run-manifest/v1", field: `/evidence/${escapeJsonPointer(verifierId)}/diagnostics/${index}`, message: "Verifier diagnostic reference is malformed." });
+      continue;
+    }
     const normalizedLocator = diagnostic.locator.toLowerCase();
     if (normalizedLocator === "manifest.json" || evidencePaths.has(normalizedLocator)
         || nestedDiagnosticPaths.has(normalizedLocator)) {
