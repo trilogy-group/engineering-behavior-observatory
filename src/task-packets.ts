@@ -426,69 +426,83 @@ function statusTaskPacketWithRoot(
   let currentInspection = inspection;
   let mismatches = compareFreezeRecord(record, currentInspection);
   if (inspection.errors.length === 0 && mismatches.length === 0) {
-    currentInspection = admitTaskPacketWithRoot(bundleRoot, packetLocator, root);
-    if (currentInspection.errors.length > 0 || currentInspection.packet?.admission.status !== "admitted") {
-      return {
-        status: currentInspection.errors.length > 0 ? "invalid" : "unadmitted",
-        packetId: currentInspection.packet?.id ?? packetId,
-        packetDigest: currentInspection.packetDigest,
-        aggregateDigest: record.aggregateDigest,
-        freezeLocator,
-        mismatches: ["admission"],
-        errors: currentInspection.errors,
-      };
-    }
-    mismatches = compareFreezeRecord(record, currentInspection);
-    try {
-      const refreshed = readOptionalJson(bundleRoot, freezeLocator, true, root);
-      if (refreshed === undefined) {
+    let previousInspection = inspection;
+    let previousRecord = record;
+    let previousFreeze = freeze;
+    let settled = false;
+    let lastMismatches = ["snapshot"];
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const nextInspection = admitTaskPacketWithRoot(bundleRoot, packetLocator, root);
+      if (nextInspection.errors.length > 0 || nextInspection.packet?.admission.status !== "admitted") {
         return {
-          status: "invalid",
-          packetId: currentInspection.packet?.id ?? packetId,
-          packetDigest: currentInspection.packetDigest,
-          aggregateDigest: null,
-          freezeLocator,
-          mismatches: ["freeze-record"],
-          errors: [...currentInspection.errors, freezeError(freezeLocator, "Freeze record disappeared after final inspection.")],
-        };
-      }
-      const refreshedErrors = validateFreezeRecord(freezeLocator, refreshed);
-      if (refreshedErrors.length > 0) {
-        return {
-          status: "invalid",
-          packetId: currentInspection.packet?.id ?? packetId,
-          packetDigest: currentInspection.packetDigest,
-          aggregateDigest: null,
-          freezeLocator,
-          mismatches: ["freeze-record"],
-          errors: [...currentInspection.errors, ...refreshedErrors],
-        };
-      }
-      record = refreshed as TaskPacketFreezeRecord;
-      const pairedInspection = admitTaskPacketWithRoot(bundleRoot, packetLocator, root);
-      if (pairedInspection.errors.length > 0 || pairedInspection.packet?.admission.status !== "admitted") {
-        return {
-          status: pairedInspection.errors.length > 0 ? "invalid" : "unadmitted",
-          packetId: pairedInspection.packet?.id ?? packetId,
-          packetDigest: pairedInspection.packetDigest,
-          aggregateDigest: record.aggregateDigest,
+          status: nextInspection.errors.length > 0 ? "invalid" : "unadmitted",
+          packetId: nextInspection.packet?.id ?? packetId,
+          packetDigest: nextInspection.packetDigest,
+          aggregateDigest: previousRecord.aggregateDigest,
           freezeLocator,
           mismatches: ["admission"],
-          errors: pairedInspection.errors,
+          errors: nextInspection.errors,
         };
       }
-      currentInspection = pairedInspection;
-      mismatches = compareFreezeRecord(record, currentInspection);
-    } catch (error) {
-      return {
-        status: "invalid",
-        packetId: currentInspection.packet?.id ?? packetId,
-        packetDigest: currentInspection.packetDigest,
-        aggregateDigest: null,
-        freezeLocator,
-        mismatches: ["freeze-record"],
-        errors: [...currentInspection.errors, freezeError(freezeLocator, errorMessage(error))],
-      };
+
+      let nextFreeze: unknown | undefined;
+      try {
+        nextFreeze = readOptionalJson(bundleRoot, freezeLocator, true, root);
+      } catch (error) {
+        return {
+          status: "invalid",
+          packetId: nextInspection.packet?.id ?? packetId,
+          packetDigest: nextInspection.packetDigest,
+          aggregateDigest: null,
+          freezeLocator,
+          mismatches: ["freeze-record"],
+          errors: [...nextInspection.errors, freezeError(freezeLocator, errorMessage(error))],
+        };
+      }
+      if (nextFreeze === undefined) {
+        return {
+          status: "invalid",
+          packetId: nextInspection.packet?.id ?? packetId,
+          packetDigest: nextInspection.packetDigest,
+          aggregateDigest: null,
+          freezeLocator,
+          mismatches: ["freeze-record"],
+          errors: [...nextInspection.errors, freezeError(freezeLocator, "Freeze record disappeared during snapshot.")],
+        };
+      }
+      const nextErrors = validateFreezeRecord(freezeLocator, nextFreeze);
+      if (nextErrors.length > 0) {
+        return {
+          status: "invalid",
+          packetId: nextInspection.packet?.id ?? packetId,
+          packetDigest: nextInspection.packetDigest,
+          aggregateDigest: null,
+          freezeLocator,
+          mismatches: ["freeze-record"],
+          errors: [...nextInspection.errors, ...nextErrors],
+        };
+      }
+
+      const nextRecord = nextFreeze as TaskPacketFreezeRecord;
+      const packetDrift = compareFreezeRecord(previousRecord, nextInspection);
+      const freezeDrift = !sameDigest(digestMetadata(previousFreeze), digestMetadata(nextFreeze));
+      const nextMismatches = compareFreezeRecord(nextRecord, nextInspection);
+      lastMismatches = [...packetDrift, ...(freezeDrift ? ["freeze-record"] : []), ...nextMismatches];
+      if (lastMismatches.length === 0) {
+        currentInspection = nextInspection;
+        record = nextRecord;
+        mismatches = [];
+        settled = true;
+        break;
+      }
+      previousInspection = nextInspection;
+      previousRecord = nextRecord;
+      previousFreeze = nextFreeze;
+    }
+    if (!settled) {
+      currentInspection = previousInspection;
+      record = previousRecord;
+      mismatches = lastMismatches;
     }
   }
   return {
