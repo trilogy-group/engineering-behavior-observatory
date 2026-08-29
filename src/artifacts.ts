@@ -853,7 +853,8 @@ function recoverInterruptedStaging(path: string, markerPath: string, relativePat
   try {
     descriptor = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const stat = fstatSync(descriptor);
-    if (!stat.isFile() || !isRecoverableStagingLink(path, stat) || (stat.mode & 0o777) !== 0o600) {
+    if (!stat.isFile() || !isRecoverableStagingLink(path, markerPath, relativePath, stat)
+        || (stat.mode & 0o777) !== 0o600) {
       throw new Error(`Publication quarantine "${path}" is already occupied.`);
     }
     const bindingPath = `${markerPath}.binding`;
@@ -866,7 +867,9 @@ function recoverInterruptedStaging(path: string, markerPath: string, relativePat
         throw new Error(`Publication quarantine "${path}" is already occupied.`);
       }
     }
+    const stagingPath = readStagingPath(markerPath, relativePath);
     movePathToAttempt(path, descriptor);
+    if (stagingPath !== undefined) moveOptionalPathToAttempt(stagingPath);
     moveMarkerToAttempt(markerPath, true);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
@@ -886,8 +889,34 @@ function recoverInterruptedMarker(path: string, relativePath: string): void {
   if (typeof marker.stagingPath === "string") moveOptionalPathToAttempt(marker.stagingPath);
 }
 
-function isRecoverableStagingLink(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
-  return target.nlink === 1 || (target.nlink === 2 && countFailedPublicationLinks(path, target) === 1);
+function isRecoverableStagingLink(
+  path: string,
+  markerPath: string,
+  relativePath: string,
+  target: { dev: number; ino: number; nlink: number },
+): boolean {
+  const staging = hasDeclaredStagingAlias(path, markerPath, relativePath, target);
+  const failed = countFailedPublicationLinks(path, target);
+  return target.nlink === 1
+    || (staging && target.nlink === 2)
+    || (staging && failed === 1 && target.nlink === 3)
+    || (!staging && failed === 1 && target.nlink === 2);
+}
+
+function hasDeclaredStagingAlias(
+  path: string,
+  markerPath: string,
+  relativePath: string,
+  target: { dev: number; ino: number },
+): boolean {
+  const stagingPath = readStagingPath(markerPath, relativePath);
+  if (stagingPath === undefined) return false;
+  try {
+    return sameFileIdentity(target, lstatSync(resolve(dirname(path), stagingPath)));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 function countFailedPublicationLinks(path: string, target: { dev: number; ino: number }): number {
@@ -1167,6 +1196,16 @@ function hasStagingAlias(path: string, target: { dev: number; ino: number }): bo
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     return false;
+  }
+}
+
+function readStagingPath(path: string, relativePath: string): string | undefined {
+  try {
+    const marker = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return isStagingMarker(marker, relativePath) ? marker.stagingPath as string : undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    return undefined;
   }
 }
 
