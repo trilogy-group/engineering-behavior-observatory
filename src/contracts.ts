@@ -1012,13 +1012,14 @@ function parseTarArchive(bytes: Buffer, maxMembers: number): { entries: ArchiveE
     const rawName = readTarText(header.subarray(0, 100));
     const prefix = readTarText(header.subarray(345, 500));
     const magic = readTarText(header.subarray(257, 263));
+    const version = readTarText(header.subarray(263, 265));
     if (magic !== "" && magic !== "ustar" && magic !== "ustar ") {
       throw new Error("Sanitized task archive contains an unsupported TAR header format.");
     }
-    if (magic !== "ustar" && magic !== "ustar " && prefix !== "") {
+    if (prefix !== "" && !(magic === "ustar" && version === "00")) {
       throw new Error("Sanitized task archive contains a TAR prefix without USTAR magic.");
     }
-    const headerPath = magic === "ustar" || magic === "ustar " ? `${prefix === "" ? "" : `${prefix}/`}${rawName}` : rawName;
+    const headerPath = prefix === "" ? rawName : `${prefix}/${rawName}`;
     const path = pendingPax?.path ?? pendingPath ?? headerPath;
     if (pendingPax?.size !== undefined && pendingPax.size !== headerSize) {
       throw new Error("Sanitized task archive PAX size does not match TAR member framing.");

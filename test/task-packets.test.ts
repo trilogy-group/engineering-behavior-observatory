@@ -79,6 +79,17 @@ function tarLegacyPrefixArchive(): Buffer {
   return gzipSync(archive);
 }
 
+function tarOldGnuPrefixArchive(): Buffer {
+  const archive = gunzipSync(tarGzipArchive([{ path: "README.md", bytes: Buffer.from("safe") }]));
+  archive.write("legacy-prefix", 345, "ascii");
+  archive.write("ustar ", 257, "ascii");
+  archive.write(" \0", 263, "ascii");
+  archive.fill(0x20, 148, 156);
+  const checksum = archive.subarray(0, 512).reduce((sum, value) => sum + value, 0);
+  archive.write(checksum.toString(8).padStart(6, "0") + "\0 ", 148, "ascii");
+  return gzipSync(archive);
+}
+
 function packetFixture(name = "task-packet.valid.v1.json"): TaskPacket {
   return JSON.parse(readFileSync(fixturePath(name), "utf8")) as TaskPacket;
 }
@@ -430,6 +441,11 @@ test("inspection validates fixture archives before admission", () => {
     },
     {
       bytes: tarLegacyPrefixArchive(),
+      expected: /prefix without USTAR/,
+      mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
+    },
+    {
+      bytes: tarOldGnuPrefixArchive(),
       expected: /prefix without USTAR/,
       mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
     },
