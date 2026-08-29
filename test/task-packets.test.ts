@@ -367,6 +367,14 @@ test("inspection validates fixture archives before admission", () => {
       expected: /invalid PAX size/,
       mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
     },
+    {
+      bytes: tarGzipArchive([
+        { path: "PaxHeader", bytes: Buffer.from("27 GNU.sparse.realsize=100\n"), type: "x" },
+        { path: "README.md", bytes: Buffer.from("safe") },
+      ]),
+      expected: /unsupported sparse PAX/,
+      mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
+    },
   ];
 
   for (const invalidCase of invalidCases) {
