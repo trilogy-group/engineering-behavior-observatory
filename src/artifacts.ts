@@ -45,6 +45,76 @@ export function verifyDigest(bytes: Uint8Array, expected: Digest): boolean {
   return expected.algorithm === actual.algorithm && expected.value === actual.value;
 }
 
+export function assertNoDuplicateJsonKeys(text: string): void {
+  let index = 0;
+
+  const skipWhitespace = () => {
+    while (/\s/.test(text[index] ?? "")) index += 1;
+  };
+  const readString = (): string => {
+    const start = index;
+    index += 1;
+    while (index < text.length) {
+      if (text[index] === "\\") index += 2;
+      else if (text[index++] === '"') return text.slice(start, index);
+    }
+    throw new Error("Verifier output contains an unterminated JSON string.");
+  };
+  const readValue = (): void => {
+    skipWhitespace();
+    if (text[index] === "{") readObject();
+    else if (text[index] === "[") readArray();
+    else if (text[index] === '"') readString();
+    else while (index < text.length && !/[\s,\]}]/.test(text[index]!)) index += 1;
+  };
+  const readObject = (): void => {
+    index += 1;
+    skipWhitespace();
+    const keys = new Set<string>();
+    if (text[index] === "}") {
+      index += 1;
+      return;
+    }
+    while (index < text.length) {
+      skipWhitespace();
+      const key = JSON.parse(readString()) as string;
+      if (keys.has(key)) throw new Error("Verifier output contains duplicate JSON object keys.");
+      keys.add(key);
+      skipWhitespace();
+      index += 1;
+      readValue();
+      skipWhitespace();
+      if (text[index] === "}") {
+        index += 1;
+        return;
+      }
+      index += 1;
+    }
+    throw new Error("Verifier output contains an unterminated JSON object.");
+  };
+  const readArray = (): void => {
+    index += 1;
+    skipWhitespace();
+    if (text[index] === "]") {
+      index += 1;
+      return;
+    }
+    while (index < text.length) {
+      readValue();
+      skipWhitespace();
+      if (text[index] === "]") {
+        index += 1;
+        return;
+      }
+      index += 1;
+    }
+    throw new Error("Verifier output contains an unterminated JSON array.");
+  };
+
+  readValue();
+  skipWhitespace();
+}
+
 export function assertUniqueArtifactIdentities(identities: readonly ArtifactIdentity[]): void {
   const ids = new Set<string>();
   const paths = new Set<string>();
@@ -158,7 +228,9 @@ function nestedVerifierDiagnosticErrors(
   const scope = `/evidence/${escapeJsonPointer(verifierId)}`;
   let result: unknown;
   try {
-    result = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    result = JSON.parse(text);
+    assertNoDuplicateJsonKeys(text);
   } catch (error) {
     return [{ artifact, schemaVersion: "run-manifest/v1", field: scope, message: `Verifier artifact could not be parsed: ${error instanceof Error ? error.message : "invalid UTF-8 or JSON."}` }];
   }
@@ -183,8 +255,8 @@ function nestedVerifierDiagnosticErrors(
       continue;
     }
     const normalizedLocator = diagnostic.locator.toLowerCase();
-    if (normalizedLocator === "manifest.json" || evidencePaths.has(normalizedLocator)
-        || nestedDiagnosticPaths.has(normalizedLocator)) {
+    if (normalizedLocator === "manifest.json" || hasPortablePathCollision(normalizedLocator, evidencePaths)
+        || hasPortablePathCollision(normalizedLocator, nestedDiagnosticPaths)) {
       errors.push({ artifact, schemaVersion: "run-manifest/v1", field: `${scope}/diagnostics`, message: "Verifier diagnostics cannot alias retained evidence paths." });
       continue;
     }
@@ -207,6 +279,10 @@ function nestedVerifierDiagnosticErrors(
     }
   }
   return errors;
+}
+
+function hasPortablePathCollision(path: string, existingPaths: ReadonlySet<string>): boolean {
+  return [...existingPaths].some((existing) => existing === path || existing.startsWith(`${path}/`) || path.startsWith(`${existing}/`));
 }
 
 export function validateExportManifest(

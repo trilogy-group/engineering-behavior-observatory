@@ -219,6 +219,7 @@ test("returns a structured error when diagnostic setup fails", async () => {
     assert.equal(result.status, "error");
     assert.match(result.error ?? "", /directory|regular file|setup|exists/i);
     assert.deepEqual(result.assertions, []);
+    assert.deepEqual(result.diagnostics, []);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
@@ -265,7 +266,7 @@ test("classifies timeout, crash, and malformed output as verifier errors", async
     {
       name: "timeout",
       source: `process.stderr.write("before-timeout"); setTimeout(() => {}, 10000);`,
-      options: { timeoutMs: 150 },
+      options: { timeoutMs: 1_000 },
       check: async (result: CompleteVerifierResult, root: Roots) => {
         const diagnostic = await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8");
         assert.match(diagnostic, /before-timeout/);

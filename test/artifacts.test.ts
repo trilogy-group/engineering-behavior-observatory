@@ -227,6 +227,14 @@ test("validates nested verifier diagnostics against retained bundle bytes", asyn
       /Diagnostic|digest/,
     );
     await writeFile(diagnosticPath, diagnosticBytes);
+    const duplicateVerifierBytes = Buffer.from('{"schemaVersion":"verifier-result/v1","status":"failed","status":"passed"}');
+    await writeFile(verifierPath, duplicateVerifierBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(duplicateVerifierBytes).value}`;
+    verifierDescriptor.sizeBytes = duplicateVerifierBytes.length;
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /duplicate JSON object keys/,
+    );
     verifier.diagnostics = [{ locator: 42 }];
     const malformedVerifierBytes = Buffer.from(JSON.stringify(verifier));
     await writeFile(verifierPath, malformedVerifierBytes);
