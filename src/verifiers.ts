@@ -144,6 +144,29 @@ const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const RESERVED_MANIFEST_PATHS = new Set(["manifest.json"]);
 const execFileAsync = promisify(execFile);
+const VERIFIER_WRAPPER = `
+import { rm, writeFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+
+const [verifier, workspace, marker] = process.argv.slice(2);
+process.argv = [process.argv[0], verifier, workspace];
+let abnormal = false;
+const report = (error) => {
+  abnormal = true;
+  void rm(marker, { force: true }).catch(() => undefined);
+  console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+  process.exitCode = 1;
+};
+process.on("uncaughtException", report);
+process.on("unhandledRejection", report);
+try {
+  await import(pathToFileURL(verifier).href);
+  await new Promise((resolve) => setImmediate(resolve));
+  if (!abnormal) await writeFile(marker, "completed", { flag: "wx" });
+} catch (error) {
+  report(error);
+}
+`;
 
 export async function digestWorkspace(workspacePath: string): Promise<string> {
   const root = await realpath(workspacePath);
@@ -323,23 +346,30 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
         if (evaluatedWorkspaceFingerprint !== options.workspaceFingerprint) {
           throw new Error("Workspace snapshot metadata does not match the evaluated workspace.");
         }
-        const stagedVerifier = join(stagingRoot, "verifier");
+        const stagedVerifier = join(stagingRoot, "verifier.cjs");
         await writePrivateFile(stagedVerifier, verifierBytes);
+        const wrapperPath = join(stagingRoot, "run-verifier.mjs");
+        await writePrivateFile(wrapperPath, Buffer.from(VERIFIER_WRAPPER));
+        const completionMarker = join(stagingRoot, "completed");
 
         const processResult = await runProcess(
           options.command ?? process.execPath,
-          [...(options.args ?? []), stagedVerifier, evaluatedWorkspacePath],
+          [wrapperPath, stagedVerifier, evaluatedWorkspacePath, completionMarker],
           evaluatedWorkspacePath,
           options.env,
           timeoutMs,
           maxOutputBytes,
           diagnosticFiles as [DiagnosticFile, DiagnosticFile],
+          completionMarker,
         );
         stdout = processResult.stdout;
         stderr = processResult.stderr;
         exitCode = processResult.exitCode;
         spawnAttempted = processResult.started;
         if (processResult.error !== undefined) internalError = processResult.error;
+        if (processResult.started && !processResult.completed) {
+          internalError = combineErrors(internalError, "Verifier did not complete normally.");
+        }
         if (stdout.error !== undefined) internalError = combineErrors(internalError, `stdout capture failed: ${stdout.error}`);
         if (stderr.error !== undefined) internalError = combineErrors(internalError, `stderr capture failed: ${stderr.error}`);
 
@@ -574,6 +604,7 @@ type CapturedOutput = {
 
 type ProcessResult = {
   started: boolean;
+  completed: boolean;
   stdout: CapturedOutput;
   stderr: CapturedOutput;
   exitCode?: number;
@@ -590,6 +621,7 @@ async function runProcess(
   timeoutMs: number,
   maxOutputBytes: number,
   diagnosticFiles: readonly DiagnosticFile[],
+  completionMarker: string,
 ): Promise<ProcessResult> {
   const child = spawn(command, args, {
     cwd,
@@ -616,6 +648,7 @@ async function runProcess(
       await terminate();
       resolveProcess({
         started,
+        completed: await fileExists(completionMarker),
         stdout: await stdout,
         stderr: await stderr,
         ...(code === null ? {} : { exitCode: code }),
@@ -645,6 +678,15 @@ async function runProcess(
     }, timeoutMs);
     timer.unref();
   });
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    return (await lstat(path)).isFile();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    return false;
+  }
 }
 
 async function killProcessTree(child: ReturnType<typeof spawn>): Promise<void> {
