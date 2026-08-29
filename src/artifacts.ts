@@ -270,9 +270,17 @@ function runManifestIntegrityErrors(
     errors.push({ artifact, schemaVersion, field: "/attempt/retryOf", message: "Retry lineage cannot reference the current attempt." });
   }
   const sourceEvidence = [...evidenceById.values()].filter((descriptor) => descriptor.sanitizedFrom === undefined);
-  if (isRecord(manifest.run) && isRecord(manifest.run.native)) {
-    validateNativeReference(artifact, schemaVersion, "sessionId", "session", "session", manifest.run.native, sourceEvidence, errors);
-    validateNativeReference(artifact, schemaVersion, "traceId", "telemetry", "trace", manifest.run.native, sourceEvidence, errors);
+  const run = isRecord(manifest.run) ? manifest.run : undefined;
+  if (run !== undefined && isRecord(run.native)) {
+    validateNativeReference(artifact, schemaVersion, "sessionId", "session", "session", run.native, sourceEvidence, errors);
+    validateNativeReference(artifact, schemaVersion, "traceId", "telemetry", "trace", run.native, sourceEvidence, errors);
+  }
+  const harness = run !== undefined && isRecord(run.harness) ? run.harness : undefined;
+  if (run !== undefined && harness !== undefined && Array.isArray(run.runtime)
+      && !run.runtime.some((component) => isRecord(component)
+        && component.version === harness.version
+        && (component.name === harness.id || component.source === harness.id))) {
+    errors.push({ artifact, schemaVersion, field: "/run/runtime", message: "Declared harness is not represented by its runtime composition." });
   }
   const terminal = isRecord(manifest.terminal) ? manifest.terminal : undefined;
   if (terminal !== undefined && typeof terminal.workspaceArtifactId === "string"
@@ -307,8 +315,9 @@ function validateSanitizedProvenance(
       errors.push({ artifact, schemaVersion, field, message: "Sanitized provenance must reference retained source evidence." });
       return;
     }
+    const currentShared = current.sharingClass === "partner" || current.sharingClass === "public";
     if (["source", "kind", "authority"].some((key) => source[key] !== current[key])
-        || (shared ? current.nativeReference !== undefined : JSON.stringify(source.nativeReference ?? null) !== JSON.stringify(current.nativeReference ?? null))
+        || (currentShared ? current.nativeReference !== undefined : JSON.stringify(source.nativeReference ?? null) !== JSON.stringify(current.nativeReference ?? null))
         || source.digest !== digest || source.digest === current.digest || source.digest === sharedDigest || source.relativePath === current.relativePath) {
       errors.push({ artifact, schemaVersion, field, message: "Sanitized provenance does not preserve its source evidence." });
       return;

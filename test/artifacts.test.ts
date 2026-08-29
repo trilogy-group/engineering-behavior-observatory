@@ -123,6 +123,15 @@ test("validation reports schema versions, fields, duplicate identities, and fixt
   const workspaceMismatch = JSON.parse(readFileSync(runFixturePath("complete/manifest.json"), "utf8"));
   workspaceMismatch.terminal.workspaceArtifactId = "other-workspace";
   assert.match(validateArtifact("run/manifest.json", workspaceMismatch).map((error) => error.message).join("\n"), /Terminal workspace/);
+  const runtimeMismatch = JSON.parse(readFileSync(runFixturePath("complete/manifest.json"), "utf8"));
+  runtimeMismatch.run.runtime = [{ source: "other", name: "other", version: "other" }];
+  assert.match(validateArtifact("run/manifest.json", runtimeMismatch).map((error) => error.message).join("\n"), /not represented/);
+  const multiHop = JSON.parse(readFileSync(runFixturePath("complete/manifest.json"), "utf8"));
+  const multiHopSource = multiHop.evidence.find((entry: { kind: string }) => entry.kind === "session");
+  const intermediate = { ...multiHopSource, id: "intermediate-session", digest: `sha256:${"e".repeat(64)}`, relativePath: "internal/session.json", sharingClass: "internal", sanitizedFrom: { artifactId: multiHopSource.id, digest: multiHopSource.digest } };
+  delete intermediate.nativeReference;
+  multiHop.evidence.push(intermediate, { ...intermediate, id: "shared-session", digest: `sha256:${"d".repeat(64)}`, relativePath: "shared/session.json", sharingClass: "partner", sanitizedFrom: { artifactId: intermediate.id, digest: intermediate.digest } });
+  assert.match(validateArtifact("run/manifest.json", multiHop).map((error) => error.message).join("\n"), /does not preserve/);
 
   let output = "";
   assert.equal(main(["validate", fixturePath("task-packet.valid.v1.json"), runFixturePath("complete/manifest.json")], (message) => (output += message)), 0);
