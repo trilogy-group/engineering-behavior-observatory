@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
-import { chmodSync, existsSync, linkSync, lstatSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
@@ -1470,6 +1470,41 @@ test("failure preservation leaves a raced replacement at its source path", () =>
     );
     assert.equal(replaced, true);
     assert.equal(readFileSync(join(root, "published.json"), "utf8"), "newer replacement");
+    assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), true);
+  } finally {
+    fs.renameSync = originalRenameSync;
+    syncBuiltinESMExports();
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("failure preservation restores a raced directory replacement", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-preservation-directory-"));
+  const originalRenameSync = fs.renameSync;
+  let replaced = false;
+  fs.renameSync = ((oldPath: fs.PathLike, newPath: fs.PathLike) => {
+    if (!replaced && oldPath === "published.json") {
+      replaced = true;
+      unlinkSync(oldPath);
+      mkdirSync(oldPath);
+    }
+    return originalRenameSync(oldPath, newPath);
+  }) as typeof originalRenameSync;
+  syncBuiltinESMExports();
+  try {
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(
+        root,
+        "published.json",
+        { state: "ready" },
+        undefined,
+        undefined,
+        () => { throw new Error("injected post-publication failure"); },
+      ),
+      /injected post-publication failure/,
+    );
+    assert.equal(replaced, true);
+    assert.equal(lstatSync(join(root, "published.json")).isDirectory(), true);
     assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), true);
   } finally {
     fs.renameSync = originalRenameSync;

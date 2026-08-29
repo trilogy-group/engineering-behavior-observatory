@@ -2338,6 +2338,21 @@ function movePathToAttempt(path: string, descriptor?: number): string {
         unlinkSync(retired);
         return target;
       }
+      if (retiredIdentity.isDirectory()) {
+        // Directories cannot be hard-linked. Restore a directory replacement
+        // with rename only while the original pathname is still vacant; an
+        // occupied source is left untouched and the replacement remains
+        // available under its failed alias.
+        if (lstatIfPresent(path) === undefined) {
+          try {
+            renameSync(retired, path);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "EEXIST"
+                && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          }
+        }
+        return target;
+      }
       let restored = false;
       try {
         linkSync(retired, path);
