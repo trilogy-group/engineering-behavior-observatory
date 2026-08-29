@@ -22,6 +22,10 @@ export type VerifierAssertion = {
   status: VerifierAssertionStatus;
 };
 
+export type VerifierPassedAssertion = Omit<VerifierAssertion, "status"> & {
+  status: "passed";
+};
+
 export type VerifierNotRunAssertion = Omit<VerifierAssertion, "status"> & {
   status: "not-run";
 };
@@ -49,11 +53,12 @@ type VerifierResultBase = {
   diagnostics?: DiagnosticReference[];
 };
 
-export type VerifierPassedResult = Omit<VerifierResultBase, "error"> & {
+export type VerifierPassedResult = Omit<VerifierResultBase, "error" | "assertions"> & {
   status: "passed";
   error?: never;
   exitCode?: 0;
   workspace: VerifierWorkspace;
+  assertions: VerifierPassedAssertion[];
 };
 
 export type VerifierFailedResult = Omit<VerifierResultBase, "error"> & {
@@ -142,6 +147,7 @@ async function hashWorkspaceDirectory(
       hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777}\0`);
       await hashWorkspaceDirectory(path, relativePath, hash);
     } else if (metadata.isFile()) {
+      if (metadata.nlink > 1) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
       const bytes = await readFile(path);
       hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777}\0${bytes.length}\0`);
       hash.update(bytes);

@@ -112,7 +112,7 @@ digest it evaluated.
 The executor receives both the retained workspace artifact reference and a
 separate live-workspace fingerprint. The v1 live-workspace fingerprint hashes
 the root and sorted descendant relative paths, entry kinds, permission mode
-bits, and file bytes;
+bits, and file bytes; hard-linked files are rejected as unsupported;
 symbolic links and unsupported entry kinds are rejected. The fingerprint must match the directory
 being evaluated, while the executor evaluates a private snapshot detached from
 the mutable agent workspace. The artifact digest remains the digest of the
@@ -145,7 +145,8 @@ when the process exits normally, and a `status` of `passed`, `failed`, or
 UTF-8/JSON, duplicate or invalid assertion, and an exit/assertion contradiction
 are verifier errors. A failed assertion therefore requires a nonzero verifier
 exit; a zero exit paired with a failure is not a task result. `not-run` remains
-available for a caller that records a verifier which was never started. Stdout
+available for a caller that records a verifier which was never started, and its
+assertions must all be `not-run`. Stdout
 and stderr are drained without an unbounded buffer and persisted to private
 files while the process runs, so a partial attempt retains output even when
 execution ends abnormally. A timeout terminates the verifier process group (or

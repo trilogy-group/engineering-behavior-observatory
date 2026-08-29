@@ -239,6 +239,15 @@ test("validates nested verifier diagnostics against retained bundle bytes", asyn
     await retainVerifier(verifier);
 
     assert.deepEqual(validateRunManifestEvidence("manifest.json", manifest, root), []);
+    await retainVerifier({
+      ...verifier,
+      diagnostics: [{ ...nestedDiagnostic, locator: "Manifest.json/stdout.log" }],
+    });
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /alias retained evidence paths/,
+    );
+    await retainVerifier(verifier);
     const noDiagnosticsVerifier = { ...verifier };
     delete noDiagnosticsVerifier.diagnostics;
     await retainVerifier({ ...noDiagnosticsVerifier, bundleId: "another-bundle" });

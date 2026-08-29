@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, link, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -92,6 +92,19 @@ test("includes executable modes in workspace fingerprints", async () => {
     assert.notEqual(rootModeFingerprint, executableFingerprint);
   } finally {
     await chmod(root.workspace, 0o755);
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("rejects hard-linked workspace files", async () => {
+  const root = await createRoots();
+  try {
+    const original = join(root.workspace, "original.txt");
+    await writeFile(original, "shared");
+    await link(original, join(root.workspace, "alias.txt"));
+
+    await assert.rejects(digestWorkspace(root.workspace), /hard-linked file/);
+  } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
 });
@@ -441,6 +454,10 @@ test("rejects contradictory failed results in public serializers", async () => {
       ...result,
       exitCode: 1,
     } as unknown as VerifierResult), /must be equal to constant|must be 0/);
+    assert.throws(() => serializeVerifierResult({
+      ...result,
+      assertions: [{ id: "serializable", status: "failed" }],
+    } as unknown as VerifierResult), /must be equal to constant|must be valid/);
     assert.throws(() => serializeVerifierResult({
       ...result,
       assertions: [

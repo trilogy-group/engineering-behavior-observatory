@@ -58,6 +58,7 @@ export type {
   VerifierFailedResult,
   VerifierNotRunResult,
   VerifierNotRunAssertion,
+  VerifierPassedAssertion,
   VerifierPassedResult,
   VerifierResult,
   VerifierRunResult,

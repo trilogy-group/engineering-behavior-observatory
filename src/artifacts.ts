@@ -25,6 +25,7 @@ const addFormats = formats.default as unknown as (instance: Ajv2020) => void;
 const schemaDirectory = fileURLToPath(new URL("../../schemas/", import.meta.url));
 const runBundleSchemaId = "urn:ebo:schema:run-bundle:v1";
 const validators = loadValidators();
+const RESERVED_MANIFEST_PATHS = new Set(["manifest.json"]);
 
 export const SUPPORTED_ARTIFACT_SCHEMA_VERSIONS = [...validators.keys()];
 
@@ -371,7 +372,8 @@ function nestedVerifierDiagnosticErrors(
       continue;
     }
     const normalizedLocator = diagnostic.locator.toLowerCase();
-    if (normalizedLocator === "manifest.json" || hasPortablePathCollision(normalizedLocator, evidencePaths)
+    if (hasPortablePathCollision(normalizedLocator, RESERVED_MANIFEST_PATHS)
+        || hasPortablePathCollision(normalizedLocator, evidencePaths)
         || hasPortablePathCollision(normalizedLocator, nestedDiagnosticPaths)) {
       errors.push({ artifact, schemaVersion: "run-manifest/v1", field: `${scope}/diagnostics`, message: "Verifier diagnostics cannot alias retained evidence paths." });
       continue;
