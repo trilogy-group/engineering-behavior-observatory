@@ -295,6 +295,21 @@ export function validateRunManifestEvidence(
         message: "Sanitized verifier must preserve its source exit code.",
       });
     }
+    const sourceVerifier = source.verifier;
+    const derivativeVerifier = derivative.verifier;
+    const sameVerifier = sourceVerifier === undefined
+      ? derivativeVerifier === undefined
+      : derivativeVerifier !== undefined
+        && derivativeVerifier.locator === sourceVerifier.locator
+        && derivativeVerifier.digest === sourceVerifier.digest;
+    if (!sameVerifier) {
+      errors.push({
+        artifact,
+        schemaVersion: "run-manifest/v1",
+        field: `/evidence/${escapeJsonPointer(descriptor.id)}/verifier`,
+        message: "Sanitized verifier must preserve its source verifier binding.",
+      });
+    }
     const sourceWorkspace = source.workspace;
     const derivativeWorkspace = derivative.workspace;
     const sameWorkspace = sourceWorkspace === undefined
@@ -309,6 +324,15 @@ export function validateRunManifestEvidence(
         schemaVersion: "run-manifest/v1",
         field: `/evidence/${escapeJsonPointer(descriptor.id)}/workspace`,
         message: "Sanitized verifier must preserve its source workspace binding.",
+      });
+    }
+    if (derivative.diagnostics.some((diagnostic) => diagnostic.source === undefined
+        || !source.diagnostics.some((sourceDiagnostic) => sameDiagnosticOrigin(sourceDiagnostic, diagnostic.source!)))) {
+      errors.push({
+        artifact,
+        schemaVersion: "run-manifest/v1",
+        field: `/evidence/${escapeJsonPointer(descriptor.id)}/diagnostics`,
+        message: "Sanitized verifier diagnostics must identify source diagnostics.",
       });
     }
   }
@@ -345,14 +369,57 @@ export function validateRunManifestEvidence(
 type NestedVerifierOutcome = {
   status: string;
   assertions: Array<{ id: string; status: string }>;
+  verifier?: { locator: string; digest: string };
   workspace?: { artifactId: string; digest: string; fingerprint?: string };
+  diagnostics: NestedVerifierDiagnostic[];
   exitCode?: number;
 };
+
+type NestedVerifierDiagnostic = {
+  stream: string;
+  locator: string;
+  digest: string;
+  sizeBytes: number;
+  truncated: boolean;
+  source?: NestedVerifierDiagnosticOrigin;
+};
+
+type NestedVerifierDiagnosticOrigin = Omit<NestedVerifierDiagnostic, "source">;
+
+function isNestedVerifierDiagnostic(value: unknown): value is NestedVerifierDiagnostic {
+  if (!isRecord(value) || ![5, 6].includes(Object.keys(value).length)
+      || typeof value.stream !== "string" || !["stdout", "stderr"].includes(value.stream)
+      || typeof value.locator !== "string" || typeof value.digest !== "string"
+      || !/^sha256:[a-f0-9]{64}$/.test(value.digest) || !Number.isSafeInteger(value.sizeBytes)
+      || (value.sizeBytes as number) < 0 || typeof value.truncated !== "boolean") return false;
+  return !Object.hasOwn(value, "source") || isNestedVerifierDiagnosticOrigin(value.source);
+}
+
+function isNestedVerifierDiagnosticOrigin(value: unknown): value is NestedVerifierDiagnosticOrigin {
+  return isRecord(value) && Object.keys(value).length === 5
+    && typeof value.stream === "string" && ["stdout", "stderr"].includes(value.stream)
+    && typeof value.locator === "string" && typeof value.digest === "string"
+    && /^sha256:[a-f0-9]{64}$/.test(value.digest) && Number.isSafeInteger(value.sizeBytes)
+    && (value.sizeBytes as number) >= 0 && typeof value.truncated === "boolean";
+}
+
+function sameDiagnosticOrigin(left: NestedVerifierDiagnosticOrigin, right: NestedVerifierDiagnosticOrigin): boolean {
+  return left.stream === right.stream
+    && left.locator === right.locator
+    && left.digest === right.digest
+    && left.sizeBytes === right.sizeBytes
+    && left.truncated === right.truncated;
+}
 
 function nestedVerifierOutcome(bytes: Buffer): NestedVerifierOutcome | undefined {
   try {
     const result: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
     if (!isRecord(result) || typeof result.status !== "string") return undefined;
+    const verifier = isRecord(result.verifier)
+      && typeof result.verifier.locator === "string"
+      && typeof result.verifier.digest === "string"
+      ? { locator: result.verifier.locator, digest: result.verifier.digest }
+      : undefined;
     const workspace = isRecord(result.workspace)
       && typeof result.workspace.artifactId === "string"
       && typeof result.workspace.digest === "string"
@@ -368,10 +435,41 @@ function nestedVerifierOutcome(bytes: Buffer): NestedVerifierOutcome | undefined
         ? [{ id: assertion.id, status: assertion.status }]
         : [])
       : [];
+    const diagnostics = Array.isArray(result.diagnostics)
+      ? result.diagnostics.flatMap((diagnostic) => {
+        if (!isRecord(diagnostic) || typeof diagnostic.stream !== "string" || typeof diagnostic.locator !== "string"
+            || typeof diagnostic.digest !== "string" || typeof diagnostic.sizeBytes !== "number"
+            || typeof diagnostic.truncated !== "boolean") return [];
+        const source = isRecord(diagnostic.source)
+          && typeof diagnostic.source.stream === "string"
+          && typeof diagnostic.source.locator === "string"
+          && typeof diagnostic.source.digest === "string"
+          && typeof diagnostic.source.sizeBytes === "number"
+          && typeof diagnostic.source.truncated === "boolean"
+          ? {
+            stream: diagnostic.source.stream,
+            locator: diagnostic.source.locator,
+            digest: diagnostic.source.digest,
+            sizeBytes: diagnostic.source.sizeBytes,
+            truncated: diagnostic.source.truncated,
+          }
+          : undefined;
+        return [{
+          stream: diagnostic.stream,
+          locator: diagnostic.locator,
+          digest: diagnostic.digest,
+          sizeBytes: diagnostic.sizeBytes,
+          truncated: diagnostic.truncated,
+          ...(source === undefined ? {} : { source }),
+        }];
+      })
+      : [];
     const exitCode = typeof result.exitCode === "number" ? result.exitCode : undefined;
     return {
       status: result.status,
       assertions,
+      diagnostics,
+      ...(verifier === undefined ? {} : { verifier }),
       ...(workspace === undefined ? {} : { workspace }),
       ...(exitCode === undefined ? {} : { exitCode }),
     };
@@ -458,14 +556,7 @@ function nestedVerifierDiagnosticErrors(
 
   const errors: ArtifactValidationError[] = [...bindingErrors];
   for (const [index, diagnostic] of result.diagnostics.entries()) {
-    if (!isRecord(diagnostic) || Object.keys(diagnostic).length !== 5 || !Object.hasOwn(diagnostic, "stream")
-        || !Object.hasOwn(diagnostic, "locator")
-        || !Object.hasOwn(diagnostic, "digest") || !Object.hasOwn(diagnostic, "sizeBytes")
-        || !Object.hasOwn(diagnostic, "truncated") || typeof diagnostic.stream !== "string"
-        || !["stdout", "stderr"].includes(diagnostic.stream) || typeof diagnostic.locator !== "string"
-        || typeof diagnostic.digest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(diagnostic.digest)
-        || !Number.isSafeInteger(diagnostic.sizeBytes) || (diagnostic.sizeBytes as number) < 0
-        || typeof diagnostic.truncated !== "boolean") {
+    if (!isNestedVerifierDiagnostic(diagnostic)) {
       errors.push({ artifact, schemaVersion: "run-manifest/v1", field: `${scope}/diagnostics/${index}`, message: "Verifier diagnostic reference is malformed." });
       continue;
     }

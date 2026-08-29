@@ -36,12 +36,16 @@ export type VerifierWorkspace = {
   fingerprint?: string;
 };
 
-export type DiagnosticReference = {
+export type DiagnosticOrigin = {
   stream: "stdout" | "stderr";
   locator: string;
   digest: string;
   sizeBytes: number;
   truncated: boolean;
+};
+
+export type DiagnosticReference = DiagnosticOrigin & {
+  source?: DiagnosticOrigin;
 };
 
 export type VerifierExecutionReference = {
@@ -768,7 +772,8 @@ function assertVerifierResult(result: VerifierResult, artifact: string): void {
 }
 
 function cleanEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] => entry[1] !== undefined));
+  return Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] =>
+    entry[1] !== undefined && entry[0].toUpperCase() !== "NODE_OPTIONS"));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

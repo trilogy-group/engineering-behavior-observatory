@@ -50,6 +50,7 @@ export {
 } from "./verifiers.js";
 export type {
   CompleteVerifierResult,
+  DiagnosticOrigin,
   DiagnosticReference,
   ExecuteVerifierOptions,
   VerifierAssertion,
