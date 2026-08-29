@@ -206,6 +206,25 @@ test("status recovers an interrupted freeze-record hard link", () => {
   }
 });
 
+test("status recovers an interrupted nested freeze link within its parent", () => {
+  const { root } = createBundle();
+  const freezeLocator = "nested/freeze.json";
+  const temporaryLink = join(root, "nested", ".22222222-2222-4222-8222-222222222222.tmp");
+  try {
+    freezeTaskPacket(root, "packet.json", freezeLocator);
+    linkSync(join(root, freezeLocator), temporaryLink);
+    assert.equal(statusTaskPacket(root, "packet.json", freezeLocator).status, "frozen");
+    assert.equal(existsSync(temporaryLink), false);
+  } finally {
+    try {
+      unlinkSync(temporaryLink);
+    } catch {
+      // The helper process may already have removed the transient link.
+    }
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("freeze publication rejects a symlinked ancestor", () => {
   const { root } = createBundle();
   const outside = mkdtempSync(join(tmpdir(), "ebo-freeze-outside-"));

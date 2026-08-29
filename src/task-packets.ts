@@ -567,7 +567,7 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHan
       process.chdir(parent);
       changedCwd = true;
       assertBundleRoot(root, rootDescriptor, locator);
-      assertFreezeParent(parentDescriptor, locator);
+      assertFreezeParent(root, parent, parentDescriptor, locator);
       const destinationStat = lstatSync(relative(parent, destination));
 
       for (const name of readdirSync(".")) {
@@ -575,8 +575,13 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHan
         try {
           const temporaryStat = lstatSync(name);
           if (temporaryStat.isFile() && temporaryStat.dev === destinationStat.dev && temporaryStat.ino === destinationStat.ino) {
+            assertFreezeParent(root, parent, parentDescriptor, locator);
+            const currentDestination = lstatSync(relative(parent, destination));
+            const currentTemporary = lstatSync(name);
+            if (currentDestination.dev !== currentTemporary.dev || currentDestination.ino !== currentTemporary.ino) continue;
             unlinkSync(name);
             removed = true;
+            assertFreezeParent(root, parent, parentDescriptor, locator);
           }
         } catch (error) {
           if (!isErrno(error, "ENOENT")) throw error;
@@ -665,16 +670,7 @@ function assertBundleRoot(root: string, descriptor: number, locator: string): vo
 
 function openFreezeParent(root: string, parent: string, locator: string, rootDescriptor: number): number {
   assertBundleRoot(root, rootDescriptor, locator);
-  if (!isContained(root, parent)) throw new Error(`Artifact path "${locator}" escapes its declared root.`);
-  let current = root;
-  const segments = relative(root, parent) === "" ? [] : relative(root, parent).split(sep);
-  for (const segment of segments) {
-    current = resolve(current, segment);
-    const entry = lstatSync(current);
-    if (!entry.isDirectory() || entry.isSymbolicLink()) {
-      throw new Error(`Artifact path "${locator}" crosses a symbolic link.`);
-    }
-  }
+  assertFreezeParentPath(root, parent, locator);
 
   const descriptor = openSync(parent, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
@@ -691,11 +687,28 @@ function openFreezeParent(root: string, parent: string, locator: string, rootDes
   }
 }
 
-function assertFreezeParent(descriptor: number, locator: string): void {
+function assertFreezeParent(root: string, parent: string, descriptor: number, locator: string): void {
+  assertFreezeParentPath(root, parent, locator);
   const opened = fstatSync(descriptor);
-  const current = lstatSync(".");
-  if (!opened.isDirectory() || current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino) {
+  const current = lstatSync(parent);
+  const cwd = lstatSync(".");
+  if (!opened.isDirectory() || current.isSymbolicLink() || cwd.isSymbolicLink()
+      || opened.dev !== current.dev || opened.ino !== current.ino
+      || opened.dev !== cwd.dev || opened.ino !== cwd.ino) {
     throw new Error(`Artifact path "${locator}" parent changed during recovery.`);
+  }
+}
+
+function assertFreezeParentPath(root: string, parent: string, locator: string): void {
+  if (!isContained(root, parent)) throw new Error(`Artifact path "${locator}" escapes its declared root.`);
+  let current = root;
+  const segments = relative(root, parent) === "" ? [] : relative(root, parent).split(sep);
+  for (const segment of segments) {
+    current = resolve(current, segment);
+    const entry = lstatSync(current);
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      throw new Error(`Artifact path "${locator}" crosses a symbolic link.`);
+    }
   }
 }
 
