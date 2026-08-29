@@ -126,7 +126,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
 
     try {
       const verifierBytes = await readVerifiedArtifact(verifierRoot, options.verifier.locator, options.verifier.digest);
-      stagingRoot = await mkdtemp(join(tmpdir(), "ebo-verifier-"));
+      stagingRoot = await createStagingRoot(workspacePath);
       const stagedVerifier = join(stagingRoot, "verifier");
       await writePrivateFile(stagedVerifier, verifierBytes);
 
@@ -252,6 +252,35 @@ function validateOptions(options: ExecuteVerifierOptions, timeoutMs: number, max
 async function prepareRoot(root: string): Promise<string> {
   await mkdir(root, { recursive: true });
   return realpath(root);
+}
+
+async function createStagingRoot(workspacePath: string): Promise<string> {
+  const candidates = [
+    tmpdir(),
+    ...(process.platform === "win32"
+      ? (process.env.SystemRoot === undefined ? [] : [join(process.env.SystemRoot, "Temp")])
+      : ["/tmp", "/var/tmp"]),
+  ];
+  let lastError: unknown;
+
+  for (const candidate of new Set(candidates)) {
+    let resolvedStagingRoot: string;
+    try {
+      const candidateRoot = await realpath(candidate);
+      resolvedStagingRoot = await realpath(await mkdtemp(join(candidateRoot, "ebo-verifier-")));
+    } catch (error) {
+      lastError = error;
+      continue;
+    }
+    if (isContained(workspacePath, resolvedStagingRoot) || isContained(resolvedStagingRoot, workspacePath)) {
+      await rm(resolvedStagingRoot, { force: true, recursive: true });
+      lastError = new Error("temporary directory is inside the evaluated workspace");
+      continue;
+    }
+    return resolvedStagingRoot;
+  }
+
+  throw new Error(`Could not create verifier staging outside the evaluated workspace: ${lastError instanceof Error ? lastError.message : "no separate temporary directory is available."}`);
 }
 
 function assertDisjointRoots(left: string, right: string, label: string): void {

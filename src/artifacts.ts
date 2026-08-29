@@ -96,6 +96,14 @@ export function validateArtifact(artifact: string, document: unknown): ArtifactV
     if (new Set(assertionIds).size !== assertionIds.length) {
       errors.push({ artifact, schemaVersion, field: "/assertions", message: "Verifier assertion IDs must be unique." });
     }
+    if (Array.isArray(document.diagnostics)) {
+      const diagnosticLocators = document.diagnostics
+        .filter((diagnostic): diagnostic is Record<string, unknown> => isRecord(diagnostic) && typeof diagnostic.locator === "string")
+        .map((diagnostic) => (diagnostic.locator as string).toLowerCase());
+      if (new Set(diagnosticLocators).size !== diagnosticLocators.length) {
+        errors.push({ artifact, schemaVersion, field: "/diagnostics", message: "Verifier diagnostic locators must be unique." });
+      }
+    }
   }
 
   return errors;
@@ -108,6 +116,11 @@ export function validateRunManifestEvidence(
 ): ArtifactValidationError[] {
   if (!isRecord(manifest) || manifest.schemaVersion !== "run-manifest/v1" || !Array.isArray(manifest.evidence)) return [];
   const errors: ArtifactValidationError[] = [];
+  const evidencePaths = new Set(
+    manifest.evidence
+      .filter((entry): entry is Record<string, unknown> => isRecord(entry) && typeof entry.relativePath === "string")
+      .map((entry) => (entry.relativePath as string).toLowerCase()),
+  );
 
   for (const descriptor of manifest.evidence) {
     if (!isRecord(descriptor) || typeof descriptor.id !== "string" || typeof descriptor.relativePath !== "string"
@@ -119,7 +132,7 @@ export function validateRunManifestEvidence(
       });
       if (bytes.length !== descriptor.sizeBytes) throw new Error("Artifact size does not match its manifest descriptor.");
       if (descriptor.kind === "verifier") {
-        errors.push(...nestedVerifierDiagnosticErrors(artifact, descriptor.id, descriptor.relativePath, bytes, bundleRoot));
+        errors.push(...nestedVerifierDiagnosticErrors(artifact, descriptor.id, bytes, bundleRoot, evidencePaths));
       }
     } catch (error) {
       errors.push({
@@ -136,9 +149,9 @@ export function validateRunManifestEvidence(
 function nestedVerifierDiagnosticErrors(
   artifact: string,
   verifierId: string,
-  verifierPath: string,
   bytes: Buffer,
   bundleRoot: string,
+  evidencePaths: ReadonlySet<string>,
 ): ArtifactValidationError[] {
   let result: unknown;
   try {
@@ -152,8 +165,8 @@ function nestedVerifierDiagnosticErrors(
   for (const diagnostic of result.diagnostics) {
     if (!isRecord(diagnostic) || typeof diagnostic.locator !== "string"
         || typeof diagnostic.digest !== "string" || typeof diagnostic.sizeBytes !== "number") continue;
-    if (diagnostic.locator.toLowerCase() === verifierPath.toLowerCase()) {
-      errors.push({ artifact, schemaVersion: "run-manifest/v1", field: `/evidence/${escapeJsonPointer(verifierId)}/diagnostics`, message: "Verifier diagnostics cannot reuse the verifier result path." });
+    if (diagnostic.locator.toLowerCase() === "manifest.json" || evidencePaths.has(diagnostic.locator.toLowerCase())) {
+      errors.push({ artifact, schemaVersion: "run-manifest/v1", field: `/evidence/${escapeJsonPointer(verifierId)}/diagnostics`, message: "Verifier diagnostics cannot alias retained evidence paths." });
       continue;
     }
     try {

@@ -225,6 +225,23 @@ test("validates nested verifier diagnostics against retained bundle bytes", asyn
       validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
       /Diagnostic|digest/,
     );
+    await writeFile(diagnosticPath, diagnosticBytes);
+    const workspaceDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "workspace");
+    const workspaceBytes = readFileSync(join(root, workspaceDescriptor.relativePath));
+    verifier.diagnostics[0] = {
+      locator: workspaceDescriptor.relativePath,
+      digest: workspaceDescriptor.digest,
+      sizeBytes: workspaceBytes.length,
+      truncated: false,
+    };
+    const aliasedVerifierBytes = Buffer.from(JSON.stringify(verifier));
+    await writeFile(verifierPath, aliasedVerifierBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(aliasedVerifierBytes).value}`;
+    verifierDescriptor.sizeBytes = aliasedVerifierBytes.length;
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /alias retained evidence/,
+    );
   } finally {
     await rm(root, { force: true, recursive: true });
   }

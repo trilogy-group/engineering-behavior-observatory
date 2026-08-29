@@ -162,6 +162,25 @@ test("preserves a subprocess launch error in diagnostics", async () => {
   }
 });
 
+test("keeps verifier staging outside a workspace-local temp directory", async () => {
+  const root = await createRoots();
+  const previousTempDirectory = process.env.TMPDIR;
+  process.env.TMPDIR = root.workspace;
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      const fs = require("node:fs");
+      const outsideWorkspace = !fs.realpathSync(process.argv[1]).startsWith(fs.realpathSync(process.argv[2]));
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "staging-isolation", status: outsideWorkspace ? "passed" : "failed" }] }));
+    `);
+    const result = await run(root, verifier);
+    assert.equal(result.status, "passed");
+  } finally {
+    if (previousTempDirectory === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = previousTempDirectory;
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("classifies timeout, crash, and malformed output as verifier errors", async (t) => {
   const cases = [
     {
@@ -269,6 +288,10 @@ test("rejects contradictory failed results in public serializers", async () => {
         { id: "serializable", status: "passed" },
       ],
     }), /unique/);
+    assert.throws(() => serializeVerifierResult({
+      ...result,
+      diagnostics: [result.diagnostics[0]!, { ...result.diagnostics[0]!, truncated: true }],
+    }), /diagnostic locators must be unique/);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
