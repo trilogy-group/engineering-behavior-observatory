@@ -1057,6 +1057,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
   metadata: unknown,
   rootHandle?: BundleRootHandle,
   beforeDestinationPublish?: () => void,
+  afterDestinationPublish?: () => void,
 ): { created: boolean; digest: Digest } {
   assertPublicationPathWithinLimits(relativePath);
   const bytes = Buffer.from(canonicalizeMetadata(metadata));
@@ -1189,6 +1190,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
             }
             assertPublishedDigest(descriptor, digest, currentTemporary, fstatSync(descriptor, { bigint: true }), relativePath);
             created = true;
+            afterDestinationPublish?.();
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code === "EEXIST") {
               linkedHere = false;

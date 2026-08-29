@@ -320,13 +320,21 @@ export function freezeTaskPacket(
     const candidateErrors = validateArtifact(freezeLocator, candidate);
     if (candidateErrors.length > 0) throw new Error(formatErrors(candidateErrors));
 
-    const write = writeMetadataAtomicallyIfAbsentSync(bundleRoot, freezeLocator, candidate, root, () => {
-      const finalInspection = assertTaskPacketAdmittedWithRoot(bundleRoot, packetLocator, root);
+    const validatePublication = () => {
+      const finalInspection = assertTaskPacketAdmittedWithRoot(root.path, packetLocator, root);
       const mismatches = compareFreezeRecord(candidate, finalInspection);
       if (mismatches.length > 0) {
         throw new Error(`Task packet changed before freeze publication: ${mismatches.join(", ")}.`);
       }
-    });
+    };
+    const write = writeMetadataAtomicallyIfAbsentSync(
+      bundleRoot,
+      freezeLocator,
+      candidate,
+      root,
+      validatePublication,
+      validatePublication,
+    );
     if (!write.created) {
       const winner = readOptionalJson(bundleRoot, freezeLocator, true, root);
       if (winner === undefined) throw new Error("Freeze record disappeared after concurrent creation.");

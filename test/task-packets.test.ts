@@ -4,7 +4,7 @@ import { once } from "node:events";
 import fs from "node:fs";
 import { chmodSync, existsSync, linkSync, lstatSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -92,6 +92,18 @@ test("freezing a packet is idempotent and keeps the model projection private", (
     assert.equal(statusTaskPacket(root, "packet.json").status, "frozen");
     assert.deepEqual(modelVisibleTaskPacket(packet), packet.agentInput);
     assert.doesNotMatch(JSON.stringify(modelVisibleTaskPacket(packet)), /referenceSolution|reviewRecord|verifier/);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("freeze keeps a relative bundle root during pre-link validation", () => {
+  const { root } = createBundle();
+  const bundleRoot = relative(process.cwd(), root);
+  try {
+    const record = freezeTaskPacket(bundleRoot, "packet.json");
+    assert.equal(record.packetLocator, "packet.json");
+    assert.equal(statusTaskPacket(bundleRoot, "packet.json").status, "frozen");
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -1398,6 +1410,32 @@ test("freeze preserves only failed evidence when inputs drift before publication
     assert.equal(mutated, true);
     assert.equal(existsSync(join(root, "packet.json.freeze.json")), false);
     assert.equal(existsSync(join(root, "packet.json.freeze.json.quarantine")), false);
+  } finally {
+    fs.linkSync = originalLinkSync;
+    syncBuiltinESMExports();
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("freeze preserves only failed evidence when inputs drift after publication", () => {
+  const { root, packet } = createBundle();
+  const originalLinkSync = fs.linkSync;
+  let mutated = false;
+  fs.linkSync = ((existingPath: fs.PathLike, newPath: fs.PathLike) => {
+    const result = originalLinkSync(existingPath, newPath);
+    if (!mutated && typeof existingPath === "string" && existingPath === "packet.json.freeze.json.quarantine"
+        && typeof newPath === "string" && newPath === "packet.json.freeze.json") {
+      mutated = true;
+      packet.agentInput.prompt = "A changed prompt after publication.";
+      writeFileSync(join(root, "packet.json"), JSON.stringify(packet, null, 2));
+    }
+    return result;
+  }) as typeof originalLinkSync;
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => freezeTaskPacket(root, "packet.json"), /Task packet changed|pre-admission digest/);
+    assert.equal(mutated, true);
+    assert.equal(existsSync(join(root, "packet.json.freeze.json")), false);
   } finally {
     fs.linkSync = originalLinkSync;
     syncBuiltinESMExports();
