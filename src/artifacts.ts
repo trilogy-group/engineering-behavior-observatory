@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, readFileSync } from "node:fs";
-import { link, lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { link, lstat, mkdir, open, readdir, realpath, rename, rm } from "node:fs/promises";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Ajv2020, type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
@@ -209,6 +209,7 @@ export function validateRunManifestEvidence(
       .map((entry) => [entry.id as string, entry]),
   );
   const verifierOutcomes: NestedVerifierOutcome[] = [];
+  const verifierResults = new Map<string, NestedVerifierOutcome>();
   const evidencePaths = new Set(
     manifest.evidence
       .filter((entry): entry is Record<string, unknown> => isRecord(entry) && typeof entry.relativePath === "string")
@@ -238,9 +239,12 @@ export function validateRunManifestEvidence(
           nestedDiagnosticPaths,
         );
         errors.push(...verifierErrors);
-        if (verifierErrors.length === 0 && descriptor.sanitizedFrom === undefined) {
+        if (verifierErrors.length === 0) {
           const outcome = nestedVerifierOutcome(bytes);
-          if (outcome !== undefined) verifierOutcomes.push(outcome);
+          if (outcome !== undefined) {
+            verifierResults.set(descriptor.id, outcome);
+            if (descriptor.sanitizedFrom === undefined) verifierOutcomes.push(outcome);
+          }
         }
       }
     } catch (error) {
@@ -249,6 +253,38 @@ export function validateRunManifestEvidence(
         schemaVersion: "run-manifest/v1",
         field: `/evidence/${escapeJsonPointer(descriptor.id)}`,
         message: error instanceof Error ? error.message : "Evidence could not be verified.",
+      });
+    }
+  }
+  for (const descriptor of manifest.evidence) {
+    if (!isRecord(descriptor) || descriptor.kind !== "verifier" || !isRecord(descriptor.sanitizedFrom)
+        || typeof descriptor.id !== "string" || typeof descriptor.sanitizedFrom.artifactId !== "string") continue;
+    const source = verifierResults.get(descriptor.sanitizedFrom.artifactId);
+    const derivative = verifierResults.get(descriptor.id);
+    if (source === undefined || derivative === undefined) continue;
+    if (source.status !== derivative.status) {
+      errors.push({
+        artifact,
+        schemaVersion: "run-manifest/v1",
+        field: `/evidence/${escapeJsonPointer(descriptor.id)}/status`,
+        message: "Sanitized verifier must preserve its source outcome status.",
+      });
+    }
+    const sourceAssertions = new Map(source.assertions.map((assertion) => [assertion.id, assertion.status]));
+    if (derivative.assertions.some((assertion) => sourceAssertions.get(assertion.id) !== assertion.status)) {
+      errors.push({
+        artifact,
+        schemaVersion: "run-manifest/v1",
+        field: `/evidence/${escapeJsonPointer(descriptor.id)}/assertions`,
+        message: "Sanitized verifier must preserve source assertion outcomes.",
+      });
+    }
+    if (derivative.exitCode !== undefined && derivative.exitCode !== source.exitCode) {
+      errors.push({
+        artifact,
+        schemaVersion: "run-manifest/v1",
+        field: `/evidence/${escapeJsonPointer(descriptor.id)}/exitCode`,
+        message: "Sanitized verifier must preserve its source exit code.",
       });
     }
   }
@@ -284,7 +320,9 @@ export function validateRunManifestEvidence(
 
 type NestedVerifierOutcome = {
   status: string;
+  assertions: Array<{ id: string; status: string }>;
   workspace?: { artifactId: string; digest: string };
+  exitCode?: number;
 };
 
 function nestedVerifierOutcome(bytes: Buffer): NestedVerifierOutcome | undefined {
@@ -296,7 +334,19 @@ function nestedVerifierOutcome(bytes: Buffer): NestedVerifierOutcome | undefined
       && typeof result.workspace.digest === "string"
       ? { artifactId: result.workspace.artifactId, digest: result.workspace.digest }
       : undefined;
-    return { status: result.status, ...(workspace === undefined ? {} : { workspace }) };
+    const assertions = Array.isArray(result.assertions)
+      ? result.assertions.flatMap((assertion) => isRecord(assertion)
+        && typeof assertion.id === "string" && typeof assertion.status === "string"
+        ? [{ id: assertion.id, status: assertion.status }]
+        : [])
+      : [];
+    const exitCode = typeof result.exitCode === "number" ? result.exitCode : undefined;
+    return {
+      status: result.status,
+      assertions,
+      ...(workspace === undefined ? {} : { workspace }),
+      ...(exitCode === undefined ? {} : { exitCode }),
+    };
   } catch {
     return undefined;
   }
@@ -462,6 +512,7 @@ export async function readVerifiedArtifact(
   expectedDigest: Digest,
 ): Promise<Buffer> {
   const { root, path } = await resolveExistingArtifactPath(artifactRoot, relativePath);
+  await recoverNoClobberLink(path);
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
 
   try {
@@ -478,6 +529,30 @@ export async function readVerifiedArtifact(
     return bytes;
   } finally {
     await handle.close();
+  }
+}
+
+async function recoverNoClobberLink(path: string): Promise<void> {
+  let target;
+  try {
+    target = await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (!target.isFile() || target.isSymbolicLink() || target.nlink <= 1) return;
+  const parent = dirname(path);
+  for (const name of await readdir(parent)) {
+    if (!/^\.[0-9a-f-]{36}\.tmp$/.test(name)) continue;
+    const temporaryPath = resolve(parent, basename(name));
+    try {
+      const temporary = await lstat(temporaryPath);
+      if (temporary.isFile() && temporary.dev === target.dev && temporary.ino === target.ino) {
+        await rm(temporaryPath, { force: true });
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
   }
 }
 

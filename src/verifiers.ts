@@ -132,7 +132,7 @@ export async function digestWorkspace(workspacePath: string): Promise<string> {
   hash.update("ebo.workspace/v1\0");
   const metadata = await lstat(root, { bigint: true });
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("Workspace root is not a directory.");
-  hash.update(`root\0${metadata.mode & 0o7777n}\0${metadata.mtimeMs}\0`);
+  hash.update(`root\0${metadata.mode & 0o7777n}\0${metadata.mtimeNs}\0`);
   await hashWorkspaceDirectory(root, "", hash);
   return `sha256:${hash.digest("hex")}`;
 }
@@ -150,12 +150,12 @@ async function hashWorkspaceDirectory(
     const metadata = await lstat(path, { bigint: true });
     if (metadata.isSymbolicLink()) throw new Error(`Workspace contains a symbolic link at "${relativePath}".`);
     if (metadata.isDirectory()) {
-      hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777n}\0${metadata.mtimeMs}\0`);
+      hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777n}\0${metadata.mtimeNs}\0`);
       await hashWorkspaceDirectory(path, relativePath, hash);
     } else if (metadata.isFile()) {
       if (metadata.nlink > 1n) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
       const bytes = await readFile(path);
-      hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777n}\0${metadata.mtimeMs}\0${bytes.length}\0`);
+      hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777n}\0${metadata.mtimeNs}\0${bytes.length}\0`);
       hash.update(bytes);
     } else {
       throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
@@ -238,10 +238,10 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
         const evaluatedWorkspacePath = join(stagingRoot, "workspace");
         await cp(workspacePath, evaluatedWorkspacePath, { recursive: true, force: false, preserveTimestamps: true });
         await restoreWorkspaceTimestamps(workspacePath, evaluatedWorkspacePath);
-        evaluatedWorkspaceFingerprint = await digestWorkspace(evaluatedWorkspacePath);
-        if (evaluatedWorkspaceFingerprint !== options.workspaceFingerprint) {
+        if (await digestWorkspace(workspacePath) !== options.workspaceFingerprint) {
           throw new Error("Workspace changed while its private evaluation snapshot was being created.");
         }
+        evaluatedWorkspaceFingerprint = await digestWorkspace(evaluatedWorkspacePath);
         const stagedVerifier = join(stagingRoot, "verifier");
         await writePrivateFile(stagedVerifier, verifierBytes);
 

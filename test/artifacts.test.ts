@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -75,6 +75,11 @@ test("atomic metadata writes retain the previous valid file when interrupted", a
     queueMicrotask(() => controller.abort());
     await assert.rejects(writing, /interrupted/);
     assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", previous), Buffer.from('{"state":"previous"}'));
+
+    const interruptedLink = join(root, ".00000000-0000-4000-8000-000000000000.tmp");
+    await link(join(root, "metadata.json"), interruptedLink);
+    assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", previous), Buffer.from('{"state":"previous"}'));
+    await assert.rejects(readFile(interruptedLink), /ENOENT/);
 
     const current = await writeMetadataAtomically(root, "metadata.json", { state: "next" });
     assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", current), Buffer.from('{"state":"next"}'));

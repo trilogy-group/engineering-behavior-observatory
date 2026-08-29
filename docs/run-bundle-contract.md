@@ -173,7 +173,9 @@ The result serializer validates `verifier-result/v1` before writing it. The
 diagnostic references are read back and digest-checked before the result is
 saved, so a result cannot point at missing or changed diagnostic bytes. Result
 paths use no-clobber persistence: an existing result, manifest, or other
-retained evidence file is never replaced by a later verifier write. Manifest
+retained evidence file is never replaced by a later verifier write, and a
+crash between the no-clobber link and temporary-name cleanup is recovered on
+the next verified read. Manifest
 validation also cross-checks each retained verifier's `bundleId` and workspace
 artifact ID/digest against the containing bundle's retained evidence. The
 `manifest.json` path and its descendants are reserved for the containing

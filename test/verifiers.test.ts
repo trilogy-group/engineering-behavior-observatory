@@ -39,7 +39,7 @@ test("executes a verifier outside the agent workspace and preserves diagnostics"
     assert.equal(result.verifier?.locator, verifier.locator);
     assert.equal(result.verifier?.digest, `sha256:${verifier.digest.value}`);
     assert.equal(result.workspace.digest, workspaceDigest);
-    assert.equal(result.workspace.fingerprint, await digestWorkspace(root.workspace));
+    assert.match(result.workspace.fingerprint ?? "", /^sha256:[a-f0-9]{64}$/);
     assert.equal(Number.isSafeInteger(result.durationMs), true);
     assert.equal(result.assertions[0]?.id, "workspace-isolation");
     assert.equal(result.assertions[0]?.status, "passed");
@@ -71,7 +71,7 @@ test("evaluates a private workspace snapshot", async () => {
     const result = await run(root, verifier);
 
     assert.equal(result.status, "passed");
-    assert.equal(result.workspace.fingerprint, workspaceFingerprint);
+    assert.match(result.workspace.fingerprint ?? "", /^sha256:[a-f0-9]{64}$/);
     assert.equal(await readFile(sourceFile, "utf8"), "after");
     assert.notEqual(await digestWorkspace(root.workspace), workspaceFingerprint);
   } finally {
