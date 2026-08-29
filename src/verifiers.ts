@@ -188,7 +188,7 @@ import { pathToFileURL } from "node:url";
 const stageRoot = pathToFileURL(process.env.EBO_VERIFIER_ROOT).href;
 export async function resolve(specifier, context, nextResolve) {
   const result = await nextResolve(specifier, context);
-  if (result.url.startsWith("node:") || result.url.startsWith("data:") || result.url.startsWith(stageRoot)) {
+  if (result.url.startsWith("node:") || result.url.startsWith(stageRoot)) {
     return result;
   }
   throw new Error("Verifier dependency resolves outside its private staging root.");
