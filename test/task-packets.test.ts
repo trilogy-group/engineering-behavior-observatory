@@ -248,6 +248,29 @@ test("create-if-absent publication recovers interrupted quarantine staging", asy
   }
 });
 
+test("create-if-absent publication recovers an unbound dead-owner staging inode", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-unbound-staging-recovery-"));
+  const staging = join(root, "metadata.json.quarantine");
+  const marker = `${staging}.marker`;
+  try {
+    writeFileSync(staging, "partial");
+    chmodSync(staging, 0o600);
+    writeFileSync(marker, JSON.stringify({
+      schemaVersion: "ebo.publication-staging/v1",
+      relativePath: "metadata.json",
+      attemptId: "55555555-5555-4555-8555-555555555555",
+      ownerPid: 999999999,
+      ownerStart: "dead",
+    }));
+    chmodSync(marker, 0o600);
+    const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
+    assert.equal(result.created, true);
+    assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", result.digest), Buffer.from('{"state":"ready"}'));
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("create-if-absent publication recovers a marker-only interruption", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-marker-only-recovery-"));
   const marker = join(root, "metadata.json.quarantine.marker");
