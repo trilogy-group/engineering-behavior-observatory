@@ -38,7 +38,7 @@ review status, sharing classification, and SHA-256 digests for every frozen
 component. Every digest has one authority: the safe fixture source, controlled
 perturbation artifact, and restricted component references carry their own. The schema
 does not claim a separate agent-input digest without defining its canonical
-bytes; admission-freeze tooling owns the whole-packet identity later.
+bytes; admission-freeze tooling owns the whole-packet identity.
 
 `proposed` packets explicitly set `admission.review` to `null`. `admitted` and
 `rejected` packets require a reviewer, RFC 3339 `date-time` evidence, and the
@@ -59,6 +59,27 @@ materialization literal must select at least one verified archive file or
 directory tree. A referenced controlled perturbation also hashes to its pinned
 digest before scheduling; explicit unavailable states remain distinct from a
 referenced artifact that fails to resolve.
+
+### Admission and freeze
+
+Task-packet tooling consumes an externally authored packet; it does not create
+tasks or make a human review decision. `validate` checks the packet schema and
+resolves every declared fixture, perturbation, reference solution, verifier,
+and review-record digest. `admit` additionally requires the recorded admission
+status to be `admitted` and a complete human review.
+
+`freeze` writes a sibling
+[`ebo.task-packet-freeze/v1`](../schemas/task-packet-freeze.v1.schema.json)
+record. It records stable SHA-256 digests for the prompt, fixture, reference
+solution, verifier, review record, controlled perturbation, and canonical
+packet. The aggregate digest is derived only from those identities and the
+packet locator, so repeating a freeze for unchanged content is idempotent.
+An existing freeze is never silently replaced after a component changes.
+
+`status` compares the current packet and resolved bytes with the freeze record
+and reports the named mismatching component before a later materializer or
+scheduler can consume it. The model-visible projection is only `agentInput`;
+reference solutions, verifier bytes, and review records remain restricted.
 
 ## Experiments
 

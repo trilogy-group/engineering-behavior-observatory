@@ -1,5 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, readFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -212,17 +224,54 @@ export async function writeMetadataAtomically(
   return digest;
 }
 
+export function writeMetadataAtomicallySync(
+  artifactRoot: string,
+  relativePath: string,
+  metadata: unknown,
+): Digest {
+  const bytes = Buffer.from(canonicalizeMetadata(metadata));
+  const { parent, path } = prepareArtifactPathSync(artifactRoot, relativePath);
+  const temporaryPath = resolve(parent, `.${randomUUID()}.tmp`);
+  let descriptor: number | undefined;
+
+  try {
+    descriptor = openSync(temporaryPath, "wx", 0o600);
+    writeFileSync(descriptor, bytes);
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+    renameSync(temporaryPath, path);
+    const directory = openSync(parent, constants.O_RDONLY);
+    try {
+      fsyncSync(directory);
+    } finally {
+      closeSync(directory);
+    }
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+    rmSync(temporaryPath, { force: true });
+  }
+
+  const digest = digestBytes(bytes);
+  if (!verifyDigest(readFileSync(path), digest)) {
+    throw new Error(`Artifact "${relativePath}" digest does not match its written bytes.`);
+  }
+  return digest;
+}
+
 function loadValidators(): Map<string, ValidateFunction> {
   const readSchema = (name: string): object => JSON.parse(readFileSync(`${schemaDirectory}${name}`, "utf8"));
   const ajv = new Ajv2020({ allErrors: true, strict: false });
 
   addFormats(ajv);
   ajv.addSchema(readSchema("task-packet.v1.schema.json"));
+  ajv.addSchema(readSchema("task-packet-freeze.v1.schema.json"));
   ajv.addSchema(readSchema("experiment.v1.schema.json"));
   ajv.addSchema(readSchema("run-bundles/v1.json"));
 
   return new Map([
     ["ebo.task-packet/v1", requiredValidator(ajv, "https://ebo.dev/schemas/task-packet.v1.schema.json")],
+    ["ebo.task-packet-freeze/v1", requiredValidator(ajv, "https://ebo.dev/schemas/task-packet-freeze.v1.schema.json")],
     ["ebo.experiment/v1", requiredValidator(ajv, "https://ebo.dev/schemas/experiment.v1.schema.json")],
     ["run-manifest/v1", requiredValidator(ajv, runBundleSchemaId)],
     ["verifier-result/v1", requiredValidator(ajv, `${runBundleSchemaId}#/$defs/verifierResult`)],
@@ -472,6 +521,39 @@ async function prepareArtifactPath(artifactRoot: string, relativePath: string): 
   const path = resolve(parent, segments.at(-1)!);
   try {
     const entry = await lstat(path);
+    if (!entry.isFile() || entry.isSymbolicLink()) {
+      throw new Error(`Artifact path "${relativePath}" is not an isolated regular file.`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  return { parent, path };
+}
+
+function prepareArtifactPathSync(artifactRoot: string, relativePath: string): { parent: string; path: string } {
+  assertSafeArtifactPath(relativePath);
+  const root = realpathSync(artifactRoot);
+  const segments = relativePath.split("/");
+  let parent = root;
+
+  for (const segment of segments.slice(0, -1)) {
+    const next = resolve(parent, segment);
+    if (!isContained(root, next)) throw new Error(`Artifact path "${relativePath}" escapes its declared root.`);
+    try {
+      mkdirSync(next);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    parent = next;
+    const entry = lstatSync(parent);
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      throw new Error(`Artifact path "${relativePath}" crosses a symbolic link.`);
+    }
+  }
+
+  const path = resolve(parent, segments.at(-1)!);
+  try {
+    const entry = lstatSync(path);
     if (!entry.isFile() || entry.isSymbolicLink()) {
       throw new Error(`Artifact path "${relativePath}" is not an isolated regular file.`);
     }

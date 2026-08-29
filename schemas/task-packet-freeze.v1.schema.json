@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ebo.dev/schemas/task-packet-freeze.v1.schema.json",
+  "title": "EBO task packet freeze v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "packetId",
+    "packetLocator",
+    "packetDigest",
+    "components",
+    "aggregateDigest",
+    "frozenAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "ebo.task-packet-freeze/v1" },
+    "packetId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "packetLocator": {
+      "type": "string",
+      "maxLength": 960,
+      "pattern": "^(?!/)(?!(?:[^/]+/){64})(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*(?:^|/)\\.[Gg][Ii][Tt](?:/|$))(?!.*(?:^|/)[^/]{256})(?!.*(?:^|/)[^/]*\\.(?:/|$))(?!.*(?:^|/)(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.[^/]*)?(?:/|$))(?!.*/$)[A-Za-z0-9][A-Za-z0-9._/-]*$"
+    },
+    "packetDigest": { "$ref": "#/$defs/digest" },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prompt", "fixture", "reference", "verifier", "reviewRecord", "controlledPerturbation"],
+      "properties": {
+        "prompt": { "$ref": "#/$defs/digest" },
+        "fixture": { "$ref": "#/$defs/digest" },
+        "reference": { "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+        "verifier": { "$ref": "#/$defs/digest" },
+        "reviewRecord": { "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+        "controlledPerturbation": { "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] }
+      }
+    },
+    "aggregateDigest": { "$ref": "#/$defs/digest" },
+    "frozenAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])[Tt](?:[01][0-9]|2[0-3]):[0-5][0-9]:(?:[0-5][0-9]|60)(?:\\.[0-9]+)?(?:[Zz]|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$"
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "value": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    }
+  }
+}
