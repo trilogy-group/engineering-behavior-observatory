@@ -20,10 +20,12 @@
     "test": "npm run build && node --test dist/test/*.test.js",
     "ebo": "node dist/src/cli.js"
   },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1"
+  },
   "devDependencies": {
     "@types/node": "^24.10.0",
-    "ajv": "^8.20.0",
-    "ajv-formats": "^3.0.1",
     "typescript": "^5.9.3"
   }
 }
