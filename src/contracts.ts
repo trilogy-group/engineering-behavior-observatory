@@ -50,6 +50,8 @@ export type PublicationOwnership = {
   stagingIdentity: { dev: number; ino: number };
 };
 
+type FileIdentity = { dev: number; ino: number; nlink?: number };
+
 export type TaskCondition = {
   packetRef: {
     locator: string;
@@ -512,15 +514,34 @@ function assertBundlePathWithoutLinks(bundleRoot: string, locator: string, label
 }
 
 function isReadableBundleFile(path: string | undefined, target: { dev: number; ino: number; nlink: number }): boolean {
+  return path !== undefined && isPublicationFileReadable(path, target);
+}
+
+export function isPublicationFileReadable(
+  path: string,
+  target: { dev: number; ino: number; nlink: number },
+  expectedRelativePath?: string,
+): boolean {
   if (target.nlink === 1) return true;
-  if (path === undefined) return false;
-  const ownership = readPublicationOwnership(path, target);
+  const ownership = readPublicationOwnership(path, target, expectedRelativePath);
   if (ownership === undefined) return false;
-  const quarantine = hasAlias(path + ".quarantine", target);
-  const recovered = hasAlias(path + ".recovered", target);
+  const openedTarget = aliasIdentity(path, target);
+  const quarantine = aliasIdentity(path + ".quarantine", target);
+  const recovered = aliasIdentity(path + ".recovered", target);
   const staging = hasStagingAlias(path, target, ownership);
-  const accounted = Number(quarantine) + Number(recovered) + Number(staging);
-  return isPublicationOwnershipCurrent(path, ownership) && accounted > 0 && target.nlink === 1 + accounted;
+  const accounted = Number(quarantine !== undefined) + Number(recovered !== undefined) + Number(staging !== undefined);
+  if (openedTarget === undefined || !isPublicationOwnershipCurrent(path, ownership, expectedRelativePath)
+      || accounted === 0) return false;
+  const currentTarget = aliasIdentity(path, target);
+  const currentQuarantine = aliasIdentity(path + ".quarantine", target);
+  const currentRecovered = aliasIdentity(path + ".recovered", target);
+  const currentStaging = hasStagingAlias(path, target, ownership);
+  return currentTarget !== undefined && sameFileIdentity(openedTarget, currentTarget)
+    && sameOptionalIdentity(quarantine, currentQuarantine)
+    && sameOptionalIdentity(recovered, currentRecovered)
+    && sameOptionalIdentity(staging, currentStaging)
+    && isPublicationOwnershipCurrent(path, ownership, expectedRelativePath)
+    && currentTarget.nlink === 1 + accounted;
 }
 
 export function isOwnedPublicationAlias(
@@ -633,13 +654,18 @@ function samePublicationMarkerFields(
     .every((field) => marker[field] === binding[field]);
 }
 
-function hasAlias(path: string, target: { dev: number; ino: number }): boolean {
+function aliasIdentity(path: string, target: FileIdentity): FileIdentity | undefined {
   try {
-    return sameFileIdentity(target, lstatSync(path));
+    const alias = lstatSync(path);
+    return sameFileIdentity(target, alias) ? alias : undefined;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
+}
+
+function sameOptionalIdentity(left: FileIdentity | undefined, right: FileIdentity | undefined): boolean {
+  return left === undefined ? right === undefined : right !== undefined && sameFileIdentity(left, right);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -650,17 +676,17 @@ function hasStagingAlias(
   path: string,
   target: { dev: number; ino: number },
   ownership: PublicationOwnership,
-): boolean {
+): FileIdentity | undefined {
   try {
     const marker = ownership.marker;
     if (marker === undefined
         || marker.schemaVersion !== "ebo.publication-staging/v1"
         || typeof marker.stagingPath !== "string"
-        || !/^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(marker.stagingPath)) return false;
-    return sameFileIdentity(target, lstatSync(resolve(dirname(path), marker.stagingPath)));
+        || !/^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(marker.stagingPath)) return undefined;
+    return aliasIdentity(resolve(dirname(path), marker.stagingPath), target);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    return false;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    return undefined;
   }
 }
 

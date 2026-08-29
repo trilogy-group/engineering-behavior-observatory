@@ -906,22 +906,39 @@ function readBundleFile(
 function hasPublicationAliases(path: string, locator: string, target: { dev: number; ino: number; nlink: number }): boolean {
   const ownership = readPublicationOwnership(path, target, locator);
   if (ownership === undefined) return false;
-  const quarantine = hasAlias(`${path}.quarantine`, target);
-  const recovered = hasAlias(`${path}.recovered`, target);
+  const openedTarget = aliasIdentity(path, target);
+  const quarantine = aliasIdentity(`${path}.quarantine`, target);
+  const recovered = aliasIdentity(`${path}.recovered`, target);
   const staging = hasStagingAlias(path, target, ownership);
-  if (staging && !quarantine && !recovered) return false;
-  const accounted = Number(quarantine) + Number(recovered) + Number(staging);
-  return isPublicationOwnershipCurrent(path, ownership, locator) && accounted > 0 && target.nlink === 1 + accounted;
+  if (openedTarget === undefined || (staging !== undefined && quarantine === undefined && recovered === undefined)) return false;
+  const accounted = Number(quarantine !== undefined) + Number(recovered !== undefined) + Number(staging !== undefined);
+  if (accounted === 0 || !isPublicationOwnershipCurrent(path, ownership, locator)) return false;
+  const currentTarget = aliasIdentity(path, target);
+  const currentQuarantine = aliasIdentity(`${path}.quarantine`, target);
+  const currentRecovered = aliasIdentity(`${path}.recovered`, target);
+  const currentStaging = hasStagingAlias(path, target, ownership);
+  return currentTarget !== undefined && sameFileIdentity(openedTarget, currentTarget)
+    && sameOptionalIdentity(quarantine, currentQuarantine)
+    && sameOptionalIdentity(recovered, currentRecovered)
+    && sameOptionalIdentity(staging, currentStaging)
+    && isPublicationOwnershipCurrent(path, ownership, locator)
+    && currentTarget.nlink === 1 + accounted;
 }
 
 function hasStagingAlias(
   path: string,
   target: { dev: number; ino: number },
   ownership: PublicationOwnership,
-): boolean {
+): FileIdentity | undefined {
   const stagingPath = ownership.marker.stagingPath;
-  return typeof stagingPath === "string"
-    && sameFileIdentity(target, lstatSync(resolve(dirname(path), stagingPath)));
+  if (typeof stagingPath !== "string") return undefined;
+  try {
+    const staging = lstatSync(resolve(dirname(path), stagingPath));
+    return sameFileIdentity(target, staging) ? staging : undefined;
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) return undefined;
+    throw error;
+  }
 }
 
 function readStagingPath(path: string, locator: string): string | undefined {
@@ -938,6 +955,22 @@ function hasAlias(path: string, target: { dev: number; ino: number }): boolean {
     if (isErrno(error, "ENOENT")) return false;
     throw error;
   }
+}
+
+type FileIdentity = { dev: number; ino: number; nlink?: number };
+
+function aliasIdentity(path: string, target: FileIdentity): FileIdentity | undefined {
+  try {
+    const alias = lstatSync(path);
+    return sameFileIdentity(target, alias) ? alias : undefined;
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) return undefined;
+    throw error;
+  }
+}
+
+function sameOptionalIdentity(left: FileIdentity | undefined, right: FileIdentity | undefined): boolean {
+  return left === undefined ? right === undefined : right !== undefined && sameFileIdentity(left, right);
 }
 
 function assertBundlePathWithoutLinks(bundleRoot: string, locator: string): string {
