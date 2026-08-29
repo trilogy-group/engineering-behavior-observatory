@@ -998,13 +998,13 @@ function moveOptionalPathToAttempt(path: string): void {
 }
 
 function preserveFailedPublication(destination: string, quarantine: string, marker: string | undefined, bindingCreated: boolean, descriptor: number): void {
-  movePathToAttempt(quarantine, descriptor);
-  if (marker !== undefined) moveMarkerToAttempt(marker, bindingCreated);
   try {
     movePathToAttempt(destination, descriptor);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
+  movePathToAttempt(quarantine, descriptor);
+  if (marker !== undefined) moveMarkerToAttempt(marker, bindingCreated);
 }
 
 function moveMarkerToAttempt(marker: string, bindingCreated: boolean): void {
@@ -1025,7 +1025,13 @@ function movePathToAttempt(path: string, descriptor?: number): string {
   for (let attempt = 0; attempt < MAX_EXISTING_DIGEST_RETRIES; attempt += 1) {
     const target = `.${randomUUID()}.failed`;
     try {
+      if (lstatIfPresent(target) !== undefined) continue;
       renameSync(path, target);
+      const moved = lstatSync(target);
+      if (!sameFileIdentity(expected, moved)) {
+        if (lstatIfPresent(path) === undefined) renameSync(target, path);
+        throw new Error(`Publication path "${path}" changed during failure preservation.`);
+      }
       return target;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
