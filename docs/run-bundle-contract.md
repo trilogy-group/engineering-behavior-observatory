@@ -128,8 +128,9 @@ Verifier execution uses a small subprocess boundary. The executor resolves the
 digest-pinned restricted verifier from its task-bundle root, stages it in a
 private directory, and invokes the pinned Node runtime with the staged verifier
 path followed by the snapshot workspace path. Launcher options cannot replace
-the staged entry point, and Node/POSIX dynamic-loader injection variables are
-removed from the child environment. The restricted implementation and any
+the staged entry point, and `PATH`, Node preload, and POSIX dynamic-loader
+injection variables are removed from the child environment; verifier tools must
+be invoked by absolute pinned paths. The restricted implementation and any
 reference solution remain outside that workspace. `.mjs`/`.cjs` locators retain
 their module semantics; ambiguous `.js` artifacts require an explicit module
 format. The verifier writes one JSON object to stdout:
@@ -166,8 +167,9 @@ execution-specific diagnostic reference with a `stream` (`stdout` or `stderr`),
 bundle-relative `locator`, SHA-256 `digest`, retained `sizeBytes`, and a
 `truncated` flag. Sanitized verifier results may retain diagnostics only when
 each one carries a source diagnostic origin and points to a separately
-classified `diagnostic` evidence sidecar. The result remains valid even when diagnostics
-are truncated.
+classified `diagnostic` evidence sidecar. The sidecar's path, digest, and size
+must match exactly, and it must be included in the export. The result remains
+valid even when diagnostics are truncated.
 The `durationMs` and `diagnostics` fields are optional for older v1 records;
 new executor results include both. An `error` result requires a nonempty
 explanation and may omit `workspace` when the verifier failed before a

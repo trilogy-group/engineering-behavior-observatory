@@ -668,7 +668,8 @@ async function runProcess(
   completionMarker: string,
   verifierRoot: string,
 ): Promise<ProcessResult> {
-  const environment = overrides === undefined ? { PATH: process.env.PATH ?? "" } : cleanEnvironment(overrides);
+  const environment = overrides === undefined ? { PATH: "" } : cleanEnvironment(overrides);
+  environment.PATH = "";
   environment.EBO_VERIFIER_COMPLETION = completionMarker;
   environment.EBO_VERIFIER_ROOT = verifierRoot;
   const child = spawn(command, args, {
@@ -960,7 +961,7 @@ function assertVerifierResult(result: VerifierResult, artifact: string): void {
 }
 
 function cleanEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const blocked = /^(?:NODE_OPTIONS|NODE_PATH|LD_PRELOAD|LD_AUDIT|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|DYLD_LIBRARY_PATH|DYLD_FRAMEWORK_PATH|DYLD_FALLBACK_LIBRARY_PATH|DYLD_FALLBACK_FRAMEWORK_PATH|DYLD_FORCE_FLAT_NAMESPACE)$/i;
+  const blocked = /^(?:PATH|NODE_OPTIONS|NODE_PATH|LD_PRELOAD|LD_AUDIT|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|DYLD_LIBRARY_PATH|DYLD_FRAMEWORK_PATH|DYLD_FALLBACK_LIBRARY_PATH|DYLD_FALLBACK_FRAMEWORK_PATH|DYLD_FORCE_FLAT_NAMESPACE)$/i;
   return Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] =>
     entry[1] !== undefined && !blocked.test(entry[0])));
 }

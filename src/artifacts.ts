@@ -616,6 +616,10 @@ function nestedVerifierDiagnosticErrors(
     }
     const normalizedLocator = diagnostic.locator.toLowerCase();
     const retainedEvidence = evidenceByPath.get(normalizedLocator);
+    const exactSidecar = retainedEvidence !== undefined
+      && retainedEvidence.relativePath === diagnostic.locator
+      && retainedEvidence.digest === diagnostic.digest
+      && retainedEvidence.sizeBytes === diagnostic.sizeBytes;
     const sourceOrigin = diagnostic.source;
     const sourceBinding = retainedEvidence !== undefined && isDiagnosticSourceBinding(retainedEvidence.diagnosticSource)
       ? retainedEvidence.diagnosticSource
@@ -627,7 +631,7 @@ function nestedVerifierDiagnosticErrors(
       && sourceOrigin.stream === diagnostic.stream
       && sameDiagnosticOrigin(sourceBinding, sourceOrigin);
     const byteIdentical = sanitized && sourceOrigin !== undefined && diagnostic.digest === sourceOrigin.digest;
-    const isSanitizedSidecar = retainedEvidence !== undefined
+    const isSanitizedSidecar = exactSidecar
       && retainedEvidence.kind === "diagnostic"
       && retainedEvidence.authority === "outcome"
       && (retainedEvidence.mediaType === "text/plain" || retainedEvidence.mediaType === "application/octet-stream")
