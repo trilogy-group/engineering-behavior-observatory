@@ -1181,7 +1181,24 @@ export function writeMetadataAtomicallyIfAbsentSync(
                 closeSync(descriptor);
                 descriptor = undefined;
               } else {
-                const existingDestination = lstatSync(destination);
+                let existingDestination: Stats;
+                try {
+                  existingDestination = lstatSync(destination);
+                } catch (error) {
+                  if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+                  winnerRequired = false;
+                  preserveFailedPublication(
+                    destination,
+                    quarantinePath,
+                    temporaryPath,
+                    markerCreated ? markerPath : undefined,
+                    bindingCreated,
+                    descriptor,
+                  );
+                  closeSync(descriptor);
+                  descriptor = undefined;
+                  throw error;
+                }
                 if (!sameFileIdentity(existingDestination, openedTemporary)) {
                   movePathToAttempt(quarantinePath, descriptor);
                   movePathToAttempt(temporaryPath, descriptor);

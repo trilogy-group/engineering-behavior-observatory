@@ -615,6 +615,7 @@ function freezeCandidate(packetLocator: string, inspection: TaskPacketInspection
   if (packet === null || preAdmissionDigest === null || packetDigest === null || components === null) {
     throw new Error("Cannot freeze an incomplete task-packet inspection.");
   }
+  const frozenAt = new Date().toISOString();
   return {
     schemaVersion: TASK_PACKET_FREEZE_SCHEMA_VERSION,
     packetId: packet.id,
@@ -622,8 +623,8 @@ function freezeCandidate(packetLocator: string, inspection: TaskPacketInspection
     preAdmissionDigest,
     packetDigest,
     components,
-    aggregateDigest: aggregateDigest(packet.id, packetLocator, preAdmissionDigest, packetDigest, components),
-    frozenAt: new Date().toISOString(),
+    aggregateDigest: aggregateDigest(packet.id, packetLocator, preAdmissionDigest, packetDigest, components, frozenAt),
+    frozenAt,
   };
 }
 
@@ -662,8 +663,9 @@ function aggregateDigest(
   preAdmissionDigest: Digest,
   packetDigest: Digest,
   components: TaskPacketComponents,
+  frozenAt: string,
 ): Digest {
-  return digestMetadata({ packetId, packetLocator, preAdmissionDigest, packetDigest, components });
+  return digestMetadata({ packetId, packetLocator, preAdmissionDigest, packetDigest, components, frozenAt });
 }
 
 function compareFreezeRecord(record: TaskPacketFreezeRecord, inspection: TaskPacketInspection): string[] {
@@ -691,6 +693,7 @@ function compareFreezeRecord(record: TaskPacketFreezeRecord, inspection: TaskPac
       inspection.preAdmissionDigest!,
       inspection.packetDigest,
       current,
+      record.frozenAt,
     );
     if (!sameDigest(record.aggregateDigest, aggregate)) mismatches.push("aggregate");
   } else {

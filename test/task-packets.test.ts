@@ -859,6 +859,43 @@ race();`,
   }
 });
 
+test("create-if-absent publication preserves its attempt when a raced winner disappears", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-vanished-winner-"));
+  const originalLinkSync = fs.linkSync;
+  let injected = false;
+  fs.linkSync = ((existingPath: fs.PathLike, newPath: fs.PathLike) => {
+    if (!injected && typeof existingPath === "string" && existingPath === "metadata.json.quarantine"
+        && typeof newPath === "string" && newPath === "metadata.json") {
+      injected = true;
+      const error = new Error("injected vanished winner") as NodeJS.ErrnoException;
+      error.code = "EEXIST";
+      throw error;
+    }
+    return originalLinkSync(existingPath, newPath);
+  }) as typeof originalLinkSync;
+  syncBuiltinESMExports();
+  try {
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }),
+      /ENOENT/,
+    );
+    assert.equal(injected, true);
+    assert.equal(existsSync(join(root, "metadata.json")), false);
+    assert.equal(existsSync(join(root, "metadata.json.quarantine")), false);
+    assert.equal(existsSync(join(root, "metadata.json.quarantine.marker")), false);
+    assert.equal(existsSync(join(root, "metadata.json.quarantine.marker.tmp")), false);
+  } finally {
+    fs.linkSync = originalLinkSync;
+    syncBuiltinESMExports();
+  }
+  try {
+    const retry = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
+    assert.equal(retry.created, true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("publication never overwrites an existing quarantine artifact", () => {
   const { root } = createBundle();
   const quarantine = join(root, "packet.json.freeze.json.quarantine");
@@ -1279,6 +1316,22 @@ test("same-size component rewrites are rejected", () => {
     const status = statusTaskPacket(root, "packet.json");
     assert.notEqual(status.status, "frozen");
     assert.ok(status.errors.some((error) => /digest does not match/.test(error.message)));
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("status detects a freeze timestamp mutation", () => {
+  const { root } = createBundle();
+  const freezePath = join(root, "packet.json.freeze.json");
+  try {
+    freezeTaskPacket(root, "packet.json");
+    const record = JSON.parse(readFileSync(freezePath, "utf8")) as { frozenAt: string };
+    record.frozenAt = "2026-08-29T00:00:00Z";
+    writeFileSync(freezePath, JSON.stringify(record));
+    const status = statusTaskPacket(root, "packet.json");
+    assert.notEqual(status.status, "frozen");
+    assert.ok(status.mismatches.includes("aggregate"));
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
