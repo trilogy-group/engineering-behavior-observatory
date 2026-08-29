@@ -2,12 +2,15 @@ import {
   closeSync,
   constants,
   fstatSync,
+  fsyncSync,
   lstatSync,
   openSync,
+  readdirSync,
   readFileSync,
   realpathSync,
+  unlinkSync,
 } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import {
   digestBytes,
@@ -265,7 +268,20 @@ export function statusTaskPacket(
   const inspection = inspectTaskPacket(bundleRoot, packetLocator);
   const packetId = inspection.packet?.id ?? null;
   const packetDigest = inspection.packetDigest;
-  const freeze = readOptionalJson(bundleRoot, freezeLocator, true);
+  let freeze: unknown | undefined;
+  try {
+    freeze = readOptionalJson(bundleRoot, freezeLocator, true);
+  } catch (error) {
+    return {
+      status: "invalid",
+      packetId,
+      packetDigest,
+      aggregateDigest: null,
+      freezeLocator,
+      mismatches: ["freeze-record"],
+      errors: [...inspection.errors, freezeError(freezeLocator, errorMessage(error))],
+    };
+  }
 
   if (freeze === undefined) {
     return {
@@ -434,9 +450,42 @@ function readOptionalJson(bundleRoot: string, locator: string, retryTransientLin
       if (isErrno(error, "ENOENT")) return undefined;
       if (!retryTransientLink || attempt >= MAX_TRANSIENT_LINK_READ_RETRIES || !(error instanceof Error)
           || !error.message.includes("not an isolated regular file")) throw error;
+      if (removeTemporaryFreezeLinks(bundleRoot, locator)) continue;
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
     }
   }
+}
+
+function removeTemporaryFreezeLinks(bundleRoot: string, locator: string): boolean {
+  const root = realpathSync(bundleRoot);
+  const destination = assertBundlePathWithoutLinks(root, locator);
+  const parent = dirname(destination);
+  const destinationStat = lstatSync(destination);
+  let removed = false;
+
+  for (const name of readdirSync(parent)) {
+    if (!/^\.[0-9a-f-]+\.tmp$/.test(name)) continue;
+    const temporary = resolve(parent, name);
+    try {
+      const temporaryStat = lstatSync(temporary);
+      if (temporaryStat.isFile() && temporaryStat.dev === destinationStat.dev && temporaryStat.ino === destinationStat.ino) {
+        unlinkSync(temporary);
+        removed = true;
+      }
+    } catch (error) {
+      if (!isErrno(error, "ENOENT")) throw error;
+    }
+  }
+
+  if (removed) {
+    const descriptor = openSync(parent, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      fsyncSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+  }
+  return removed;
 }
 
 function readBundleFile(bundleRoot: string, locator: string): Buffer {
@@ -476,6 +525,10 @@ function assertBundlePathWithoutLinks(bundleRoot: string, locator: string): stri
 
 function packetError(artifact: string, field: string, message: string): ArtifactValidationError {
   return { artifact, schemaVersion: "ebo.task-packet/v1", field, message };
+}
+
+function freezeError(artifact: string, message: string): ArtifactValidationError {
+  return { artifact, schemaVersion: TASK_PACKET_FREEZE_SCHEMA_VERSION, field: "/", message };
 }
 
 function errorMessage(error: unknown): string {

@@ -232,7 +232,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
 ): { created: boolean; digest: Digest } {
   const bytes = Buffer.from(canonicalizeMetadata(metadata));
   const root = realpathSync(artifactRoot);
-  const { parent, path } = prepareArtifactPathSync(root, relativePath);
+  const { createdDirectories, parent, path } = prepareArtifactPathSync(root, relativePath);
   const digest = digestBytes(bytes);
   const parentDescriptor = openPublishParent(root, parent, relativePath);
   let created = false;
@@ -245,7 +245,10 @@ export function writeMetadataAtomicallyIfAbsentSync(
     process.chdir(parent);
     changedCwd = true;
     assertPublishParentHandle(parentDescriptor, relativePath);
-    if (lstatIfPresent(destination) !== undefined) return { created: false, digest };
+    if (lstatIfPresent(destination) !== undefined) {
+      syncCreatedDirectories(root, createdDirectories, parentDescriptor);
+      return { created: false, digest };
+    }
 
     const temporaryPath = `.${randomUUID()}.tmp`;
     let descriptor: number | undefined;
@@ -267,7 +270,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
     } finally {
       if (descriptor !== undefined) closeSync(descriptor);
       rmSync(temporaryPath, { force: true });
-      if (created) fsyncSync(parentDescriptor);
+      syncCreatedDirectories(root, createdDirectories, parentDescriptor);
     }
   } finally {
     if (changedCwd) process.chdir(originalCwd);
@@ -548,17 +551,22 @@ async function prepareArtifactPath(artifactRoot: string, relativePath: string): 
   return { parent, path };
 }
 
-function prepareArtifactPathSync(artifactRoot: string, relativePath: string): { parent: string; path: string } {
+function prepareArtifactPathSync(
+  artifactRoot: string,
+  relativePath: string,
+): { createdDirectories: string[]; parent: string; path: string } {
   assertSafeArtifactPath(relativePath);
   const root = realpathSync(artifactRoot);
   const segments = relativePath.split("/");
   let parent = root;
+  const createdDirectories: string[] = [];
 
   for (const segment of segments.slice(0, -1)) {
     const next = resolve(parent, segment);
     if (!isContained(root, next)) throw new Error(`Artifact path "${relativePath}" escapes its declared root.`);
     try {
       mkdirSync(next);
+      createdDirectories.push(next);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
@@ -578,7 +586,7 @@ function prepareArtifactPathSync(artifactRoot: string, relativePath: string): { 
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  return { parent, path };
+  return { createdDirectories, parent, path };
 }
 
 function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined {
@@ -620,6 +628,19 @@ function assertPublishParentHandle(descriptor: number, relativePath: string): vo
   const current = lstatSync(".");
   if (!opened.isDirectory() || current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino) {
     throw new Error(`Artifact path "${relativePath}" parent changed during publication.`);
+  }
+}
+
+function syncCreatedDirectories(root: string, directories: readonly string[], leafDescriptor: number): void {
+  fsyncSync(leafDescriptor);
+  const paths = new Set<string>([...directories].reverse().concat(root));
+  for (const path of paths) {
+    const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      fsyncSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
   }
 }
 

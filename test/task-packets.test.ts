@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { existsSync, linkSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -184,17 +183,16 @@ test("create-if-absent metadata writes preserve the first freeze", () => {
   }
 });
 
-test("status tolerates a transient extra freeze-record hard link", () => {
+test("status recovers an interrupted freeze-record hard link", () => {
   const { root } = createBundle();
   const freezePath = join(root, "packet.json.freeze.json");
-  const temporaryLink = join(root, "freeze-record.tmp-link");
+  const temporaryLink = join(root, ".11111111-1111-4111-8111-111111111111.tmp");
   try {
     freezeTaskPacket(root, "packet.json");
     linkSync(freezePath, temporaryLink);
     assert.equal(lstatSync(freezePath).nlink, 2);
-    const unlinker = spawn(process.execPath, ["--input-type=module", "-e", `setTimeout(() => unlinkSync(${JSON.stringify(temporaryLink)}), 0); import { unlinkSync } from "node:fs";`], { stdio: "ignore" });
-    unlinker.unref();
     assert.equal(statusTaskPacket(root, "packet.json").status, "frozen");
+    assert.equal(existsSync(temporaryLink), false);
   } finally {
     try {
       unlinkSync(temporaryLink);
@@ -241,6 +239,19 @@ test("status never reports an unadmitted packet as frozen", () => {
     const status = statusTaskPacket(root, "packet.json");
     assert.equal(status.status, "unadmitted");
     assert.deepEqual(status.mismatches, ["admission"]);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("status reports a malformed freeze record as invalid", () => {
+  const { root } = createBundle();
+  try {
+    writeFileSync(join(root, "packet.json.freeze.json"), "{\n");
+    const status = statusTaskPacket(root, "packet.json");
+    assert.equal(status.status, "invalid");
+    assert.deepEqual(status.mismatches, ["freeze-record"]);
+    assert.equal(status.errors[0]?.schemaVersion, "ebo.task-packet-freeze/v1");
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
