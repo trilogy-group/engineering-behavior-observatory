@@ -215,6 +215,10 @@ export async function writeVerifierResult(
   result: VerifierResult,
 ): Promise<{ algorithm: "sha256"; value: string }> {
   assertVerifierResult(result, relativePath);
+  const resultLocator = relativePath.toLowerCase();
+  if ((result.diagnostics ?? []).some((diagnostic) => diagnostic.locator.toLowerCase() === resultLocator)) {
+    throw new Error("Verifier result path collides with a diagnostic locator.");
+  }
   for (const diagnostic of result.diagnostics ?? []) {
     const bytes = await readVerifiedArtifact(artifactRoot, diagnostic.locator, {
       algorithm: "sha256",

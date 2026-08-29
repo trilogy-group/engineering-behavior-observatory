@@ -293,6 +293,28 @@ test("uses distinct diagnostic paths for repeated executions", async () => {
   }
 });
 
+test("rejects result paths that collide with diagnostics", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "path-safe", status: "passed" }] }));
+    `);
+    const result = await run(root, verifier);
+    const diagnostic = result.diagnostics[0]!;
+
+    await assert.rejects(
+      writeVerifierResult(root.artifact, diagnostic.locator, result),
+      /collides with a diagnostic/,
+    );
+    await assert.rejects(
+      writeVerifierResult(root.artifact, diagnostic.locator.toUpperCase(), result),
+      /collides with a diagnostic/,
+    );
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("serializes a result that validates against the run-bundle schema", async () => {
   const root = await createRoots();
   try {
