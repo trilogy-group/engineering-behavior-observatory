@@ -317,6 +317,7 @@ export function resolveBundleArtifactDigest(
   try {
     descriptor = openBundleRegularFile(bundleRoot, reference.locator, "Artifact locator", root);
     const opened = fstatSync(descriptor);
+    const openedTimes = fstatSync(descriptor, { bigint: true });
     const size = opened.size;
     if (!opened.isFile() || opened.nlink > 1 || !Number.isSafeInteger(size) || size < 0) {
       throw new Error("Artifact is not an isolated regular file.");
@@ -334,8 +335,10 @@ export function resolveBundleArtifactDigest(
       throw new Error("Artifact changed while its digest was being read.");
     }
     const completed = fstatSync(descriptor);
+    const completedTimes = fstatSync(descriptor, { bigint: true });
     if (!completed.isFile() || completed.nlink > 1 || completed.dev !== opened.dev || completed.ino !== opened.ino
-        || completed.size !== size) {
+        || completed.size !== size || completedTimes.mtimeNs !== openedTimes.mtimeNs
+        || completedTimes.ctimeNs !== openedTimes.ctimeNs) {
       throw new Error("Artifact changed while its digest was being read.");
     }
     assertBundleRootHandle(root, bundleRoot, reference.locator);
@@ -381,6 +384,7 @@ function readVerifiedBundleFile(
 ): Buffer {
   try {
     const opened = fstatSync(descriptor);
+    const openedTimes = fstatSync(descriptor, { bigint: true });
     const size = opened.size;
     if (!opened.isFile() || opened.nlink > 1 || !Number.isSafeInteger(size) || size < 0
         || (maxBytes !== undefined && size > maxBytes)) {
@@ -397,8 +401,11 @@ function readVerifiedBundleFile(
       throw new Error(`${label} changed while it was being read.`);
     }
     const completed = fstatSync(descriptor);
+    const completedTimes = fstatSync(descriptor, { bigint: true });
     if (!completed.isFile() || completed.nlink > 1 || completed.dev !== opened.dev || completed.ino !== opened.ino
-        || completed.size !== size || (maxBytes !== undefined && completed.size > maxBytes)) {
+        || completed.size !== size || completedTimes.mtimeNs !== openedTimes.mtimeNs
+        || completedTimes.ctimeNs !== openedTimes.ctimeNs
+        || (maxBytes !== undefined && completed.size > maxBytes)) {
       throw new Error(`${label} changed while it was being read.`);
     }
     if (root !== undefined && bundleRoot !== undefined) {

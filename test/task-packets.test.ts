@@ -409,6 +409,24 @@ test("unrestricted component digests stream without buffering the file", () => {
   }
 });
 
+test("same-size component rewrites are rejected", () => {
+  const { root } = createBundle();
+  try {
+    freezeTaskPacket(root, "packet.json");
+    const verifierPath = join(root, "verifier.sh");
+    const original = readFileSync(verifierPath);
+    const changed = Buffer.from(original);
+    changed[0] = changed[0] === 35 ? 36 : 35;
+    assert.equal(changed.length, original.length);
+    writeFileSync(verifierPath, changed);
+    const status = statusTaskPacket(root, "packet.json");
+    assert.notEqual(status.status, "frozen");
+    assert.ok(status.errors.some((error) => /digest does not match/.test(error.message)));
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("task-packet CLI exposes validate, freeze, and status", () => {
   const { root } = createBundle();
   try {

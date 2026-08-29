@@ -687,6 +687,7 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
     const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const opened = fstatSync(descriptor);
+      const openedTimes = fstatSync(descriptor, { bigint: true });
       if (!opened.isFile() || opened.nlink > 1) throw new Error(`Artifact path "${locator}" is not an isolated regular file.`);
       if (!Number.isSafeInteger(opened.size) || opened.size > MAX_TASK_PACKET_METADATA_BYTES) {
         throw new Error(`Artifact path "${locator}" exceeds its metadata size limit.`);
@@ -702,8 +703,11 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
         throw new Error(`Artifact path "${locator}" changed while it was being read.`);
       }
       const completed = fstatSync(descriptor);
+      const completedTimes = fstatSync(descriptor, { bigint: true });
       if (!completed.isFile() || completed.nlink > 1 || completed.dev !== opened.dev || completed.ino !== opened.ino
-          || completed.size !== opened.size || completed.size > MAX_TASK_PACKET_METADATA_BYTES || bytes.length !== opened.size) {
+          || completed.size !== opened.size || completedTimes.mtimeNs !== openedTimes.mtimeNs
+          || completedTimes.ctimeNs !== openedTimes.ctimeNs
+          || completed.size > MAX_TASK_PACKET_METADATA_BYTES || bytes.length !== opened.size) {
         throw new Error(`Artifact path "${locator}" changed while it was being read.`);
       }
       assertBundleRoot(root, rootDescriptor, locator);
