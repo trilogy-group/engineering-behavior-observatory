@@ -320,11 +320,15 @@ export function freezeTaskPacket(
       if (winner === undefined) throw new Error("Freeze record disappeared after concurrent creation.");
       const errors = validateFreezeRecord(freezeLocator, winner);
       if (errors.length > 0) throw new Error(formatErrors(errors));
+      const winnerDigest = digestMetadata(winner);
       const finalInspection = assertTaskPacketAdmittedWithRoot(bundleRoot, packetLocator, root);
       const finalWinner = readOptionalJson(bundleRoot, freezeLocator, true, root);
       if (finalWinner === undefined) throw new Error("Freeze record disappeared after final inspection.");
       const finalWinnerErrors = validateFreezeRecord(freezeLocator, finalWinner);
       if (finalWinnerErrors.length > 0) throw new Error(formatErrors(finalWinnerErrors));
+      if (!sameDigest(winnerDigest, digestMetadata(finalWinner))) {
+        throw new Error("Freeze record changed after final inspection.");
+      }
       const mismatches = compareFreezeRecord(finalWinner as TaskPacketFreezeRecord, finalInspection);
       if (mismatches.length > 0) throw new Error(`Frozen task packet changed: ${mismatches.join(", ")}.`);
       return finalWinner as TaskPacketFreezeRecord;
@@ -343,7 +347,10 @@ export function freezeTaskPacket(
     if (publishedMismatches.length > 0) {
       throw new Error(`Published freeze record changed: ${publishedMismatches.join(", ")}.`);
     }
-    return candidate;
+    if (!sameDigest(write.digest, digestMetadata(published))) {
+      throw new Error("Published freeze record bytes do not match the candidate.");
+    }
+    return published as TaskPacketFreezeRecord;
   } finally {
     closeBundleRoot(root);
   }
