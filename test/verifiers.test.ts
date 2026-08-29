@@ -259,7 +259,12 @@ test("strips Node preload options from the verifier environment", async () => {
       process.stdout.write(JSON.stringify({ assertions: [{ id: "preload-stripped", status: process.env.NODE_OPTIONS === undefined ? "passed" : "failed" }] }));
     `);
     const result = await run(root, verifier, {
-      env: { PATH: process.env.PATH ?? "", NODE_OPTIONS: "--eval=process.exit(1)" },
+      env: {
+        PATH: process.env.PATH ?? "",
+        NODE_OPTIONS: "--eval=process.exit(1)",
+        LD_PRELOAD: "/missing/preload.dylib",
+        DYLD_INSERT_LIBRARIES: "/missing/injected.dylib",
+      },
     });
 
     assert.equal(result.status, "passed");

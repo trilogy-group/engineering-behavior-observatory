@@ -291,9 +291,9 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
     try {
       if (internalError === undefined) {
         const verifierBytes = await readVerifiedArtifact(verifierRoot, options.verifier.locator, options.verifier.digest);
+        const workspaceContent = await captureWorkspaceContent(workspacePath);
         stagingRoot = await createStagingRoot(workspacePath);
         const evaluatedWorkspacePath = join(stagingRoot, "workspace");
-        const workspaceContent = await captureWorkspaceContent(workspacePath);
         await cp(workspacePath, evaluatedWorkspacePath, { recursive: true, force: false, preserveTimestamps: true });
         await restoreWorkspaceTimestamps(workspacePath, evaluatedWorkspacePath);
         await assertWorkspaceSnapshotContent(evaluatedWorkspacePath, workspaceContent);
@@ -830,8 +830,9 @@ function assertVerifierResult(result: VerifierResult, artifact: string): void {
 }
 
 function cleanEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const blocked = /^(?:NODE_OPTIONS|LD_PRELOAD|LD_AUDIT|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|DYLD_LIBRARY_PATH|DYLD_FRAMEWORK_PATH|DYLD_FALLBACK_LIBRARY_PATH|DYLD_FALLBACK_FRAMEWORK_PATH|DYLD_FORCE_FLAT_NAMESPACE)$/i;
   return Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] =>
-    entry[1] !== undefined && entry[0].toUpperCase() !== "NODE_OPTIONS"));
+    entry[1] !== undefined && !blocked.test(entry[0])));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

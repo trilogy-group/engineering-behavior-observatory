@@ -123,9 +123,9 @@ Verifier execution uses a small subprocess boundary. The executor resolves the
 digest-pinned restricted verifier from its task-bundle root, stages it in a
 private directory, and invokes the pinned Node runtime with the staged verifier
 path followed by the snapshot workspace path. Launcher options cannot replace
-the staged entry point, and `NODE_OPTIONS` preload/import settings are removed
-from the child environment. The restricted implementation and any reference
-solution remain outside that workspace. The verifier writes one JSON object to
+the staged entry point, and Node/POSIX dynamic-loader injection variables are
+removed from the child environment. The restricted implementation and any
+reference solution remain outside that workspace. The verifier writes one JSON object to
 stdout:
 
 ```json
