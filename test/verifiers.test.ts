@@ -32,6 +32,7 @@ test("executes a verifier outside the agent workspace and preserves diagnostics"
 
     assert.equal(result.status, "passed");
     assert.equal(result.exitCode, 0);
+    assert.equal(Number.isSafeInteger(result.durationMs), true);
     assert.equal(result.assertions[0]?.id, "workspace-isolation");
     assert.equal(result.assertions[0]?.status, "passed");
     assert.equal(result.diagnostics.length, 2);
@@ -86,6 +87,22 @@ test("returns a verifier error for an oversized assertion ID", async () => {
   try {
     const verifier = await addVerifier(root.verifier, `
       process.stdout.write(JSON.stringify({ assertions: [{ id: "x".repeat(257), status: "passed" }] }));
+    `);
+    const result = await run(root, verifier);
+
+    assert.equal(result.status, "error");
+    assert.deepEqual(result.assertions, []);
+    assert.match(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), /invalid.*assertion/);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("returns a verifier error for undeclared assertion fields", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "extra-field", status: "passed", error: "unexpected" }] }));
     `);
     const result = await run(root, verifier);
 

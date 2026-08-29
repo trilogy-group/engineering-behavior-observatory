@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
+import { performance } from "node:perf_hooks";
 
 import {
   canonicalizeMetadata,
@@ -95,7 +96,7 @@ const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
  * is retained as bounded diagnostic evidence.
  */
 export async function executeVerifier(options: ExecuteVerifierOptions): Promise<CompleteVerifierResult> {
-  const startedAt = Date.now();
+  const startedAt = performance.now();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   validateOptions(options, timeoutMs, maxOutputBytes);
@@ -191,7 +192,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
       schemaVersion: "verifier-result/v1",
       bundleId: options.bundleId,
       status,
-      durationMs: Math.max(0, Date.now() - startedAt),
+      durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
       ...(exitCode === undefined ? {} : { exitCode }),
       workspace: options.workspace,
       assertions,
@@ -397,18 +398,25 @@ function appendDiagnostic(output: CapturedOutput, message: string, limit: number
 function parseAssertions(bytes: Buffer): VerifierAssertion[] {
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   const parsed: unknown = JSON.parse(text);
-  if (!isRecord(parsed) || !Array.isArray(parsed.assertions) || parsed.assertions.length === 0) {
+  if (!isRecord(parsed) || !hasExactKeys(parsed, ["assertions"]) || !Array.isArray(parsed.assertions)
+      || parsed.assertions.length === 0) {
     throw new Error("Verifier output must contain a non-empty assertions array.");
   }
   const identifiers = new Set<string>();
   return parsed.assertions.map((value) => {
-    if (!isRecord(value) || typeof value.id !== "string" || value.id.trim() === "" || value.id.length > 256
+    if (!isRecord(value) || !hasExactKeys(value, ["id", "status"]) || typeof value.id !== "string"
+        || value.id.trim() === "" || value.id.length > 256
         || !["passed", "failed", "not-run"].includes(String(value.status)) || identifiers.has(value.id)) {
       throw new Error("Verifier output contains an invalid or duplicate assertion.");
     }
     identifiers.add(value.id);
     return { id: value.id, status: value.status as VerifierAssertionStatus };
   });
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expected.length && expected.every((key) => Object.hasOwn(value, key));
 }
 
 type DiagnosticFile = {
