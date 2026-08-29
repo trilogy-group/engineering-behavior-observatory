@@ -326,7 +326,7 @@ export function validateRunManifestEvidence(
     }
     const sameError = derivative.errorRedacted === true
       ? source.status === "error" && derivative.error === "[redacted]"
-      : source.error === derivative.error && source.errorRedacted !== true;
+      : source.error === derivative.error && source.errorRedacted === derivative.errorRedacted;
     if (!sameError) {
       errors.push({
         artifact,
