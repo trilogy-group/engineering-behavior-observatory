@@ -1056,6 +1056,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
   relativePath: string,
   metadata: unknown,
   rootHandle?: BundleRootHandle,
+  beforeDestinationPublish?: () => void,
 ): { created: boolean; digest: Digest } {
   assertPublicationPathWithinLimits(relativePath);
   const bytes = Buffer.from(canonicalizeMetadata(metadata));
@@ -1176,6 +1177,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
             if (!sameFileIdentity(openedTemporary, staged)) {
               throw new Error(`Artifact path "${relativePath}" published a different staging entry.`);
             }
+            beforeDestinationPublish?.();
             linkSync(quarantinePath, destination);
             linkedHere = true;
             const published = lstatSync(destination);

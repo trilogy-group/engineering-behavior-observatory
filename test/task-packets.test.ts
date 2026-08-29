@@ -1351,6 +1351,32 @@ test("status detects a freeze timestamp mutation", () => {
   }
 });
 
+test("freeze preserves only failed evidence when inputs drift before publication", () => {
+  const { root, packet } = createBundle();
+  const originalLinkSync = fs.linkSync;
+  let mutated = false;
+  fs.linkSync = ((existingPath: fs.PathLike, newPath: fs.PathLike) => {
+    const result = originalLinkSync(existingPath, newPath);
+    if (!mutated && typeof newPath === "string" && newPath === "packet.json.freeze.json.quarantine") {
+      mutated = true;
+      packet.agentInput.prompt = "A changed prompt after staging.";
+      writeFileSync(join(root, "packet.json"), JSON.stringify(packet, null, 2));
+    }
+    return result;
+  }) as typeof originalLinkSync;
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => freezeTaskPacket(root, "packet.json"), /Task packet changed|pre-admission digest/);
+    assert.equal(mutated, true);
+    assert.equal(existsSync(join(root, "packet.json.freeze.json")), false);
+    assert.equal(existsSync(join(root, "packet.json.freeze.json.quarantine")), false);
+  } finally {
+    fs.linkSync = originalLinkSync;
+    syncBuiltinESMExports();
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("task-packet CLI exposes validate, freeze, and status", () => {
   const { root } = createBundle();
   try {
