@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "capture-report/v1",
+  "bundleId": "bundle-complete",
+  "qualification": "qualified",
+  "capabilities": {
+    "semantic": { "status": "available" },
+    "timingResource": { "status": "available" },
+    "outcome": { "status": "available" }
+  },
+  "missingEvidence": []
+}

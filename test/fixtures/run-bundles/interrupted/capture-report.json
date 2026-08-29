@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "capture-report/v1",
+  "bundleId": "bundle-interrupted",
+  "qualification": "incomplete",
+  "capabilities": {
+    "semantic": { "status": "available" },
+    "timingResource": { "status": "not-checked" },
+    "outcome": { "status": "missing" }
+  },
+  "missingEvidence": [
+    {
+      "kind": "telemetry",
+      "reason": "not-checked",
+      "affects": ["timing-resource"]
+    },
+    {
+      "kind": "workspace-and-verifier",
+      "reason": "process-interrupted",
+      "affects": ["outcome"]
+    }
+  ]
+}

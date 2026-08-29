@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "run-manifest/v1",
+  "bundleId": "bundle-telemetry-incomplete",
+  "run": {
+    "id": "run-telemetry-incomplete",
+    "task": { "id": "task-example" },
+    "fixture": {
+      "id": "fixture-example",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "model": { "provider": "example-provider", "id": "example-model" },
+    "harness": { "id": "agent-sdk", "version": "1.0.0" },
+    "runtime": [
+      { "source": "anthropic", "name": "agent-sdk", "version": "1.0.0" },
+      { "source": "anthropic", "name": "agent-cli", "version": "1.0.0" }
+    ],
+    "native": { "sessionId": "session-telemetry-incomplete-1" }
+  },
+  "attempt": { "id": "attempt-telemetry-incomplete-1", "number": 1 },
+  "configuration": {
+    "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "budgetDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "toolPolicyDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "terminal": { "state": "completed", "failureClass": "none", "stopReason": "none", "workspaceArtifactId": "workspace" },
+  "evidence": [
+    {
+      "id": "session",
+      "source": "native-session",
+      "kind": "session",
+      "authority": "semantic",
+      "mediaType": "application/x-ndjson",
+      "digest": "sha256:806040d00c978aafaea58e54cddd91cf9a4ee1f2d5d8454396402cc0e71a8b95",
+      "sizeBytes": 67,
+      "sharingClass": "restricted",
+      "relativePath": "session.jsonl",
+      "nativeReference": { "type": "session", "id": "session-telemetry-incomplete-1" }
+    },
+    {
+      "id": "hooks",
+      "source": "native-hooks",
+      "kind": "hook",
+      "authority": "semantic",
+      "mediaType": "application/x-ndjson",
+      "digest": "sha256:c81058d797f3bf06650380c93c86532240014ac0cac052e5312b7179375a0ab9",
+      "sizeBytes": 58,
+      "sharingClass": "restricted",
+      "relativePath": "hooks.jsonl",
+      "nativeReference": { "type": "hook-stream", "id": "hook-telemetry-incomplete-1" }
+    },
+    {
+      "id": "workspace",
+      "source": "workspace-snapshot",
+      "kind": "workspace",
+      "authority": "outcome",
+      "mediaType": "text/x-diff",
+      "digest": "sha256:d4fba6dd51027bab3b34ce73155475b5d462bbbab29119c1bb41fb7c29f5c557",
+      "sizeBytes": 143,
+      "sharingClass": "restricted",
+      "relativePath": "workspace.patch"
+    },
+    {
+      "id": "verifier",
+      "source": "ebo-verifier",
+      "kind": "verifier",
+      "authority": "outcome",
+      "mediaType": "application/json",
+      "digest": "sha256:56c85b28055d7235a47ae011fb6a3516b89a85e5b3c521bd877cc50c43c3aeae",
+      "sizeBytes": 342,
+      "sharingClass": "restricted",
+      "relativePath": "verifier.json"
+    },
+    {
+      "id": "capture-report",
+      "source": "ebo-capture",
+      "kind": "capture-report",
+      "authority": "capture",
+      "mediaType": "application/json",
+      "digest": "sha256:7a1873d86769c7b3af47e9751c2c533305dfd25b48e19339d4d7c561aae5af11",
+      "sizeBytes": 431,
+      "sharingClass": "internal",
+      "relativePath": "capture-report.json"
+    }
+  ]
+}

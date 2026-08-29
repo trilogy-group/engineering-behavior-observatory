@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "export-manifest/v1",
+  "bundleId": "bundle-complete",
+  "status": "blocked",
+  "sharingClass": "partner",
+  "policyDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "artifactIds": [
+    "session",
+    "hooks",
+    "telemetry",
+    "workspace",
+    "verifier",
+    "capture-report"
+  ]
+}

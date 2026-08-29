@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "verifier-result/v1",
+  "bundleId": "bundle-task-failed",
+  "status": "failed",
+  "exitCode": 1,
+  "workspace": {
+    "artifactId": "workspace",
+    "digest": "sha256:d4fba6dd51027bab3b34ce73155475b5d462bbbab29119c1bb41fb7c29f5c557"
+  },
+  "assertions": [
+    { "id": "example-check", "status": "failed" }
+  ]
+}

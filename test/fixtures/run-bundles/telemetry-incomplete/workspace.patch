@@ -1,0 +1,7 @@
+diff --git a/result.txt b/result.txt
+new file mode 100644
+index 0000000..3b18e51
+--- /dev/null
++++ b/result.txt
+@@ -0,0 +1 @@
++fixture outcome

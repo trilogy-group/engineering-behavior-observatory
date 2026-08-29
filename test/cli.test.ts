@@ -74,6 +74,39 @@ test("a clean source checkout packs an executable ebo binary", () => {
   }
 });
 
+test("build removes stale compiled tests before test discovery", () => {
+  const installationRoot = mkdtempSync(join(tmpdir(), "ebo-clean-build-"));
+  const sourceRoot = join(installationRoot, "source");
+
+  try {
+    for (const file of execFileSync("git", ["ls-files", "-z"], {
+      cwd: repositoryRoot,
+    }).toString().split("\0").filter(Boolean)) {
+      const destination = join(sourceRoot, file);
+
+      mkdirSync(dirname(destination), { recursive: true });
+      cpSync(join(repositoryRoot, file), destination);
+    }
+
+    const npmEnvironment: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: installationRoot,
+      npm_config_userconfig: join(installationRoot, ".npmrc"),
+    };
+    delete npmEnvironment.npm_config_allow_scripts;
+    const staleTest = join(sourceRoot, "dist", "test", "stale.test.js");
+
+    execFileSync("npm", ["ci"], { cwd: sourceRoot, env: npmEnvironment, stdio: "pipe" });
+    execFileSync("npm", ["run", "build"], { cwd: sourceRoot, env: npmEnvironment, stdio: "pipe" });
+    writeFileSync(staleTest, "throw new Error('stale test should be removed');\n");
+    execFileSync("npm", ["run", "build"], { cwd: sourceRoot, env: npmEnvironment, stdio: "pipe" });
+
+    assert.equal(existsSync(staleTest), false);
+  } finally {
+    rmSync(installationRoot, { force: true, recursive: true });
+  }
+});
+
 test("CLI import ignores a non-filesystem argv entry", () => {
   assert.doesNotThrow(() =>
     execFileSync(

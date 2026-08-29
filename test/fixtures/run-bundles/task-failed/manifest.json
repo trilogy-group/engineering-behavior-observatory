@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "run-manifest/v1",
+  "bundleId": "bundle-task-failed",
+  "run": {
+    "id": "run-task-failed",
+    "task": { "id": "task-example" },
+    "fixture": {
+      "id": "fixture-example",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "model": { "provider": "example-provider", "id": "example-model" },
+    "harness": { "id": "agent-sdk", "version": "1.0.0" },
+    "runtime": [
+      { "source": "anthropic", "name": "agent-sdk", "version": "1.0.0" },
+      { "source": "anthropic", "name": "agent-cli", "version": "1.0.0" }
+    ],
+    "native": { "sessionId": "session-task-failed-1" }
+  },
+  "attempt": { "id": "attempt-task-failed-1", "number": 1 },
+  "configuration": {
+    "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "budgetDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "toolPolicyDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "terminal": { "state": "failed", "failureClass": "task", "stopReason": "none", "workspaceArtifactId": "workspace" },
+  "evidence": [
+    {
+      "id": "session",
+      "source": "native-session",
+      "kind": "session",
+      "authority": "semantic",
+      "mediaType": "application/x-ndjson",
+      "digest": "sha256:d5a1948492cb573cd8e1d3b5a7de226afc91cba121133a3aa6e6402370426aa5",
+      "sizeBytes": 58,
+      "sharingClass": "restricted",
+      "relativePath": "session.jsonl",
+      "nativeReference": { "type": "session", "id": "session-task-failed-1" }
+    },
+    {
+      "id": "hooks",
+      "source": "native-hooks",
+      "kind": "hook",
+      "authority": "semantic",
+      "mediaType": "application/x-ndjson",
+      "digest": "sha256:4af9b836bc011e17cd9d39f5492dcdd3b9ba2bc89cb3e920eb05718014c682f0",
+      "sizeBytes": 49,
+      "sharingClass": "restricted",
+      "relativePath": "hooks.jsonl",
+      "nativeReference": { "type": "hook-stream", "id": "hook-task-failed-1" }
+    },
+    {
+      "id": "workspace",
+      "source": "workspace-snapshot",
+      "kind": "workspace",
+      "authority": "outcome",
+      "mediaType": "text/x-diff",
+      "digest": "sha256:d4fba6dd51027bab3b34ce73155475b5d462bbbab29119c1bb41fb7c29f5c557",
+      "sizeBytes": 143,
+      "sharingClass": "restricted",
+      "relativePath": "workspace.patch"
+    },
+    {
+      "id": "verifier",
+      "source": "ebo-verifier",
+      "kind": "verifier",
+      "authority": "outcome",
+      "mediaType": "application/json",
+      "digest": "sha256:01c59f47b5d89d4713b9f5bf93acb9d584481e44ffb895010e4e1c5bb03ccd23",
+      "sizeBytes": 333,
+      "sharingClass": "restricted",
+      "relativePath": "verifier.json"
+    },
+    {
+      "id": "capture-report",
+      "source": "ebo-capture",
+      "kind": "capture-report",
+      "authority": "capture",
+      "mediaType": "application/json",
+      "digest": "sha256:9c5a8aa79ce25e573d5cb4ecd705a19d464f5fd3162b9fac0d20d69c43815c1d",
+      "sizeBytes": 406,
+      "sharingClass": "internal",
+      "relativePath": "capture-report.json"
+    }
+  ]
+}

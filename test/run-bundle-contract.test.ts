@@ -1,0 +1,1684 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { Ajv2020 } from "ajv/dist/2020.js";
+
+const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
+const fixtureRoot = resolve(repositoryRoot, "test/fixtures/run-bundles");
+const schemaId = "urn:ebo:schema:run-bundle:v1";
+const schema = JSON.parse(readFileSync(resolve(repositoryRoot, "schemas/run-bundles/v1.json"), "utf8"));
+const ajv = new Ajv2020({ allErrors: true, strict: false });
+
+ajv.addSchema(schema);
+
+type JsonObject = Record<string, unknown>;
+
+function readJson(path: string): JsonObject {
+  return JSON.parse(readFileSync(path, "utf8")) as JsonObject;
+}
+
+function assertJsonMedia(mediaType: unknown, artifact: Buffer): number {
+  const content = new TextDecoder("utf-8", { fatal: true }).decode(artifact);
+
+  if (mediaType === "application/json") {
+    const value = JSON.parse(content);
+    if (Array.isArray(value)) {
+      for (const record of value) assertJsonRecord(record);
+      return value.length;
+    }
+    assertJsonRecord(value);
+    return 1;
+  }
+  if (mediaType === "application/x-ndjson") {
+    let records = 0;
+
+    for (const line of content.split(/\r?\n/)) {
+      if (line.trim() !== "") {
+        const record = JSON.parse(line);
+        assertJsonRecord(record);
+        records += 1;
+      }
+    }
+    return records;
+  }
+
+  return 0;
+}
+
+function assertJsonRecord(record: unknown): asserts record is JsonObject {
+  assert.ok(
+    typeof record === "object" && record !== null && !Array.isArray(record) && Object.keys(record).length > 0,
+    "retained JSON evidence records must be non-empty objects",
+  );
+}
+
+function assertNativeEvidenceRecords(kind: unknown, records: number): void {
+  if (kind === "session" || kind === "hook" || kind === "telemetry") {
+    assert.ok(records > 0, "retained native evidence must contain a record");
+  }
+}
+
+function validator(reference: string) {
+  const validate = ajv.getSchema(reference);
+
+  assert.ok(validate, `missing validator for ${reference}`);
+  return validate;
+}
+
+function schemaErrors(reference: string, value: unknown): string[] {
+  const validate = validator(reference);
+
+  return validate(value)
+    ? []
+    : (validate.errors ?? []).map((error: { instancePath: string; message?: string }) =>
+      `${error.instancePath} ${error.message}`,
+    );
+}
+
+function sourceDescriptor(
+  descriptor: JsonObject,
+  evidenceById: ReadonlyMap<unknown, JsonObject>,
+): JsonObject | undefined {
+  const seen = new Set([String(descriptor.id)]);
+  let current = descriptor;
+
+  while (current.sanitizedFrom !== undefined) {
+    const sourceId = String((current.sanitizedFrom as JsonObject).artifactId);
+    if (seen.has(sourceId)) return undefined;
+    const source = evidenceById.get(sourceId);
+    if (source === undefined) return undefined;
+    seen.add(sourceId);
+    current = source;
+  }
+
+  return current;
+}
+
+function contractErrors(manifest: JsonObject, artifacts = new Map<string, JsonObject>()): string[] {
+  const errors = schemaErrors(schemaId, manifest);
+  if (errors.length > 0) {
+    return errors;
+  }
+  const evidence = manifest.evidence;
+
+  if (!Array.isArray(evidence)) {
+    return errors;
+  }
+
+  const ids = evidence.map((descriptor) => (descriptor as JsonObject).id);
+
+  if (new Set(ids).size !== ids.length) {
+    errors.push("/evidence contains duplicate artifact IDs");
+  }
+
+  const evidenceById = new Map(
+    (evidence as JsonObject[]).map((descriptor) => [descriptor.id, descriptor]),
+  );
+  for (const descriptor of evidence as JsonObject[]) {
+    if (descriptor.sanitizedFrom === undefined) continue;
+    try {
+      assertSanitizedProvenance(descriptor, evidenceById, "retained evidence");
+    } catch (error) {
+      errors.push(`/evidence/${String(descriptor.id)}/sanitizedFrom ${error instanceof Error ? error.message : "is invalid"}`);
+    }
+  }
+
+  const descriptorByPath = new Map<string, JsonObject>();
+  const descriptorByDigest = new Map<string, JsonObject>();
+
+  for (const descriptor of evidence as JsonObject[]) {
+    const relativePath = String(descriptor.relativePath);
+    const existingDescriptor = descriptorByPath.get(relativePath.toLowerCase());
+    const digest = String(descriptor.digest);
+    const existingDigestDescriptor = descriptorByDigest.get(digest);
+
+    if (existingDescriptor !== undefined) {
+      errors.push(`/evidence reuses ${relativePath}`);
+    }
+    if (existingDigestDescriptor !== undefined &&
+        (existingDigestDescriptor.kind !== descriptor.kind || existingDigestDescriptor.authority !== descriptor.authority)) {
+      errors.push(`/evidence reuses ${digest} across evidence classes`);
+    }
+    descriptorByPath.set(relativePath.toLowerCase(), descriptor);
+    descriptorByDigest.set(digest, descriptor);
+  }
+  for (const relativePath of descriptorByPath.keys()) {
+    if (relativePath === "manifest.json" || relativePath.startsWith("manifest.json/")) {
+      errors.push("/evidence cannot reuse the containing manifest path");
+    }
+    for (let boundary = relativePath.lastIndexOf("/"); boundary > 0; boundary = relativePath.lastIndexOf("/", boundary - 1)) {
+      if (descriptorByPath.has(relativePath.slice(0, boundary))) {
+        errors.push(`/evidence path ${relativePath} collides with an artifact ancestor`);
+      }
+    }
+  }
+
+  const attempt = manifest.attempt as JsonObject;
+
+  if (attempt.retryOf === attempt.id) {
+    errors.push("/attempt/retryOf cannot reference the current attempt");
+  }
+
+  const declaredSessionId = (((manifest.run as JsonObject).native as JsonObject | undefined)?.sessionId);
+  const declaredTraceId = (((manifest.run as JsonObject).native as JsonObject | undefined)?.traceId);
+  const sourceEvidence = (evidence as JsonObject[]).filter((descriptor) => descriptor.sanitizedFrom === undefined);
+  const sessionDescriptors = sourceEvidence.filter((descriptor) => descriptor.kind === "session");
+  const telemetryDescriptors = sourceEvidence.filter((descriptor) => descriptor.kind === "telemetry");
+  const verifierStatuses: unknown[] = [];
+  const verifierWorkspaceBindings: Array<{ status: unknown; workspace: JsonObject; source: boolean; descriptor: JsonObject }> = [];
+
+  if (declaredSessionId !== undefined && !sessionDescriptors.some((descriptor) =>
+        ((descriptor.nativeReference as JsonObject | undefined)?.type) === "session"
+          && ((descriptor.nativeReference as JsonObject | undefined)?.id) === declaredSessionId,
+  )) {
+    errors.push("/run/native/sessionId does not match retained session evidence");
+  }
+  if (declaredTraceId !== undefined && !telemetryDescriptors.some((descriptor) =>
+        ((descriptor.nativeReference as JsonObject | undefined)?.type) === "trace"
+          && ((descriptor.nativeReference as JsonObject | undefined)?.id) === declaredTraceId,
+  )) {
+    errors.push("/run/native/traceId does not match retained telemetry evidence");
+  }
+
+  const runtime = (manifest.run as JsonObject).runtime;
+  const harness = (manifest.run as JsonObject).harness as JsonObject;
+  if (Array.isArray(runtime)) {
+    const runtimeIds = runtime.map((component) => {
+      const value = component as JsonObject;
+      return JSON.stringify([value.source, value.name, value.version]);
+    });
+    if (new Set(runtimeIds).size !== runtimeIds.length) {
+      errors.push("/run/runtime contains duplicate components");
+    }
+    if (!runtime.some((component) => {
+      const value = component as JsonObject;
+      return value.version === harness.version && (value.name === harness.id || value.source === harness.id);
+    })) {
+      errors.push("/run/harness is not represented by its runtime composition");
+    }
+  }
+
+  for (const descriptor of evidence as JsonObject[]) {
+    if (descriptor.kind !== "capture-report" && descriptor.kind !== "verifier") {
+      continue;
+    }
+
+    const report = artifacts.get(String(descriptor.id));
+
+    if (report === undefined) {
+      continue;
+    }
+    const artifactSchema = descriptor.kind === "verifier"
+      ? `${schemaId}#/$defs/verifierResult`
+      : `${schemaId}#/$defs/captureReport`;
+    const artifactErrors = schemaErrors(artifactSchema, report);
+    if (artifactErrors.length > 0) {
+      errors.push(`/evidence/${String(descriptor.id)} does not satisfy its artifact schema`);
+      continue;
+    }
+    if (report.bundleId !== manifest.bundleId) {
+      errors.push(`/evidence/${String(descriptor.id)} bundle ID does not match the manifest`);
+    }
+
+    if (descriptor.kind === "verifier") {
+      if (descriptor.sanitizedFrom !== undefined) {
+        const sourceVerifier = evidenceById.get(String((descriptor.sanitizedFrom as JsonObject).artifactId));
+        const sourceResult = sourceVerifier === undefined ? undefined : artifacts.get(String(sourceVerifier.id));
+
+        if (sourceResult === undefined || schemaErrors(artifactSchema, sourceResult).length > 0 || sourceResult.status !== report.status) {
+          errors.push(`/evidence/${String(descriptor.id)} does not preserve its source verifier outcome`);
+        }
+        if (sourceResult !== undefined && schemaErrors(artifactSchema, sourceResult).length === 0) {
+          const sourceAssertions = new Map((sourceResult.assertions as JsonObject[]).map((assertion) => [assertion.id, assertion]));
+          if ((report.assertions as JsonObject[]).some((assertion) => {
+            const sourceAssertion = sourceAssertions.get(assertion.id);
+            return sourceAssertion === undefined || sourceAssertion.status !== assertion.status;
+          })) {
+            errors.push(`/evidence/${String(descriptor.id)} does not preserve source verifier assertion outcomes`);
+          }
+          if (report.exitCode !== undefined && sourceResult.exitCode !== report.exitCode) {
+            errors.push(`/evidence/${String(descriptor.id)} does not preserve its source verifier exit code`);
+          }
+        }
+      }
+      const assertionIds = (report.assertions as JsonObject[]).map((assertion) => assertion.id);
+
+      if (new Set(assertionIds).size !== assertionIds.length) {
+        errors.push(`/evidence/${String(descriptor.id)} contains duplicate verifier assertion IDs`);
+      }
+      const terminal = manifest.terminal as JsonObject;
+      if (terminal.state === "completed" && !["passed", "error", "not-run"].includes(String(report.status))) {
+        errors.push(`/evidence/${String(descriptor.id)} contradicts the manifest terminal outcome`);
+      }
+      verifierStatuses.push(report.status);
+      if (report.workspace !== undefined) {
+        verifierWorkspaceBindings.push({
+          status: report.status,
+          workspace: report.workspace as JsonObject,
+          source: descriptor.sanitizedFrom === undefined,
+          descriptor,
+        });
+      }
+      continue;
+    }
+
+    if (descriptor.sanitizedFrom !== undefined) {
+      const sourceCapture = sourceDescriptor(descriptor, evidenceById);
+      const sourceReport = sourceCapture === undefined ? undefined : artifacts.get(String(sourceCapture.id));
+      if (sourceReport?.qualification === "incomplete" && report.qualification === "qualified") {
+        errors.push(`/evidence/${String(descriptor.id)} cannot escalate incomplete source capture qualification`);
+      }
+      if (sourceReport !== undefined && schemaErrors(artifactSchema, sourceReport).length === 0) {
+        const sourceCapabilities = sourceReport.capabilities as JsonObject;
+        const capabilities = report.capabilities as JsonObject;
+        if (["semantic", "timingResource", "outcome"].some((capability) =>
+          (sourceCapabilities[capability] as JsonObject).status !== (capabilities[capability] as JsonObject).status,
+        )) {
+          errors.push(`/evidence/${String(descriptor.id)} does not preserve source capture capabilities`);
+        }
+        const missingEvidenceFacts = (capture: JsonObject) => JSON.stringify((capture.missingEvidence as JsonObject[])
+          .map((entry) => [entry.kind, entry.reason, [...(entry.affects as string[])].sort()])
+          .sort());
+        if (missingEvidenceFacts(sourceReport) !== missingEvidenceFacts(report)) {
+          errors.push(`/evidence/${String(descriptor.id)} does not preserve source missing-evidence facts`);
+        }
+      }
+    }
+    const capabilities = report.capabilities as JsonObject;
+    const missingEvidenceIdentities = new Set<string>();
+    for (const missingEvidence of report.missingEvidence as JsonObject[]) {
+      const identity = JSON.stringify([
+        missingEvidence.kind,
+        missingEvidence.reason,
+        [...(missingEvidence.affects as string[])].sort(),
+      ]);
+      if (missingEvidenceIdentities.has(identity)) {
+        errors.push("/capture-report/missingEvidence contains equivalent records");
+      }
+      missingEvidenceIdentities.add(identity);
+    }
+    for (const [capability, authority] of Object.entries({
+      semantic: "semantic",
+      timingResource: "timing-resource",
+      outcome: "outcome",
+    })) {
+      if ((capabilities[capability] as JsonObject).status === "available" &&
+          !sourceEvidence.some((item) => item.authority === authority)) {
+        errors.push(`/capture-report/${capability} is available without ${authority} evidence`);
+      }
+      if ((capabilities[capability] as JsonObject).status === "available" &&
+          (report.missingEvidence as JsonObject[]).some((entry) =>
+            (entry.affects as string[]).includes(authority)
+              && !(authority === "timing-resource" && entry.reason === "optional-beta-unavailable"),
+          )) {
+        errors.push(`/capture-report/${capability} is available but declared missing`);
+      }
+    }
+  }
+
+  const terminal = manifest.terminal as JsonObject;
+  if ((terminal.state === "completed" && !verifierStatuses.includes("passed")) ||
+      (terminal.state === "failed" && terminal.failureClass === "task" && !verifierStatuses.includes("failed"))) {
+    errors.push("/terminal outcome requires a matching retained verifier result");
+  }
+  if ((terminal.state === "completed" || (terminal.state === "failed" && terminal.failureClass === "task"))
+      && !(evidence as JsonObject[]).some((descriptor) => descriptor.kind === "workspace")) {
+    errors.push("/terminal outcome requires retained workspace evidence");
+  }
+  const captureReport = [...artifacts.entries()]
+    .find(([artifactId]) => (evidence as JsonObject[]).some((descriptor) =>
+      descriptor.id === artifactId && descriptor.kind === "capture-report"
+        && !["partner", "public"].includes(String(descriptor.sharingClass))
+        && descriptor.sanitizedFrom === undefined,
+    ))?.[1];
+  if (captureReport === undefined) {
+    errors.push("/capture-report must be retained as authoritative source evidence");
+  }
+  const outcomeStatus = (captureReport?.capabilities as JsonObject | undefined)?.outcome as JsonObject | undefined;
+  const workspaceDescriptors = sourceEvidence.filter((descriptor) => descriptor.kind === "workspace");
+  const retainedWorkspaceDescriptors = (evidence as JsonObject[]).filter((descriptor) => descriptor.kind === "workspace");
+  const terminalWorkspace = typeof terminal.workspaceArtifactId === "string"
+    ? workspaceDescriptors.find((descriptor) => descriptor.id === terminal.workspaceArtifactId)
+    : undefined;
+  if (terminal.workspaceArtifactId !== undefined && terminalWorkspace === undefined) {
+    errors.push("/terminal/workspaceArtifactId must reference retained workspace evidence");
+  }
+  const bindingMatches = (binding: { workspace: JsonObject }, workspace: JsonObject | undefined) => workspace !== undefined
+    && workspace.id === binding.workspace.artifactId
+    && JSON.stringify(workspace.digest) === JSON.stringify(binding.workspace.digest);
+  const bindingMatchesWorkspace = (binding: { workspace: JsonObject; source: boolean; descriptor: JsonObject }) => {
+    const workspace = retainedWorkspaceDescriptors.find((descriptor) =>
+      binding.source === (descriptor.sanitizedFrom === undefined)
+        && (binding.source || descriptor.sharingClass === binding.descriptor.sharingClass)
+        && bindingMatches(binding, descriptor),
+    );
+    if (workspace === undefined || binding.source) return workspace !== undefined;
+
+    const immediateVerifier = evidenceById.get(String((binding.descriptor.sanitizedFrom as JsonObject).artifactId));
+    const immediateResult = immediateVerifier === undefined ? undefined : artifacts.get(String(immediateVerifier.id));
+    const immediateWorkspace = workspace.sanitizedFrom === undefined
+      ? undefined
+      : evidenceById.get(String((workspace.sanitizedFrom as JsonObject).artifactId));
+    if (immediateResult === undefined || schemaErrors(`${schemaId}#/$defs/verifierResult`, immediateResult).length > 0 ||
+        immediateResult.workspace === undefined || immediateWorkspace === undefined ||
+        !bindingMatches({ workspace: immediateResult.workspace as JsonObject }, immediateWorkspace)) {
+      return false;
+    }
+
+    const sourceVerifier = sourceDescriptor(binding.descriptor, evidenceById);
+    const sourceResult = sourceVerifier === undefined ? undefined : artifacts.get(String(sourceVerifier.id));
+    const sourceWorkspace = sourceDescriptor(workspace, evidenceById);
+    return sourceResult?.workspace !== undefined && sourceWorkspace !== undefined
+      && bindingMatches({ workspace: sourceResult.workspace as JsonObject }, sourceWorkspace);
+  };
+  if (verifierWorkspaceBindings.some((binding) => !bindingMatchesWorkspace(binding))) {
+    errors.push("/verifier workspace binding does not match retained workspace evidence");
+  }
+  const hasOutcomeWorkspace = verifierWorkspaceBindings.some((binding) =>
+    binding.source && (binding.status === "passed" || binding.status === "failed") && bindingMatches(binding, terminalWorkspace),
+  );
+  if (terminal.state === "completed" && !verifierWorkspaceBindings.some((binding) =>
+    binding.source && binding.status === "passed" && bindingMatches(binding, terminalWorkspace),
+  )) {
+    errors.push("/terminal outcome requires a passed verifier bound to the terminal workspace");
+  }
+  if (terminal.state === "failed" && terminal.failureClass === "task" && !verifierWorkspaceBindings.some((binding) =>
+    binding.source && binding.status === "failed" && bindingMatches(binding, terminalWorkspace),
+  )) {
+    errors.push("/terminal outcome requires a failed verifier bound to the terminal workspace");
+  }
+  if (outcomeStatus?.status === "available" && !hasOutcomeWorkspace) {
+    errors.push("/capture-report/outcome requires retained workspace and an executed verifier");
+  }
+  if (hasOutcomeWorkspace && outcomeStatus?.status !== "available") {
+    errors.push("/capture-report/outcome must be available when retained verifier evidence has an outcome");
+  }
+
+  return errors;
+}
+
+function assertContractValid(manifest: JsonObject, artifacts?: Map<string, JsonObject>): void {
+  assert.deepEqual(contractErrors(manifest, artifacts), []);
+}
+
+function assertContractInvalid(manifest: JsonObject, artifacts?: Map<string, JsonObject>): void {
+  assert.notDeepEqual(contractErrors(manifest, artifacts), []);
+}
+
+function assertExportSafe(manifest: JsonObject, exportManifest: JsonObject): void {
+  assert.equal(exportManifest.bundleId, manifest.bundleId, "export manifest bundle ID must match the containing bundle");
+  if (!["ready", "exported"].includes(String(exportManifest.status))) {
+    return;
+  }
+
+  const evidenceById = new Map(
+    (manifest.evidence as JsonObject[]).map((descriptor) => [descriptor.id, descriptor]),
+  );
+  let hasNonExportArtifact = false;
+
+  for (const artifactId of exportManifest.artifactIds as string[]) {
+    const descriptor = evidenceById.get(artifactId);
+
+    assert.ok(descriptor, `export references unknown artifact ${artifactId}`);
+    assert.notEqual(descriptor.sharingClass, "unknown", "ready or exported manifests cannot include unknown artifacts");
+    assert.equal(
+      descriptor.sharingClass,
+      exportManifest.sharingClass,
+      `${String(exportManifest.sharingClass)} export cannot include ${artifactId} with ${String(descriptor.sharingClass)} sharing class`,
+    );
+    if (["partner", "public"].includes(String(exportManifest.sharingClass))) {
+      assertSanitizedProvenance(descriptor, evidenceById, String(exportManifest.sharingClass));
+    }
+    hasNonExportArtifact ||= descriptor.kind !== "export-manifest";
+  }
+  assert.ok(hasNonExportArtifact, "ready or exported manifests must include non-export evidence");
+}
+
+function assertSanitizedProvenance(
+  descriptor: JsonObject,
+  evidenceById: ReadonlyMap<unknown, JsonObject>,
+  sharingClass: string,
+): void {
+  const seen = new Set([String(descriptor.id)]);
+  let current = descriptor;
+
+  assert.ok(current.sanitizedFrom, `${sharingClass} export requires sanitized artifact provenance`);
+  while (current.sanitizedFrom !== undefined) {
+    const sanitizedFrom = current.sanitizedFrom as JsonObject | undefined;
+    assert.ok(sanitizedFrom, `${sharingClass} export requires sanitized artifact provenance`);
+    const sourceId = String(sanitizedFrom.artifactId);
+    assert.ok(!seen.has(sourceId), "sanitized artifact provenance cannot contain a cycle");
+    const sourceDescriptor = evidenceById.get(sourceId);
+    assert.ok(sourceDescriptor, "sanitized artifact must reference retained source evidence");
+    assert.equal(sourceDescriptor.source, current.source, "sanitized provenance must preserve evidence source");
+    assert.equal(sourceDescriptor.kind, current.kind, "sanitized provenance must preserve evidence kind");
+    assert.equal(sourceDescriptor.authority, current.authority, "sanitized provenance must preserve evidence authority");
+    if (["partner", "public"].includes(String(current.sharingClass))) {
+      assert.equal(current.nativeReference, undefined, "sanitized partner/public evidence must omit native reference");
+    } else {
+      assert.deepEqual(sourceDescriptor.nativeReference ?? null, current.nativeReference ?? null, "sanitized provenance must preserve native reference");
+    }
+    assert.deepEqual(sourceDescriptor.digest, sanitizedFrom.digest, "sanitized provenance must bind the source digest");
+    assert.notDeepEqual(sourceDescriptor.digest, current.digest, "sanitized provenance must change bytes");
+    assert.notDeepEqual(sourceDescriptor.digest, descriptor.digest, "sanitized provenance cannot restore an ancestor's bytes");
+    assert.notEqual(sourceDescriptor.relativePath, current.relativePath, "sanitized artifact must have a distinct retained path");
+    seen.add(sourceId);
+    current = sourceDescriptor;
+  }
+  if (["partner", "public"].includes(String(descriptor.sharingClass))) {
+    for (const candidate of evidenceById.values()) {
+      if (!seen.has(String(candidate.id))) {
+        assert.notDeepEqual(candidate.digest, descriptor.digest, "sanitized shared evidence cannot reuse unrelated retained bytes");
+      }
+    }
+  }
+}
+
+test("validates retained run-bundle fixtures and their references", () => {
+  for (const fixture of ["complete", "task-failed", "interrupted", "telemetry-incomplete"]) {
+    const bundleRoot = resolve(fixtureRoot, fixture);
+    const manifest = readJson(resolve(bundleRoot, "manifest.json"));
+    const artifacts = new Map<string, JsonObject>();
+
+    for (const descriptor of manifest.evidence as JsonObject[]) {
+      const artifactPath = resolve(bundleRoot, String(descriptor.relativePath));
+      const artifact = readFileSync(artifactPath);
+
+      assert.equal(artifactPath.startsWith(`${bundleRoot}${sep}`), true);
+      assert.equal(statSync(artifactPath).isFile(), true);
+      assert.equal(descriptor.sizeBytes, artifact.length);
+      assert.equal(descriptor.digest, `sha256:${createHash("sha256").update(artifact).digest("hex")}`);
+      assertNativeEvidenceRecords(descriptor.kind, assertJsonMedia(descriptor.mediaType, artifact));
+
+      if (descriptor.kind === "verifier") {
+        const verifierResult = readJson(artifactPath);
+
+        assert.deepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, verifierResult), []);
+        artifacts.set(String(descriptor.id), verifierResult);
+      }
+      if (descriptor.kind === "capture-report") {
+        const captureReport = readJson(artifactPath);
+
+        assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, captureReport), []);
+        artifacts.set(String(descriptor.id), captureReport);
+      }
+      if (descriptor.kind === "export-manifest") {
+        const exportManifest = readJson(artifactPath);
+
+        assert.deepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, exportManifest), []);
+        assertExportSafe(manifest, exportManifest);
+      }
+      if (descriptor.kind === "workspace") {
+        const workspaceRoot = mkdtempSync(join(tmpdir(), "ebo-workspace-patch-"));
+
+        try {
+          const result = spawnSync("git", ["apply", "--check", artifactPath], { cwd: workspaceRoot, encoding: "utf8" });
+
+          assert.equal(result.status, 0, result.stderr);
+        } finally {
+          rmSync(workspaceRoot, { force: true, recursive: true });
+        }
+      }
+    }
+
+    assertContractValid(manifest, artifacts);
+  }
+});
+
+test("blocks a ready partner export that lists restricted source artifacts", () => {
+  const bundleRoot = resolve(fixtureRoot, "complete");
+  const manifest = readJson(resolve(bundleRoot, "manifest.json"));
+  const exportManifest = readJson(resolve(bundleRoot, "export/manifest.json"));
+  const readyExport = structuredClone(exportManifest);
+
+  assert.equal(exportManifest.status, "blocked");
+  readyExport.status = "ready";
+  assert.throws(() => assertExportSafe(manifest, readyExport));
+
+  const publicUnknown = structuredClone(readyExport);
+  publicUnknown.sharingClass = "public";
+  publicUnknown.artifactIds = ["unknown-artifact"];
+  assert.throws(() => assertExportSafe(manifest, publicUnknown));
+
+  const publicRestricted = structuredClone(readyExport);
+  publicRestricted.sharingClass = "public";
+  publicRestricted.artifactIds = ["session"];
+  assert.throws(() => assertExportSafe(manifest, publicRestricted));
+
+  const publicManifest = structuredClone(manifest);
+  (publicManifest.evidence as JsonObject[])[0].sharingClass = "public";
+  assert.throws(() => assertExportSafe(publicManifest, publicRestricted), /sanitized artifact provenance/);
+
+  const sanitizedPublicManifest = structuredClone(manifest);
+  const sourceSession = (sanitizedPublicManifest.evidence as JsonObject[])[0]!;
+  const sanitizedSession: JsonObject = {
+    ...sourceSession,
+    id: "sanitized-session",
+    sharingClass: "public",
+    relativePath: "sanitized/session.jsonl",
+    digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    sizeBytes: sourceSession.sizeBytes as number + 1,
+    sanitizedFrom: { artifactId: sourceSession.id, digest: sourceSession.digest },
+  };
+  delete sanitizedSession.nativeReference;
+  (sanitizedPublicManifest.evidence as JsonObject[]).push(sanitizedSession);
+  const sanitizedPublicExport = structuredClone(publicRestricted);
+  sanitizedPublicExport.artifactIds = ["sanitized-session"];
+  assert.deepEqual(schemaErrors(schemaId, sanitizedPublicManifest), []);
+  assert.doesNotThrow(() => assertExportSafe(sanitizedPublicManifest, sanitizedPublicExport));
+
+  const rewrittenSourceManifest = structuredClone(sanitizedPublicManifest);
+  (rewrittenSourceManifest.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-session",
+  )!.source = "other-harness";
+  assert.throws(() => assertExportSafe(rewrittenSourceManifest, sanitizedPublicExport), /preserve evidence source/);
+
+  const leakedNativeReferenceManifest = structuredClone(sanitizedPublicManifest);
+  const leakedNativeReferenceSession = (leakedNativeReferenceManifest.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-session",
+  )!;
+  leakedNativeReferenceSession.nativeReference = sourceSession.nativeReference;
+  assert.notDeepEqual(schemaErrors(schemaId, leakedNativeReferenceManifest), []);
+  assert.throws(() => assertExportSafe(leakedNativeReferenceManifest, sanitizedPublicExport), /must omit native reference/);
+
+  const sanitizedCaptureManifest = structuredClone(manifest);
+  const sourceCapture = (sanitizedCaptureManifest.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "capture-report",
+  )!;
+  (sanitizedCaptureManifest.evidence as JsonObject[]).push({
+    ...sourceCapture,
+    id: "sanitized-capture-report",
+    sharingClass: "public",
+    relativePath: "sanitized/capture-report.json",
+    digest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    sizeBytes: sourceCapture.sizeBytes as number + 1,
+    sanitizedFrom: { artifactId: sourceCapture.id, digest: sourceCapture.digest },
+  });
+  const sanitizedCaptureExport = structuredClone(publicRestricted);
+  sanitizedCaptureExport.artifactIds = ["sanitized-capture-report"];
+  assert.deepEqual(schemaErrors(schemaId, sanitizedCaptureManifest), []);
+  assert.doesNotThrow(() => assertExportSafe(sanitizedCaptureManifest, sanitizedCaptureExport));
+
+  const reclassifiedPublicManifest = structuredClone(sanitizedPublicManifest);
+  const reclassifiedSession = (reclassifiedPublicManifest.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-session",
+  )!;
+  const workspaceSource = (reclassifiedPublicManifest.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "workspace",
+  )!;
+  reclassifiedSession.source = workspaceSource.source;
+  reclassifiedSession.sanitizedFrom = { artifactId: workspaceSource.id, digest: workspaceSource.digest };
+  assert.throws(() => assertExportSafe(reclassifiedPublicManifest, sanitizedPublicExport), /preserve evidence kind/);
+
+  const reidentifiedPublicManifest = structuredClone(sanitizedPublicManifest);
+  const reidentifiedSession = (reidentifiedPublicManifest.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-session",
+  )!;
+  delete reidentifiedSession.nativeReference;
+  assert.doesNotThrow(() => assertExportSafe(reidentifiedPublicManifest, sanitizedPublicExport));
+
+  const restoredPublicManifest = structuredClone(manifest);
+  const restrictedSession = (restoredPublicManifest.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "session")!;
+  delete restrictedSession.nativeReference;
+  const intermediateDigest = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+  (restoredPublicManifest.evidence as JsonObject[]).push(
+    {
+      ...restrictedSession,
+      id: "sanitized-intermediate-session",
+      sharingClass: "partner",
+      relativePath: "sanitized/intermediate-session.jsonl",
+      digest: intermediateDigest,
+      sizeBytes: restrictedSession.sizeBytes as number + 1,
+      sanitizedFrom: { artifactId: restrictedSession.id, digest: restrictedSession.digest },
+    },
+    {
+      ...restrictedSession,
+      id: "restored-public-session",
+      sharingClass: "public",
+      relativePath: "sanitized/restored-session.jsonl",
+      sanitizedFrom: { artifactId: "sanitized-intermediate-session", digest: intermediateDigest },
+    },
+  );
+  const restoredPublicExport = structuredClone(publicRestricted);
+  restoredPublicExport.artifactIds = ["restored-public-session"];
+  assert.throws(() => assertExportSafe(restoredPublicManifest, restoredPublicExport), /restore an ancestor/);
+
+  const cyclicPublicManifest = structuredClone(manifest);
+  const cyclicSource = (cyclicPublicManifest.evidence as JsonObject[])[0]!;
+  delete cyclicSource.nativeReference;
+  (cyclicPublicManifest.evidence as JsonObject[]).push(
+    {
+      ...cyclicSource,
+      id: "sanitized-a",
+      sharingClass: "public",
+      relativePath: "sanitized/a.jsonl",
+      digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      sanitizedFrom: { artifactId: "sanitized-b", digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222" },
+    },
+    {
+      ...cyclicSource,
+      id: "sanitized-b",
+      sharingClass: "public",
+      relativePath: "sanitized/b.jsonl",
+      digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      sanitizedFrom: { artifactId: "sanitized-a", digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111" },
+    },
+  );
+  const cyclicPublicExport = structuredClone(publicRestricted);
+  cyclicPublicExport.artifactIds = ["sanitized-a"];
+  assert.throws(() => assertExportSafe(cyclicPublicManifest, cyclicPublicExport), /provenance cannot contain a cycle/);
+
+  const emptyReadyExport = structuredClone(readyExport);
+  emptyReadyExport.artifactIds = [];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, emptyReadyExport), []);
+
+  const unknownBlockedExport = structuredClone(exportManifest);
+  unknownBlockedExport.sharingClass = "unknown";
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, unknownBlockedExport), []);
+  const unknownNotRequestedExport = structuredClone(unknownBlockedExport);
+  unknownNotRequestedExport.status = "not-requested";
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, unknownNotRequestedExport), []);
+  const unknownReadyExport = structuredClone(unknownBlockedExport);
+  unknownReadyExport.status = "ready";
+  unknownReadyExport.artifactIds = ["session"];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, unknownReadyExport), []);
+  const unknownExportedExport = structuredClone(unknownReadyExport);
+  unknownExportedExport.status = "exported";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/exportManifest`, unknownExportedExport), []);
+
+  const unknownArtifactManifest = structuredClone(manifest);
+  (unknownArtifactManifest.evidence as JsonObject[])[0].sharingClass = "unknown";
+  const unknownArtifactExport = structuredClone(readyExport);
+  unknownArtifactExport.sharingClass = "restricted";
+  unknownArtifactExport.artifactIds = ["session"];
+  assert.throws(() => assertExportSafe(unknownArtifactManifest, unknownArtifactExport), /unknown artifacts/);
+
+  const selfReferentialExport = structuredClone(readyExport);
+  selfReferentialExport.sharingClass = "internal";
+  selfReferentialExport.artifactIds = ["export-manifest"];
+  assert.throws(() => assertExportSafe(manifest, selfReferentialExport));
+});
+
+test("native JSON media is structurally inspectable", () => {
+  assert.doesNotThrow(() => assertJsonMedia("application/x-ndjson", Buffer.from('{"event":"tool"}\n')));
+  assert.throws(() => assertNativeEvidenceRecords("session", assertJsonMedia("application/json", Buffer.from("[]"))));
+  for (const placeholder of ["null", "false", "0", "[null]"]) {
+    assert.throws(() => assertNativeEvidenceRecords("session", assertJsonMedia("application/json", Buffer.from(placeholder))));
+    assert.throws(() => assertNativeEvidenceRecords("session", assertJsonMedia("application/x-ndjson", Buffer.from(`${placeholder}\n`))));
+  }
+  for (const [mediaType, content] of [
+    ["application/json", '[{"event":"tool"},false]'],
+    ["application/x-ndjson", '{"event":"tool"}\nfalse\n'],
+    ["application/json", "{}"],
+    ["application/json", "[{}]"],
+    ["application/x-ndjson", "{}\n"],
+  ]) {
+    assert.throws(() => assertJsonMedia(mediaType, Buffer.from(content)), /non-empty objects/);
+  }
+  assert.throws(() => assertJsonMedia("application/json", Buffer.from("not json")));
+  assert.throws(() => assertJsonMedia("application/x-ndjson", Buffer.from('{"event":"tool"}\nnot json\n')));
+  assert.throws(() => assertJsonMedia("application/json", Buffer.from([0x22, 0xff, 0x22])));
+  assert.throws(() => assertNativeEvidenceRecords("session", assertJsonMedia("application/x-ndjson", Buffer.from(" \n"))));
+  assert.throws(() => assertNativeEvidenceRecords("hook", assertJsonMedia("application/x-ndjson", Buffer.from(" \n"))));
+  assert.throws(() => assertNativeEvidenceRecords("telemetry", assertJsonMedia("application/x-ndjson", Buffer.from(" \n"))));
+});
+
+test("rejects contradictory and incomplete contract records", () => {
+  const complete = readJson(resolve(fixtureRoot, "complete/manifest.json"));
+  const completeCaptureReport = readJson(resolve(fixtureRoot, "complete/capture-report.json"));
+  const completeVerifier = readJson(resolve(fixtureRoot, "complete/verifier.json"));
+  const completeArtifacts = new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", completeVerifier],
+  ]);
+  const telemetryReport = readJson(resolve(fixtureRoot, "telemetry-incomplete/capture-report.json"));
+  const interrupted = readJson(resolve(fixtureRoot, "interrupted/manifest.json"));
+  const interruptedReport = readJson(resolve(fixtureRoot, "interrupted/capture-report.json"));
+  const interruptedArtifacts = new Map([["capture-report", interruptedReport]]);
+  const taskFailed = readJson(resolve(fixtureRoot, "task-failed/manifest.json"));
+  const taskFailedArtifacts = new Map([
+    ["capture-report", readJson(resolve(fixtureRoot, "task-failed/capture-report.json"))],
+    ["verifier", readJson(resolve(fixtureRoot, "task-failed/verifier.json"))],
+  ]);
+  const verifier = readJson(resolve(fixtureRoot, "complete/verifier.json"));
+
+  const invalidTerminal = structuredClone(complete);
+  invalidTerminal.terminal = { state: "completed", failureClass: "task", stopReason: "none" };
+  assertContractInvalid(invalidTerminal);
+
+  const infrastructureFailed = structuredClone(interrupted);
+  infrastructureFailed.terminal = { state: "failed", failureClass: "infrastructure", stopReason: "none" };
+  assertContractValid(infrastructureFailed, interruptedArtifacts);
+
+  const contradictoryInfrastructureFailure = structuredClone(infrastructureFailed);
+  contradictoryInfrastructureFailure.terminal = { state: "failed", failureClass: "task", stopReason: "none" };
+  assertContractInvalid(contradictoryInfrastructureFailure, interruptedArtifacts);
+
+  const unresolvedPartialWorkspace = structuredClone(infrastructureFailed);
+  (unresolvedPartialWorkspace.terminal as JsonObject).workspaceArtifactId = "missing-workspace";
+  assertContractInvalid(unresolvedPartialWorkspace, interruptedArtifacts);
+
+  const verifierError = structuredClone(completeVerifier);
+  verifierError.status = "error";
+  verifierError.assertions = [];
+  delete verifierError.exitCode;
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, verifierError), []);
+  const infrastructureError = structuredClone(infrastructureFailed);
+  const verifierDescriptor = (complete.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "verifier")!;
+  (infrastructureError.evidence as JsonObject[]).push({ ...verifierDescriptor });
+  const interruptedVerifierError = structuredClone(verifierError);
+  interruptedVerifierError.bundleId = infrastructureError.bundleId;
+  assertContractInvalid(infrastructureError, new Map([
+    ["capture-report", interruptedReport],
+    ["verifier", interruptedVerifierError],
+  ]));
+  delete interruptedVerifierError.workspace;
+  assertContractValid(infrastructureError, new Map([
+    ["capture-report", interruptedReport],
+    ["verifier", interruptedVerifierError],
+  ]));
+
+  const executedVerifierWithoutWorkspace = structuredClone(infrastructureFailed);
+  (executedVerifierWithoutWorkspace.evidence as JsonObject[]).push({ ...verifierDescriptor });
+  const interruptedPassedVerifier = structuredClone(completeVerifier);
+  interruptedPassedVerifier.bundleId = executedVerifierWithoutWorkspace.bundleId;
+  assertContractInvalid(executedVerifierWithoutWorkspace, new Map([
+    ["capture-report", interruptedReport],
+    ["verifier", interruptedPassedVerifier],
+  ]));
+
+  const errorAsOutcome = structuredClone(complete);
+  errorAsOutcome.terminal = { state: "failed", failureClass: "infrastructure", stopReason: "none" };
+  assertContractInvalid(errorAsOutcome, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", verifierError],
+  ]));
+
+  const completedWithIndependentError = structuredClone(complete);
+  const errorVerifierDescriptor = (complete.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "verifier")!;
+  (completedWithIndependentError.evidence as JsonObject[]).push({
+    ...errorVerifierDescriptor,
+    id: "error-verifier",
+    relativePath: "error-verifier.json",
+  });
+  assertContractValid(completedWithIndependentError, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", completeVerifier],
+    ["error-verifier", verifierError],
+  ]));
+
+  const sharedVerifierWithSanitizedWorkspace = structuredClone(complete);
+  const sourceWorkspace = (sharedVerifierWithSanitizedWorkspace.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "workspace",
+  )!;
+  const sourceVerifier = (sharedVerifierWithSanitizedWorkspace.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "verifier",
+  )!;
+  const sanitizedWorkspace = {
+    ...sourceWorkspace,
+    id: "sanitized-workspace",
+    sharingClass: "partner",
+    relativePath: "sanitized/workspace.patch",
+    digest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    sizeBytes: sourceWorkspace.sizeBytes as number + 1,
+    sanitizedFrom: { artifactId: sourceWorkspace.id, digest: sourceWorkspace.digest },
+  };
+  (sharedVerifierWithSanitizedWorkspace.evidence as JsonObject[]).push(
+    sanitizedWorkspace,
+    {
+      ...sourceVerifier,
+      id: "sanitized-verifier",
+      sharingClass: "partner",
+      relativePath: "sanitized/verifier.json",
+      digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      sizeBytes: sourceVerifier.sizeBytes as number + 1,
+      sanitizedFrom: { artifactId: sourceVerifier.id, digest: sourceVerifier.digest },
+    },
+  );
+  const sanitizedVerifier = structuredClone(completeVerifier);
+  sanitizedVerifier.workspace = { artifactId: sanitizedWorkspace.id, digest: sanitizedWorkspace.digest };
+  assertContractValid(sharedVerifierWithSanitizedWorkspace, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", completeVerifier],
+    ["sanitized-verifier", sanitizedVerifier],
+  ]));
+
+  const sharedVerifierWithWrongSharingClass = structuredClone(sharedVerifierWithSanitizedWorkspace);
+  (sharedVerifierWithWrongSharingClass.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-verifier",
+  )!.sharingClass = "public";
+  assertContractInvalid(sharedVerifierWithWrongSharingClass, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", completeVerifier],
+    ["sanitized-verifier", sanitizedVerifier],
+  ]));
+
+  const sharedVerifierWithMismatchedWorkspace = structuredClone(sharedVerifierWithSanitizedWorkspace);
+  const otherSourceWorkspace = (sharedVerifierWithMismatchedWorkspace.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "workspace",
+  )!;
+  (sharedVerifierWithMismatchedWorkspace.evidence as JsonObject[]).push({
+    ...otherSourceWorkspace,
+    id: "other-workspace",
+    relativePath: "other-workspace.patch",
+    digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  });
+  const mismatchedSanitizedWorkspace = (sharedVerifierWithMismatchedWorkspace.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-workspace",
+  )!;
+  mismatchedSanitizedWorkspace.sanitizedFrom = { artifactId: "other-workspace", digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" };
+  assertContractInvalid(sharedVerifierWithMismatchedWorkspace, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", completeVerifier],
+    ["sanitized-verifier", sanitizedVerifier],
+  ]));
+
+  const sharedFailedVerifierWithChangedStatus = structuredClone(taskFailed);
+  const taskFailedSourceWorkspace = (sharedFailedVerifierWithChangedStatus.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "workspace",
+  )!;
+  const taskFailedSourceVerifier = (sharedFailedVerifierWithChangedStatus.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "verifier",
+  )!;
+  const taskFailedSanitizedWorkspace = {
+    ...taskFailedSourceWorkspace,
+    id: "sanitized-workspace",
+    sharingClass: "partner",
+    relativePath: "sanitized/workspace.patch",
+    digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    sizeBytes: taskFailedSourceWorkspace.sizeBytes as number + 1,
+    sanitizedFrom: { artifactId: taskFailedSourceWorkspace.id, digest: taskFailedSourceWorkspace.digest },
+  };
+  (sharedFailedVerifierWithChangedStatus.evidence as JsonObject[]).push(
+    taskFailedSanitizedWorkspace,
+    {
+      ...taskFailedSourceVerifier,
+      id: "sanitized-verifier",
+      sharingClass: "partner",
+      relativePath: "sanitized/verifier.json",
+      digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      sizeBytes: taskFailedSourceVerifier.sizeBytes as number + 1,
+      sanitizedFrom: { artifactId: taskFailedSourceVerifier.id, digest: taskFailedSourceVerifier.digest },
+    },
+  );
+  const changedStatusVerifier = structuredClone(taskFailedArtifacts.get("verifier")!);
+  changedStatusVerifier.status = "passed";
+  changedStatusVerifier.exitCode = 0;
+  changedStatusVerifier.assertions = [{ id: "example-check", status: "passed" }];
+  changedStatusVerifier.workspace = {
+    artifactId: taskFailedSanitizedWorkspace.id,
+    digest: taskFailedSanitizedWorkspace.digest,
+  };
+  const changedStatusArtifacts = new Map(taskFailedArtifacts);
+  changedStatusArtifacts.set("sanitized-verifier", changedStatusVerifier);
+  assertContractInvalid(sharedFailedVerifierWithChangedStatus, changedStatusArtifacts);
+
+  const malformedSourceVerifier = structuredClone(taskFailedArtifacts.get("verifier")!);
+  delete malformedSourceVerifier.assertions;
+  const malformedSourceArtifacts = new Map(taskFailedArtifacts);
+  malformedSourceArtifacts.set("verifier", malformedSourceVerifier);
+  malformedSourceArtifacts.set("sanitized-verifier", {
+    ...taskFailedArtifacts.get("verifier")!,
+    workspace: { artifactId: taskFailedSanitizedWorkspace.id, digest: taskFailedSanitizedWorkspace.digest },
+  });
+  assert.doesNotThrow(() => assertContractInvalid(sharedFailedVerifierWithChangedStatus, malformedSourceArtifacts));
+
+  const incompleteCaptureWithQualifiedDerivative = structuredClone(complete);
+  const sourceCaptureDescriptor = (incompleteCaptureWithQualifiedDerivative.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "capture-report",
+  )!;
+  (incompleteCaptureWithQualifiedDerivative.evidence as JsonObject[]).push({
+    ...sourceCaptureDescriptor,
+    id: "sanitized-capture-report",
+    sharingClass: "partner",
+    relativePath: "sanitized/capture-report.json",
+    digest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    sizeBytes: sourceCaptureDescriptor.sizeBytes as number + 1,
+    sanitizedFrom: { artifactId: sourceCaptureDescriptor.id, digest: sourceCaptureDescriptor.digest },
+  });
+  const incompleteCaptureReport = structuredClone(completeCaptureReport);
+  incompleteCaptureReport.qualification = "incomplete";
+  (incompleteCaptureReport.capabilities as JsonObject).semantic = { status: "not-checked" };
+  incompleteCaptureReport.missingEvidence = [{ kind: "session", reason: "not-checked", affects: ["semantic"] }];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, incompleteCaptureReport), []);
+  assertContractInvalid(incompleteCaptureWithQualifiedDerivative, new Map([
+    ["capture-report", incompleteCaptureReport],
+    ["verifier", completeVerifier],
+    ["sanitized-capture-report", completeCaptureReport],
+  ]));
+
+  const malformedSourceCaptureReport = structuredClone(incompleteCaptureReport);
+  delete malformedSourceCaptureReport.capabilities;
+  assert.doesNotThrow(() => assertContractInvalid(incompleteCaptureWithQualifiedDerivative, new Map([
+    ["capture-report", malformedSourceCaptureReport],
+    ["verifier", completeVerifier],
+    ["sanitized-capture-report", completeCaptureReport],
+  ])));
+
+  const incompleteCaptureWithChangedFacts = structuredClone(incompleteCaptureWithQualifiedDerivative);
+  const changedCaptureFacts = structuredClone(incompleteCaptureReport);
+  changedCaptureFacts.capabilities = {
+    semantic: { status: "available" },
+    timingResource: { status: "not-checked" },
+    outcome: { status: "available" },
+  };
+  changedCaptureFacts.missingEvidence = [{ kind: "telemetry", reason: "not-checked", affects: ["timing-resource"] }];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, changedCaptureFacts), []);
+  assertContractInvalid(incompleteCaptureWithChangedFacts, new Map([
+    ["capture-report", incompleteCaptureReport],
+    ["verifier", completeVerifier],
+    ["sanitized-capture-report", changedCaptureFacts],
+  ]));
+
+  const incompleteCaptureWithChangedKind = structuredClone(incompleteCaptureWithQualifiedDerivative);
+  const changedCaptureKind = structuredClone(incompleteCaptureReport);
+  changedCaptureKind.missingEvidence = [{ kind: "hooks", reason: "not-checked", affects: ["semantic"] }];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, changedCaptureKind), []);
+  assertContractInvalid(incompleteCaptureWithChangedKind, new Map([
+    ["capture-report", incompleteCaptureReport],
+    ["verifier", completeVerifier],
+    ["sanitized-capture-report", changedCaptureKind],
+  ]));
+
+  const sharedVerifierWithChangedAssertions = structuredClone(sharedFailedVerifierWithChangedStatus);
+  const sourceVerifierWithTwoAssertions = structuredClone(taskFailedArtifacts.get("verifier")!);
+  sourceVerifierWithTwoAssertions.assertions = [
+    { id: "source-failed", status: "failed" },
+    { id: "source-passed", status: "passed" },
+  ];
+  const changedAssertionVerifier = structuredClone(sourceVerifierWithTwoAssertions);
+  changedAssertionVerifier.exitCode = 2;
+  changedAssertionVerifier.assertions = [
+    { id: "source-failed", status: "passed" },
+    { id: "source-passed", status: "failed" },
+  ];
+  const changedAssertionWorkspace = (sharedVerifierWithChangedAssertions.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-workspace",
+  )!;
+  changedAssertionVerifier.workspace = {
+    artifactId: changedAssertionWorkspace.id,
+    digest: changedAssertionWorkspace.digest,
+  };
+  const changedAssertionArtifacts = new Map(taskFailedArtifacts);
+  changedAssertionArtifacts.set("verifier", sourceVerifierWithTwoAssertions);
+  changedAssertionArtifacts.set("sanitized-verifier", changedAssertionVerifier);
+  assertContractInvalid(sharedVerifierWithChangedAssertions, changedAssertionArtifacts);
+
+  const sharedVerifierWithInventedAssertion = structuredClone(sharedFailedVerifierWithChangedStatus);
+  const inventedAssertionVerifier = structuredClone(taskFailedArtifacts.get("verifier")!);
+  inventedAssertionVerifier.assertions = [{ id: "invented-check", status: "failed" }];
+  inventedAssertionVerifier.workspace = {
+    artifactId: changedAssertionWorkspace.id,
+    digest: changedAssertionWorkspace.digest,
+  };
+  const inventedAssertionArtifacts = new Map(taskFailedArtifacts);
+  inventedAssertionArtifacts.set("sanitized-verifier", inventedAssertionVerifier);
+  assertContractInvalid(sharedVerifierWithInventedAssertion, inventedAssertionArtifacts);
+
+  const sharedVerifierWithInventedExitCode = structuredClone(sharedFailedVerifierWithChangedStatus);
+  const sourceVerifierWithoutExitCode = structuredClone(taskFailedArtifacts.get("verifier")!);
+  delete sourceVerifierWithoutExitCode.exitCode;
+  const inventedExitCodeVerifier = structuredClone(sourceVerifierWithoutExitCode);
+  inventedExitCodeVerifier.exitCode = 2;
+  inventedExitCodeVerifier.workspace = {
+    artifactId: changedAssertionWorkspace.id,
+    digest: changedAssertionWorkspace.digest,
+  };
+  const inventedExitCodeArtifacts = new Map(taskFailedArtifacts);
+  inventedExitCodeArtifacts.set("verifier", sourceVerifierWithoutExitCode);
+  inventedExitCodeArtifacts.set("sanitized-verifier", inventedExitCodeVerifier);
+  assertContractInvalid(sharedVerifierWithInventedExitCode, inventedExitCodeArtifacts);
+
+  const multiHopSharedVerifier = structuredClone(sharedFailedVerifierWithChangedStatus);
+  const partnerWorkspace = (multiHopSharedVerifier.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-workspace",
+  )!;
+  const partnerVerifier = (multiHopSharedVerifier.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.id === "sanitized-verifier",
+  )!;
+  const publicWorkspace = {
+    ...partnerWorkspace,
+    id: "public-workspace",
+    sharingClass: "public",
+    relativePath: "public/workspace.patch",
+    digest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    sanitizedFrom: { artifactId: partnerWorkspace.id, digest: partnerWorkspace.digest },
+  };
+  (multiHopSharedVerifier.evidence as JsonObject[]).push(
+    publicWorkspace,
+    {
+      ...partnerVerifier,
+      id: "public-verifier",
+      sharingClass: "public",
+      relativePath: "public/verifier.json",
+      digest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      sanitizedFrom: { artifactId: partnerVerifier.id, digest: partnerVerifier.digest },
+    },
+  );
+  const multiHopSourceVerifier = structuredClone(taskFailedArtifacts.get("verifier")!);
+  multiHopSourceVerifier.assertions = [
+    { id: "source-failed", status: "failed" },
+    { id: "source-passed", status: "passed" },
+  ];
+  const redactedPartnerVerifier = structuredClone(multiHopSourceVerifier);
+  redactedPartnerVerifier.assertions = [{ id: "source-failed", status: "failed" }];
+  delete redactedPartnerVerifier.exitCode;
+  redactedPartnerVerifier.workspace = { artifactId: partnerWorkspace.id, digest: partnerWorkspace.digest };
+  const restoredPublicVerifier = structuredClone(multiHopSourceVerifier);
+  restoredPublicVerifier.workspace = { artifactId: publicWorkspace.id, digest: publicWorkspace.digest };
+  assertContractInvalid(multiHopSharedVerifier, new Map([
+    ["capture-report", taskFailedArtifacts.get("capture-report")!],
+    ["verifier", multiHopSourceVerifier],
+    ["sanitized-verifier", redactedPartnerVerifier],
+    ["public-verifier", restoredPublicVerifier],
+  ]));
+
+  const sourceErrorVerifier = structuredClone(taskFailedArtifacts.get("verifier")!);
+  sourceErrorVerifier.status = "error";
+  sourceErrorVerifier.assertions = [];
+  const redactedPartnerWorkspace = structuredClone(sourceErrorVerifier);
+  delete redactedPartnerWorkspace.workspace;
+  const restoredPublicWorkspace = structuredClone(sourceErrorVerifier);
+  restoredPublicWorkspace.workspace = { artifactId: publicWorkspace.id, digest: publicWorkspace.digest };
+  assert.match(contractErrors(multiHopSharedVerifier, new Map([
+    ["capture-report", taskFailedArtifacts.get("capture-report")!],
+    ["verifier", sourceErrorVerifier],
+    ["sanitized-verifier", redactedPartnerWorkspace],
+    ["public-verifier", restoredPublicWorkspace],
+  ])).join("\n"), /verifier workspace binding/);
+
+  const malformedImmediateWorkspace = structuredClone(sourceErrorVerifier);
+  malformedImmediateWorkspace.workspace = null;
+  assert.doesNotThrow(() => assertContractInvalid(multiHopSharedVerifier, new Map([
+    ["capture-report", taskFailedArtifacts.get("capture-report")!],
+    ["verifier", sourceErrorVerifier],
+    ["sanitized-verifier", malformedImmediateWorkspace],
+    ["public-verifier", restoredPublicWorkspace],
+  ])));
+
+  const sharedDerivativeWithOtherSourceBytes = structuredClone(complete);
+  const firstSession = (sharedDerivativeWithOtherSourceBytes.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "session",
+  )!;
+  const otherSession = {
+    ...firstSession,
+    id: "other-session",
+    relativePath: "other-session.jsonl",
+    digest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  };
+  const derivativeWithOtherSourceBytes: JsonObject = {
+    ...firstSession,
+    id: "sanitized-other-session",
+    sharingClass: "partner",
+    relativePath: "sanitized/other-session.jsonl",
+    sanitizedFrom: { artifactId: otherSession.id, digest: otherSession.digest },
+  };
+  delete derivativeWithOtherSourceBytes.nativeReference;
+  (sharedDerivativeWithOtherSourceBytes.evidence as JsonObject[]).push(otherSession, derivativeWithOtherSourceBytes);
+  assertContractInvalid(sharedDerivativeWithOtherSourceBytes, completeArtifacts);
+
+  const completedWithIndependentNotRun = structuredClone(completedWithIndependentError);
+  const notRunVerifierDescriptor = (complete.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "verifier")!;
+  (completedWithIndependentNotRun.evidence as JsonObject[]).push({
+    ...notRunVerifierDescriptor,
+    id: "not-run-verifier",
+    relativePath: "not-run-verifier.json",
+  });
+  const independentNotRun = structuredClone(completeVerifier);
+  independentNotRun.status = "not-run";
+  independentNotRun.assertions = [{ id: "example-check", status: "not-run" }];
+  delete independentNotRun.exitCode;
+  delete independentNotRun.workspace;
+  assertContractValid(completedWithIndependentNotRun, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", completeVerifier],
+    ["error-verifier", verifierError],
+    ["not-run-verifier", independentNotRun],
+  ]));
+
+  const completedWithMismatchedError = structuredClone(completedWithIndependentError);
+  const mismatchedErrorVerifier = structuredClone(verifierError);
+  (mismatchedErrorVerifier.workspace as JsonObject).digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+  assertContractInvalid(completedWithMismatchedError, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", completeVerifier],
+    ["error-verifier", mismatchedErrorVerifier],
+  ]));
+
+  const verifierWithOtherWorkspace = structuredClone(completeVerifier);
+  (verifierWithOtherWorkspace.workspace as JsonObject).digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+  assertContractInvalid(complete, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", verifierWithOtherWorkspace],
+  ]));
+
+  const terminalWorkspaceMismatch = structuredClone(complete);
+  (terminalWorkspaceMismatch.evidence as JsonObject[]).push({
+    ...((terminalWorkspaceMismatch.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "workspace")!),
+    id: "workspace-later",
+    relativePath: "workspace-later.patch",
+    digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  });
+  (terminalWorkspaceMismatch.terminal as JsonObject).workspaceArtifactId = "workspace-later";
+  assertContractInvalid(terminalWorkspaceMismatch, completeArtifacts);
+
+  const taskFailureWithMismatchedVerifier = structuredClone(complete);
+  taskFailureWithMismatchedVerifier.terminal = { state: "failed", failureClass: "task", stopReason: "none" };
+  const mismatchedFailedVerifier = structuredClone(completeVerifier);
+  mismatchedFailedVerifier.status = "failed";
+  mismatchedFailedVerifier.exitCode = 1;
+  mismatchedFailedVerifier.assertions = [{ id: "example-check", status: "failed" }];
+  (mismatchedFailedVerifier.workspace as JsonObject).digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+  const mismatchedFailedVerifierDescriptor = (complete.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "verifier")!;
+  (taskFailureWithMismatchedVerifier.evidence as JsonObject[]).push({
+    ...mismatchedFailedVerifierDescriptor,
+    id: "failed-verifier",
+    relativePath: "failed-verifier.json",
+  });
+  assertContractInvalid(taskFailureWithMismatchedVerifier, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", completeVerifier],
+    ["failed-verifier", mismatchedFailedVerifier],
+  ]));
+
+  const firstAttemptRetry = structuredClone(complete);
+  (firstAttemptRetry.attempt as JsonObject).retryOf = "prior-attempt";
+  assertContractInvalid(firstAttemptRetry, completeArtifacts);
+
+  const unlinkedRetry = structuredClone(complete);
+  (unlinkedRetry.attempt as JsonObject).number = 2;
+  assertContractInvalid(unlinkedRetry, completeArtifacts);
+
+  const reorderedMissingEvidence = structuredClone(interruptedReport);
+  (reorderedMissingEvidence.capabilities as JsonObject).outcome = { status: "not-checked" };
+  reorderedMissingEvidence.missingEvidence = [
+    { kind: "outcome-and-timing", reason: "not-checked", affects: ["timing-resource", "outcome"] },
+    { kind: "outcome-and-timing", reason: "not-checked", affects: ["outcome", "timing-resource"] },
+  ];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, reorderedMissingEvidence), []);
+  assertContractInvalid(interrupted, new Map([["capture-report", reorderedMissingEvidence]]));
+
+  const mixedSemanticReasons = structuredClone(interruptedReport);
+  (mixedSemanticReasons.capabilities as JsonObject).semantic = { status: "missing" };
+  mixedSemanticReasons.missingEvidence = [
+    { kind: "hooks", reason: "unsupported", affects: ["semantic"] },
+    { kind: "session", reason: "not-checked", affects: ["semantic"] },
+    { kind: "telemetry", reason: "not-checked", affects: ["timing-resource"] },
+    { kind: "workspace-and-verifier", reason: "process-interrupted", affects: ["outcome"] },
+  ];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, mixedSemanticReasons), []);
+
+  assert.doesNotThrow(() => assertContractInvalid({ evidence: [] }));
+
+  const invalidPath = structuredClone(complete);
+  (invalidPath.evidence as JsonObject[])[0].relativePath = "../outside.json";
+  assertContractInvalid(invalidPath);
+
+  const tooLongRelativePath = structuredClone(complete);
+  (tooLongRelativePath.evidence as JsonObject[])[0].relativePath = "a".repeat(256);
+  assertContractInvalid(tooLongRelativePath, completeArtifacts);
+
+  const manifestPathAlias = structuredClone(complete);
+  (manifestPathAlias.evidence as JsonObject[])[0].relativePath = "manifest.json";
+  assertContractInvalid(manifestPathAlias, completeArtifacts);
+
+  const manifestDescendantAlias = structuredClone(complete);
+  (manifestDescendantAlias.evidence as JsonObject[])[0].relativePath = "manifest.json/session.jsonl";
+  assertContractInvalid(manifestDescendantAlias, completeArtifacts);
+
+  const ancestorPathAlias = structuredClone(complete);
+  (ancestorPathAlias.evidence as JsonObject[])[0].relativePath = "logs";
+  (ancestorPathAlias.evidence as JsonObject[])[1].relativePath = "logs/session.jsonl";
+  assertContractInvalid(ancestorPathAlias, completeArtifacts);
+
+  const invalidAuthority = structuredClone(complete);
+  (invalidAuthority.evidence as JsonObject[])[0].authority = "outcome";
+  assertContractInvalid(invalidAuthority);
+
+  const unprovenancedPublicEvidence = structuredClone(complete);
+  (unprovenancedPublicEvidence.evidence as JsonObject[])[0]!.sharingClass = "public";
+  assertContractInvalid(unprovenancedPublicEvidence, completeArtifacts);
+
+  const duplicateArtifact = structuredClone(complete);
+  (duplicateArtifact.evidence as JsonObject[])[1].id = (duplicateArtifact.evidence as JsonObject[])[0].id;
+  assertContractInvalid(duplicateArtifact, completeArtifacts);
+
+  const sharingClassAlias = structuredClone(complete);
+  (sharingClassAlias.evidence as JsonObject[]).push({
+    ...(sharingClassAlias.evidence as JsonObject[])[0],
+    id: "partner-session-alias",
+    sharingClass: "partner",
+  });
+  assertContractInvalid(sharingClassAlias, completeArtifacts);
+
+  const authorityAlias = structuredClone(complete);
+  (authorityAlias.evidence as JsonObject[]).push({
+    ...(authorityAlias.evidence as JsonObject[])[0],
+    id: "outcome-session-alias",
+    kind: "workspace",
+    authority: "outcome",
+    relativePath: "outcome-session-alias.patch",
+  });
+  assertContractInvalid(authorityAlias, completeArtifacts);
+
+  for (const [authority, nativeId] of [["semantic", "sessionId"], ["timing-resource", "traceId"]] as const) {
+    const derivativeOnly = structuredClone(complete);
+    const sourceDescriptors = (derivativeOnly.evidence as JsonObject[]).filter((descriptor) => descriptor.authority === authority);
+    derivativeOnly.evidence = [
+      ...(derivativeOnly.evidence as JsonObject[]).filter((descriptor) => descriptor.authority !== authority),
+      ...sourceDescriptors.map((descriptor, index) => ({
+        ...descriptor,
+        id: `sanitized-${authority}-${index}`,
+        sharingClass: "partner",
+        relativePath: `sanitized/${authority}-${index}.json`,
+        digest: `sha256:${String(index + 1).repeat(64)}`,
+        sanitizedFrom: { artifactId: descriptor.id, digest: descriptor.digest },
+      })),
+    ];
+    delete ((derivativeOnly.run as JsonObject).native as JsonObject)[nativeId];
+    assertContractInvalid(derivativeOnly, completeArtifacts);
+  }
+
+  for (const kind of ["workspace", "verifier", "capture-report"] as const) {
+    const derivativeOnly = structuredClone(complete);
+    const descriptor = (derivativeOnly.evidence as JsonObject[]).find((item) => item.kind === kind)!;
+    descriptor.sanitizedFrom = { artifactId: `missing-${kind}`, digest: descriptor.digest };
+    assertContractInvalid(derivativeOnly, completeArtifacts);
+  }
+
+  const unreferencedDerivative = structuredClone(complete);
+  const sourceSession = (unreferencedDerivative.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "session")!;
+  const unreferencedSanitizedSession: JsonObject = {
+    ...sourceSession,
+    id: "unreferenced-sanitized-session",
+    sharingClass: "partner",
+    relativePath: "sanitized/unreferenced-session.jsonl",
+    digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    sizeBytes: sourceSession.sizeBytes as number + 1,
+    sanitizedFrom: { artifactId: "missing-session", digest: sourceSession.digest },
+  };
+  delete unreferencedSanitizedSession.nativeReference;
+  (unreferencedDerivative.evidence as JsonObject[]).push(unreferencedSanitizedSession);
+  assertContractInvalid(unreferencedDerivative, completeArtifacts);
+
+  const unsafeArtifactSize = structuredClone(complete);
+  (unsafeArtifactSize.evidence as JsonObject[])[0]!.sizeBytes = Number.MAX_SAFE_INTEGER + 1;
+  assertContractInvalid(unsafeArtifactSize, completeArtifacts);
+
+  const caseFoldedAlias = structuredClone(complete);
+  (caseFoldedAlias.evidence as JsonObject[]).push({
+    ...(caseFoldedAlias.evidence as JsonObject[])[0],
+    id: "case-folded-session-alias",
+    relativePath: "SESSION.jsonl",
+  });
+  assertContractInvalid(caseFoldedAlias, completeArtifacts);
+
+  const nativeIdentityAlias = structuredClone(complete);
+  const sessionDescriptor = (nativeIdentityAlias.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "session")!;
+  (nativeIdentityAlias.evidence as JsonObject[]).push({
+    ...sessionDescriptor,
+    id: "session-native-alias",
+    nativeReference: { type: "session", id: "session-alias-1" },
+  });
+  ((nativeIdentityAlias.run as JsonObject).native as JsonObject).sessionId = "session-alias-1";
+  assertContractInvalid(nativeIdentityAlias, completeArtifacts);
+
+  const missingCaptureReport = structuredClone(complete);
+  missingCaptureReport.evidence = (missingCaptureReport.evidence as JsonObject[]).filter(
+    (descriptor) => descriptor.kind !== "capture-report",
+  );
+  assertContractInvalid(missingCaptureReport, completeArtifacts);
+
+  const duplicateCaptureReport = structuredClone(complete);
+  const captureReport = (duplicateCaptureReport.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "capture-report",
+  );
+  (duplicateCaptureReport.evidence as JsonObject[]).push({ ...captureReport, id: "second-capture-report" });
+  assertContractInvalid(duplicateCaptureReport, completeArtifacts);
+
+  const serverRuntime = structuredClone(complete);
+  (serverRuntime.run as JsonObject).harness = { id: "openhands-agent-server", version: "1.0.0" };
+  (serverRuntime.run as JsonObject).runtime = [
+    { source: "openhands-agent-server", name: "agent-server", version: "1.0.0" },
+  ];
+  assertContractValid(serverRuntime, completeArtifacts);
+
+  const stoppedWithUnexecutedVerifier = structuredClone(complete);
+  stoppedWithUnexecutedVerifier.terminal = { state: "stopped", failureClass: "none", stopReason: "budget" };
+  const unexecutedVerifier = structuredClone(completeVerifier);
+  unexecutedVerifier.status = "not-run";
+  unexecutedVerifier.assertions = [{ id: "example-check", status: "not-run" }];
+  delete unexecutedVerifier.exitCode;
+  delete unexecutedVerifier.workspace;
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, unexecutedVerifier), []);
+  assertContractInvalid(stoppedWithUnexecutedVerifier, new Map([
+    ["capture-report", completeCaptureReport],
+    ["verifier", unexecutedVerifier],
+  ]));
+
+  const notRunWithWorkspace = structuredClone(completeVerifier);
+  notRunWithWorkspace.status = "not-run";
+  notRunWithWorkspace.assertions = [{ id: "example-check", status: "not-run" }];
+  delete notRunWithWorkspace.exitCode;
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, notRunWithWorkspace), []);
+
+  const mismatchedHarnessRuntime = structuredClone(complete);
+  (mismatchedHarnessRuntime.run as JsonObject).runtime = [
+    { source: "openhands-agent-server", name: "agent-server", version: "1.0.0" },
+  ];
+  assertContractInvalid(mismatchedHarnessRuntime, completeArtifacts);
+
+  const selfRetry = structuredClone(complete);
+  (selfRetry.attempt as JsonObject).retryOf = (selfRetry.attempt as JsonObject).id;
+  assertContractInvalid(selfRetry, completeArtifacts);
+
+  const unsafeAttemptNumber = structuredClone(complete);
+  (unsafeAttemptNumber.attempt as JsonObject).number = Number.MAX_SAFE_INTEGER + 1;
+  (unsafeAttemptNumber.attempt as JsonObject).retryOf = "prior-attempt";
+  assertContractInvalid(unsafeAttemptNumber, completeArtifacts);
+
+  for (const exitCode of [Number.MIN_SAFE_INTEGER - 1, Number.MAX_SAFE_INTEGER + 1]) {
+    const unsafeVerifierExitCode = structuredClone(verifier);
+    unsafeVerifierExitCode.status = "failed";
+    unsafeVerifierExitCode.exitCode = exitCode;
+    unsafeVerifierExitCode.assertions = [{ id: "example-check", status: "failed" }];
+    assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, unsafeVerifierExitCode), []);
+  }
+
+  const mismatchedNativeTrace = structuredClone(complete);
+  ((mismatchedNativeTrace.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "telemetry")!.nativeReference as JsonObject).id = "other-trace";
+  assertContractInvalid(mismatchedNativeTrace, completeArtifacts);
+
+  const mismatchedNativeSessionType = structuredClone(complete);
+  ((mismatchedNativeSessionType.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "session")!.nativeReference as JsonObject).type = "trace";
+  assertContractInvalid(mismatchedNativeSessionType, completeArtifacts);
+
+  const mismatchedNativeTraceType = structuredClone(complete);
+  ((mismatchedNativeTraceType.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "telemetry")!.nativeReference as JsonObject).type = "session";
+  assertContractInvalid(mismatchedNativeTraceType, completeArtifacts);
+
+  const missingNativeTrace = structuredClone(taskFailed);
+  ((missingNativeTrace.run as JsonObject).native as JsonObject).traceId = "trace-task-failed-1";
+  assertContractInvalid(missingNativeTrace, taskFailedArtifacts);
+
+  const duplicateRuntime = structuredClone(complete);
+  ((duplicateRuntime.run as JsonObject).runtime as JsonObject[]).push({
+    ...((duplicateRuntime.run as JsonObject).runtime as JsonObject[])[0],
+  });
+  assertContractInvalid(duplicateRuntime, completeArtifacts);
+
+  const distinctDelimiterRuntime = structuredClone(complete);
+  (distinctDelimiterRuntime.run as JsonObject).harness = { id: "a\u0000b", version: "d" };
+  (distinctDelimiterRuntime.run as JsonObject).runtime = [
+    { source: "a\u0000b", name: "c", version: "d" },
+    { source: "a", name: "b\u0000c", version: "d" },
+  ];
+  assertContractValid(distinctDelimiterRuntime, completeArtifacts);
+
+  const mismatchedCaptureReport = new Map(completeArtifacts);
+  mismatchedCaptureReport.set("capture-report", {
+    ...completeCaptureReport,
+    bundleId: "other-bundle",
+  });
+  assertContractInvalid(complete, mismatchedCaptureReport);
+
+  const mismatchedVerifier = new Map(completeArtifacts);
+  mismatchedVerifier.set("verifier", { ...completeVerifier, bundleId: "other-bundle" });
+  assertContractInvalid(complete, mismatchedVerifier);
+
+  const completedWithFailedVerifier = new Map(completeArtifacts);
+  completedWithFailedVerifier.set("verifier", {
+    ...completeVerifier,
+    status: "failed",
+    assertions: [{ id: "example-check", status: "failed" }],
+  });
+  assertContractInvalid(complete, completedWithFailedVerifier);
+
+  const taskFailedWithPassingVerifier = structuredClone(taskFailed);
+  const failedVerifierDescriptor = (taskFailedWithPassingVerifier.evidence as JsonObject[]).find(
+    (descriptor) => descriptor.kind === "verifier",
+  )!;
+  (taskFailedWithPassingVerifier.evidence as JsonObject[]).push({
+    ...failedVerifierDescriptor,
+    id: "passing-verifier",
+    relativePath: "passing-verifier.json",
+  });
+  const taskFailedWithPassingArtifacts = new Map(taskFailedArtifacts);
+  taskFailedWithPassingArtifacts.set("passing-verifier", {
+    ...completeVerifier,
+    bundleId: taskFailed.bundleId,
+  });
+  assertContractValid(taskFailedWithPassingVerifier, taskFailedWithPassingArtifacts);
+
+  const blockedExportWithOtherBundle = readJson(resolve(fixtureRoot, "complete/export/manifest.json"));
+  blockedExportWithOtherBundle.bundleId = "other-bundle";
+  assert.throws(() => assertExportSafe(complete, blockedExportWithOtherBundle));
+
+  const duplicateVerifierAssertion = new Map(completeArtifacts);
+  duplicateVerifierAssertion.set("verifier", {
+    ...completeVerifier,
+    status: "failed",
+    assertions: [
+      ...completeVerifier.assertions as JsonObject[],
+      { id: "example-check", status: "failed" },
+    ],
+  });
+  assertContractInvalid(complete, duplicateVerifierAssertion);
+
+  const qualifiedWithoutEvidence = structuredClone(complete);
+  qualifiedWithoutEvidence.evidence = (qualifiedWithoutEvidence.evidence as JsonObject[]).filter(
+    (descriptor) => descriptor.kind === "capture-report",
+  );
+  assertContractInvalid(qualifiedWithoutEvidence, completeArtifacts);
+
+  const completedWithoutVerifier = structuredClone(complete);
+  completedWithoutVerifier.evidence = (completedWithoutVerifier.evidence as JsonObject[]).filter(
+    (descriptor) => descriptor.kind !== "verifier",
+  );
+  assertContractInvalid(completedWithoutVerifier, completeArtifacts);
+
+  const taskFailedWithoutVerifier = structuredClone(taskFailed);
+  taskFailedWithoutVerifier.evidence = (taskFailedWithoutVerifier.evidence as JsonObject[]).filter(
+    (descriptor) => descriptor.kind !== "verifier",
+  );
+  assertContractInvalid(taskFailedWithoutVerifier, taskFailedArtifacts);
+
+  const mismatchedNativeSession = structuredClone(complete);
+  ((mismatchedNativeSession.run as JsonObject).native as JsonObject).sessionId = "other-session";
+  assertContractInvalid(mismatchedNativeSession, completeArtifacts);
+
+  const missingNativeSession = structuredClone(complete);
+  missingNativeSession.evidence = (missingNativeSession.evidence as JsonObject[]).filter(
+    (descriptor) => descriptor.kind !== "session",
+  );
+  assertContractInvalid(missingNativeSession, completeArtifacts);
+
+  const trailingPeriodPath = structuredClone(complete);
+  (trailingPeriodPath.evidence as JsonObject[])[0].relativePath = "session.jsonl.";
+  assertContractInvalid(trailingPeriodPath, completeArtifacts);
+
+  const deviceNamePath = structuredClone(complete);
+  (deviceNamePath.evidence as JsonObject[])[0].relativePath = "NUL.json";
+  assertContractInvalid(deviceNamePath, completeArtifacts);
+
+  const missingWorkspace = structuredClone(complete);
+  missingWorkspace.evidence = (missingWorkspace.evidence as JsonObject[]).filter(
+    (descriptor) => descriptor.kind !== "workspace",
+  );
+  assertContractInvalid(missingWorkspace, completeArtifacts);
+
+  const missingSemanticReason = structuredClone(telemetryReport);
+  ((missingSemanticReason.capabilities as JsonObject).semantic as JsonObject).status = "missing";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, missingSemanticReason), []);
+
+  const qualifiedTelemetryGap = structuredClone(telemetryReport);
+  qualifiedTelemetryGap.qualification = "qualified";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, qualifiedTelemetryGap), []);
+
+  const incompleteFullyQualified = structuredClone(taskFailedArtifacts.get("capture-report")!);
+  incompleteFullyQualified.qualification = "incomplete";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, incompleteFullyQualified), []);
+
+  const incompleteUnsupportedSemantic = structuredClone(completeCaptureReport);
+  incompleteUnsupportedSemantic.qualification = "incomplete";
+  (incompleteUnsupportedSemantic.capabilities as JsonObject).semantic = { status: "unsupported" };
+  incompleteUnsupportedSemantic.missingEvidence = [{ kind: "semantic-events", reason: "unsupported", affects: ["semantic"] }];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, incompleteUnsupportedSemantic), []);
+
+  const incompleteUnsupportedOutcome = structuredClone(completeCaptureReport);
+  incompleteUnsupportedOutcome.qualification = "incomplete";
+  (incompleteUnsupportedOutcome.capabilities as JsonObject).outcome = { status: "unsupported" };
+  incompleteUnsupportedOutcome.missingEvidence = [{ kind: "outcome-verifier", reason: "unsupported", affects: ["outcome"] }];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, incompleteUnsupportedOutcome), []);
+
+  const qualifiedUnsupportedTiming = structuredClone(completeCaptureReport);
+  (qualifiedUnsupportedTiming.capabilities as JsonObject).timingResource = { status: "unsupported" };
+  qualifiedUnsupportedTiming.missingEvidence = [{ kind: "telemetry", reason: "unsupported", affects: ["timing-resource"] }];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, qualifiedUnsupportedTiming), []);
+
+  const availableOptionalBetaTiming = new Map(completeArtifacts);
+  availableOptionalBetaTiming.set("capture-report", {
+    ...completeCaptureReport,
+    missingEvidence: [{ kind: "hook-span", reason: "optional-beta-unavailable", affects: ["timing-resource"] }],
+  });
+  assertContractValid(complete, availableOptionalBetaTiming);
+
+  const qualifiedUncheckedTiming = structuredClone(completeCaptureReport);
+  (qualifiedUncheckedTiming.capabilities as JsonObject).timingResource = { status: "unsupported" };
+  qualifiedUncheckedTiming.missingEvidence = [
+    { kind: "telemetry", reason: "unsupported", affects: ["timing-resource"] },
+    { kind: "telemetry-receipt", reason: "not-checked", affects: ["timing-resource"] },
+  ];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, qualifiedUncheckedTiming), []);
+
+  for (const reason of ["not-collected", "process-interrupted"]) {
+    const qualifiedLostTiming = structuredClone(completeCaptureReport);
+    (qualifiedLostTiming.capabilities as JsonObject).timingResource = { status: "unsupported" };
+    qualifiedLostTiming.missingEvidence = [
+      { kind: "telemetry", reason: "unsupported", affects: ["timing-resource"] },
+      { kind: "telemetry-receipt", reason, affects: ["timing-resource"] },
+    ];
+    assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, qualifiedLostTiming), []);
+  }
+
+  const qualifiedOptionalBetaTiming = structuredClone(completeCaptureReport);
+  (qualifiedOptionalBetaTiming.capabilities as JsonObject).timingResource = { status: "unsupported" };
+  qualifiedOptionalBetaTiming.missingEvidence = [
+    { kind: "telemetry", reason: "unsupported", affects: ["timing-resource"] },
+    { kind: "hook-span", reason: "optional-beta-unavailable", affects: ["timing-resource"] },
+  ];
+  assert.deepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, qualifiedOptionalBetaTiming), []);
+
+  const unsupportedReasonWithMissingStatus = structuredClone(telemetryReport);
+  (unsupportedReasonWithMissingStatus.missingEvidence as JsonObject[])[0].reason = "unsupported";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, unsupportedReasonWithMissingStatus), []);
+
+  const unsupportedStatusWithoutReason = structuredClone(telemetryReport);
+  ((unsupportedStatusWithoutReason.capabilities as JsonObject).timingResource as JsonObject).status = "unsupported";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, unsupportedStatusWithoutReason), []);
+
+  const notCheckedReasonWithMissingStatus = structuredClone(interruptedReport);
+  (notCheckedReasonWithMissingStatus.missingEvidence as JsonObject[])[0].reason = "not-emitted";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, notCheckedReasonWithMissingStatus), []);
+
+  const notCheckedStatusWithoutReason = structuredClone(interruptedReport);
+  ((notCheckedStatusWithoutReason.capabilities as JsonObject).timingResource as JsonObject).status = "missing";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, notCheckedStatusWithoutReason), []);
+
+  const nonJsonVerifierDescriptor = structuredClone(complete);
+  ((nonJsonVerifierDescriptor.evidence as JsonObject[]).find((descriptor) => descriptor.kind === "verifier")!).mediaType = "text/plain";
+  assertContractInvalid(nonJsonVerifierDescriptor, completeArtifacts);
+
+  const missingOutcomeWithVerifier = new Map(completeArtifacts);
+  missingOutcomeWithVerifier.set("capture-report", {
+    ...completeCaptureReport,
+    qualification: "incomplete",
+    capabilities: {
+      ...completeCaptureReport.capabilities as JsonObject,
+      outcome: { status: "missing" },
+    },
+    missingEvidence: [{ kind: "outcome-verifier", reason: "not-collected", affects: ["outcome"] }],
+  });
+  assertContractInvalid(complete, missingOutcomeWithVerifier);
+
+  const declaredTimingGap = new Map(completeArtifacts);
+  declaredTimingGap.set("capture-report", {
+    ...completeCaptureReport,
+    missingEvidence: [{ kind: "telemetry", reason: "not-checked", affects: ["timing-resource"] }],
+  });
+  assertContractInvalid(complete, declaredTimingGap);
+
+  const wrongOptionalBetaAuthority = structuredClone(telemetryReport);
+  ((wrongOptionalBetaAuthority.missingEvidence as JsonObject[])[0].affects as string[]) = [
+    "timing-resource",
+    "semantic",
+  ];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, wrongOptionalBetaAuthority), []);
+
+  const duplicateCapabilityEffects = structuredClone(telemetryReport);
+  (duplicateCapabilityEffects.missingEvidence as JsonObject[])[0].affects = ["timing-resource", "timing-resource"];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, duplicateCapabilityEffects), []);
+
+  const duplicateMissingEvidence = structuredClone(telemetryReport);
+  (duplicateMissingEvidence.missingEvidence as JsonObject[]).push(
+    structuredClone((duplicateMissingEvidence.missingEvidence as JsonObject[])[0]),
+  );
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/captureReport`, duplicateMissingEvidence), []);
+
+  const budgetStopped = structuredClone(complete);
+  budgetStopped.terminal = { state: "stopped", failureClass: "none", stopReason: "budget", workspaceArtifactId: "workspace" };
+  assertContractValid(budgetStopped, completeArtifacts);
+
+  const invalidStopped = structuredClone(budgetStopped);
+  invalidStopped.terminal = { state: "stopped", failureClass: "infrastructure", stopReason: "budget" };
+  assertContractInvalid(invalidStopped, completeArtifacts);
+
+  const passedWithFailure = structuredClone(verifier);
+  (passedWithFailure.assertions as JsonObject[])[0].status = "failed";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, passedWithFailure), []);
+
+  const passedWithNonzeroExit = structuredClone(verifier);
+  passedWithNonzeroExit.exitCode = 1;
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, passedWithNonzeroExit), []);
+
+  const passedWithNotRun = structuredClone(verifier);
+  (passedWithNotRun.assertions as JsonObject[])[0].status = "not-run";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, passedWithNotRun), []);
+
+  const passedWithOnlyNotRun = structuredClone(verifier);
+  passedWithOnlyNotRun.assertions = [{ id: "example-check", status: "not-run" }];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, passedWithOnlyNotRun), []);
+
+  const passedWithoutAssertions = structuredClone(verifier);
+  passedWithoutAssertions.assertions = [];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, passedWithoutAssertions), []);
+
+  const notRunWithPassedAssertion = structuredClone(verifier);
+  notRunWithPassedAssertion.status = "not-run";
+  notRunWithPassedAssertion.assertions = [{ id: "example-check", status: "passed" }];
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, notRunWithPassedAssertion), []);
+
+  const notRunWithExitCode = structuredClone(verifier);
+  notRunWithExitCode.status = "not-run";
+  notRunWithExitCode.assertions = [{ id: "example-check", status: "not-run" }];
+  notRunWithExitCode.exitCode = 0;
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, notRunWithExitCode), []);
+
+  const failedWithoutFailure = structuredClone(verifier);
+  failedWithoutFailure.status = "failed";
+  assert.notDeepEqual(schemaErrors(`${schemaId}#/$defs/verifierResult`, failedWithoutFailure), []);
+
+  const malformedVerifier = new Map(completeArtifacts);
+  malformedVerifier.set("verifier", { ...completeVerifier, assertions: undefined });
+  assert.doesNotThrow(() => assertContractInvalid(complete, malformedVerifier));
+
+  const malformedCaptureReport = new Map(completeArtifacts);
+  malformedCaptureReport.set("capture-report", { ...completeCaptureReport, capabilities: undefined });
+  assert.doesNotThrow(() => assertContractInvalid(complete, malformedCaptureReport));
+});
