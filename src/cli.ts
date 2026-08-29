@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import { readFileSync, realpathSync } from "node:fs";
+import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { validateArtifact } from "./artifacts.js";
+import { validateArtifact, validateExportManifest, validateRunManifestEvidence } from "./artifacts.js";
 
 const usage = `Usage: ebo [--help] | validate <artifact.json>...
 
@@ -27,18 +28,33 @@ export function main(
       return 1;
     }
 
-    const errors = args.slice(1).flatMap((artifact) => {
+    const artifacts = args.slice(1).map((artifact) => {
       try {
-        return validateArtifact(artifact, JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(artifact))));
+        return { artifact, document: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(artifact))) };
       } catch (error) {
-        return [{
+        return {
           artifact,
-          schemaVersion: "unknown",
-          field: "/",
-          message: error instanceof Error ? error.message : "Unable to read artifact.",
-        }];
+          error: { artifact, schemaVersion: "unknown", field: "/", message: error instanceof Error ? error.message : "Unable to read artifact." },
+        };
       }
     });
+    const errors = artifacts.flatMap(({ artifact, document, error }) => {
+      if (error !== undefined) return [error];
+      const validation = validateArtifact(artifact, document);
+      return document !== undefined && typeof document === "object" && document !== null
+        && (document as { schemaVersion?: unknown }).schemaVersion === "run-manifest/v1"
+        ? [...validation, ...validateRunManifestEvidence(artifact, document, dirname(artifact))]
+        : validation;
+    });
+    for (const { artifact, document } of artifacts) {
+      if (document === undefined || typeof document !== "object" || document === null
+          || (document as { schemaVersion?: unknown }).schemaVersion !== "export-manifest/v1") continue;
+      const bundleId = (document as { bundleId?: unknown }).bundleId;
+      const containing = artifacts.find(({ document: candidate }) => candidate !== undefined && typeof candidate === "object" && candidate !== null
+        && (candidate as { schemaVersion?: unknown }).schemaVersion === "run-manifest/v1"
+        && (candidate as { bundleId?: unknown }).bundleId === bundleId)?.document;
+      errors.push(...validateExportManifest(artifact, document, containing));
+    }
 
     if (errors.length === 0) {
       write(`Validated ${args.length - 1} artifact(s).\n`);

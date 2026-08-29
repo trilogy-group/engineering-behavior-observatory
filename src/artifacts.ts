@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Ajv2020, type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
 import * as formats from "ajv-formats";
 
-import { isSafeArtifactRelativePath, type Digest } from "./contracts.js";
+import { isSafeArtifactRelativePath, resolveBundleArtifact, type Digest } from "./contracts.js";
 
 export type ArtifactValidationError = {
   artifact: string;
@@ -90,6 +90,70 @@ export function validateArtifact(artifact: string, document: unknown): ArtifactV
     errors.push(...runManifestIntegrityErrors(artifact, schemaVersion, document));
   }
 
+  return errors;
+}
+
+export function validateRunManifestEvidence(
+  artifact: string,
+  manifest: unknown,
+  bundleRoot: string,
+): ArtifactValidationError[] {
+  if (!isRecord(manifest) || manifest.schemaVersion !== "run-manifest/v1" || !Array.isArray(manifest.evidence)) return [];
+  const errors: ArtifactValidationError[] = [];
+
+  for (const descriptor of manifest.evidence) {
+    if (!isRecord(descriptor) || typeof descriptor.id !== "string" || typeof descriptor.relativePath !== "string"
+        || typeof descriptor.digest !== "string" || typeof descriptor.sizeBytes !== "number") continue;
+    try {
+      const bytes = resolveBundleArtifact(bundleRoot, {
+        locator: descriptor.relativePath,
+        digest: runDigest(descriptor.digest),
+      });
+      if (bytes.length !== descriptor.sizeBytes) throw new Error("Artifact size does not match its manifest descriptor.");
+    } catch (error) {
+      errors.push({
+        artifact,
+        schemaVersion: "run-manifest/v1",
+        field: `/evidence/${escapeJsonPointer(descriptor.id)}`,
+        message: error instanceof Error ? error.message : "Evidence could not be verified.",
+      });
+    }
+  }
+  return errors;
+}
+
+export function validateExportManifest(
+  artifact: string,
+  exportManifest: unknown,
+  containingManifest: unknown | undefined,
+): ArtifactValidationError[] {
+  if (!isRecord(exportManifest) || exportManifest.schemaVersion !== "export-manifest/v1"
+      || !["ready", "exported"].includes(String(exportManifest.status))) return [];
+  if (!isRecord(containingManifest) || containingManifest.schemaVersion !== "run-manifest/v1" || !Array.isArray(containingManifest.evidence)) {
+    return [{ artifact, schemaVersion: "export-manifest/v1", field: "/bundleId", message: "Ready exports require their containing run manifest." }];
+  }
+  if (exportManifest.bundleId !== containingManifest.bundleId) {
+    return [{ artifact, schemaVersion: "export-manifest/v1", field: "/bundleId", message: "Export bundle ID does not match its containing run manifest." }];
+  }
+
+  const evidenceById = new Map<string, Record<string, unknown>>();
+  for (const descriptor of containingManifest.evidence) {
+    if (isRecord(descriptor) && typeof descriptor.id === "string") evidenceById.set(descriptor.id, descriptor);
+  }
+  const errors: ArtifactValidationError[] = [];
+  let hasNonExportArtifact = false;
+  for (const id of Array.isArray(exportManifest.artifactIds) ? exportManifest.artifactIds : []) {
+    const descriptor = typeof id === "string" ? evidenceById.get(id) : undefined;
+    if (descriptor === undefined || descriptor.sharingClass === "unknown" || descriptor.sharingClass !== exportManifest.sharingClass) {
+      errors.push({ artifact, schemaVersion: "export-manifest/v1", field: "/artifactIds", message: `Export cannot include artifact ${String(id)}.` });
+      continue;
+    }
+    if (exportManifest.sharingClass === "partner" || exportManifest.sharingClass === "public") {
+      validateSanitizedProvenance(artifact, "export-manifest/v1", descriptor, evidenceById, errors);
+    }
+    hasNonExportArtifact ||= descriptor.kind !== "export-manifest";
+  }
+  if (!hasNonExportArtifact) errors.push({ artifact, schemaVersion: "export-manifest/v1", field: "/artifactIds", message: "Ready exports must include non-export evidence." });
   return errors;
 }
 
@@ -353,6 +417,10 @@ function validateNativeReference(
 function sameNativeReference(left: unknown, right: unknown): boolean {
   if (left == null || right == null) return left == null && right == null;
   return isRecord(left) && isRecord(right) && left.type === right.type && left.id === right.id;
+}
+
+function runDigest(value: string): Digest {
+  return { algorithm: "sha256", value: value.slice("sha256:".length) };
 }
 
 function escapeJsonPointer(value: string): string {

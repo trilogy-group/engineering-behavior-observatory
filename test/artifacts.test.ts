@@ -99,6 +99,31 @@ test("CLI rejects non-UTF-8 JSON bytes", async () => {
   }
 });
 
+test("CLI verifies run evidence and correlates ready exports", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ebo-cli-bundle-"));
+  const manifestPath = join(root, "manifest.json");
+  const completeManifest = runFixturePath("complete/manifest.json");
+  const completeExport = runFixturePath("complete/export/manifest.json");
+
+  try {
+    await writeFile(manifestPath, readFileSync(completeManifest));
+    let output = "";
+    assert.equal(main(["validate", manifestPath], (message) => (output += message)), 1);
+    assert.match(output, /evidence/);
+
+    const invalidExport = JSON.parse(readFileSync(completeExport, "utf8"));
+    invalidExport.status = "ready";
+    invalidExport.artifactIds = ["missing-artifact"];
+    const invalidExportPath = join(root, "export.json");
+    await writeFile(invalidExportPath, JSON.stringify(invalidExport));
+    output = "";
+    assert.equal(main(["validate", completeManifest, invalidExportPath], (message) => (output += message)), 1);
+    assert.match(output, /Export cannot include artifact/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("validation reports schema versions, fields, duplicate identities, and fixture results", () => {
   const packet = JSON.parse(readFileSync(fixturePath("task-packet.valid.v1.json"), "utf8"));
   const runManifest = JSON.parse(readFileSync(runFixturePath("complete/manifest.json"), "utf8"));

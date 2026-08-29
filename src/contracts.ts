@@ -257,6 +257,14 @@ export function resolveTaskArchive(bundleRoot: string, source: ArtifactReference
   );
 }
 
+export function resolveBundleArtifact(bundleRoot: string, reference: ArtifactReference): Buffer {
+  return readVerifiedBundleFile(
+    openBundleRegularFile(bundleRoot, reference.locator, "Artifact locator"),
+    reference,
+    "Artifact",
+  );
+}
+
 function readVerifiedBundleFile(
   descriptor: number,
   reference: ArtifactReference,

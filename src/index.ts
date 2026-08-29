@@ -7,6 +7,8 @@ export {
   readVerifiedArtifact,
   SUPPORTED_ARTIFACT_SCHEMA_VERSIONS,
   validateArtifact,
+  validateExportManifest,
+  validateRunManifestEvidence,
   verifyDigest,
   writeMetadataAtomically,
 } from "./artifacts.js";
@@ -22,6 +24,7 @@ export {
   isSafeArtifactRelativePath,
   MAX_CONFIGURATION_BYTES,
   resolveBundleConfiguration,
+  resolveBundleArtifact,
   resolveTaskArchive,
 } from "./contracts.js";
 export type {
