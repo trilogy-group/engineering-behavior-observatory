@@ -239,14 +239,18 @@ export async function writeVerifierResult(
 }
 
 function validateOptions(options: ExecuteVerifierOptions, timeoutMs: number, maxOutputBytes: number): void {
-  if (options.bundleId.trim() === "") throw new Error("Bundle ID must not be blank.");
-  if (options.workspace.artifactId.trim() === "" || !/^sha256:[a-f0-9]{64}$/.test(options.workspace.digest)) {
+  if (!isValidIdentifier(options.bundleId)) throw new Error("Bundle ID is invalid.");
+  if (!isValidIdentifier(options.workspace.artifactId) || !/^sha256:[a-f0-9]{64}$/.test(options.workspace.digest)) {
     throw new Error("Workspace reference is invalid.");
   }
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("Verifier timeout must be a positive safe integer.");
   if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 0 || maxOutputBytes > MAX_OUTPUT_BYTES) {
     throw new Error(`Verifier output limit must be between 0 and ${MAX_OUTPUT_BYTES} bytes.`);
   }
+}
+
+function isValidIdentifier(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "" && [...value].length <= 256;
 }
 
 async function prepareRoot(root: string): Promise<string> {

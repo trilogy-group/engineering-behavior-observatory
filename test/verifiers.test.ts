@@ -181,6 +181,33 @@ test("keeps verifier staging outside a workspace-local temp directory", async ()
   }
 });
 
+test("rejects overlong execution identifiers before starting", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "should-not-run", status: "passed" }] }));
+    `);
+    await assert.rejects(() => executeVerifier({
+      bundleId: "x".repeat(257),
+      verifierRoot: root.verifier,
+      verifier,
+      workspacePath: root.workspace,
+      workspace: { artifactId: "workspace", digest: workspaceDigest },
+      artifactRoot: root.artifact,
+    }), /Bundle ID/);
+    await assert.rejects(() => executeVerifier({
+      bundleId: "bundle-test",
+      verifierRoot: root.verifier,
+      verifier,
+      workspacePath: root.workspace,
+      workspace: { artifactId: "x".repeat(257), digest: workspaceDigest },
+      artifactRoot: root.artifact,
+    }), /Workspace reference/);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("classifies timeout, crash, and malformed output as verifier errors", async (t) => {
   const cases = [
     {
@@ -302,12 +329,12 @@ test("represents a not-run verifier without a workspace", () => {
     schemaVersion: "verifier-result/v1" as const,
     bundleId: "bundle-test",
     status: "not-run" as const,
-    durationMs: 0,
     assertions: [{ id: "not-started", status: "not-run" as const }],
     diagnostics: [],
   };
 
   assert.doesNotThrow(() => serializeVerifierResult(result));
+  assert.throws(() => serializeVerifierResult({ ...result, durationMs: 0 }), /must NOT be valid|durationMs/);
 });
 
 test("represents a pre-workspace verifier error without inventing a workspace", () => {

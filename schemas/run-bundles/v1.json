@@ -408,7 +408,7 @@
         {
           "if": { "properties": { "status": { "const": "not-run" } }, "required": ["status"] },
           "then": {
-            "not": { "anyOf": [{ "required": ["exitCode"] }, { "required": ["workspace"] }] },
+            "not": { "anyOf": [{ "required": ["durationMs"] }, { "required": ["exitCode"] }, { "required": ["workspace"] }] },
             "properties": {
               "assertions": {
                 "items": {
