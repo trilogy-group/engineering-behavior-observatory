@@ -302,20 +302,13 @@ export function freezeTaskPacket(
   const root = openBundleRoot(bundleRoot);
   try {
     const inspection = assertTaskPacketAdmittedWithRoot(bundleRoot, packetLocator, root);
-    const packet = inspection.packet!;
-    const preAdmissionDigest = inspection.preAdmissionDigest!;
-    const packetDigest = inspection.packetDigest!;
-    const components = inspection.components!;
-    const candidate: TaskPacketFreezeRecord = {
-      schemaVersion: TASK_PACKET_FREEZE_SCHEMA_VERSION,
-      packetId: packet.id,
-      packetLocator,
-      preAdmissionDigest,
-      packetDigest,
-      components,
-      aggregateDigest: aggregateDigest(packet.id, packetLocator, preAdmissionDigest, packetDigest, components),
-      frozenAt: new Date().toISOString(),
-    };
+    const confirmedInspection = assertTaskPacketAdmittedWithRoot(bundleRoot, packetLocator, root);
+    const beforePublication = freezeCandidate(packetLocator, inspection);
+    const prePublicationMismatches = compareFreezeRecord(beforePublication, confirmedInspection);
+    if (prePublicationMismatches.length > 0) {
+      throw new Error(`Task packet changed before freeze publication: ${prePublicationMismatches.join(", ")}.`);
+    }
+    const candidate = freezeCandidate(packetLocator, confirmedInspection);
     const candidateErrors = validateArtifact(freezeLocator, candidate);
     if (candidateErrors.length > 0) throw new Error(formatErrors(candidateErrors));
 
@@ -323,13 +316,19 @@ export function freezeTaskPacket(
     if (!write.created) {
       const winner = readOptionalJson(bundleRoot, freezeLocator, true, root);
       if (winner === undefined) throw new Error("Freeze record disappeared after concurrent creation.");
-      const errors = validateArtifact(freezeLocator, winner);
+      const errors = validateFreezeRecord(freezeLocator, winner);
       if (errors.length > 0) throw new Error(formatErrors(errors));
-      const mismatches = compareFreezeRecord(winner as TaskPacketFreezeRecord, inspection);
+      const finalInspection = assertTaskPacketAdmittedWithRoot(bundleRoot, packetLocator, root);
+      const mismatches = compareFreezeRecord(winner as TaskPacketFreezeRecord, finalInspection);
       if (mismatches.length > 0) throw new Error(`Frozen task packet changed: ${mismatches.join(", ")}.`);
       return winner as TaskPacketFreezeRecord;
     }
 
+    const finalInspection = assertTaskPacketAdmittedWithRoot(bundleRoot, packetLocator, root);
+    const postPublicationMismatches = compareFreezeRecord(candidate, finalInspection);
+    if (postPublicationMismatches.length > 0) {
+      throw new Error(`Task packet changed after freeze publication: ${postPublicationMismatches.join(", ")}.`);
+    }
     return candidate;
   } finally {
     closeBundleRoot(root);
@@ -387,7 +386,7 @@ function statusTaskPacketWithRoot(
     };
   }
 
-  const freezeErrors = validateArtifact(freezeLocator, freeze);
+  const freezeErrors = validateFreezeRecord(freezeLocator, freeze);
   if (freezeErrors.length > 0) {
     return {
       status: "invalid",
@@ -472,6 +471,40 @@ function resolveReviewRecord(
   }
 }
 
+function freezeCandidate(packetLocator: string, inspection: TaskPacketInspection): TaskPacketFreezeRecord {
+  const packet = inspection.packet;
+  const preAdmissionDigest = inspection.preAdmissionDigest;
+  const packetDigest = inspection.packetDigest;
+  const components = inspection.components;
+  if (packet === null || preAdmissionDigest === null || packetDigest === null || components === null) {
+    throw new Error("Cannot freeze an incomplete task-packet inspection.");
+  }
+  return {
+    schemaVersion: TASK_PACKET_FREEZE_SCHEMA_VERSION,
+    packetId: packet.id,
+    packetLocator,
+    preAdmissionDigest,
+    packetDigest,
+    components,
+    aggregateDigest: aggregateDigest(packet.id, packetLocator, preAdmissionDigest, packetDigest, components),
+    frozenAt: new Date().toISOString(),
+  };
+}
+
+function validateFreezeRecord(freezeLocator: string, document: unknown): ArtifactValidationError[] {
+  if (isRecord(document) && document.schemaVersion !== TASK_PACKET_FREEZE_SCHEMA_VERSION) {
+    return [
+      {
+        artifact: freezeLocator,
+        schemaVersion: TASK_PACKET_FREEZE_SCHEMA_VERSION,
+        field: "/schemaVersion",
+        message: `must equal ${TASK_PACKET_FREEZE_SCHEMA_VERSION}`,
+      },
+    ];
+  }
+  return validateArtifact(freezeLocator, document);
+}
+
 function aggregateDigest(
   packetId: string,
   packetLocator: string,
@@ -525,6 +558,10 @@ function isDigest(value: unknown): value is Digest {
     && (value as { algorithm?: unknown }).algorithm === "sha256"
     && typeof (value as { value?: unknown }).value === "string"
     && /^[a-f0-9]{64}$/.test((value as { value: string }).value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function sameComponent(left: TaskPacketComponent, right: TaskPacketComponent): boolean {

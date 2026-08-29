@@ -360,6 +360,20 @@ test("status reports a malformed freeze record as invalid", () => {
   }
 });
 
+test("status rejects a document with the wrong freeze-record schema", () => {
+  const { root, packet } = createBundle();
+  try {
+    writeFileSync(join(root, "packet.json.freeze.json"), JSON.stringify(packet));
+    const status = statusTaskPacket(root, "packet.json");
+    assert.equal(status.status, "invalid");
+    assert.deepEqual(status.mismatches, ["freeze-record"]);
+    assert.ok(status.errors.some((error) => /ebo\.task-packet-freeze\/v1/.test(error.message)));
+    assert.throws(() => freezeTaskPacket(root, "packet.json"), /ebo\.task-packet-freeze\/v1/);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("packet and freeze JSON reads enforce the metadata size limit", () => {
   const { root, packet } = createBundle();
   try {
