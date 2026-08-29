@@ -377,6 +377,14 @@ test("rejects contradictory failed results in public serializers", async () => {
     }), /diagnostic locators must be unique/);
     assert.throws(() => serializeVerifierResult({
       ...result,
+      diagnostics: [result.diagnostics[0]!, { ...result.diagnostics[1]!, stream: "stdout", locator: "other.log" }],
+    }), /diagnostic streams must be unique/);
+    assert.throws(() => serializeVerifierResult({
+      ...result,
+      diagnostics: [{ ...result.diagnostics[0]!, locator: "Logs" }, { ...result.diagnostics[1]!, locator: "logs/stdout.log" }],
+    }), /diagnostic locators must be unique and non-overlapping/);
+    assert.throws(() => serializeVerifierResult({
+      ...result,
       error: "unexpected coordinator error",
     }), /must NOT be valid/);
   } finally {

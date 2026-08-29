@@ -170,8 +170,19 @@ export function validateArtifact(artifact: string, document: unknown): ArtifactV
       const diagnosticLocators = document.diagnostics
         .filter((diagnostic): diagnostic is Record<string, unknown> => isRecord(diagnostic) && typeof diagnostic.locator === "string")
         .map((diagnostic) => (diagnostic.locator as string).toLowerCase());
-      if (new Set(diagnosticLocators).size !== diagnosticLocators.length) {
-        errors.push({ artifact, schemaVersion, field: "/diagnostics", message: "Verifier diagnostic locators must be unique." });
+      const diagnosticStreams = document.diagnostics
+        .filter((diagnostic): diagnostic is Record<string, unknown> => isRecord(diagnostic) && typeof diagnostic.stream === "string")
+        .map((diagnostic) => diagnostic.stream as string);
+      if (new Set(diagnosticStreams).size !== diagnosticStreams.length) {
+        errors.push({ artifact, schemaVersion, field: "/diagnostics", message: "Verifier diagnostic streams must be unique." });
+      }
+      const seenDiagnosticLocators = new Set<string>();
+      if (diagnosticLocators.some((locator) => {
+        const collision = hasPortablePathCollision(locator, seenDiagnosticLocators);
+        seenDiagnosticLocators.add(locator);
+        return collision;
+      })) {
+        errors.push({ artifact, schemaVersion, field: "/diagnostics", message: "Verifier diagnostic locators must be unique and non-overlapping." });
       }
     }
   }
