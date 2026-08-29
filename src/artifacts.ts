@@ -1848,7 +1848,8 @@ function countFailedPublicationLinks(path: string, target: { dev: number; ino: n
 }
 
 function writeStagingMarker(path: string, relativePath: string, stagingPath: string): Stats {
-  const temporaryPath = `.${randomUUID()}.marker-tmp`;
+  const attemptId = randomUUID();
+  const temporaryPath = `.${attemptId}.marker-tmp`;
   const markerTemporaryPath = `${path}.tmp`;
   const descriptor = openSync(temporaryPath, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL, 0o600);
   let temporaryLinked = false;
@@ -1859,7 +1860,7 @@ function writeStagingMarker(path: string, relativePath: string, stagingPath: str
       schemaVersion: STAGING_MARKER_SCHEMA_VERSION,
       relativePath,
       stagingPath,
-      attemptId: randomUUID(),
+      attemptId,
       ownerPid: process.pid,
       ownerStart: CURRENT_PROCESS_START ?? "unknown",
     }));
@@ -2001,7 +2002,7 @@ function bindStagingMarker(
       throw new Error(`Publication staging binding "${bindingPath}" is already occupied.`);
     }
     if (!stagingMarkerMatches(bindingTemporaryPath, relativePath, staging)) {
-      bindingAttemptPath = `.${randomUUID()}.binding-tmp`;
+      bindingAttemptPath = `.${(marker as Record<string, unknown>).attemptId}.binding-tmp`;
       bindingDescriptor = openSync(bindingAttemptPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
       writeFileSync(bindingDescriptor, bytes);
       fsyncSync(bindingDescriptor);
@@ -2101,6 +2102,14 @@ function isAccountedStagingMarkerLink(path: string, target: { dev: number; ino: 
 }
 
 function hasMarkerStagingAlias(path: string, target: { dev: number; ino: number }): boolean {
+  const marker = readMarkerMetadataWithIdentity(path)?.value;
+  const attemptId = marker?.attemptId;
+  if (typeof attemptId === "string" && STAGING_ATTEMPT_PATTERN.test(attemptId)) {
+    const suffix = path.endsWith(".binding") || path.endsWith(".binding.tmp") || path.endsWith(".binding-tmp")
+      ? "binding-tmp"
+      : "marker-tmp";
+    if (hasAliasIdentity(resolve(dirname(path), `.${attemptId}.${suffix}`), target)) return true;
+  }
   const directory = opendirSync(dirname(path));
   let scanned = 0;
   try {
