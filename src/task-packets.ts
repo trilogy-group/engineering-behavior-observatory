@@ -9,7 +9,7 @@ import {
   readFileSync,
   readSync,
   realpathSync,
-  unlinkSync,
+  renameSync,
 } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
@@ -127,7 +127,7 @@ const MAX_FREEZE_RECOVERY_ENTRIES = 4096;
 const TEMPORARY_FREEZE_LINK_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
 const TASK_PACKET_SCHEMA_VERSION = "ebo.task-packet/v1";
 const FREEZE_LOCATOR_SUFFIX = ".freeze.json";
-const FREEZE_QUARANTINE_SUFFIX = ".quarantine";
+const FREEZE_QUARANTINE_SUFFIX = ".quarantine.marker";
 
 export function inspectTaskPacket(bundleRoot: string, packetLocator: string): TaskPacketInspection {
   let root: BundleRootHandle | undefined;
@@ -711,7 +711,7 @@ function readOptionalJson(
 ): unknown | undefined {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readBundleFile(bundleRoot, locator, rootHandle)));
+      return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readBundleFile(bundleRoot, locator, rootHandle, true)));
     } catch (error) {
       if (isErrno(error, "ENOENT")) return undefined;
       if (!retryTransientLink || attempt >= MAX_TRANSIENT_LINK_READ_RETRIES || !(error instanceof Error)
@@ -766,8 +766,7 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHan
                 const currentTemporary = lstatSync(name);
                 if (!sameFileIdentity(currentDestination, currentTemporary)
                     || !sameFileIdentity(openedTarget, currentTemporary)) continue;
-                unlinkSync(name);
-                removed = true;
+                if (preserveRecoveredTemporaryLink(name, destination, targetDescriptor)) removed = true;
                 assertFreezeParent(root, parent, parentDescriptor, locator);
               } finally {
                 closeSync(targetDescriptor);
@@ -792,7 +791,35 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHan
   return removed;
 }
 
-function readBundleFile(bundleRoot: string, locator: string, rootHandle?: BundleRootHandle): Buffer {
+function preserveRecoveredTemporaryLink(name: string, destination: string, descriptor: number): boolean {
+  const expected = fstatSync(descriptor);
+  const recoveryName = `${destination}.recovered`;
+  try {
+    lstatSync(recoveryName);
+    return false;
+  } catch (error) {
+    if (!isErrno(error, "ENOENT")) throw error;
+  }
+  try {
+    const current = lstatSync(name);
+    if (!sameFileIdentity(expected, current)) return false;
+    renameSync(name, recoveryName);
+    // If the pathname changed after the identity check, rename preserves the replacement
+    // under the recovery name rather than deleting it.
+    return true;
+  } catch (error) {
+    if (isErrno(error, "EEXIST")) return false;
+    if (isErrno(error, "ENOENT")) return false;
+    throw error;
+  }
+}
+
+function readBundleFile(
+  bundleRoot: string,
+  locator: string,
+  rootHandle?: BundleRootHandle,
+  allowPublicationAliases = false,
+): Buffer {
   if (!isSafeArtifactRelativePath(locator)) throw new Error(`Artifact path "${locator}" is unsafe.`);
   const rootIdentity = rootHandle ?? openBundleRoot(bundleRoot);
   const ownsRoot = rootHandle === undefined;
@@ -805,9 +832,7 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
     try {
       const opened = fstatSync(descriptor);
       const openedTimes = fstatSync(descriptor, { bigint: true });
-      const openedHasQuarantine = opened.nlink === 2
-        && hasQuarantineAlias(path, opened);
-      if (!opened.isFile() || (opened.nlink > 1 && !openedHasQuarantine)) {
+      if (!opened.isFile() || (opened.nlink > 1 && (!allowPublicationAliases || !hasPublicationAliases(path, opened)))) {
         throw new Error(`Artifact path "${locator}" is not an isolated regular file.`);
       }
       if (!Number.isSafeInteger(opened.size) || opened.size > MAX_TASK_PACKET_METADATA_BYTES) {
@@ -825,9 +850,7 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
       }
       const completed = fstatSync(descriptor);
       const completedTimes = fstatSync(descriptor, { bigint: true });
-      const completedHasQuarantine = completed.nlink === 2
-        && hasQuarantineAlias(path, completed);
-      if (!completed.isFile() || (completed.nlink > 1 && !completedHasQuarantine)
+      if (!completed.isFile() || (completed.nlink > 1 && (!allowPublicationAliases || !hasPublicationAliases(path, completed)))
           || completed.dev !== opened.dev || completed.ino !== opened.ino
           || completed.size !== opened.size || completedTimes.mtimeNs !== openedTimes.mtimeNs
           || completedTimes.ctimeNs !== openedTimes.ctimeNs
@@ -848,9 +871,16 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
   }
 }
 
-function hasQuarantineAlias(path: string, target: { dev: number; ino: number }): boolean {
+function hasPublicationAliases(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
+  const quarantine = hasAlias(`${path}.quarantine`, target);
+  const recovered = hasAlias(`${path}.recovered`, target);
+  return (target.nlink === 2 && (quarantine || recovered))
+    || (target.nlink === 3 && quarantine && recovered);
+}
+
+function hasAlias(path: string, target: { dev: number; ino: number }): boolean {
   try {
-    return sameFileIdentity(target, lstatSync(`${path}.quarantine`));
+    return sameFileIdentity(target, lstatSync(path));
   } catch (error) {
     if (isErrno(error, "ENOENT")) return false;
     throw error;

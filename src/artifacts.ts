@@ -47,6 +47,7 @@ const addFormats = formats.default as unknown as (instance: Ajv2020) => void;
 const schemaDirectory = fileURLToPath(new URL("../../schemas/", import.meta.url));
 const runBundleSchemaId = "urn:ebo:schema:run-bundle:v1";
 const MAX_EXISTING_DIGEST_RETRIES = 20;
+const STAGING_MARKER_SCHEMA_VERSION = "ebo.publication-staging/v1";
 const validators = loadValidators();
 
 export const SUPPORTED_ARTIFACT_SCHEMA_VERSIONS = [...validators.keys()];
@@ -282,7 +283,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
       }
       const quarantinePath = `${destination}.quarantine`;
       if (lstatIfPresent(quarantinePath) !== undefined) {
-        recoverInterruptedStaging(quarantinePath);
+        recoverInterruptedStaging(quarantinePath, `${quarantinePath}.marker`, relativePath, digest);
       }
 
       // The deterministic quarantine sibling is also the staging inode. Keeping it as
@@ -303,6 +304,8 @@ export function writeMetadataAtomicallyIfAbsentSync(
         if (descriptor !== undefined) {
           assertPublishRootHandle(root, rootDescriptor, relativePath);
           assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
+          const markerPath = `${temporaryPath}.marker`;
+          writeStagingMarker(markerPath, relativePath, digest);
           writeFileSync(descriptor, bytes);
           fsyncSync(descriptor);
           const openedTemporary = fstatSync(descriptor);
@@ -330,12 +333,16 @@ export function writeMetadataAtomicallyIfAbsentSync(
               const existingDestination = lstatSync(destination);
               if (!sameFileIdentity(existingDestination, openedTemporary)) {
                 movePathToAttempt(temporaryPath, descriptor);
+                moveOptionalPathToAttempt(markerPath);
                 closeSync(descriptor);
                 descriptor = undefined;
               }
             } else {
-              if (linkedHere) preserveFailedPublication(destination, temporaryPath, descriptor);
-              else movePathToAttempt(temporaryPath, descriptor);
+              if (linkedHere) preserveFailedPublication(destination, temporaryPath, markerPath, descriptor);
+              else {
+                movePathToAttempt(temporaryPath, descriptor);
+                moveOptionalPathToAttempt(markerPath);
+              }
               closeSync(descriptor);
               descriptor = undefined;
               throw error;
@@ -345,7 +352,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
             assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
           } catch (error) {
             if (created && descriptor !== undefined) {
-              preserveFailedPublication(destination, temporaryPath, descriptor);
+              preserveFailedPublication(destination, temporaryPath, markerPath, descriptor);
               closeSync(descriptor);
               descriptor = undefined;
             }
@@ -355,7 +362,10 @@ export function writeMetadataAtomicallyIfAbsentSync(
         }
       } finally {
         if (descriptor !== undefined) {
-          if (!created && !winnerRequired) movePathToAttempt(temporaryPath, descriptor);
+          if (!created && !winnerRequired) {
+            movePathToAttempt(temporaryPath, descriptor);
+            moveOptionalPathToAttempt(`${temporaryPath}.marker`);
+          }
           closeSync(descriptor);
           descriptor = undefined;
         }
@@ -780,20 +790,24 @@ function digestExistingPathWithRetry(path: string, relativePath: string): Digest
 }
 
 function assertPublicationPathWithinLimits(relativePath: string): void {
-  if (isSafeArtifactRelativePath(relativePath) && !isSafeArtifactRelativePath(`${relativePath}.quarantine`)) {
+  if (isSafeArtifactRelativePath(relativePath)
+      && (!isSafeArtifactRelativePath(`${relativePath}.quarantine`)
+        || !isSafeArtifactRelativePath(`${relativePath}.quarantine.marker`))) {
     throw new Error(`Publication path "${relativePath}" exceeds safe path limits including quarantine staging.`);
   }
 }
 
-function recoverInterruptedStaging(path: string): void {
+function recoverInterruptedStaging(path: string, markerPath: string, relativePath: string, expectedDigest: Digest): void {
   let descriptor: number | undefined;
   try {
     descriptor = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const stat = fstatSync(descriptor);
-    if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600) {
+    if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600
+        || !stagingMarkerMatches(markerPath, relativePath, expectedDigest)) {
       throw new Error(`Publication quarantine "${path}" is already occupied.`);
     }
     movePathToAttempt(path, descriptor);
+    moveOptionalPathToAttempt(markerPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     if (error instanceof Error && error.message.includes("already occupied")) throw error;
@@ -803,8 +817,56 @@ function recoverInterruptedStaging(path: string): void {
   }
 }
 
-function preserveFailedPublication(destination: string, quarantine: string, descriptor: number): void {
+function writeStagingMarker(path: string, relativePath: string, digest: Digest): void {
+  const descriptor = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+  try {
+    writeFileSync(descriptor, Buffer.from(canonicalizeMetadata({
+      schemaVersion: STAGING_MARKER_SCHEMA_VERSION,
+      relativePath,
+      digest,
+    })));
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function stagingMarkerMatches(path: string, relativePath: string, expectedDigest: Digest): boolean {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile() || opened.nlink !== 1 || (opened.mode & 0o777) !== 0o600
+        || !Number.isSafeInteger(opened.size) || opened.size > 4096) return false;
+    const marker = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(descriptor)));
+    const completed = fstatSync(descriptor);
+    return sameFileIdentity(opened, completed)
+      && completed.size === opened.size
+      && isRecord(marker)
+      && marker.schemaVersion === STAGING_MARKER_SCHEMA_VERSION
+      && marker.relativePath === relativePath
+      && isRecord(marker.digest)
+      && marker.digest.algorithm === expectedDigest.algorithm
+      && marker.digest.value === expectedDigest.value;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    return false;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function moveOptionalPathToAttempt(path: string): void {
+  try {
+    movePathToAttempt(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function preserveFailedPublication(destination: string, quarantine: string, marker: string, descriptor: number): void {
   movePathToAttempt(quarantine, descriptor);
+  moveOptionalPathToAttempt(marker);
   try {
     movePathToAttempt(destination, descriptor);
   } catch (error) {
@@ -812,8 +874,8 @@ function preserveFailedPublication(destination: string, quarantine: string, desc
   }
 }
 
-function movePathToAttempt(path: string, descriptor: number): string {
-  const expected = fstatSync(descriptor);
+function movePathToAttempt(path: string, descriptor?: number): string {
+  const expected = descriptor === undefined ? lstatSync(path) : fstatSync(descriptor);
   const current = lstatSync(path);
   if (!sameFileIdentity(expected, current)) {
     throw new Error(`Publication path "${path}" changed during failure preservation.`);
@@ -831,12 +893,16 @@ function movePathToAttempt(path: string, descriptor: number): string {
 }
 
 function isReadablePublishedFile(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
-  return target.nlink === 1 || (target.nlink === 2 && hasQuarantineAliasSync(path, target));
+  const quarantine = hasAliasSync(`${path}.quarantine`, target);
+  const recovered = hasAliasSync(`${path}.recovered`, target);
+  return target.nlink === 1
+    || (target.nlink === 2 && (quarantine || recovered))
+    || (target.nlink === 3 && quarantine && recovered);
 }
 
-function hasQuarantineAliasSync(path: string, target: { dev: number; ino: number }): boolean {
+function hasAliasSync(path: string, target: { dev: number; ino: number }): boolean {
   try {
-    return sameFileIdentity(target, lstatSync(`${path}.quarantine`));
+    return sameFileIdentity(target, lstatSync(path));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
@@ -844,8 +910,12 @@ function hasQuarantineAliasSync(path: string, target: { dev: number; ino: number
 }
 
 async function hasQuarantineAlias(path: string, target: { dev: number; ino: number }): Promise<boolean> {
+  return (await hasAlias(path, target)) || (await hasAlias(`${path}.recovered`, target));
+}
+
+async function hasAlias(path: string, target: { dev: number; ino: number }): Promise<boolean> {
   try {
-    const alias = await lstat(`${path}.quarantine`);
+    const alias = await lstat(path);
     return sameFileIdentity(target, alias);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;

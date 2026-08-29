@@ -207,15 +207,39 @@ test("create-if-absent metadata writes remain readable through the artifact API"
 test("create-if-absent publication recovers interrupted quarantine staging", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-staging-recovery-"));
   const staging = join(root, "metadata.json.quarantine");
+  const marker = `${staging}.marker`;
   const metadata = { state: "ready" };
   try {
     writeFileSync(staging, "partial");
     chmodSync(staging, 0o600);
+    writeFileSync(marker, JSON.stringify({
+      schemaVersion: "ebo.publication-staging/v1",
+      relativePath: "metadata.json",
+      digest: digestMetadata(metadata),
+    }));
+    chmodSync(marker, 0o600);
     const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", metadata);
     assert.equal(result.created, true);
     assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", result.digest), Buffer.from('{"state":"ready"}'));
     assert.equal(existsSync(staging), true);
     assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("create-if-absent publication preserves unrecognized quarantine staging", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-staging-ownership-"));
+  const staging = join(root, "metadata.json.quarantine");
+  try {
+    writeFileSync(staging, "not ours");
+    chmodSync(staging, 0o600);
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }),
+      /already occupied/,
+    );
+    assert.equal(readFileSync(staging, "utf8"), "not ours");
+    assert.deepEqual(readdirSync(root), ["metadata.json.quarantine"]);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -557,7 +581,7 @@ test("freeze validates its constructed record and bounds the default locator", (
     rmSync(root, { force: true, recursive: true });
   }
 
-  const validWithQuarantine = Array.from({ length: 5 }, () => "a".repeat(186)).join("/");
+  const validWithQuarantine = Array.from({ length: 5 }, () => "a".repeat(184)).join("/");
   assert.equal(defaultFreezeLocator(validWithQuarantine), `${validWithQuarantine}.freeze.json`);
 
   const nearLimit = Array.from({ length: 5 }, () => "a".repeat(188)).join("/");

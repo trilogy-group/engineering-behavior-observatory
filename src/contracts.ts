@@ -500,12 +500,17 @@ function assertBundlePathWithoutLinks(bundleRoot: string, locator: string, label
 }
 
 function isReadableBundleFile(path: string | undefined, target: { dev: number; ino: number; nlink: number }): boolean {
-  return target.nlink === 1 || (path !== undefined && target.nlink === 2 && hasQuarantineAlias(path, target));
+  if (target.nlink === 1) return true;
+  if (path === undefined) return false;
+  const quarantine = hasAlias(path + ".quarantine", target);
+  const recovered = hasAlias(path + ".recovered", target);
+  return (target.nlink === 2 && (quarantine || recovered))
+    || (target.nlink === 3 && quarantine && recovered);
 }
 
-function hasQuarantineAlias(path: string, target: { dev: number; ino: number }): boolean {
+function hasAlias(path: string, target: { dev: number; ino: number }): boolean {
   try {
-    return sameFileIdentity(target, lstatSync(`${path}.quarantine`));
+    return sameFileIdentity(target, lstatSync(path));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
