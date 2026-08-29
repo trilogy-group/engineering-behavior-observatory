@@ -394,6 +394,10 @@ test("rejects contradictory failed results in public serializers", async () => {
     } as unknown as VerifierResult), /contradicts/);
     assert.throws(() => serializeVerifierResult({
       ...result,
+      exitCode: 1,
+    } as unknown as VerifierResult), /must be equal to constant|must be 0/);
+    assert.throws(() => serializeVerifierResult({
+      ...result,
       assertions: [
         { id: "serializable", status: "passed" },
         { id: "serializable", status: "passed" },
@@ -570,6 +574,25 @@ test("rejects result paths that collide with diagnostics", async () => {
       }),
       /collides with a diagnostic/,
     );
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("does not replace an existing verifier result", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "no-clobber", status: "passed" }] }));
+    `);
+    const result = await run(root, verifier);
+    const firstDigest = await writeVerifierResult(root.artifact, "verifier.json", result);
+
+    await assert.rejects(
+      writeVerifierResult(root.artifact, "verifier.json", result),
+      /already exists/,
+    );
+    assert.deepEqual(await readVerifiedArtifact(root.artifact, "verifier.json", firstDigest), Buffer.from(serializeVerifierResult(result)));
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }

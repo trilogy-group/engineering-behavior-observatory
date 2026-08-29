@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, readFileSync } from "node:fs";
-import { lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
+import { link, lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -363,6 +363,7 @@ export async function writeMetadataAtomically(
   relativePath: string,
   metadata: unknown,
   signal?: AbortSignal,
+  options: { overwrite?: boolean } = {},
 ): Promise<Digest> {
   const bytes = Buffer.from(canonicalizeMetadata(metadata));
   const { parent, path } = await prepareArtifactPath(artifactRoot, relativePath);
@@ -376,7 +377,19 @@ export async function writeMetadataAtomically(
     await handle.close();
     handle = undefined;
     if (signal?.aborted) throw new Error("Artifact metadata write interrupted.");
-    await rename(temporaryPath, path);
+    if (options.overwrite === false) {
+      try {
+        await link(temporaryPath, path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+          throw new Error(`Artifact metadata path "${relativePath}" already exists.`);
+        }
+        throw error;
+      }
+      await rm(temporaryPath, { force: true });
+    } else {
+      await rename(temporaryPath, path);
+    }
     await syncDirectory(parent);
   } finally {
     await handle?.close();

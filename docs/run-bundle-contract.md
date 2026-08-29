@@ -163,7 +163,9 @@ run untrusted verifiers need an OS sandbox or equivalent isolation boundary.
 
 The result serializer validates `verifier-result/v1` before writing it. The
 diagnostic references are read back and digest-checked before the result is
-saved, so a result cannot point at missing or changed diagnostic bytes.
+saved, so a result cannot point at missing or changed diagnostic bytes. Result
+paths use no-clobber persistence: an existing result, manifest, or other
+retained evidence file is never replaced by a later verifier write.
 
 ## Sharing boundary
 

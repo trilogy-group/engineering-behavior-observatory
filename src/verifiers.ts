@@ -48,7 +48,7 @@ type VerifierResultBase = {
 export type VerifierPassedResult = Omit<VerifierResultBase, "error"> & {
   status: "passed";
   error?: never;
-  exitCode?: number;
+  exitCode?: 0;
   workspace: VerifierWorkspace;
 };
 
@@ -315,7 +315,7 @@ export async function writeVerifierResult(
       throw new Error(`Diagnostic "${diagnostic.locator}" size does not match its result reference.`);
     }
   }
-  return writeMetadataAtomically(artifactRoot, relativePath, result);
+  return writeMetadataAtomically(artifactRoot, relativePath, result, undefined, { overwrite: false });
 }
 
 function validateOptions(options: ExecuteVerifierOptions, timeoutMs: number, maxOutputBytes: number): void {
