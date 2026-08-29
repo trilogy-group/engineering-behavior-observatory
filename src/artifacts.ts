@@ -620,6 +620,7 @@ function nestedVerifierDiagnosticErrors(
       && retainedEvidence.relativePath === diagnostic.locator
       && retainedEvidence.digest === diagnostic.digest
       && retainedEvidence.sizeBytes === diagnostic.sizeBytes;
+    const invalidUnsanitizedReference = !sanitized && diagnostic.source !== undefined;
     const sourceOrigin = diagnostic.source;
     const sourceBinding = retainedEvidence !== undefined && isDiagnosticSourceBinding(retainedEvidence.diagnosticSource)
       ? retainedEvidence.diagnosticSource
@@ -642,7 +643,8 @@ function nestedVerifierDiagnosticErrors(
       && !byteIdentical;
     const invalidSanitizedReference = sanitized && !isSanitizedSidecar;
     const aliasesRetainedEvidence = !sanitized && hasPortablePathCollision(normalizedLocator, evidencePaths);
-    if (hasPortablePathCollision(normalizedLocator, RESERVED_MANIFEST_PATHS)
+    if (invalidUnsanitizedReference
+        || hasPortablePathCollision(normalizedLocator, RESERVED_MANIFEST_PATHS)
         || invalidSanitizedReference
         || aliasesRetainedEvidence
         || hasPortablePathCollision(normalizedLocator, nestedDiagnosticPaths)) {
@@ -650,7 +652,9 @@ function nestedVerifierDiagnosticErrors(
         artifact,
         schemaVersion: "run-manifest/v1",
         field: `${scope}/diagnostics`,
-        message: invalidSanitizedReference
+        message: invalidUnsanitizedReference
+          ? "Unsanitized verifier diagnostics cannot carry source provenance."
+          : invalidSanitizedReference
           ? "Sanitized verifier diagnostics require classified, source-bound sidecars with changed bytes."
           : "Verifier diagnostics cannot alias retained evidence paths.",
       });
