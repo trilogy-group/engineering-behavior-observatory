@@ -240,6 +240,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
   relativePath: string,
   metadata: unknown,
   rootHandle?: BundleRootHandle,
+  preserveQuarantine = false,
 ): { created: boolean; digest: Digest } {
   const bytes = Buffer.from(canonicalizeMetadata(metadata));
   const rootIdentity = rootHandle ?? openBundleRoot(artifactRoot);
@@ -254,6 +255,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
     assertPublishRootHandle(root, rootDescriptor, relativePath);
     const parentDescriptor = openPublishParent(root, parent, relativePath, rootDescriptor);
     const destination = relative(parent, path);
+    const quarantineBase = preserveQuarantine ? destination : undefined;
     const originalCwd = process.cwd();
     let changedCwd = false;
     try {
@@ -299,21 +301,21 @@ export function writeMetadataAtomicallyIfAbsentSync(
           if ((error as NodeJS.ErrnoException).code === "EEXIST") {
             linkedHere = false;
           } else {
-            if (linkedHere) removeOwnedPath(destination, descriptor);
+            if (linkedHere) removeOwnedPath(destination, descriptor, quarantineBase, true);
             throw error;
           }
         }
         try {
           assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
         } catch (error) {
-          if (linkedHere) removeOwnedPath(destination, descriptor);
+          if (linkedHere) removeOwnedPath(destination, descriptor, quarantineBase, true);
           created = false;
           throw error;
         }
       } finally {
         if (descriptor !== undefined) {
           try {
-            removeOwnedPath(temporaryPath, descriptor, destination, true);
+            removeOwnedPath(temporaryPath, descriptor, quarantineBase, preserveQuarantine);
           } finally {
             closeSync(descriptor);
             descriptor = undefined;
@@ -683,7 +685,20 @@ function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined 
   }
 }
 
-function removeOwnedPath(path: string, descriptor: number, quarantineBase = path, removeSource = false): void {
+function removeOwnedPath(path: string, descriptor: number, quarantineBase: string | undefined, removeSource: boolean): void {
+  if (quarantineBase === undefined) {
+    try {
+      const opened = fstatSync(descriptor);
+      const current = lstatSync(path);
+      if (!sameFileIdentity(opened, current)) {
+        throw new Error(`Publication path "${path}" changed before cleanup.`);
+      }
+      unlinkSync(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    return;
+  }
   const quarantine = `${quarantineBase}.quarantine`;
   try {
     const opened = fstatSync(descriptor);

@@ -16,6 +16,7 @@ import {
   MAX_TASK_PACKET_METADATA_BYTES,
   main,
   modelVisibleTaskPacket,
+  readVerifiedArtifact,
   resolveBundleArtifactDigest,
   statusTaskPacket,
   writeMetadataAtomicallyIfAbsentSync,
@@ -188,12 +189,22 @@ test("create-if-absent metadata writes preserve the first freeze", () => {
   }
 });
 
+test("create-if-absent metadata writes remain readable through the artifact API", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-readable-metadata-"));
+  try {
+    const written = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
+    assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", written.digest), Buffer.from('{"state":"ready"}'));
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("publication never overwrites an existing quarantine artifact", () => {
-  const root = mkdtempSync(join(tmpdir(), "ebo-quarantine-collision-"));
-  const quarantine = join(root, "freeze.json.quarantine");
+  const { root } = createBundle();
+  const quarantine = join(root, "packet.json.freeze.json.quarantine");
   try {
     writeFileSync(quarantine, "preserve me");
-    assert.throws(() => writeMetadataAtomicallyIfAbsentSync(root, "freeze.json", { state: "new" }), /already occupied/);
+    assert.throws(() => freezeTaskPacket(root, "packet.json"), /already occupied/);
     assert.equal(readFileSync(quarantine, "utf8"), "preserve me");
   } finally {
     rmSync(root, { force: true, recursive: true });
@@ -446,7 +457,10 @@ test("freeze validates its constructed record and bounds the default locator", (
     rmSync(root, { force: true, recursive: true });
   }
 
-  const nearLimit = Array.from({ length: 4 }, () => "a".repeat(236)).join("/");
+  const validWithQuarantine = Array.from({ length: 5 }, () => "a".repeat(186)).join("/");
+  assert.equal(defaultFreezeLocator(validWithQuarantine), `${validWithQuarantine}.freeze.json`);
+
+  const nearLimit = Array.from({ length: 5 }, () => "a".repeat(188)).join("/");
   assert.throws(() => defaultFreezeLocator(nearLimit), /exceeds safe path limits/);
 });
 

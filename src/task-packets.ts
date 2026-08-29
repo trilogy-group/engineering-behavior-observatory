@@ -127,7 +127,7 @@ const MAX_FREEZE_RECOVERY_ENTRIES = 4096;
 const TEMPORARY_FREEZE_LINK_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
 const TASK_PACKET_SCHEMA_VERSION = "ebo.task-packet/v1";
 const FREEZE_LOCATOR_SUFFIX = ".freeze.json";
-const FREEZE_QUARANTINE_SUFFIX = `${FREEZE_LOCATOR_SUFFIX}.quarantine`;
+const FREEZE_QUARANTINE_SUFFIX = ".quarantine";
 
 export function inspectTaskPacket(bundleRoot: string, packetLocator: string): TaskPacketInspection {
   let root: BundleRootHandle | undefined;
@@ -312,7 +312,7 @@ export function freezeTaskPacket(
     const candidateErrors = validateArtifact(freezeLocator, candidate);
     if (candidateErrors.length > 0) throw new Error(formatErrors(candidateErrors));
 
-    const write = writeMetadataAtomicallyIfAbsentSync(bundleRoot, freezeLocator, candidate, root);
+    const write = writeMetadataAtomicallyIfAbsentSync(bundleRoot, freezeLocator, candidate, root, true);
     if (!write.created) {
       const winner = readOptionalJson(bundleRoot, freezeLocator, true, root);
       if (winner === undefined) throw new Error("Freeze record disappeared after concurrent creation.");
