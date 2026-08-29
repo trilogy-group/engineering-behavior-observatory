@@ -321,9 +321,13 @@ export function freezeTaskPacket(
       const errors = validateFreezeRecord(freezeLocator, winner);
       if (errors.length > 0) throw new Error(formatErrors(errors));
       const finalInspection = assertTaskPacketAdmittedWithRoot(bundleRoot, packetLocator, root);
-      const mismatches = compareFreezeRecord(winner as TaskPacketFreezeRecord, finalInspection);
+      const finalWinner = readOptionalJson(bundleRoot, freezeLocator, true, root);
+      if (finalWinner === undefined) throw new Error("Freeze record disappeared after final inspection.");
+      const finalWinnerErrors = validateFreezeRecord(freezeLocator, finalWinner);
+      if (finalWinnerErrors.length > 0) throw new Error(formatErrors(finalWinnerErrors));
+      const mismatches = compareFreezeRecord(finalWinner as TaskPacketFreezeRecord, finalInspection);
       if (mismatches.length > 0) throw new Error(`Frozen task packet changed: ${mismatches.join(", ")}.`);
-      return winner as TaskPacketFreezeRecord;
+      return finalWinner as TaskPacketFreezeRecord;
     }
 
     const finalInspection = assertTaskPacketAdmittedWithRoot(bundleRoot, packetLocator, root);
@@ -407,7 +411,7 @@ function statusTaskPacketWithRoot(
     };
   }
 
-  const record = freeze as TaskPacketFreezeRecord;
+  let record = freeze as TaskPacketFreezeRecord;
   if (inspection.errors.length === 0 && inspection.packet?.admission.status !== "admitted") {
     return {
       status: "unadmitted",
@@ -435,6 +439,44 @@ function statusTaskPacketWithRoot(
       };
     }
     mismatches = compareFreezeRecord(record, currentInspection);
+    try {
+      const refreshed = readOptionalJson(bundleRoot, freezeLocator, true, root);
+      if (refreshed === undefined) {
+        return {
+          status: "invalid",
+          packetId: currentInspection.packet?.id ?? packetId,
+          packetDigest: currentInspection.packetDigest,
+          aggregateDigest: null,
+          freezeLocator,
+          mismatches: ["freeze-record"],
+          errors: [...currentInspection.errors, freezeError(freezeLocator, "Freeze record disappeared after final inspection.")],
+        };
+      }
+      const refreshedErrors = validateFreezeRecord(freezeLocator, refreshed);
+      if (refreshedErrors.length > 0) {
+        return {
+          status: "invalid",
+          packetId: currentInspection.packet?.id ?? packetId,
+          packetDigest: currentInspection.packetDigest,
+          aggregateDigest: null,
+          freezeLocator,
+          mismatches: ["freeze-record"],
+          errors: [...currentInspection.errors, ...refreshedErrors],
+        };
+      }
+      record = refreshed as TaskPacketFreezeRecord;
+      mismatches = compareFreezeRecord(record, currentInspection);
+    } catch (error) {
+      return {
+        status: "invalid",
+        packetId: currentInspection.packet?.id ?? packetId,
+        packetDigest: currentInspection.packetDigest,
+        aggregateDigest: null,
+        freezeLocator,
+        mismatches: ["freeze-record"],
+        errors: [...currentInspection.errors, freezeError(freezeLocator, errorMessage(error))],
+      };
+    }
   }
   return {
     status: currentInspection.errors.length > 0 ? "invalid" : mismatches.length > 0 ? "changed" : "frozen",

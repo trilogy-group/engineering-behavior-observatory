@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, linkSync, lstatSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -182,6 +184,50 @@ test("create-if-absent metadata writes preserve the first freeze", () => {
     assert.equal(writeMetadataAtomicallyIfAbsentSync(root, "freeze.json", { winner: "second" }).created, false);
     assert.deepEqual(JSON.parse(readFileSync(join(root, "freeze.json"), "utf8")), { winner: "first" });
   } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("publication rejects a synchronized temporary-file mutation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-publication-race-"));
+  const mutator = spawn(
+    process.execPath,
+    [
+      "-e",
+      `const fs = require("node:fs");
+const path = require("node:path");
+const root = process.argv[1];
+const pattern = /^\\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.tmp$/;
+process.stdout.write("ready\\n");
+function mutate() {
+  for (const name of fs.readdirSync(root)) {
+    if (!pattern.test(name)) continue;
+    try {
+      const descriptor = fs.openSync(path.join(root, name), fs.constants.O_RDWR);
+      const stat = fs.fstatSync(descriptor);
+      if (stat.size > 0) fs.writeSync(descriptor, Buffer.from("!"), 0, 1, 0);
+      fs.fsyncSync(descriptor);
+      fs.closeSync(descriptor);
+    } catch {}
+  }
+  setImmediate(mutate);
+}
+mutate();`,
+      root,
+    ],
+    { stdio: ["ignore", "pipe", "ignore"] },
+  );
+  try {
+    await once(mutator.stdout!, "data");
+    writeFileSync(join(root, "unrelated.txt"), "keep");
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, "published.json", { payload: "x".repeat(8 * 1024 * 1024) }),
+      /changed while it was being published/,
+    );
+    assert.equal(readFileSync(join(root, "unrelated.txt"), "utf8"), "keep");
+  } finally {
+    if (mutator.exitCode === null) mutator.kill();
+    await once(mutator, "exit").catch(() => undefined);
     rmSync(root, { force: true, recursive: true });
   }
 });
