@@ -523,7 +523,7 @@ test("status recovers an interrupted nested freeze link within its parent", () =
   }
 });
 
-test("status recovers an interrupted quarantine alias", () => {
+test("status rejects an unowned temporary alias when quarantine is present", () => {
   const { root } = createBundle();
   const freezePath = join(root, "packet.json.freeze.json");
   const temporaryName = ".55555555-5555-4555-8555-555555555555.tmp";
@@ -532,7 +532,9 @@ test("status recovers an interrupted quarantine alias", () => {
     freezeTaskPacket(root, "packet.json");
     linkSync(freezePath, join(root, temporaryName));
     renameSync(join(root, temporaryName), quarantinePath);
-    assert.equal(statusTaskPacket(root, "packet.json").status, "frozen");
+    const status = statusTaskPacket(root, "packet.json");
+    assert.equal(status.status, "invalid");
+    assert.equal(existsSync(join(root, temporaryName)), true);
     assert.equal(existsSync(quarantinePath), true);
   } finally {
     rmSync(root, { force: true, recursive: true });

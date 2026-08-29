@@ -740,7 +740,9 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHan
       changedCwd = true;
       assertBundleRoot(root, rootDescriptor, locator);
       assertFreezeParent(root, parent, parentDescriptor, locator);
+      if (hasAlias(`${relative(parent, destination)}.quarantine`, lstatSync(relative(parent, destination)))) return false;
       const destinationStat = lstatSync(relative(parent, destination));
+      if (!hasPublicationOwnership(destination, locator, destinationStat)) return false;
 
       const directory = opendirSync(".");
       let scanned = 0;
@@ -872,9 +874,34 @@ function readBundleFile(
 function hasPublicationAliases(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
   const quarantine = hasAlias(`${path}.quarantine`, target);
   const recovered = hasAlias(`${path}.recovered`, target);
-  const temporaryLinks = target.nlink > 2 ? countTemporaryAliases(path, target) : 0;
+  const temporaryLinks = !quarantine && hasPublicationOwnership(path, undefined, target) && target.nlink > 2
+    ? countTemporaryAliases(path, target)
+    : 0;
   return (quarantine || recovered)
     && target.nlink === 1 + Number(quarantine) + Number(recovered) + temporaryLinks;
+}
+
+function hasPublicationOwnership(
+  path: string,
+  locator: string | undefined,
+  target: { dev: number; ino: number; nlink: number },
+): boolean {
+  try {
+    const marker = JSON.parse(readFileSync(`${path}.quarantine.marker`, "utf8")) as unknown;
+    const binding = JSON.parse(readFileSync(`${path}.quarantine.marker.binding`, "utf8")) as unknown;
+    return isRecord(marker)
+      && marker.schemaVersion === "ebo.publication-staging/v1"
+      && typeof marker.relativePath === "string"
+      && (locator === undefined || marker.relativePath === locator)
+      && typeof marker.attemptId === "string"
+      && isRecord(binding)
+      && isRecord(binding.stagingIdentity)
+      && binding.stagingIdentity.dev === target.dev
+      && binding.stagingIdentity.ino === target.ino;
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) return false;
+    return false;
+  }
 }
 
 function countTemporaryAliases(path: string, target: { dev: number; ino: number }): number {
