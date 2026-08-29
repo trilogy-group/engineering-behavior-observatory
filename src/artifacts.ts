@@ -696,7 +696,6 @@ function removeOwnedPath(path: string, descriptor: number): void {
     if (!sameFileIdentity(opened, quarantined)) {
       throw new Error(`Publication path "${path}" changed during quarantine.`);
     }
-    rmSync(quarantine, { force: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }

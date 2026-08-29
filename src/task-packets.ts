@@ -125,7 +125,7 @@ export const MAX_TASK_PACKET_METADATA_BYTES = MAX_CONFIGURATION_BYTES;
 const MAX_TRANSIENT_LINK_READ_RETRIES = 20;
 const MAX_FREEZE_RECOVERY_ENTRIES = 4096;
 const TEMPORARY_FREEZE_LINK_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
-const QUARANTINED_FREEZE_LINK_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp\.quarantine-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const QUARANTINED_LINK_PATTERN = /^[A-Za-z0-9._-]+\.quarantine-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const TASK_PACKET_SCHEMA_VERSION = "ebo.task-packet/v1";
 const FREEZE_LOCATOR_SUFFIX = ".freeze.json";
 
@@ -335,12 +335,14 @@ export function freezeTaskPacket(
     if (postPublicationMismatches.length > 0) {
       throw new Error(`Task packet changed after freeze publication: ${postPublicationMismatches.join(", ")}.`);
     }
-    resolveBundleArtifact(
-      bundleRoot,
-      { locator: freezeLocator, digest: write.digest },
-      MAX_TASK_PACKET_METADATA_BYTES,
-      root,
-    );
+    const published = readOptionalJson(bundleRoot, freezeLocator, true, root);
+    if (published === undefined) throw new Error("Freeze record disappeared after final inspection.");
+    const publishedErrors = validateFreezeRecord(freezeLocator, published);
+    if (publishedErrors.length > 0) throw new Error(formatErrors(publishedErrors));
+    const publishedMismatches = compareFreezeRecord(published as TaskPacketFreezeRecord, finalInspection);
+    if (publishedMismatches.length > 0) {
+      throw new Error(`Published freeze record changed: ${publishedMismatches.join(", ")}.`);
+    }
     return candidate;
   } finally {
     closeBundleRoot(root);
@@ -487,15 +489,33 @@ function statusTaskPacketWithRoot(
       const packetDrift = compareFreezeRecord(previousRecord, nextInspection);
       const freezeDrift = !sameDigest(digestMetadata(previousFreeze), digestMetadata(nextFreeze));
       const nextMismatches = compareFreezeRecord(nextRecord, nextInspection);
-      lastMismatches = [...packetDrift, ...(freezeDrift ? ["freeze-record"] : []), ...nextMismatches];
+      const finalInspection = admitTaskPacketWithRoot(bundleRoot, packetLocator, root);
+      if (finalInspection.errors.length > 0 || finalInspection.packet?.admission.status !== "admitted") {
+        return {
+          status: finalInspection.errors.length > 0 ? "invalid" : "unadmitted",
+          packetId: finalInspection.packet?.id ?? packetId,
+          packetDigest: finalInspection.packetDigest,
+          aggregateDigest: nextRecord.aggregateDigest,
+          freezeLocator,
+          mismatches: ["admission"],
+          errors: finalInspection.errors,
+        };
+      }
+      const finalMismatches = compareFreezeRecord(nextRecord, finalInspection);
+      lastMismatches = [
+        ...packetDrift,
+        ...(freezeDrift ? ["freeze-record"] : []),
+        ...nextMismatches,
+        ...finalMismatches,
+      ];
       if (lastMismatches.length === 0) {
-        currentInspection = nextInspection;
+        currentInspection = finalInspection;
         record = nextRecord;
         mismatches = [];
         settled = true;
         break;
       }
-      previousInspection = nextInspection;
+      previousInspection = finalInspection;
       previousRecord = nextRecord;
       previousFreeze = nextFreeze;
     }
@@ -719,7 +739,7 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHan
           }
           const name = entry.name;
           if (name === relative(parent, destination)) continue;
-          if (!TEMPORARY_FREEZE_LINK_PATTERN.test(name) && !QUARANTINED_FREEZE_LINK_PATTERN.test(name)) continue;
+          if (!TEMPORARY_FREEZE_LINK_PATTERN.test(name)) continue;
           try {
             const temporaryStat = lstatSync(name);
             if (temporaryStat.isFile() && temporaryStat.dev === destinationStat.dev && temporaryStat.ino === destinationStat.ino) {
@@ -772,7 +792,11 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
     try {
       const opened = fstatSync(descriptor);
       const openedTimes = fstatSync(descriptor, { bigint: true });
-      if (!opened.isFile() || opened.nlink > 1) throw new Error(`Artifact path "${locator}" is not an isolated regular file.`);
+      const openedHasQuarantine = opened.nlink > 1
+        && countQuarantineAliases(dirname(path), opened) === opened.nlink - 1;
+      if (!opened.isFile() || (opened.nlink > 1 && !openedHasQuarantine)) {
+        throw new Error(`Artifact path "${locator}" is not an isolated regular file.`);
+      }
       if (!Number.isSafeInteger(opened.size) || opened.size > MAX_TASK_PACKET_METADATA_BYTES) {
         throw new Error(`Artifact path "${locator}" exceeds its metadata size limit.`);
       }
@@ -788,7 +812,10 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
       }
       const completed = fstatSync(descriptor);
       const completedTimes = fstatSync(descriptor, { bigint: true });
-      if (!completed.isFile() || completed.nlink > 1 || completed.dev !== opened.dev || completed.ino !== opened.ino
+      const completedHasQuarantine = completed.nlink > 1
+        && countQuarantineAliases(dirname(path), completed) === completed.nlink - 1;
+      if (!completed.isFile() || (completed.nlink > 1 && !completedHasQuarantine)
+          || completed.dev !== opened.dev || completed.ino !== opened.ino
           || completed.size !== opened.size || completedTimes.mtimeNs !== openedTimes.mtimeNs
           || completedTimes.ctimeNs !== openedTimes.ctimeNs
           || completed.size > MAX_TASK_PACKET_METADATA_BYTES || bytes.length !== opened.size) {
@@ -806,6 +833,27 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
   } finally {
     if (ownsRoot) closeBundleRoot(rootIdentity);
   }
+}
+
+function countQuarantineAliases(parent: string, target: { dev: number; ino: number }): number {
+  const directory = opendirSync(parent);
+  let scanned = 0;
+  let matches = 0;
+  try {
+    for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
+      scanned += 1;
+      if (scanned > MAX_FREEZE_RECOVERY_ENTRIES) return 0;
+      if (!QUARANTINED_LINK_PATTERN.test(entry.name)) continue;
+      try {
+        if (sameFileIdentity(target, lstatSync(resolve(parent, entry.name)))) matches += 1;
+      } catch (error) {
+        if (!isErrno(error, "ENOENT")) throw error;
+      }
+    }
+  } finally {
+    directory.closeSync();
+  }
+  return matches;
 }
 
 function assertBundlePathWithoutLinks(bundleRoot: string, locator: string): string {
