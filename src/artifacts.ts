@@ -274,30 +274,47 @@ export function writeMetadataAtomicallyIfAbsentSync(
         assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
         writeFileSync(descriptor, bytes);
         fsyncSync(descriptor);
-        closeSync(descriptor);
-        descriptor = undefined;
+        const openedTemporary = fstatSync(descriptor);
+        const namedTemporary = lstatSync(temporaryPath);
+        if (!sameFileIdentity(openedTemporary, namedTemporary)) {
+          throw new Error(`Artifact path "${relativePath}" temporary publication entry changed.`);
+        }
         assertPublishRootHandle(root, rootDescriptor, relativePath);
         assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
         let linkedHere = false;
         try {
           linkSync(temporaryPath, destination);
           linkedHere = true;
+          const published = lstatSync(destination);
+          const currentTemporary = fstatSync(descriptor);
+          if (!sameFileIdentity(currentTemporary, published)) {
+            throw new Error(`Artifact path "${relativePath}" published a different temporary entry.`);
+          }
           created = true;
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+            linkedHere = false;
+          } else {
+            if (linkedHere) removeOwnedPath(destination, descriptor);
+            throw error;
+          }
         }
         try {
           assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
         } catch (error) {
-          if (linkedHere) {
-            rmSync(destination, { force: true });
-            created = false;
-          }
+          if (linkedHere) removeOwnedPath(destination, descriptor);
+          created = false;
           throw error;
         }
       } finally {
-        if (descriptor !== undefined) closeSync(descriptor);
-        rmSync(temporaryPath, { force: true });
+        if (descriptor !== undefined) {
+          try {
+            removeOwnedPath(temporaryPath, descriptor);
+          } finally {
+            closeSync(descriptor);
+            descriptor = undefined;
+          }
+        }
         assertPublishRootHandle(root, rootDescriptor, relativePath);
         syncCreatedDirectories(root, createdDirectories, parentDescriptor);
       }
@@ -660,6 +677,23 @@ function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined 
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
+}
+
+function removeOwnedPath(path: string, descriptor: number): void {
+  try {
+    const opened = fstatSync(descriptor);
+    const current = lstatSync(path);
+    if (!sameFileIdentity(opened, current)) {
+      throw new Error(`Publication path "${path}" changed before cleanup.`);
+    }
+    rmSync(path, { force: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function sameFileIdentity(left: { dev: number; ino: number }, right: { dev: number; ino: number }): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
 }
 
 function openPublishParent(root: string, parent: string, relativePath: string, rootDescriptor: number): number {
