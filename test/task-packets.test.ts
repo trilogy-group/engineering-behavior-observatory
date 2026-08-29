@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { linkSync, lstatSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -176,6 +177,27 @@ test("create-if-absent metadata writes preserve the first freeze", () => {
     assert.equal(writeMetadataAtomicallyIfAbsentSync(root, "freeze.json", { winner: "second" }).created, false);
     assert.deepEqual(JSON.parse(readFileSync(join(root, "freeze.json"), "utf8")), { winner: "first" });
   } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("status tolerates a transient extra freeze-record hard link", () => {
+  const { root } = createBundle();
+  const freezePath = join(root, "packet.json.freeze.json");
+  const temporaryLink = join(root, "freeze-record.tmp-link");
+  try {
+    freezeTaskPacket(root, "packet.json");
+    linkSync(freezePath, temporaryLink);
+    assert.equal(lstatSync(freezePath).nlink, 2);
+    const unlinker = spawn(process.execPath, ["--input-type=module", "-e", `setTimeout(() => unlinkSync(${JSON.stringify(temporaryLink)}), 0); import { unlinkSync } from "node:fs";`], { stdio: "ignore" });
+    unlinker.unref();
+    assert.equal(statusTaskPacket(root, "packet.json").status, "frozen");
+  } finally {
+    try {
+      unlinkSync(temporaryLink);
+    } catch {
+      // The helper process may already have removed the transient link.
+    }
     rmSync(root, { force: true, recursive: true });
   }
 });

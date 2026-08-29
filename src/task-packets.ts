@@ -112,6 +112,7 @@ export type TaskPacketStatus = {
 };
 
 export const TASK_PACKET_FREEZE_SCHEMA_VERSION = "ebo.task-packet-freeze/v1";
+const MAX_TRANSIENT_LINK_READ_RETRIES = 20;
 
 export function inspectTaskPacket(bundleRoot: string, packetLocator: string): TaskPacketInspection {
   let document: unknown;
@@ -236,7 +237,7 @@ export function freezeTaskPacket(
 
   const write = writeMetadataAtomicallyIfAbsentSync(bundleRoot, freezeLocator, candidate);
   if (!write.created) {
-    const winner = readOptionalJson(bundleRoot, freezeLocator);
+    const winner = readOptionalJson(bundleRoot, freezeLocator, true);
     if (winner === undefined) throw new Error("Freeze record disappeared after concurrent creation.");
     const errors = validateArtifact(freezeLocator, winner);
     if (errors.length > 0) throw new Error(formatErrors(errors));
@@ -256,7 +257,7 @@ export function statusTaskPacket(
   const inspection = inspectTaskPacket(bundleRoot, packetLocator);
   const packetId = inspection.packet?.id ?? null;
   const packetDigest = inspection.packetDigest;
-  const freeze = readOptionalJson(bundleRoot, freezeLocator);
+  const freeze = readOptionalJson(bundleRoot, freezeLocator, true);
 
   if (freeze === undefined) {
     return {
@@ -406,35 +407,52 @@ function sameComponent(left: TaskPacketComponent, right: TaskPacketComponent): b
   return sameDigest(left.digest, right.digest);
 }
 
-function readOptionalJson(bundleRoot: string, locator: string): unknown | undefined {
-  try {
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readBundleFile(bundleRoot, locator)));
-  } catch (error) {
-    if (isErrno(error, "ENOENT")) return undefined;
-    throw error;
+function readOptionalJson(bundleRoot: string, locator: string, retryTransientLink = false): unknown | undefined {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readBundleFile(bundleRoot, locator)));
+    } catch (error) {
+      if (isErrno(error, "ENOENT")) return undefined;
+      if (!retryTransientLink || attempt >= MAX_TRANSIENT_LINK_READ_RETRIES || !(error instanceof Error)
+          || !error.message.includes("not an isolated regular file")) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+    }
   }
 }
 
 function readBundleFile(bundleRoot: string, locator: string): Buffer {
   if (!isSafeArtifactRelativePath(locator)) throw new Error(`Artifact path "${locator}" is unsafe.`);
   const root = realpathSync(bundleRoot);
-  let path = root;
-  for (const segment of locator.split("/")) {
-    path = resolve(path, segment);
-    const entry = lstatSync(path);
-    if (!isContained(root, path) || entry.isSymbolicLink()) {
-      throw new Error(`Artifact path "${locator}" escapes its declared root.`);
-    }
-  }
+  const path = assertBundlePathWithoutLinks(root, locator);
 
   const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const opened = fstatSync(descriptor);
     if (!opened.isFile() || opened.nlink > 1) throw new Error(`Artifact path "${locator}" is not an isolated regular file.`);
+    const current = lstatSync(assertBundlePathWithoutLinks(root, locator));
+    if (opened.dev !== current.dev || opened.ino !== current.ino) {
+      throw new Error(`Artifact path "${locator}" changed after bundle-root verification.`);
+    }
     return readFileSync(descriptor);
   } finally {
     closeSync(descriptor);
   }
+}
+
+function assertBundlePathWithoutLinks(bundleRoot: string, locator: string): string {
+  let path = bundleRoot;
+  const segments = locator.split("/");
+  for (const [index, segment] of segments.entries()) {
+    path = resolve(path, segment);
+    const entry = lstatSync(path);
+    if (!isContained(bundleRoot, path) || entry.isSymbolicLink()) {
+      throw new Error(`Artifact path "${locator}" escapes its declared root.`);
+    }
+    if (index === segments.length - 1 && !entry.isFile()) {
+      throw new Error(`Artifact path "${locator}" is not an isolated regular file.`);
+    }
+  }
+  return path;
 }
 
 function packetError(artifact: string, field: string, message: string): ArtifactValidationError {
