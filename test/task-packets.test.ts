@@ -15,6 +15,7 @@ import {
   digestBytes,
   digestMetadata,
   freezeTaskPacket,
+  inspectTaskPacket,
   MAX_TASK_PACKET_METADATA_BYTES,
   main,
   modelVisibleTaskPacket,
@@ -170,6 +171,22 @@ test("admission rejects a review record bound to another packet", () => {
     writeFileSync(join(root, "packet.json"), JSON.stringify(packet, null, 2));
     const result = admitTaskPacket(root, "packet.json");
     assert.ok(result.errors.some((error) => /pre-admission digest/.test(error.message)));
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("packet inspection rejects duplicate JSON keys before parsing", () => {
+  const { root } = createBundle();
+  try {
+    const packetPath = join(root, "packet.json");
+    const text = readFileSync(packetPath, "utf8").replace(
+      /("id"\s*:\s*"[^"]+",)/,
+      "$1\"id\":\"duplicate\",",
+    );
+    writeFileSync(packetPath, text);
+    const result = inspectTaskPacket(root, "packet.json");
+    assert.ok(result.errors.some((error) => /duplicate JSON object keys/.test(error.message)));
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -412,6 +429,31 @@ test("create-if-absent publication preserves an unowned partial binding sidecar"
       /already occupied|EEXIST|binding/,
     );
     assert.equal(readFileSync(bindingTemporary, "utf8"), "{");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("create-if-absent publication rejects a FIFO binding sidecar without blocking", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-fifo-binding-recovery-"));
+  const marker = join(root, "metadata.json.quarantine.marker");
+  const bindingTemporary = `${marker}.binding.tmp`;
+  try {
+    writeFileSync(marker, JSON.stringify({
+      schemaVersion: "ebo.publication-staging/v1",
+      relativePath: "metadata.json",
+      stagingPath: ".dddddddd-dddd-4ddd-8ddd-dddddddddddd.tmp",
+      attemptId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      ownerPid: 999999999,
+      ownerStart: "dead",
+    }));
+    chmodSync(marker, 0o600);
+    execFileSync("mkfifo", [bindingTemporary]);
+    assert.throws(
+      () => writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" }),
+      /already occupied|EEXIST|binding/,
+    );
+    assert.equal(lstatSync(bindingTemporary).isFIFO(), true);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

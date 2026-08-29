@@ -14,6 +14,7 @@ import {
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import {
+  assertNoDuplicateJsonKeys,
   digestBytes,
   digestMetadata,
   validateArtifact,
@@ -157,7 +158,9 @@ function inspectTaskPacketWithRoot(
 ): TaskPacketInspection {
   let document: unknown;
   try {
-    document = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readBundleFile(bundleRoot, packetLocator, root)));
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(readBundleFile(bundleRoot, packetLocator, root));
+    assertNoDuplicateJsonKeys(text);
+    document = JSON.parse(text);
   } catch (error) {
     return {
       packetLocator,
@@ -578,7 +581,9 @@ function resolveReviewRecord(
 ): Digest | null {
   try {
     const bytes = resolveBundleArtifact(bundleRoot, reference, MAX_TASK_PACKET_METADATA_BYTES, root);
-    const record = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    assertNoDuplicateJsonKeys(text);
+    const record = JSON.parse(text) as unknown;
     const bound = record !== null && typeof record === "object" && !Array.isArray(record)
       ? (record as { preAdmissionDigest?: unknown }).preAdmissionDigest
       : undefined;
@@ -723,7 +728,9 @@ function readOptionalJson(
 ): unknown | undefined {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readBundleFile(bundleRoot, locator, rootHandle, true)));
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(readBundleFile(bundleRoot, locator, rootHandle, true));
+      assertNoDuplicateJsonKeys(text);
+      return JSON.parse(text);
     } catch (error) {
       if (isErrno(error, "ENOENT")) return undefined;
       if (!retryTransientLink || attempt >= MAX_TRANSIENT_LINK_READ_RETRIES || !(error instanceof Error)

@@ -2129,8 +2129,9 @@ function moveRecoveredMarkerToAttempt(
   if (sourcePath === markerTemporaryPath) {
     movePathToAttemptIfIdentity(sourcePath, markerIdentity);
   } else {
-    if (isOwnedMarkerSidecar(markerTemporaryPath, relativePath, marker)) {
-      moveOptionalPathToAttempt(markerTemporaryPath);
+    const markerTemporary = isOwnedMarkerSidecar(markerTemporaryPath, relativePath, marker);
+    if (markerTemporary !== undefined) {
+      movePathToAttemptIfIdentity(markerTemporaryPath, markerTemporary.identity);
     }
     movePathToAttemptIfIdentity(markerPath, markerIdentity);
   }
@@ -2169,9 +2170,15 @@ function isOwnedMarkerBinding(
   return { bindingIdentity, stagingIdentity: { dev, ino } };
 }
 
-function isOwnedMarkerSidecar(path: string, relativePath: string, marker: Record<string, unknown>): boolean {
-  const candidate = readMarkerMetadata(path);
-  return candidate !== undefined && isOwnedMarkerSidecarValue(candidate, relativePath, marker);
+function isOwnedMarkerSidecar(
+  path: string,
+  relativePath: string,
+  marker: Record<string, unknown>,
+): { identity: Stats; value: Record<string, unknown> } | undefined {
+  const metadata = readMarkerMetadataWithIdentity(path);
+  return metadata !== undefined && isOwnedMarkerSidecarValue(metadata.value, relativePath, marker)
+    ? metadata
+    : undefined;
 }
 
 function isOwnedMarkerSidecarValue(
@@ -2191,16 +2198,28 @@ function readMarkerMetadata(path: string): Record<string, unknown> | undefined {
 function readMarkerMetadataWithIdentity(
   path: string,
 ): { value: Record<string, unknown>; identity: Stats } | undefined {
+  let descriptor: number | undefined;
   try {
-    const opened = lstatSync(path);
-    if (!opened.isFile() || opened.isSymbolicLink() || (opened.mode & 0o777) !== 0o600
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile() || (opened.mode & 0o777) !== 0o600
         || !Number.isSafeInteger(opened.size) || opened.size > 4096) return undefined;
-    const value = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    const completed = lstatSync(path);
-    if (!sameFileIdentity(opened, completed) || completed.size !== opened.size) return undefined;
+    const bytes = Buffer.alloc(opened.size);
+    for (let offset = 0; offset < opened.size;) {
+      const read = readSync(descriptor, bytes, offset, opened.size - offset, offset);
+      if (read === 0) return undefined;
+      offset += read;
+    }
+    const trailing = Buffer.allocUnsafe(1);
+    if (readSync(descriptor, trailing, 0, 1, opened.size) !== 0) return undefined;
+    const completed = fstatSync(descriptor);
+    if (!completed.isFile() || !sameFileIdentity(opened, completed) || completed.size !== opened.size) return undefined;
+    const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
     return isRecord(value) ? { value, identity: opened } : undefined;
   } catch {
     return undefined;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
