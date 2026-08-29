@@ -69,6 +69,16 @@ function tarNumericWhitespaceArchive(): Buffer {
   return gzipSync(archive);
 }
 
+function tarLegacyPrefixArchive(): Buffer {
+  const archive = gunzipSync(tarGzipArchive([{ path: "README.md", bytes: Buffer.from("safe") }]));
+  archive.write("legacy-prefix", 345, "ascii");
+  archive.fill(0, 257, 263);
+  archive.fill(0x20, 148, 156);
+  const checksum = archive.subarray(0, 512).reduce((sum, value) => sum + value, 0);
+  archive.write(checksum.toString(8).padStart(6, "0") + "\0 ", 148, "ascii");
+  return gzipSync(archive);
+}
+
 function packetFixture(name = "task-packet.valid.v1.json"): TaskPacket {
   return JSON.parse(readFileSync(fixturePath(name), "utf8")) as TaskPacket;
 }
@@ -362,6 +372,14 @@ test("inspection validates fixture archives before admission", () => {
     },
     {
       bytes: tarGzipArchive([
+        { path: "PaxHeader", bytes: Buffer.from("16 path=../evil\n"), type: "X" },
+        { path: "README.md", bytes: Buffer.from("safe") },
+      ]),
+      expected: /unsupported uppercase local PAX/,
+      mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
+    },
+    {
+      bytes: tarGzipArchive([
         { path: "PaxHeader", bytes: Buffer.from("12x path=aa\n"), type: "x" },
         { path: "README.md", bytes: Buffer.from("safe") },
       ]),
@@ -408,6 +426,11 @@ test("inspection validates fixture archives before admission", () => {
     {
       bytes: tarNumericWhitespaceArchive(),
       expected: /invalid TAR size/,
+      mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
+    },
+    {
+      bytes: tarLegacyPrefixArchive(),
+      expected: /prefix without USTAR/,
       mutate: (packet) => { packet.agentInput.fixture.materializer.includePaths = ["README.md"]; },
     },
   ];
