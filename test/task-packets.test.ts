@@ -241,6 +241,21 @@ test("status bounds orphan-link recovery directory scans", () => {
   }
 });
 
+test("status does not remove an unrelated dot-tmp hard link", () => {
+  const { root } = createBundle();
+  const freezePath = join(root, "packet.json.freeze.json");
+  const unrelatedLink = join(root, ".deadbeef.tmp");
+  try {
+    freezeTaskPacket(root, "packet.json");
+    linkSync(freezePath, unrelatedLink);
+    const status = statusTaskPacket(root, "packet.json");
+    assert.equal(status.status, "invalid");
+    assert.equal(existsSync(unrelatedLink), true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("freeze publication rejects a symlinked ancestor", () => {
   const { root } = createBundle();
   const outside = mkdtempSync(join(tmpdir(), "ebo-freeze-outside-"));

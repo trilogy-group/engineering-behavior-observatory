@@ -124,6 +124,7 @@ export const TASK_PACKET_FREEZE_SCHEMA_VERSION = "ebo.task-packet-freeze/v1";
 export const MAX_TASK_PACKET_METADATA_BYTES = MAX_CONFIGURATION_BYTES;
 const MAX_TRANSIENT_LINK_READ_RETRIES = 20;
 const MAX_FREEZE_RECOVERY_ENTRIES = 4096;
+const TEMPORARY_FREEZE_LINK_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
 const FREEZE_LOCATOR_SUFFIX = ".freeze.json";
 
 export function inspectTaskPacket(bundleRoot: string, packetLocator: string): TaskPacketInspection {
@@ -580,7 +581,7 @@ function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHan
             throw new Error("Freeze recovery directory exceeds its entry limit.");
           }
           const name = entry.name;
-          if (!/^\.[0-9a-f-]+\.tmp$/.test(name)) continue;
+          if (!TEMPORARY_FREEZE_LINK_PATTERN.test(name)) continue;
           try {
             const temporaryStat = lstatSync(name);
             if (temporaryStat.isFile() && temporaryStat.dev === destinationStat.dev && temporaryStat.ino === destinationStat.ino) {
