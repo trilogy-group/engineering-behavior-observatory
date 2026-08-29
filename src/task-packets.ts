@@ -799,7 +799,7 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
       const opened = fstatSync(descriptor);
       const openedTimes = fstatSync(descriptor, { bigint: true });
       const openedHasQuarantine = opened.nlink > 1
-        && hasQuarantineAlias(path, opened) && opened.nlink === 2;
+        && hasQuarantineAlias(path, opened);
       if (!opened.isFile() || (opened.nlink > 1 && !openedHasQuarantine)) {
         throw new Error(`Artifact path "${locator}" is not an isolated regular file.`);
       }
@@ -819,7 +819,7 @@ function readBundleFile(bundleRoot: string, locator: string, rootHandle?: Bundle
       const completed = fstatSync(descriptor);
       const completedTimes = fstatSync(descriptor, { bigint: true });
       const completedHasQuarantine = completed.nlink > 1
-        && hasQuarantineAlias(path, completed) && completed.nlink === 2;
+        && hasQuarantineAlias(path, completed);
       if (!completed.isFile() || (completed.nlink > 1 && !completedHasQuarantine)
           || completed.dev !== opened.dev || completed.ino !== opened.ino
           || completed.size !== opened.size || completedTimes.mtimeNs !== openedTimes.mtimeNs

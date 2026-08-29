@@ -11,7 +11,6 @@ import {
   readFileSync,
   readSync,
   realpathSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -692,10 +691,14 @@ function removeOwnedPath(path: string, descriptor: number, quarantineBase = path
       throw new Error(`Publication path "${path}" changed before cleanup.`);
     }
     try {
-      renameSync(path, quarantine);
+      linkSync(path, quarantine);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") return;
-      throw error;
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const existing = lstatSync(quarantine);
+      if (!sameFileIdentity(opened, existing)) {
+        throw new Error(`Publication quarantine "${quarantine}" is already occupied.`);
+      }
+      return;
     }
     const quarantined = lstatSync(quarantine);
     if (!sameFileIdentity(opened, quarantined)) {

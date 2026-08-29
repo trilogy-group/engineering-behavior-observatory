@@ -188,6 +188,18 @@ test("create-if-absent metadata writes preserve the first freeze", () => {
   }
 });
 
+test("publication never overwrites an existing quarantine artifact", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-quarantine-collision-"));
+  const quarantine = join(root, "freeze.json.quarantine");
+  try {
+    writeFileSync(quarantine, "preserve me");
+    assert.throws(() => writeMetadataAtomicallyIfAbsentSync(root, "freeze.json", { state: "new" }), /already occupied/);
+    assert.equal(readFileSync(quarantine, "utf8"), "preserve me");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("publication rejects a synchronized temporary-file mutation", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-publication-race-"));
   const mutator = spawn(
@@ -238,6 +250,7 @@ test("status recovers an interrupted freeze-record hard link", () => {
   const temporaryLink = join(root, ".11111111-1111-4111-8111-111111111111.tmp");
   try {
     freezeTaskPacket(root, "packet.json");
+    unlinkSync(`${freezePath}.quarantine`);
     linkSync(freezePath, temporaryLink);
     assert.ok(lstatSync(freezePath).nlink >= 2);
     assert.equal(statusTaskPacket(root, "packet.json").status, "frozen");
@@ -258,6 +271,7 @@ test("status recovers an interrupted nested freeze link within its parent", () =
   const temporaryLink = join(root, "nested", ".22222222-2222-4222-8222-222222222222.tmp");
   try {
     freezeTaskPacket(root, "packet.json", freezeLocator);
+    unlinkSync(`${join(root, freezeLocator)}.quarantine`);
     linkSync(join(root, freezeLocator), temporaryLink);
     assert.equal(statusTaskPacket(root, "packet.json", freezeLocator).status, "frozen");
     assert.equal(existsSync(temporaryLink), false);
@@ -304,6 +318,7 @@ test("status bounds orphan-link recovery directory scans", () => {
   const temporaryLink = join(root, ".33333333-3333-4333-8333-333333333333.tmp");
   try {
     freezeTaskPacket(root, "packet.json");
+    unlinkSync(`${freezePath}.quarantine`);
     linkSync(freezePath, temporaryLink);
     for (let index = 0; index < 4_097; index += 1) writeFileSync(join(root, `scan-entry-${index}`), "");
     const status = statusTaskPacket(root, "packet.json");
@@ -320,6 +335,7 @@ test("status does not remove an unrelated dot-tmp hard link", () => {
   const unrelatedLink = join(root, ".deadbeef.tmp");
   try {
     freezeTaskPacket(root, "packet.json");
+    unlinkSync(`${freezePath}.quarantine`);
     linkSync(freezePath, unrelatedLink);
     const status = statusTaskPacket(root, "packet.json");
     assert.equal(status.status, "invalid");
@@ -336,6 +352,7 @@ test("recovery never removes a freeze destination that resembles a temporary nam
   const extraLink = join(root, "freeze-durable-link");
   try {
     freezeTaskPacket(root, "packet.json", freezeLocator);
+    unlinkSync(`${freezePath}.quarantine`);
     linkSync(freezePath, extraLink);
     const status = statusTaskPacket(root, "packet.json", freezeLocator);
     assert.equal(status.status, "invalid");
