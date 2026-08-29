@@ -566,10 +566,15 @@ function nestedVerifierDiagnosticErrors(
   }
   if (expectedVerifier !== undefined) {
     const actualVerifier = isRecord(result.verifier) ? result.verifier : undefined;
+    const expectedFormat = typeof expectedVerifier.format === "string"
+      ? expectedVerifier.format
+      : typeof expectedVerifier.locator === "string" && expectedVerifier.locator.toLowerCase().endsWith(".mjs")
+        ? "module"
+        : "commonjs";
     if (actualVerifier === undefined
         || actualVerifier.locator !== expectedVerifier.locator
         || actualVerifier.digest !== expectedVerifier.digest
-        || (expectedVerifier.format !== undefined && actualVerifier.format !== expectedVerifier.format)) {
+        || actualVerifier.format !== expectedFormat) {
       bindingErrors.push({
         artifact,
         schemaVersion: "run-manifest/v1",

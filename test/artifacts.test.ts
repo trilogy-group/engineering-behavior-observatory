@@ -442,6 +442,7 @@ test("binds verifier results to the configured verifier reference", async () => 
     const verifierReference = {
       locator: "restricted/verifier.js",
       digest: `sha256:${"a".repeat(64)}`,
+      format: "commonjs",
     };
     const workspaceFingerprint = `sha256:${"c".repeat(64)}`;
     workspaceDescriptor.fingerprint = workspaceFingerprint;
