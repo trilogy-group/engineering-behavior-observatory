@@ -438,13 +438,17 @@ test("binds verifier results to the configured verifier reference", async () => 
     const verifierPath = join(root, "verifier.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     const verifierDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "verifier");
+    const workspaceDescriptor = manifest.evidence.find((entry: { kind: string }) => entry.kind === "workspace");
     const verifierReference = {
       locator: "restricted/verifier.js",
       digest: `sha256:${"a".repeat(64)}`,
     };
+    const workspaceFingerprint = `sha256:${"c".repeat(64)}`;
+    workspaceDescriptor.fingerprint = workspaceFingerprint;
     manifest.run.verifier = verifierReference;
     const verifier = JSON.parse(readFileSync(verifierPath, "utf8"));
     verifier.verifier = verifierReference;
+    verifier.workspace.fingerprint = workspaceFingerprint;
     const verifierBytes = Buffer.from(JSON.stringify(verifier));
     await writeFile(verifierPath, verifierBytes);
     verifierDescriptor.digest = `sha256:${digestBytes(verifierBytes).value}`;
@@ -459,6 +463,16 @@ test("binds verifier results to the configured verifier reference", async () => 
     assert.match(
       validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
       /Verifier execution reference must match the run configuration/,
+    );
+    verifier.verifier = verifierReference;
+    verifier.workspace.fingerprint = `sha256:${"d".repeat(64)}`;
+    const mismatchedWorkspaceBytes = Buffer.from(JSON.stringify(verifier));
+    await writeFile(verifierPath, mismatchedWorkspaceBytes);
+    verifierDescriptor.digest = `sha256:${digestBytes(mismatchedWorkspaceBytes).value}`;
+    verifierDescriptor.sizeBytes = mismatchedWorkspaceBytes.length;
+    assert.match(
+      validateRunManifestEvidence("manifest.json", manifest, root).map((error) => error.message).join("\n"),
+      /workspace digest must match retained workspace evidence/,
     );
   } finally {
     await rm(root, { force: true, recursive: true });

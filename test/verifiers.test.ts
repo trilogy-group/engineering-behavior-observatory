@@ -305,7 +305,7 @@ test("rejects an artifact root inside the workspace before creating it", async (
       verifier,
       workspacePath: root.workspace,
       workspaceFingerprint: workspaceDigest,
-      workspace: { artifactId: "workspace", digest: workspaceDigest },
+      workspace: { artifactId: "workspace", digest: workspaceDigest, fingerprint: workspaceDigest },
       artifactRoot,
     }), /Artifact and workspace roots/);
     assert.equal(existsSync(artifactRoot), false);
@@ -326,7 +326,7 @@ test("rejects a workspace fingerprint that does not match evaluated bytes", asyn
       verifier,
       workspacePath: root.workspace,
       workspaceFingerprint: workspaceDigest,
-      workspace: { artifactId: "workspace", digest: workspaceDigest },
+      workspace: { artifactId: "workspace", digest: workspaceDigest, fingerprint: workspaceDigest },
       artifactRoot: root.artifact,
     }), /does not match the evaluated workspace/);
     assert.equal(existsSync(join(root.artifact, "diagnostics")), false);
@@ -366,7 +366,7 @@ test("rejects overlong execution identifiers before starting", async () => {
       verifier,
       workspacePath: root.workspace,
       workspaceFingerprint: workspaceDigest,
-      workspace: { artifactId: "workspace", digest: workspaceDigest },
+      workspace: { artifactId: "workspace", digest: workspaceDigest, fingerprint: workspaceDigest },
       artifactRoot: root.artifact,
     }), /Bundle ID/);
     await assert.rejects(() => executeVerifier({
@@ -375,7 +375,7 @@ test("rejects overlong execution identifiers before starting", async () => {
       verifier,
       workspacePath: root.workspace,
       workspaceFingerprint: workspaceDigest,
-      workspace: { artifactId: "x".repeat(257), digest: workspaceDigest },
+      workspace: { artifactId: "x".repeat(257), digest: workspaceDigest, fingerprint: workspaceDigest },
       artifactRoot: root.artifact,
     }), /Workspace reference/);
     await assert.rejects(() => executeVerifier({
@@ -384,7 +384,7 @@ test("rejects overlong execution identifiers before starting", async () => {
       verifier,
       workspacePath: root.workspace,
       workspaceFingerprint: workspaceDigest,
-      workspace: { artifactId: "workspace", digest: workspaceDigest },
+      workspace: { artifactId: "workspace", digest: workspaceDigest, fingerprint: workspaceDigest },
       artifactRoot: root.artifact,
       timeoutMs: 2_147_483_648,
     }), /timeout/);
@@ -820,6 +820,7 @@ async function run(
   const workspace = {
     artifactId: "workspace",
     digest: workspaceDigest,
+    fingerprint: workspaceFingerprint,
   };
   return executeVerifier({
     bundleId: "bundle-test",

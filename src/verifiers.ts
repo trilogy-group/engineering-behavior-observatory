@@ -60,6 +60,7 @@ type VerifierResultBase = {
   bundleId: string;
   durationMs?: number;
   error?: string;
+  errorRedacted?: boolean;
   verifier?: VerifierExecutionReference;
   assertions: VerifierAssertion[];
   diagnostics?: DiagnosticReference[];
@@ -68,6 +69,7 @@ type VerifierResultBase = {
 export type VerifierPassedResult = Omit<VerifierResultBase, "error" | "assertions"> & {
   status: "passed";
   error?: never;
+  errorRedacted?: never;
   exitCode?: 0;
   workspace: VerifierWorkspace;
   assertions: VerifierPassedAssertion[];
@@ -76,6 +78,7 @@ export type VerifierPassedResult = Omit<VerifierResultBase, "error" | "assertion
 export type VerifierFailedResult = Omit<VerifierResultBase, "error"> & {
   status: "failed";
   error?: never;
+  errorRedacted?: never;
   exitCode: number;
   workspace: VerifierWorkspace;
 };
@@ -89,12 +92,13 @@ export type VerifierErrorResult = VerifierResultBase & {
   workspace?: VerifierWorkspace;
 };
 
-export type VerifierNotRunResult = Omit<VerifierResultBase, "durationMs" | "diagnostics" | "assertions"> & {
+export type VerifierNotRunResult = Omit<VerifierResultBase, "durationMs" | "diagnostics" | "assertions" | "errorRedacted"> & {
   status: "not-run";
   durationMs?: never;
   diagnostics?: never;
   workspace?: never;
   exitCode?: never;
+  errorRedacted?: never;
   assertions: VerifierNotRunAssertion[];
 };
 
@@ -124,7 +128,7 @@ export type ExecuteVerifierOptions = {
   verifier: ArtifactReference;
   workspacePath: string;
   workspaceFingerprint: string;
-  workspace: VerifierWorkspace;
+  workspace: VerifierWorkspace & { fingerprint: string };
   artifactRoot: string;
   command?: string;
   args?: readonly string[];
@@ -478,7 +482,9 @@ function validateOptions(options: ExecuteVerifierOptions, timeoutMs: number, max
   if (!isValidIdentifier(options.workspace.artifactId) || !/^sha256:[a-f0-9]{64}$/.test(options.workspace.digest)) {
     throw new Error("Workspace reference is invalid.");
   }
-  if (!/^sha256:[a-f0-9]{64}$/.test(options.workspaceFingerprint)) {
+  if (!/^sha256:[a-f0-9]{64}$/.test(options.workspaceFingerprint)
+      || !/^sha256:[a-f0-9]{64}$/.test(options.workspace.fingerprint)
+      || options.workspaceFingerprint !== options.workspace.fingerprint) {
     throw new Error("Workspace fingerprint is invalid.");
   }
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS) {

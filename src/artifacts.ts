@@ -313,6 +313,24 @@ export function validateRunManifestEvidence(
         message: "Sanitized verifier must preserve its source verifier binding.",
       });
     }
+    if (source.durationMs !== derivative.durationMs) {
+      errors.push({
+        artifact,
+        schemaVersion: "run-manifest/v1",
+        field: `/evidence/${escapeJsonPointer(descriptor.id)}/durationMs`,
+        message: "Sanitized verifier must preserve its source duration.",
+      });
+    }
+    const sameError = source.error === derivative.error
+      || (source.status === "error" && derivative.errorRedacted === true && derivative.error === "[redacted]");
+    if (!sameError) {
+      errors.push({
+        artifact,
+        schemaVersion: "run-manifest/v1",
+        field: `/evidence/${escapeJsonPointer(descriptor.id)}/error`,
+        message: "Sanitized verifier must preserve or explicitly redact its source error.",
+      });
+    }
     const sourceWorkspace = source.workspace;
     const derivativeWorkspace = derivative.workspace;
     const sameWorkspace = sourceWorkspace === undefined
@@ -348,7 +366,8 @@ export function validateRunManifestEvidence(
       && outcome.workspace !== undefined
       && terminalWorkspace !== undefined
       && outcome.workspace.artifactId === terminalWorkspace.id
-      && outcome.workspace.digest === terminalWorkspace.digest;
+      && outcome.workspace.digest === terminalWorkspace.digest
+      && (terminalWorkspace.fingerprint === undefined || outcome.workspace.fingerprint === terminalWorkspace.fingerprint);
   if (terminal?.state === "completed" && !verifierOutcomes.some((outcome) => matchesTerminalWorkspace(outcome, "passed"))) {
     errors.push({
       artifact,
@@ -371,6 +390,9 @@ export function validateRunManifestEvidence(
 
 type NestedVerifierOutcome = {
   status: string;
+  durationMs?: number;
+  error?: string;
+  errorRedacted?: boolean;
   assertions: Array<{ id: string; status: string }>;
   verifier?: { locator: string; digest: string };
   workspace?: { artifactId: string; digest: string; fingerprint?: string };
@@ -476,8 +498,14 @@ function nestedVerifierOutcome(bytes: Buffer): NestedVerifierOutcome | undefined
       })
       : [];
     const exitCode = typeof result.exitCode === "number" ? result.exitCode : undefined;
+    const durationMs = typeof result.durationMs === "number" ? result.durationMs : undefined;
+    const error = typeof result.error === "string" ? result.error : undefined;
+    const errorRedacted = typeof result.errorRedacted === "boolean" ? result.errorRedacted : undefined;
     return {
       status: result.status,
+      ...(durationMs === undefined ? {} : { durationMs }),
+      ...(error === undefined ? {} : { error }),
+      ...(errorRedacted === undefined ? {} : { errorRedacted }),
       assertions,
       diagnostics,
       ...(verifier === undefined ? {} : { verifier }),
@@ -549,7 +577,8 @@ function nestedVerifierDiagnosticErrors(
         field: `${scope}/workspace/artifactId`,
         message: "Verifier workspace must reference retained workspace evidence.",
       });
-    } else if (retainedWorkspace.digest !== result.workspace.digest) {
+    } else if (retainedWorkspace.digest !== result.workspace.digest
+        || (retainedWorkspace.fingerprint !== undefined && retainedWorkspace.fingerprint !== result.workspace.fingerprint)) {
       bindingErrors.push({
         artifact,
         schemaVersion: "run-manifest/v1",

@@ -110,7 +110,8 @@ Every passed or failed verifier also names the retained workspace artifact and
 digest it evaluated.
 
 The executor receives both the retained workspace artifact reference and a
-separate live-workspace fingerprint. The v1 live-workspace fingerprint hashes
+separate live-workspace fingerprint; the executor options require the retained
+workspace reference to carry that same fingerprint. The v1 live-workspace fingerprint hashes
 the root and sorted descendant relative paths, entry kinds, permission mode
 bits, reproducible modification times, and file bytes; hard-linked files,
 symbolic links, and unsupported entry kinds are rejected. POSIX snapshots use
@@ -119,7 +120,8 @@ millisecond precision. The fingerprint must
 match the live workspace before and after its private snapshot is created. The
 executor then evaluates that detached snapshot, while the artifact digest
 remains the digest of the retained workspace evidence. The complete executor
-result records the snapshot fingerprint alongside the workspace reference.
+result records the snapshot fingerprint alongside the workspace reference, and
+manifest workspace descriptors may carry it for later terminal binding checks.
 
 Verifier execution uses a small subprocess boundary. The executor resolves the
 digest-pinned restricted verifier from its task-bundle root, stages it in a
@@ -171,7 +173,9 @@ workspace was available; it must not invent a workspace binding. Coordinator
 failures such as timeout, launch, parse, or
 cleanup errors are recorded in the result's `error` field; the native stderr
 diagnostic remains byte-for-byte separate. `error` is not valid on passed or
-failed results. The process-group boundary cannot
+failed results. Sanitized verifier derivatives preserve `durationMs` and
+`error`; sensitive error text may use `errorRedacted: true` with the literal
+`[redacted]`, but cannot be replaced by an unmarked claim. The process-group boundary cannot
 contain a verifier that deliberately creates a new POSIX session; callers that
 run untrusted verifiers need an OS sandbox or equivalent isolation boundary.
 

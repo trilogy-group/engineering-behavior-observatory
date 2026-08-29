@@ -88,6 +88,7 @@
         "sizeBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
         "sharingClass": { "$ref": "#/$defs/sharingClass" },
         "relativePath": { "$ref": "#/$defs/relativePath" },
+        "fingerprint": { "$ref": "#/$defs/digest" },
         "nativeReference": { "$ref": "#/$defs/nativeReference" },
         "diagnosticSource": { "$ref": "#/$defs/diagnosticSourceBinding" },
         "sanitizedFrom": {
@@ -383,6 +384,7 @@
         "status": { "enum": ["passed", "failed", "error", "not-run"] },
         "durationMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
         "error": { "type": "string", "maxLength": 4096, "pattern": ".*\\S.*" },
+        "errorRedacted": { "type": "boolean" },
         "verifier": { "$ref": "#/$defs/verifierReference" },
         "exitCode": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
         "workspace": {
@@ -468,6 +470,10 @@
         {
           "if": { "properties": { "status": { "const": "error" } }, "required": ["status"] },
           "then": { "required": ["error"] }
+        },
+        {
+          "if": { "properties": { "status": { "enum": ["passed", "failed", "not-run"] } }, "required": ["status"] },
+          "then": { "not": { "required": ["errorRedacted"] } }
         }
       ]
     },
