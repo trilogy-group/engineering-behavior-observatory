@@ -8,6 +8,7 @@ import test from "node:test";
 
 import {
   digestBytes,
+  digestWorkspace,
   executeVerifier,
   readVerifiedArtifact,
   serializeVerifierResult,
@@ -208,6 +209,26 @@ test("rejects an artifact root inside the workspace before creating it", async (
   }
 });
 
+test("rejects a workspace digest that does not match evaluated bytes", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "should-not-run", status: "passed" }] }));
+    `);
+    await assert.rejects(() => executeVerifier({
+      bundleId: "bundle-test",
+      verifierRoot: root.verifier,
+      verifier,
+      workspacePath: root.workspace,
+      workspace: { artifactId: "workspace", digest: workspaceDigest },
+      artifactRoot: root.artifact,
+    }), /does not match the evaluated workspace/);
+    assert.equal(existsSync(join(root.artifact, "diagnostics")), false);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("returns a structured error when diagnostic setup fails", async () => {
   const root = await createRoots();
   try {
@@ -357,36 +378,36 @@ test("rejects contradictory failed results in public serializers", async () => {
       status: "failed",
       exitCode: 0,
       assertions: [{ id: "serializable", status: "failed" }],
-    }), /contradicts/);
+    } as unknown as VerifierResult), /contradicts/);
     assert.throws(() => serializeVerifierResult({
       ...result,
       status: "failed",
       exitCode: undefined,
       assertions: [{ id: "serializable", status: "failed" }],
-    }), /contradicts/);
+    } as unknown as VerifierResult), /contradicts/);
     assert.throws(() => serializeVerifierResult({
       ...result,
       assertions: [
         { id: "serializable", status: "passed" },
         { id: "serializable", status: "passed" },
       ],
-    }), /unique/);
+    } as unknown as VerifierResult), /unique/);
     assert.throws(() => serializeVerifierResult({
       ...result,
       diagnostics: [result.diagnostics[0]!, { ...result.diagnostics[0]!, truncated: true }],
-    }), /diagnostic locators must be unique/);
+    } as unknown as VerifierResult), /diagnostic locators must be unique/);
     assert.throws(() => serializeVerifierResult({
       ...result,
       diagnostics: [result.diagnostics[0]!, { ...result.diagnostics[1]!, stream: "stdout", locator: "other.log" }],
-    }), /diagnostic streams must be unique/);
+    } as unknown as VerifierResult), /diagnostic streams must be unique/);
     assert.throws(() => serializeVerifierResult({
       ...result,
       diagnostics: [{ ...result.diagnostics[0]!, locator: "Logs" }, { ...result.diagnostics[1]!, locator: "logs/stdout.log" }],
-    }), /diagnostic locators must be unique and non-overlapping/);
+    } as unknown as VerifierResult), /diagnostic locators must be unique and non-overlapping/);
     assert.throws(() => serializeVerifierResult({
       ...result,
       error: "unexpected coordinator error",
-    }), /must NOT be valid/);
+    } as unknown as VerifierResult), /must NOT be valid/);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
@@ -590,12 +611,16 @@ async function run(
   verifier: { locator: string; digest: ReturnType<typeof digestBytes> },
   options: { timeoutMs?: number; maxOutputBytes?: number; command?: string; diagnosticDirectory?: string } = {},
 ): Promise<CompleteVerifierResult> {
+  const workspace = {
+    artifactId: "workspace",
+    digest: await digestWorkspace(root.workspace),
+  };
   return executeVerifier({
     bundleId: "bundle-test",
     verifierRoot: root.verifier,
     verifier,
     workspacePath: root.workspace,
-    workspace: { artifactId: "workspace", digest: workspaceDigest },
+    workspace,
     artifactRoot: root.artifact,
     ...options,
   });

@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
@@ -44,11 +44,21 @@ type VerifierResultBase = {
   diagnostics?: DiagnosticReference[];
 };
 
-export type VerifierRunResult = VerifierResultBase & {
-  status: "passed" | "failed";
+export type VerifierPassedResult = Omit<VerifierResultBase, "error"> & {
+  status: "passed";
+  error?: never;
   exitCode?: number;
   workspace: VerifierWorkspace;
 };
+
+export type VerifierFailedResult = Omit<VerifierResultBase, "error"> & {
+  status: "failed";
+  error?: never;
+  exitCode: number;
+  workspace: VerifierWorkspace;
+};
+
+export type VerifierRunResult = VerifierPassedResult | VerifierFailedResult | VerifierErrorResult;
 
 export type VerifierErrorResult = VerifierResultBase & {
   status: "error";
@@ -64,15 +74,17 @@ export type VerifierNotRunResult = Omit<VerifierResultBase, "durationMs" | "diag
   exitCode?: never;
 };
 
-export type VerifierResult = VerifierRunResult | VerifierErrorResult | VerifierNotRunResult;
+export type VerifierResult = VerifierRunResult | VerifierNotRunResult;
 
-export type CompleteVerifierResult = VerifierResultBase & {
-  status: "passed" | "failed" | "error";
+type CompleteResultFields = {
   durationMs: number;
   diagnostics: DiagnosticReference[];
-  exitCode?: number;
-  workspace: VerifierWorkspace;
 };
+
+export type CompleteVerifierResult =
+  | (VerifierPassedResult & CompleteResultFields)
+  | (VerifierFailedResult & CompleteResultFields)
+  | (VerifierErrorResult & CompleteResultFields & { workspace: VerifierWorkspace });
 
 export type ExecuteVerifierOptions = {
   bundleId: string;
@@ -94,6 +106,39 @@ const MAX_TIMEOUT_MS = 2_147_483_647;
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
+export async function digestWorkspace(workspacePath: string): Promise<string> {
+  const root = await realpath(workspacePath);
+  const hash = createHash("sha256");
+  hash.update("ebo.workspace/v1\0");
+  await hashWorkspaceDirectory(root, "", hash);
+  return `sha256:${hash.digest("hex")}`;
+}
+
+async function hashWorkspaceDirectory(
+  directory: string,
+  relativeDirectory: string,
+  hash: ReturnType<typeof createHash>,
+): Promise<void> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    const relativePath = posix.join(relativeDirectory, entry.name);
+    const metadata = await lstat(path);
+    if (metadata.isSymbolicLink()) throw new Error(`Workspace contains a symbolic link at "${relativePath}".`);
+    if (metadata.isDirectory()) {
+      hash.update(`directory\0${relativePath}\0`);
+      await hashWorkspaceDirectory(path, relativePath, hash);
+    } else if (metadata.isFile()) {
+      const bytes = await readFile(path);
+      hash.update(`file\0${relativePath}\0${bytes.length}\0`);
+      hash.update(bytes);
+    } else {
+      throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
+    }
+  }
+}
+
 /**
  * Execute a digest-pinned verifier in a private staging directory.
  *
@@ -113,6 +158,9 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
   assertDisjointRoots(workspacePath, verifierRoot, "Verifier and workspace roots");
   assertDisjointRoots(workspacePath, artifactCandidate, "Artifact and workspace roots");
   assertDisjointRoots(verifierRoot, artifactCandidate, "Verifier and artifact roots");
+  if (options.workspace.digest !== await digestWorkspace(workspacePath)) {
+    throw new Error("Workspace reference digest does not match the evaluated workspace.");
+  }
   const artifactRoot = await prepareRoot(artifactCandidate);
 
   const diagnosticDirectory = options.diagnosticDirectory ?? "diagnostics";
@@ -216,7 +264,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
       }
       diagnostics = references.flatMap((reference) => reference === undefined ? [] : [reference]);
     }
-    const result: CompleteVerifierResult = {
+    const result = {
       schemaVersion: "verifier-result/v1",
       bundleId: options.bundleId,
       status,
@@ -226,7 +274,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
       workspace: options.workspace,
       assertions,
       diagnostics,
-    };
+    } as CompleteVerifierResult;
     assertVerifierResult(result, "verifier-result");
     return result;
   } finally {

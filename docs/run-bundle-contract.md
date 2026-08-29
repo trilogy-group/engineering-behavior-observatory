@@ -109,6 +109,12 @@ result contains only passed assertions and, when retained, an exit code of zero.
 Every passed or failed verifier also names the retained workspace artifact and
 digest it evaluated.
 
+The executor verifies that the workspace reference digest matches the directory
+it evaluates. The v1 workspace fingerprint hashes sorted relative paths,
+entry kinds, and file bytes; symbolic links and unsupported entry kinds are
+rejected. This prevents a stale workspace artifact reference from being
+attached to a new verifier result.
+
 Verifier execution uses a small subprocess boundary. The executor resolves the
 digest-pinned restricted verifier from its task-bundle root, stages it in a
 private directory, and invokes it with the staged verifier path followed by the
