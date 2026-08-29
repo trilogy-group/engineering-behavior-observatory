@@ -319,7 +319,8 @@ export function resolveBundleArtifactDigest(
     const opened = fstatSync(descriptor);
     const openedTimes = fstatSync(descriptor, { bigint: true });
     const size = opened.size;
-    if (!opened.isFile() || opened.nlink > 1 || !Number.isSafeInteger(size) || size < 0) {
+    if (!isReadableBundleFile(resolve(root.path, reference.locator), opened)
+        || !Number.isSafeInteger(size) || size < 0) {
       throw new Error("Artifact is not an isolated regular file.");
     }
     const hash = createHash("sha256");
@@ -336,7 +337,8 @@ export function resolveBundleArtifactDigest(
     }
     const completed = fstatSync(descriptor);
     const completedTimes = fstatSync(descriptor, { bigint: true });
-    if (!completed.isFile() || completed.nlink > 1 || completed.dev !== opened.dev || completed.ino !== opened.ino
+    if (!isReadableBundleFile(resolve(root.path, reference.locator), completed)
+        || completed.dev !== opened.dev || completed.ino !== opened.ino
         || completed.size !== size || completedTimes.mtimeNs !== openedTimes.mtimeNs
         || completedTimes.ctimeNs !== openedTimes.ctimeNs) {
       throw new Error("Artifact changed while its digest was being read.");
@@ -386,7 +388,8 @@ function readVerifiedBundleFile(
     const opened = fstatSync(descriptor);
     const openedTimes = fstatSync(descriptor, { bigint: true });
     const size = opened.size;
-    if (!opened.isFile() || opened.nlink > 1 || !Number.isSafeInteger(size) || size < 0
+    if (!isReadableBundleFile(root === undefined ? undefined : resolve(root.path, reference.locator), opened)
+        || !Number.isSafeInteger(size) || size < 0
         || (maxBytes !== undefined && size > maxBytes)) {
       throw new Error(`${label} exceeds its maximum bytes.`);
     }
@@ -402,7 +405,8 @@ function readVerifiedBundleFile(
     }
     const completed = fstatSync(descriptor);
     const completedTimes = fstatSync(descriptor, { bigint: true });
-    if (!completed.isFile() || completed.nlink > 1 || completed.dev !== opened.dev || completed.ino !== opened.ino
+    if (!isReadableBundleFile(root === undefined ? undefined : resolve(root.path, reference.locator), completed)
+        || completed.dev !== opened.dev || completed.ino !== opened.ino
         || completed.size !== size || completedTimes.mtimeNs !== openedTimes.mtimeNs
         || completedTimes.ctimeNs !== openedTimes.ctimeNs
         || (maxBytes !== undefined && completed.size > maxBytes)) {
@@ -447,7 +451,7 @@ function openBundleRegularFile(
   try {
     descriptor = openSync(selectedPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const opened = fstatSync(descriptor);
-    if (!opened.isFile() || opened.nlink > 1) {
+    if (!isReadableBundleFile(selectedPath, opened)) {
       throw new Error(`${label} "${locator}" is not an isolated regular file.`);
     }
     assertBundleRootHandle(root, bundleRoot, locator);
@@ -493,6 +497,23 @@ function assertBundlePathWithoutLinks(bundleRoot: string, locator: string, label
   }
 
   return selectedPath;
+}
+
+function isReadableBundleFile(path: string | undefined, target: { dev: number; ino: number; nlink: number }): boolean {
+  return target.nlink === 1 || (path !== undefined && target.nlink === 2 && hasQuarantineAlias(path, target));
+}
+
+function hasQuarantineAlias(path: string, target: { dev: number; ino: number }): boolean {
+  try {
+    return sameFileIdentity(target, lstatSync(`${path}.quarantine`));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function sameFileIdentity(left: { dev: number; ino: number }, right: { dev: number; ino: number }): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
 }
 
 export function assertControlledPerturbationDigest(

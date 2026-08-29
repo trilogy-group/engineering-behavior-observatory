@@ -312,7 +312,7 @@ export function freezeTaskPacket(
     const candidateErrors = validateArtifact(freezeLocator, candidate);
     if (candidateErrors.length > 0) throw new Error(formatErrors(candidateErrors));
 
-    const write = writeMetadataAtomicallyIfAbsentSync(bundleRoot, freezeLocator, candidate, root, true);
+    const write = writeMetadataAtomicallyIfAbsentSync(bundleRoot, freezeLocator, candidate, root);
     if (!write.created) {
       const winner = readOptionalJson(bundleRoot, freezeLocator, true, root);
       if (winner === undefined) throw new Error("Freeze record disappeared after concurrent creation.");

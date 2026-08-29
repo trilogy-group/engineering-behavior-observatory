@@ -12,7 +12,6 @@ import {
   readSync,
   realpathSync,
   rmSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import type { BigIntStats, Stats } from "node:fs";
@@ -191,11 +190,17 @@ export async function readVerifiedArtifact(
   try {
     const opened = await handle.stat();
     const current = await lstat(path);
-    if (!opened.isFile() || opened.nlink > 1 || current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino) {
+    if (!opened.isFile() || !(opened.nlink === 1 || (opened.nlink === 2 && await hasQuarantineAlias(path, opened)))
+        || current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino) {
       throw new Error(`Artifact path "${relativePath}" is not an isolated regular file.`);
     }
     await assertExistingArtifactPath(root, relativePath);
     const bytes = await handle.readFile();
+    const completed = await handle.stat();
+    if (!completed.isFile() || !(completed.nlink === 1 || (completed.nlink === 2 && await hasQuarantineAlias(path, completed)))
+        || completed.dev !== opened.dev || completed.ino !== opened.ino || completed.size !== opened.size) {
+      throw new Error(`Artifact path "${relativePath}" changed while it was being read.`);
+    }
     if (!verifyDigest(bytes, expectedDigest)) {
       throw new Error(`Artifact "${relativePath}" digest does not match its source reference.`);
     }
@@ -240,7 +245,6 @@ export function writeMetadataAtomicallyIfAbsentSync(
   relativePath: string,
   metadata: unknown,
   rootHandle?: BundleRootHandle,
-  preserveQuarantine = false,
 ): { created: boolean; digest: Digest } {
   const bytes = Buffer.from(canonicalizeMetadata(metadata));
   const rootIdentity = rootHandle ?? openBundleRoot(artifactRoot);
@@ -255,7 +259,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
     assertPublishRootHandle(root, rootDescriptor, relativePath);
     const parentDescriptor = openPublishParent(root, parent, relativePath, rootDescriptor);
     const destination = relative(parent, path);
-    const quarantineBase = preserveQuarantine ? destination : undefined;
+    const quarantineBase = destination;
     const originalCwd = process.cwd();
     let changedCwd = false;
     try {
@@ -266,8 +270,11 @@ export function writeMetadataAtomicallyIfAbsentSync(
       assertPublishRootHandle(root, rootDescriptor, relativePath);
       assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
       if (lstatIfPresent(destination) !== undefined) {
+        const winnerDigest = digestExistingPath(destination, relativePath);
+        assertPublishRootHandle(root, rootDescriptor, relativePath);
+        assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
         syncCreatedDirectories(root, createdDirectories, parentDescriptor);
-        return { created: false, digest };
+        return { created: false, digest: winnerDigest };
       }
 
       const temporaryPath = `.${randomUUID()}.tmp`;
@@ -315,7 +322,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
       } finally {
         if (descriptor !== undefined) {
           try {
-            removeOwnedPath(temporaryPath, descriptor, quarantineBase, preserveQuarantine);
+            removeOwnedPath(temporaryPath, descriptor, quarantineBase, true);
           } finally {
             closeSync(descriptor);
             descriptor = undefined;
@@ -685,20 +692,46 @@ function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined 
   }
 }
 
-function removeOwnedPath(path: string, descriptor: number, quarantineBase: string | undefined, removeSource: boolean): void {
-  if (quarantineBase === undefined) {
-    try {
-      const opened = fstatSync(descriptor);
-      const current = lstatSync(path);
-      if (!sameFileIdentity(opened, current)) {
-        throw new Error(`Publication path "${path}" changed before cleanup.`);
-      }
-      unlinkSync(path);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+function digestExistingPath(path: string, relativePath: string): Digest {
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const opened = fstatSync(descriptor);
+    const openedTimes = fstatSync(descriptor, { bigint: true });
+    if (!isReadablePublishedFile(path, opened) || !Number.isSafeInteger(opened.size) || opened.size < 0) {
+      throw new Error(`Artifact path "${relativePath}" is not an isolated regular file.`);
     }
-    return;
+    const hash = createHash("sha256");
+    const chunk = Buffer.allocUnsafe(64 * 1024);
+    for (let offset = 0; offset < opened.size;) {
+      const read = readSync(descriptor, chunk, 0, Math.min(chunk.length, opened.size - offset), offset);
+      if (read === 0) throw new Error(`Artifact path "${relativePath}" changed while it was being read.`);
+      hash.update(chunk.subarray(0, read));
+      offset += read;
+    }
+    const trailing = Buffer.allocUnsafe(1);
+    if (readSync(descriptor, trailing, 0, 1, opened.size) !== 0) {
+      throw new Error(`Artifact path "${relativePath}" changed while it was being read.`);
+    }
+    const completed = fstatSync(descriptor);
+    const completedTimes = fstatSync(descriptor, { bigint: true });
+    if (!isReadablePublishedFile(path, completed) || !sameFileIdentity(opened, completed)
+        || completed.size !== opened.size || completedTimes.mtimeNs !== openedTimes.mtimeNs
+        || completedTimes.ctimeNs !== openedTimes.ctimeNs) {
+      throw new Error(`Artifact path "${relativePath}" changed while it was being read.`);
+    }
+    const current = lstatSync(path);
+    if (!sameFileIdentity(completed, current)) {
+      throw new Error(`Artifact path "${relativePath}" changed while it was being read.`);
+    }
+    return { algorithm: "sha256", value: hash.digest("hex") };
+  } catch (error) {
+    throw error;
+  } finally {
+    closeSync(descriptor);
   }
+}
+
+function removeOwnedPath(path: string, descriptor: number, quarantineBase: string, removeSource: boolean): void {
   const quarantine = `${quarantineBase}.quarantine`;
   try {
     const opened = fstatSync(descriptor);
@@ -726,10 +759,41 @@ function removeOwnedPath(path: string, descriptor: number, quarantineBase: strin
       if (!sameFileIdentity(opened, current)) {
         throw new Error(`Publication path "${path}" changed before source cleanup.`);
       }
-      unlinkSync(path);
+      unlinkPathAfterIdentityCheck(path, opened);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function unlinkPathAfterIdentityCheck(path: string, expected: { dev: number; ino: number }): void {
+  const current = lstatSync(path);
+  if (!sameFileIdentity(expected, current)) {
+    throw new Error(`Publication path "${path}" changed before source cleanup.`);
+  }
+  rmSync(path, { force: true });
+}
+
+function isReadablePublishedFile(path: string, target: { dev: number; ino: number; nlink: number }): boolean {
+  return target.nlink === 1 || (target.nlink === 2 && hasQuarantineAliasSync(path, target));
+}
+
+function hasQuarantineAliasSync(path: string, target: { dev: number; ino: number }): boolean {
+  try {
+    return sameFileIdentity(target, lstatSync(`${path}.quarantine`));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function hasQuarantineAlias(path: string, target: { dev: number; ino: number }): Promise<boolean> {
+  try {
+    const alias = await lstat(`${path}.quarantine`);
+    return sameFileIdentity(target, alias);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
   }
 }
 

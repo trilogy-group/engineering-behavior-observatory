@@ -17,6 +17,7 @@ import {
   main,
   modelVisibleTaskPacket,
   readVerifiedArtifact,
+  resolveBundleArtifact,
   resolveBundleArtifactDigest,
   statusTaskPacket,
   writeMetadataAtomicallyIfAbsentSync,
@@ -181,8 +182,11 @@ test("inspection enforces the fixture compressed-byte limit", () => {
 test("create-if-absent metadata writes preserve the first freeze", () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-freeze-race-"));
   try {
-    assert.equal(writeMetadataAtomicallyIfAbsentSync(root, "freeze.json", { winner: "first" }).created, true);
-    assert.equal(writeMetadataAtomicallyIfAbsentSync(root, "freeze.json", { winner: "second" }).created, false);
+    const first = writeMetadataAtomicallyIfAbsentSync(root, "freeze.json", { winner: "first" });
+    const second = writeMetadataAtomicallyIfAbsentSync(root, "freeze.json", { winner: "second" });
+    assert.equal(first.created, true);
+    assert.equal(second.created, false);
+    assert.deepEqual(second.digest, first.digest);
     assert.deepEqual(JSON.parse(readFileSync(join(root, "freeze.json"), "utf8")), { winner: "first" });
   } finally {
     rmSync(root, { force: true, recursive: true });
@@ -194,6 +198,7 @@ test("create-if-absent metadata writes remain readable through the artifact API"
   try {
     const written = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
     assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", written.digest), Buffer.from('{"state":"ready"}'));
+    assert.deepEqual(resolveBundleArtifact(root, { locator: "metadata.json", digest: written.digest }), Buffer.from('{"state":"ready"}'));
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
