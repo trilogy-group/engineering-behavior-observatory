@@ -171,6 +171,9 @@ validation also cross-checks each retained verifier's `bundleId` and workspace
 artifact ID/digest against the containing bundle's retained evidence. The
 `manifest.json` path and its descendants are reserved for the containing
 manifest and cannot be used for verifier results or diagnostic directories.
+The CLI applies duplicate-key detection to standalone verifier JSON before
+parsing, just as manifest-nested verifier artifacts and subprocess output are
+checked before interpretation.
 
 ## Sharing boundary
 

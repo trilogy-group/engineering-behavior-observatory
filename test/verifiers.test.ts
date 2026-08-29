@@ -589,6 +589,13 @@ test("rejects result paths that collide with diagnostics", async () => {
       writeVerifierResult(root.artifact, "manifest.json/verifier.json", result),
       /reserved manifest path/,
     );
+    await assert.rejects(
+      writeVerifierResult(root.artifact, "verifier.json", {
+        ...result,
+        diagnostics: [{ ...diagnostic, locator: "manifest.json/stdout.log" }],
+      }),
+      /reserved manifest path/,
+    );
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }

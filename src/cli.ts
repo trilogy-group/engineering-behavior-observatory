@@ -4,7 +4,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { validateArtifact, validateExportManifest, validateRunManifestEvidence } from "./artifacts.js";
+import { assertNoDuplicateJsonKeys, validateArtifact, validateExportManifest, validateRunManifestEvidence } from "./artifacts.js";
 
 const usage = `Usage: ebo [--help] | validate <artifact.json>...
 
@@ -30,7 +30,9 @@ export function main(
 
     const artifacts = args.slice(1).map((artifact) => {
       try {
-        return { artifact, document: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(artifact))) };
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(artifact));
+        assertNoDuplicateJsonKeys(text);
+        return { artifact, document: JSON.parse(text) };
       } catch (error) {
         return {
           artifact,

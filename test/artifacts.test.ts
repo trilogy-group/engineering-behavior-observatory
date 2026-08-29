@@ -100,6 +100,20 @@ test("CLI rejects non-UTF-8 JSON bytes", async () => {
   }
 });
 
+test("CLI rejects duplicate keys in a standalone verifier result", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ebo-duplicate-verifier-"));
+  const artifact = join(root, "verifier.json");
+
+  try {
+    await writeFile(artifact, Buffer.from('{"schemaVersion":"verifier-result/v1","bundleId":"bundle-test","status":"failed","status":"passed","assertions":[]}'));
+    let output = "";
+    assert.equal(main(["validate", artifact], (message) => (output += message)), 1);
+    assert.match(output, /duplicate JSON object keys/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("CLI verifies run evidence and correlates ready exports", async () => {
   const root = await mkdtemp(join(tmpdir(), "ebo-cli-bundle-"));
   const manifestPath = join(root, "manifest.json");
