@@ -82,6 +82,22 @@ test("classifies failed assertions with a zero exit as verifier errors", async (
   }
 });
 
+test("returns a verifier error for an oversized assertion ID", async () => {
+  const root = await createRoots();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stdout.write(JSON.stringify({ assertions: [{ id: "x".repeat(257), status: "passed" }] }));
+    `);
+    const result = await run(root, verifier);
+
+    assert.equal(result.status, "error");
+    assert.deepEqual(result.assertions, []);
+    assert.match(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), /invalid.*assertion/);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("classifies timeout, crash, and malformed output as verifier errors", async (t) => {
   const cases = [
     {
@@ -159,6 +175,19 @@ test("rejects contradictory failed results in public serializers", async () => {
       exitCode: 0,
       assertions: [{ id: "serializable", status: "failed" }],
     }), /contradicts/);
+    assert.throws(() => serializeVerifierResult({
+      ...result,
+      status: "failed",
+      exitCode: undefined,
+      assertions: [{ id: "serializable", status: "failed" }],
+    }), /contradicts/);
+    assert.throws(() => serializeVerifierResult({
+      ...result,
+      assertions: [
+        { id: "serializable", status: "passed" },
+        { id: "serializable", status: "passed" },
+      ],
+    }), /unique/);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }

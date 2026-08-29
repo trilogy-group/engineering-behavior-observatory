@@ -377,7 +377,7 @@ function parseAssertions(bytes: Buffer): VerifierAssertion[] {
   }
   const identifiers = new Set<string>();
   return parsed.assertions.map((value) => {
-    if (!isRecord(value) || typeof value.id !== "string" || value.id.trim() === ""
+    if (!isRecord(value) || typeof value.id !== "string" || value.id.trim() === "" || value.id.length > 256
         || !["passed", "failed", "not-run"].includes(String(value.status)) || identifiers.has(value.id)) {
       throw new Error("Verifier output contains an invalid or duplicate assertion.");
     }
@@ -474,7 +474,10 @@ function assertVerifierResult(result: VerifierResult, artifact: string): void {
   if (errors.length > 0) {
     throw new Error(errors.map((error) => `${error.field}: ${error.message}`).join("; "));
   }
-  if (result.status === "failed" && result.exitCode === 0
+  if (new Set(result.assertions.map((assertion) => assertion.id)).size !== result.assertions.length) {
+    throw new Error("Verifier assertion IDs must be unique.");
+  }
+  if (result.status === "failed" && (result.exitCode === undefined || result.exitCode === 0)
       && result.assertions.some((assertion) => assertion.status === "failed")) {
     throw new Error("Verifier exit status contradicts its failed assertions.");
   }
