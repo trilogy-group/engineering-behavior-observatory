@@ -77,7 +77,8 @@ test("classifies failed assertions with a zero exit as verifier errors", async (
 
     assert.equal(result.status, "error");
     assert.deepEqual(result.assertions, [{ id: "contradiction", status: "failed" }]);
-    assert.match(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), /contradicts/);
+    assert.match(result.error ?? "", /contradicts/);
+    assert.equal(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), "");
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
@@ -93,7 +94,7 @@ test("returns a verifier error for an oversized assertion ID", async () => {
 
     assert.equal(result.status, "error");
     assert.deepEqual(result.assertions, []);
-    assert.match(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), /invalid.*assertion/);
+    assert.match(result.error ?? "", /invalid.*assertion/);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
@@ -109,7 +110,7 @@ test("returns a verifier error for undeclared assertion fields", async () => {
 
     assert.equal(result.status, "error");
     assert.deepEqual(result.assertions, []);
-    assert.match(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), /invalid.*assertion/);
+    assert.match(result.error ?? "", /invalid.*assertion/);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
@@ -125,7 +126,7 @@ test("returns a verifier error for a non-string assertion status", async () => {
 
     assert.equal(result.status, "error");
     assert.deepEqual(result.assertions, []);
-    assert.match(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), /invalid.*assertion/);
+    assert.match(result.error ?? "", /invalid.*assertion/);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
@@ -141,7 +142,7 @@ test("rejects duplicate JSON object keys in verifier output", async () => {
 
     assert.equal(result.status, "error");
     assert.deepEqual(result.assertions, []);
-    assert.match(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), /duplicate JSON/);
+    assert.match(result.error ?? "", /duplicate JSON/);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
@@ -156,8 +157,8 @@ test("preserves a subprocess launch error in diagnostics", async () => {
     const result = await run(root, verifier, { command: join(root.parent, "missing-command") });
 
     assert.equal(result.status, "error");
-    assert.match(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), /ENOENT|spawn/);
-    assert.doesNotMatch(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), /non-empty assertions/);
+    assert.match(result.error ?? "", /ENOENT|spawn/);
+    assert.equal(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), "");
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
@@ -227,7 +228,8 @@ test("classifies timeout, crash, and malformed output as verifier errors", async
       check: async (result: CompleteVerifierResult, root: Roots) => {
         const diagnostic = await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8");
         assert.match(diagnostic, /before-timeout/);
-        assert.match(diagnostic, /timed out/);
+        assert.doesNotMatch(diagnostic, /timed out/);
+        assert.match(result.error ?? "", /timed out/);
       },
     },
     {
@@ -241,7 +243,7 @@ test("classifies timeout, crash, and malformed output as verifier errors", async
       source: `process.stdout.write("not-json");`,
       options: {},
       check: async (result: CompleteVerifierResult, root: Roots) => assert.match(
-        await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"),
+        result.error ?? "",
         /invalid|Unexpected token/i,
       ),
     },
@@ -293,7 +295,7 @@ test("rejects truncated verifier protocol output", async () => {
 
     assert.equal(result.status, "error");
     assert.equal(result.diagnostics.find((diagnostic) => diagnostic.locator.endsWith("stdout.log"))?.truncated, true);
-    assert.match(await readFile(join(root.artifact, diagnosticPath(result, "stderr")), "utf8"), /stdout exceeded/);
+    assert.match(result.error ?? "", /stdout exceeded/);
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }

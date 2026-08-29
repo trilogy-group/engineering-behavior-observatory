@@ -145,7 +145,11 @@ bundle-relative `locator`, SHA-256 `digest`, retained `sizeBytes`, and a
 The `durationMs` and `diagnostics` fields are optional for older v1 records;
 new executor results include both. An `error` result may omit `workspace` when
 the verifier failed before a workspace was available; it must not invent a
-workspace binding.
+workspace binding. Coordinator failures such as timeout, launch, parse, or
+cleanup errors are recorded in the result's `error` field; the native stderr
+diagnostic remains byte-for-byte separate. The process-group boundary cannot
+contain a verifier that deliberately creates a new POSIX session; callers that
+run untrusted verifiers need an OS sandbox or equivalent isolation boundary.
 
 The result serializer validates `verifier-result/v1` before writing it. The
 diagnostic references are read back and digest-checked before the result is

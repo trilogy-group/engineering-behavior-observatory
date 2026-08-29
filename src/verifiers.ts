@@ -37,6 +37,7 @@ type VerifierResultBase = {
   schemaVersion: "verifier-result/v1";
   bundleId: string;
   durationMs?: number;
+  error?: string;
   assertions: VerifierAssertion[];
   diagnostics?: DiagnosticReference[];
 };
@@ -182,24 +183,26 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
       }
     }
 
-    if (internalError !== undefined) {
-      const appended = appendDiagnostic(stderr, internalError, maxOutputBytes);
-      stderr = appended.output;
-      queueDiagnosticWrite(diagnosticFiles[1]!, appended.appended);
-      status = "error";
-    }
+    if (internalError !== undefined) status = "error";
 
     await finalizeDiagnosticFiles(diagnosticFiles);
-    if (diagnosticFiles.some((file) => file.error !== undefined)) status = "error";
+    if (diagnosticFiles.some((file) => file.error !== undefined)) {
+      status = "error";
+      internalError ??= "Verifier diagnostics could not be persisted.";
+    }
     const references = await Promise.all(diagnosticFiles.map((file, index) =>
       diagnosticReference(artifactRoot, file, index === 0 ? stdout : stderr)));
-    if (references.some((reference) => reference === undefined)) status = "error";
+    if (references.some((reference) => reference === undefined)) {
+      status = "error";
+      internalError ??= "Verifier diagnostics could not be verified.";
+    }
     const diagnostics = references.flatMap((reference) => reference === undefined ? [] : [reference]);
     const result: CompleteVerifierResult = {
       schemaVersion: "verifier-result/v1",
       bundleId: options.bundleId,
       status,
       durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      ...(internalError === undefined ? {} : { error: internalError }),
       ...(exitCode === undefined ? {} : { exitCode }),
       workspace: options.workspace,
       assertions,
@@ -426,21 +429,6 @@ function capture(stream: NodeJS.ReadableStream | null, limit: number, diagnostic
 
 function emptyOutput(): CapturedOutput {
   return { bytes: Buffer.alloc(0), truncated: false };
-}
-
-function appendDiagnostic(output: CapturedOutput, message: string, limit: number): {
-  output: CapturedOutput;
-  appended: Buffer;
-} {
-  const suffix = Buffer.from(`${output.bytes.length === 0 ? "" : "\n"}${message}\n`);
-  const appended = suffix.subarray(0, Math.max(0, limit - output.bytes.length));
-  return {
-    output: {
-      bytes: Buffer.concat([output.bytes, appended]),
-      truncated: output.truncated || appended.length < suffix.length,
-    },
-    appended,
-  };
 }
 
 function parseAssertions(bytes: Buffer): VerifierAssertion[] {

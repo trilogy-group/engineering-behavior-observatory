@@ -344,6 +344,7 @@
         "bundleId": { "$ref": "#/$defs/identifier" },
         "status": { "enum": ["passed", "failed", "error", "not-run"] },
         "durationMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "error": { "type": "string", "maxLength": 4096, "pattern": ".*\\S.*" },
         "exitCode": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
         "workspace": {
           "type": "object",
