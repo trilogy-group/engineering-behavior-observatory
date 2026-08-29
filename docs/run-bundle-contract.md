@@ -135,7 +135,8 @@ unavailable. Verifier tools must be invoked by absolute pinned paths. The
 restricted implementation and any
 reference solution remain outside that workspace. `.mjs`/`.cjs` locators retain
 their module semantics; ambiguous `.js` artifacts require an explicit module
-format. The verifier writes one JSON object to stdout:
+format, and explicit formats cannot contradict an unambiguous suffix. The
+verifier writes one JSON object to stdout:
 
 ```json
 {

@@ -539,6 +539,10 @@ function validateOptions(options: ExecuteVerifierOptions, timeoutMs: number, max
   if (options.moduleFormat !== undefined && !["commonjs", "module"].includes(options.moduleFormat)) {
     throw new Error("Verifier module format is invalid.");
   }
+  const locatorFormat = explicitModuleFormat(options.verifier.locator);
+  if (options.moduleFormat !== undefined && locatorFormat !== undefined && options.moduleFormat !== locatorFormat) {
+    throw new Error("Verifier module format conflicts with its locator.");
+  }
   if (options.args !== undefined && options.args.length > 0) {
     throw new Error("Verifier launcher arguments cannot replace the staged verifier.");
   }
@@ -565,6 +569,13 @@ function isValidIdentifier(value: unknown): value is string {
 function inferredModuleFormat(locator: string): "commonjs" | "module" {
   const lowerLocator = locator.toLowerCase();
   return lowerLocator.endsWith(".mjs") ? "module" : "commonjs";
+}
+
+function explicitModuleFormat(locator: string): "commonjs" | "module" | undefined {
+  const lowerLocator = locator.toLowerCase();
+  if (lowerLocator.endsWith(".mjs")) return "module";
+  if (lowerLocator.endsWith(".cjs")) return "commonjs";
+  return undefined;
 }
 
 function stagedVerifierName(format: "commonjs" | "module"): string {

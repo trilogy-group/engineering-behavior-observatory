@@ -65,6 +65,10 @@ test("preserves ESM verifier module semantics", async () => {
     const result = await run(root, { locator: "verifier.mjs", digest: digestBytes(bytes) });
 
     assert.equal(result.status, "passed");
+    await assert.rejects(
+      run(root, { locator: "verifier.mjs", digest: digestBytes(bytes) }, { moduleFormat: "commonjs" }),
+      /module format conflicts/,
+    );
   } finally {
     await rm(root.parent, { force: true, recursive: true });
   }
@@ -896,7 +900,7 @@ async function addVerifier(root: string, source: string): Promise<{ locator: str
 async function run(
   root: Roots,
   verifier: { locator: string; digest: ReturnType<typeof digestBytes> },
-  options: { timeoutMs?: number; maxOutputBytes?: number; command?: string; args?: readonly string[]; env?: NodeJS.ProcessEnv; diagnosticDirectory?: string } = {},
+  options: { timeoutMs?: number; maxOutputBytes?: number; command?: string; args?: readonly string[]; env?: NodeJS.ProcessEnv; moduleFormat?: "commonjs" | "module"; diagnosticDirectory?: string } = {},
 ): Promise<CompleteVerifierResult> {
   const workspaceFingerprint = await digestWorkspace(root.workspace);
   const workspace = {
