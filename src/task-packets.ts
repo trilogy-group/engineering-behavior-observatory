@@ -9,6 +9,7 @@ import {
   opendirSync,
   readSync,
   realpathSync,
+  unlinkSync,
 } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
@@ -833,10 +834,32 @@ function preserveRecoveredTemporaryLink(name: string, destination: string, descr
     const current = lstatSync(name);
     if (!sameFileIdentity(expected, current)) return false;
     linkSync(name, recoveryName);
-    return sameFileIdentity(expected, lstatSync(recoveryName));
+    const linked = lstatSync(recoveryName);
+    if (!sameFileIdentity(expected, linked)) {
+      unlinkAliasIfIdentity(recoveryName, linked);
+      return false;
+    }
+    return true;
   } catch (error) {
     if (isErrno(error, "EEXIST")) return false;
     if (isErrno(error, "ENOENT")) return false;
+    throw error;
+  }
+}
+
+function unlinkAliasIfIdentity(path: string, expected: { dev: number; ino: number }): boolean {
+  try {
+    const current = lstatSync(path);
+    if (!sameFileIdentity(expected, current)) return false;
+    unlinkSync(path);
+    try {
+      return !sameFileIdentity(expected, lstatSync(path));
+    } catch (error) {
+      if (isErrno(error, "ENOENT")) return true;
+      throw error;
+    }
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) return true;
     throw error;
   }
 }
