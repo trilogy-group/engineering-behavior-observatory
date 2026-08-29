@@ -85,9 +85,13 @@ test("includes executable modes in workspace fingerprints", async () => {
     const readableFingerprint = await digestWorkspace(root.workspace);
     await chmod(executable, 0o755);
     const executableFingerprint = await digestWorkspace(root.workspace);
+    await chmod(root.workspace, 0o555);
+    const rootModeFingerprint = await digestWorkspace(root.workspace);
 
     assert.notEqual(executableFingerprint, readableFingerprint);
+    assert.notEqual(rootModeFingerprint, executableFingerprint);
   } finally {
+    await chmod(root.workspace, 0o755);
     await rm(root.parent, { force: true, recursive: true });
   }
 });
@@ -484,6 +488,10 @@ test("represents a not-run verifier without a workspace", () => {
       truncated: false,
     }],
   } as unknown as VerifierResult), /more than 0|must NOT be valid/);
+  assert.throws(() => serializeVerifierResult({
+    ...result,
+    assertions: [{ id: "not-started", status: "passed" }],
+  } as unknown as VerifierResult), /must be equal to constant|must be valid/);
 });
 
 test("represents a pre-workspace verifier error without inventing a workspace", () => {

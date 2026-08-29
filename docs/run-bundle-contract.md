@@ -111,7 +111,8 @@ digest it evaluated.
 
 The executor receives both the retained workspace artifact reference and a
 separate live-workspace fingerprint. The v1 live-workspace fingerprint hashes
-sorted relative paths, entry kinds, permission mode bits, and file bytes;
+the root and sorted descendant relative paths, entry kinds, permission mode
+bits, and file bytes;
 symbolic links and unsupported entry kinds are rejected. The fingerprint must match the directory
 being evaluated, while the executor evaluates a private snapshot detached from
 the mutable agent workspace. The artifact digest remains the digest of the

@@ -22,6 +22,10 @@ export type VerifierAssertion = {
   status: VerifierAssertionStatus;
 };
 
+export type VerifierNotRunAssertion = Omit<VerifierAssertion, "status"> & {
+  status: "not-run";
+};
+
 export type VerifierWorkspace = {
   artifactId: string;
   digest: string;
@@ -68,12 +72,13 @@ export type VerifierErrorResult = VerifierResultBase & {
   workspace?: VerifierWorkspace;
 };
 
-export type VerifierNotRunResult = Omit<VerifierResultBase, "durationMs" | "diagnostics"> & {
+export type VerifierNotRunResult = Omit<VerifierResultBase, "durationMs" | "diagnostics" | "assertions"> & {
   status: "not-run";
   durationMs?: never;
   diagnostics?: never;
   workspace?: never;
   exitCode?: never;
+  assertions: VerifierNotRunAssertion[];
 };
 
 export type VerifierResult = VerifierRunResult | VerifierNotRunResult;
@@ -114,6 +119,9 @@ export async function digestWorkspace(workspacePath: string): Promise<string> {
   const root = await realpath(workspacePath);
   const hash = createHash("sha256");
   hash.update("ebo.workspace/v1\0");
+  const metadata = await lstat(root);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("Workspace root is not a directory.");
+  hash.update(`root\0${metadata.mode & 0o7777}\0`);
   await hashWorkspaceDirectory(root, "", hash);
   return `sha256:${hash.digest("hex")}`;
 }
