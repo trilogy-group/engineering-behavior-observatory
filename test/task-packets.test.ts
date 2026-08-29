@@ -218,16 +218,37 @@ test("create-if-absent publication recovers interrupted quarantine staging", asy
   try {
     writeFileSync(staging, "partial");
     chmodSync(staging, 0o600);
+    const stagingIdentity = lstatSync(staging);
     writeFileSync(marker, JSON.stringify({
       schemaVersion: "ebo.publication-staging/v1",
       relativePath: "metadata.json",
       attemptId: "11111111-1111-4111-8111-111111111111",
+      stagingIdentity: { dev: stagingIdentity.dev, ino: stagingIdentity.ino },
     }));
     chmodSync(marker, 0o600);
     const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", metadata);
     assert.equal(result.created, true);
     assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", result.digest), Buffer.from('{"state":"ready"}'));
     assert.equal(existsSync(staging), true);
+    assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("create-if-absent publication recovers a marker-only interruption", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-marker-only-recovery-"));
+  const marker = join(root, "metadata.json.quarantine.marker");
+  try {
+    writeFileSync(marker, JSON.stringify({
+      schemaVersion: "ebo.publication-staging/v1",
+      relativePath: "metadata.json",
+      attemptId: "22222222-2222-4222-8222-222222222222",
+    }));
+    chmodSync(marker, 0o600);
+    const result = writeMetadataAtomicallyIfAbsentSync(root, "metadata.json", { state: "ready" });
+    assert.equal(result.created, true);
+    assert.deepEqual(await readVerifiedArtifact(root, "metadata.json", result.digest), Buffer.from('{"state":"ready"}'));
     assert.equal(readdirSync(root).some((name) => name.endsWith(".failed")), true);
   } finally {
     rmSync(root, { force: true, recursive: true });
@@ -435,6 +456,25 @@ test("status recovers an interrupted freeze-record hard link", () => {
     } catch {
       // The helper process may already have removed the transient link.
     }
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("status preserves an existing recovered alias", () => {
+  const { root } = createBundle();
+  const freezePath = join(root, "packet.json.freeze.json");
+  const temporaryLink = join(root, ".66666666-6666-4666-8666-666666666666.tmp");
+  const recoveredAlias = `${freezePath}.recovered`;
+  try {
+    freezeTaskPacket(root, "packet.json");
+    unlinkSync(`${freezePath}.quarantine`);
+    linkSync(freezePath, temporaryLink);
+    writeFileSync(recoveredAlias, "preserve this alias");
+    const status = statusTaskPacket(root, "packet.json");
+    assert.equal(status.status, "invalid");
+    assert.equal(readFileSync(recoveredAlias, "utf8"), "preserve this alias");
+    assert.equal(existsSync(temporaryLink), true);
+  } finally {
     rmSync(root, { force: true, recursive: true });
   }
 });

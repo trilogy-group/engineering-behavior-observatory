@@ -3,6 +3,7 @@ import {
   closeSync,
   constants,
   fstatSync,
+  ftruncateSync,
   fsyncSync,
   linkSync,
   lstatSync,
@@ -12,6 +13,7 @@ import {
   readSync,
   realpathSync,
   renameSync,
+  writeSync,
   writeFileSync,
 } from "node:fs";
 import type { BigIntStats, Stats } from "node:fs";
@@ -322,6 +324,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
         if (descriptor !== undefined) {
           assertPublishRootHandle(root, rootDescriptor, relativePath);
           assertPublishParentHandle(root, parent, parentDescriptor, relativePath);
+          bindStagingMarker(markerPath, relativePath, descriptor);
           writeFileSync(descriptor, bytes);
           fsyncSync(descriptor);
           const openedTemporary = fstatSync(descriptor);
@@ -819,7 +822,7 @@ function recoverInterruptedStaging(path: string, markerPath: string, relativePat
     descriptor = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const stat = fstatSync(descriptor);
     if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600
-        || !stagingMarkerMatches(markerPath, relativePath)) {
+        || !stagingMarkerMatches(markerPath, relativePath, stat)) {
       throw new Error(`Publication quarantine "${path}" is already occupied.`);
     }
     movePathToAttempt(path, descriptor);
@@ -854,7 +857,46 @@ function writeStagingMarker(path: string, relativePath: string): void {
   }
 }
 
-function stagingMarkerMatches(path: string, relativePath: string): boolean {
+function isStagingMarker(value: unknown, relativePath: string): value is Record<string, unknown> {
+  return isRecord(value)
+    && value.schemaVersion === STAGING_MARKER_SCHEMA_VERSION
+    && value.relativePath === relativePath
+    && typeof value.attemptId === "string"
+    && STAGING_ATTEMPT_PATTERN.test(value.attemptId);
+}
+
+function bindStagingMarker(path: string, relativePath: string, stagingDescriptor: number): void {
+  const descriptor = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile() || opened.nlink !== 1 || (opened.mode & 0o777) !== 0o600
+        || !Number.isSafeInteger(opened.size) || opened.size > 4096) {
+      throw new Error(`Publication staging marker "${path}" changed during binding.`);
+    }
+    const marker = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(descriptor)));
+    if (!isStagingMarker(marker, relativePath)) {
+      throw new Error(`Publication staging marker "${path}" is invalid.`);
+    }
+    const current = lstatSync(path);
+    if (!sameFileIdentity(opened, current)) {
+      throw new Error(`Publication staging marker "${path}" changed during binding.`);
+    }
+    const staging = fstatSync(stagingDescriptor);
+    const bytes = Buffer.from(canonicalizeMetadata({
+      ...marker,
+      stagingIdentity: { dev: staging.dev, ino: staging.ino },
+    }));
+    ftruncateSync(descriptor, 0);
+    if (writeSync(descriptor, bytes, 0, bytes.length, 0) !== bytes.length) {
+      throw new Error(`Publication staging marker "${path}" was partially written.`);
+    }
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function stagingMarkerMatches(path: string, relativePath: string, expectedStaging?: { dev: number; ino: number }): boolean {
   let descriptor: number | undefined;
   try {
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -865,11 +907,11 @@ function stagingMarkerMatches(path: string, relativePath: string): boolean {
     const completed = fstatSync(descriptor);
     return sameFileIdentity(opened, completed)
       && completed.size === opened.size
-      && isRecord(marker)
-      && marker.schemaVersion === STAGING_MARKER_SCHEMA_VERSION
-      && marker.relativePath === relativePath
-      && typeof marker.attemptId === "string"
-      && STAGING_ATTEMPT_PATTERN.test(marker.attemptId);
+      && isStagingMarker(marker, relativePath)
+      && (expectedStaging === undefined
+        || (isRecord(marker.stagingIdentity)
+          && marker.stagingIdentity.dev === expectedStaging.dev
+          && marker.stagingIdentity.ino === expectedStaging.ino));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     return false;
