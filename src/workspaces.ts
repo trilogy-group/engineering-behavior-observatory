@@ -827,7 +827,7 @@ function removeWorkspaceIfOwned(path: string, expected: WorkspaceIdentity | unde
       closeSync(parentHandle);
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return expected === undefined;
     throw error;
   }
 }
