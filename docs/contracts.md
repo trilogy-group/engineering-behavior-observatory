@@ -128,9 +128,10 @@ controls are limited to JavaScript safe integers.
 `ebo.run-queue/v1` document. Every entry contains the task-packet freeze
 identity, digest-pinned model and harness configuration references, and a
 one-based trial identity; the queue also retains the selected capture-profile
-reference and coordinator budget. Run IDs are hashes of those identities and
-queue controls, so standalone consumers reject mutations to either. When the
-API is used without a bundle root, each admitted task resolution must carry
+reference and coordinator budget. A scheduling digest covers those controls,
+the matrix, seed, and ordering policy; run IDs include that digest so
+standalone consumers reject mutations to any persisted scheduling input. When
+the API is used without a bundle root, each admitted task resolution must carry
 the complete schema-valid freeze record that supplied task identities are
 checked against.
 

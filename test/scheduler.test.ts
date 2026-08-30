@@ -322,6 +322,23 @@ test("matrix compilation rejects unfrozen, duplicate, and unresolved inputs", ()
     /task-a.*not bound to its admitted packet evidence/,
   );
 
+  const forgedComponentEvidence = compileOptions(experiment);
+  const forgedComponents = structuredClone(forgedComponentEvidence.resolvedPackets["task-a"]!.freezeRecord!);
+  forgedComponents.components.verifier = { algorithm: "sha256", value: "0".repeat(64) };
+  forgedComponents.aggregateDigest = digestMetadata({
+    packetId: forgedComponents.packetId,
+    packetLocator: forgedComponents.packetLocator,
+    preAdmissionDigest: forgedComponents.preAdmissionDigest,
+    packetDigest: forgedComponents.packetDigest,
+    components: forgedComponents.components,
+    frozenAt: forgedComponents.frozenAt,
+  });
+  forgedComponentEvidence.frozenTasks["task-a"] = forgedComponents;
+  assert.throws(
+    () => compileRunQueue(experiment, forgedComponentEvidence),
+    /task-a.*supplied freeze record does not match/,
+  );
+
   const duplicate = structuredClone(experiment);
   duplicate.taskSet["task-b"]!.packetRef = duplicate.taskSet["task-a"]!.packetRef;
   const duplicateOptions = compileOptions(duplicate);
@@ -440,6 +457,10 @@ test("standalone queues reject conflicting identities for one condition ID", () 
   const reordered = structuredClone(queue);
   [reordered.entries[0], reordered.entries[1]] = [reordered.entries[1]!, reordered.entries[0]!];
   assert.match(validateRunQueue(reordered).map((error) => error.message).join("\n"), /persisted ordering/);
+
+  const alteredPolicy = structuredClone(queue);
+  alteredPolicy.ordering = { strategy: "balanced", balanceBy: "model" };
+  assert.match(validateRunQueue(alteredPolicy).map((error) => error.message).join("\n"), /Scheduling digest/);
 });
 
 test("queue validation rejects another valid artifact schema", () => {
@@ -476,6 +497,18 @@ test("bundle-root queue validation rechecks real frozen sources", () => {
     });
     assert.deepEqual(validateRunQueue(queue, undefined, "queue.json", { bundleRoot: root }), []);
     assert.deepEqual(validateRunQueue(queue, experiment, "queue.json", { bundleRoot: root }), []);
+
+    for (const ordering of [
+      { seed: "bundle-seed", strategy: "sequential" as const },
+      { seed: "bundle-seed", strategy: "balanced" as const, balanceBy: "model" as const },
+    ]) {
+      const variant = { ...structuredClone(experiment), ordering };
+      const variantQueue = compileRunQueue(variant, {
+        bundleRoot: root,
+        freezeLocators: { "task-a": "freezes/task-a.json" },
+      });
+      assert.deepEqual(validateRunQueue(variantQueue, variant, "queue.json", { bundleRoot: root }), []);
+    }
 
     writeFileSync(join(root, "configs/model.json"), "changed");
     assert.match(
@@ -524,8 +557,8 @@ test("a persisted local queue is validated and consumed in order", () => {
     assert.throws(() => writeRunQueue(path, alteredQueue), /different queue/);
     const alteredControls = structuredClone(queue);
     alteredControls.coordinatorBudget.maxWallClockMs += 1;
-    assert.match(validateRunQueue(alteredControls).map((error) => error.message).join("\n"), /Run ID does not match/);
-    assert.throws(() => new LocalRunQueue(alteredControls), /Run ID does not match/);
+    assert.match(validateRunQueue(alteredControls).map((error) => error.message).join("\n"), /Scheduling digest/);
+    assert.throws(() => new LocalRunQueue(alteredControls), /Scheduling digest/);
     assert.equal(readFileSync(path, "utf8"), canonicalizeMetadata(queue));
     const loaded = readRunQueue(path, experiment, compileOptions(experiment));
     let output = "";

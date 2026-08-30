@@ -90,6 +90,7 @@ export type RunQueue = {
   schemaVersion: "ebo.run-queue/v1";
   experimentId: string;
   experimentDigest: Digest;
+  schedulingDigest: Digest;
   captureProfile: ArtifactReference;
   coordinatorBudget: { maxWallClockMs: number };
   matrix: RunQueueMatrix;
@@ -150,13 +151,22 @@ export function compileRunQueue(
   const persistedOrdering = ordering.strategy === "seeded-shuffle"
     ? { ...ordering, permutationAlgorithm }
     : ordering;
+  const matrix = { ...matrixOrder(experiment), trialCount: experiment.trialCount };
+  const schedulingDigest = digestScheduling(
+    experimentDigest,
+    experiment.captureProfile,
+    experiment.coordinatorBudget,
+    matrix,
+    experiment.ordering.seed,
+    persistedOrdering,
+  );
   const tasks = resolveFrozenTasks(experiment, options);
   if (options.bundleRoot === undefined) {
     if (options.resolvedPackets === undefined) {
       throw new Error("Resolved admitted task packets are required when no bundle root is supplied.");
     }
     assertAdmittedTaskPackets(experiment.taskSet, options.resolvedPackets);
-    assertAdmittedFreezeRecords(experiment, options.resolvedPackets, tasks);
+    assertAdmittedFreezeRecords(experiment, options, tasks);
   } else if (options.resolvedPackets !== undefined) {
     assertAdmittedTaskPackets(experiment.taskSet, options.resolvedPackets);
   }
@@ -183,8 +193,7 @@ export function compileRunQueue(
       runId: runId(
         experiment.id,
         experimentDigest,
-        experiment.captureProfile,
-        experiment.coordinatorBudget,
+        schedulingDigest,
         task,
         model,
         harness,
@@ -202,9 +211,10 @@ export function compileRunQueue(
     schemaVersion: "ebo.run-queue/v1",
     experimentId: experiment.id,
     experimentDigest,
+    schedulingDigest,
     captureProfile: experiment.captureProfile,
     coordinatorBudget: experiment.coordinatorBudget,
-    matrix: { ...matrixOrder(experiment), trialCount: experiment.trialCount },
+    matrix,
     seed: experiment.ordering.seed,
     ordering: persistedOrdering,
     entries,
@@ -258,7 +268,7 @@ export function validateRunQueue(
       if (options.bundleRoot !== undefined || options.resolvedDigests !== undefined) {
         assertResolvedExperimentConfigurationDigests(experiment, resolveConfigurationDigests(experiment, options));
       }
-      if (canResolvePermutationAlgorithm(options)) {
+      if (isPermutationOrdering(experiment.ordering) && canResolvePermutationAlgorithm(options)) {
         validatedPermutationAlgorithm = resolvePermutationAlgorithm(experiment, options);
       }
     } catch (error) {
@@ -274,6 +284,19 @@ export function validateRunQueue(
 
   const runQueue = queue as unknown as RunQueue;
   const semanticErrors: ArtifactValidationError[] = [];
+  if (!sameDigest(
+    runQueue.schedulingDigest,
+    digestScheduling(
+      runQueue.experimentDigest,
+      runQueue.captureProfile,
+      runQueue.coordinatorBudget,
+      runQueue.matrix,
+      runQueue.seed,
+      runQueue.ordering,
+    ),
+  )) {
+    semanticErrors.push(queueError(artifact, "/schedulingDigest", "Scheduling digest does not match the persisted queue policy."));
+  }
   if (experiment === undefined && options.bundleRoot !== undefined) {
     semanticErrors.push(...validateQueueBundleRoot(runQueue, options.bundleRoot, artifact));
   }
@@ -306,7 +329,7 @@ export function validateRunQueue(
         }
         expectedTasks = resolveFrozenTasks(experiment, provenanceOptions(runQueue, options));
         if (options.bundleRoot === undefined) {
-          assertAdmittedFreezeRecords(experiment, options.resolvedPackets!, expectedTasks);
+          assertAdmittedFreezeRecords(experiment, options, expectedTasks);
         }
       } catch (error) {
         semanticErrors.push(queueError(artifact, "/entries/task", error instanceof Error ? error.message : "Frozen task records could not be resolved."));
@@ -384,8 +407,7 @@ export function validateRunQueue(
     if (entry.runId !== runId(
       runQueue.experimentId,
       runQueue.experimentDigest,
-      runQueue.captureProfile,
-      runQueue.coordinatorBudget,
+      runQueue.schedulingDigest,
       entry.task,
       entry.model,
       entry.harness,
@@ -560,6 +582,21 @@ function normalizeOrdering(ordering: ExperimentOrdering): RunQueue["ordering"] {
     case "interleaved":
       return { strategy: "balanced", ...(ordering.balanceBy === undefined ? {} : { balanceBy: ordering.balanceBy }) };
   }
+}
+
+function digestScheduling(
+  experimentDigest: Digest,
+  captureProfile: ArtifactReference,
+  coordinatorBudget: { maxWallClockMs: number },
+  matrix: RunQueueMatrix,
+  seed: string,
+  ordering: RunQueue["ordering"],
+): Digest {
+  return digestMetadata({ experimentDigest, captureProfile, coordinatorBudget, matrix, seed, ordering });
+}
+
+function isPermutationOrdering(ordering: ExperimentOrdering): boolean {
+  return ordering.strategy === "permuted" || ordering.strategy === "seeded-shuffle";
 }
 
 function queueMatrixOrdering(queue: RunQueue): ExperimentOrdering {
@@ -786,9 +823,14 @@ function resolveFrozenTasks(
 
 function assertAdmittedFreezeRecords(
   experiment: ExperimentConfiguration,
-  resolvedPackets: Record<string, ResolvedTaskPacket>,
+  options: CompileRunQueueOptions,
   tasks: Map<string, FrozenTaskIdentity>,
 ): void {
+  const resolvedPackets = options.resolvedPackets;
+  if (resolvedPackets === undefined) {
+    throw new Error("Resolved admitted task packets are required before scheduling.");
+  }
+  const supplied = options.frozenTasks ?? options.taskFreezeRecords ?? options.taskPackets;
   for (const [taskId, condition] of Object.entries(experiment.taskSet)) {
     const packet = resolvedPackets[taskId];
     const record = packet?.freezeRecord;
@@ -806,6 +848,10 @@ function assertAdmittedFreezeRecords(
       || !sameDigest(packet.preAdmissionDigest, record.preAdmissionDigest)
     ) {
       throw new Error(`Task packet "${taskId}" freeze record is not bound to its admitted packet evidence.`);
+    }
+    const suppliedRecord = freezeRecordOf(supplied?.[taskId] ?? supplied?.[condition.packetRef.locator]);
+    if (suppliedRecord !== undefined && !sameFreezeRecord(record, suppliedRecord)) {
+      throw new Error(`Task packet "${taskId}" supplied freeze record does not match its admitted packet evidence.`);
     }
     const expected = tasks.get(taskId);
     if (expected === undefined) throw new Error(`Task packet "${taskId}" did not resolve.`);
@@ -865,6 +911,12 @@ function frozenTaskFromBundle(
 function freezeLocatorOf(input: FrozenTaskInput | undefined): string | undefined {
   return isRecord(input) && "freezeLocator" in input && typeof input.freezeLocator === "string"
     ? input.freezeLocator
+    : undefined;
+}
+
+function freezeRecordOf(input: FrozenTaskInput | undefined): TaskPacketFreezeRecord | undefined {
+  return isRecord(input) && "schemaVersion" in input && input.schemaVersion === "ebo.task-packet-freeze/v1"
+    ? input as TaskPacketFreezeRecord
     : undefined;
 }
 
@@ -966,8 +1018,7 @@ function interleave(cells: DeclaredMatrixCell[], dimension: "task" | "model" | "
 function runId(
   experimentId: string,
   experimentDigest: Digest,
-  captureProfile: ArtifactReference,
-  coordinatorBudget: { maxWallClockMs: number },
+  schedulingDigest: Digest,
   task: FrozenTaskIdentity,
   model: RunQueueEntry["model"],
   harness: RunQueueEntry["harness"],
@@ -976,8 +1027,7 @@ function runId(
   return `run-${digestMetadata({
     experimentId,
     experimentDigest,
-    captureProfile,
-    coordinatorBudget,
+    schedulingDigest,
     task,
     model,
     harness,
@@ -1063,6 +1113,10 @@ function sameFrozenTask(left: FrozenTaskIdentity, right: FrozenTaskIdentity): bo
     && sameReference(left.packetRef, right.packetRef)
     && left.freezeLocator === right.freezeLocator
     && sameDigest(left.aggregateDigest, right.aggregateDigest);
+}
+
+function sameFreezeRecord(left: TaskPacketFreezeRecord, right: TaskPacketFreezeRecord): boolean {
+  return sameDigest(digestMetadata(left), digestMetadata(right));
 }
 
 function sameOptionalReference(left: ArtifactReference | undefined, right: ArtifactReference | undefined): boolean {
