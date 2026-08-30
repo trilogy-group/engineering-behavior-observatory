@@ -417,6 +417,7 @@ export class ProtocolEvidenceRecorder {
 
   public recordFrame(payload: unknown, observedAt = this.now(), raw?: string): Promise<ProtocolObservation> {
     if (payload === undefined) return Promise.reject(new Error("Frame payload is required."));
+    if (raw !== undefined) assertNonEmpty(raw, "Raw frame text");
     return this.record({ kind: "frame", source: this.source, stream: "stdout", ...(raw === undefined ? {} : { raw }), payload, observedAt });
   }
 

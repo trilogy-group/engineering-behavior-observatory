@@ -455,9 +455,10 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         if (setupOutcome.kind === "aborted" || controller.signal.aborted) {
           const settledSetup = await settleWithTimeout(setupPromise, options.shutdownGraceMs ?? 250);
           if (settledSetup.status === "completed") {
-            workspace = snapshotWorkspace(settledSetup.value);
-            record.workspace = snapshotWorkspace(workspace);
-            if (workspaceShutdown !== undefined) {
+          workspace = snapshotWorkspace(settledSetup.value);
+          record.workspace = snapshotWorkspace(workspace);
+          workspaceTerminationConfirmed = workspace.shutdownResult === undefined || workspace.shutdownResult.status === "completed";
+          if (workspaceShutdown !== undefined) {
               workspaceTerminationConfirmed = false;
               const shutdownResult = await shutdownWorkspace(workspaceShutdown, options.shutdownGraceMs ?? 250);
               if (shutdownResult !== undefined) {
@@ -489,6 +490,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         } else {
           workspace = snapshotWorkspace(setupOutcome.value);
           record.workspace = snapshotWorkspace(workspace);
+          workspaceTerminationConfirmed = workspace.shutdownResult === undefined || workspace.shutdownResult.status === "completed";
           if (workspace.status === "failed") {
             classification = infrastructureClassification("Workspace setup failed.", "workspace", workspace);
             if (workspaceShutdown !== undefined) {
@@ -789,7 +791,10 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       }
     }
     markCoordinatorBudgetIfExpired();
-    if (cleanupStatus?.status === "timed-out" && classificationUnderlyingKind(classification ?? infrastructureClassification("Run did not produce a terminal outcome.", "runner")) === "completed") {
+    if (cleanupStatus?.status === "timed-out" && classificationUnderlyingKind(classification ?? infrastructureClassification("Run did not produce a terminal outcome.", "runner")) === "completed"
+        && abortCause === "budget") {
+      classification = abortClassification(abortCause, budgetExpired, cleanupStatus.error, workspace);
+    } else if (cleanupStatus?.status === "timed-out" && classificationUnderlyingKind(classification ?? infrastructureClassification("Run did not produce a terminal outcome.", "runner")) === "completed") {
       classification = infrastructureClassification(cleanupStatus.error ?? "Workspace cleanup timed out.", "cleanup", workspace);
     }
     record.cleanup = cleanupStatus;
@@ -818,7 +823,23 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       };
     }
     markCoordinatorBudgetIfExpired();
-    lifecycle.transition("terminal");
+    try {
+      lifecycle.transition("terminal");
+    } catch (error) {
+      const runnerFailure = infrastructureClassification(errorMessage(error), "runner", workspace);
+      classification = record.capture?.status === "incomplete"
+        ? {
+          kind: "capture-incomplete",
+          terminal: runnerFailure.terminal,
+          ...(record.capture.error === undefined ? {} : { reason: record.capture.error }),
+          source: "capture",
+          underlying: runnerFailure.kind,
+          ...(runnerFailure.source === undefined ? {} : { underlyingSource: runnerFailure.source }),
+        }
+        : runnerFailure;
+      const fallbackTimestamp = lifecycle.snapshot().timestamps.cleaning ?? lifecycle.snapshot().createdAt;
+      lifecycle.transition("terminal", fallbackTimestamp);
+    }
     classification ??= infrastructureClassification("Run did not produce a terminal outcome.", "runner", workspace);
     record.classification = classification;
     record.terminal = classification.terminal;

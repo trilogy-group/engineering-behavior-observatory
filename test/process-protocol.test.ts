@@ -506,6 +506,7 @@ test("rejects values that JSONL cannot preserve", async () => {
     await assert.rejects(recorder.recordCapability({ source: "fake-harness", name: "unknown-capability", status: "unknown" as never }), /Capability status/);
     await assert.rejects(recorder.recordCompletion({ source: "fake-harness", status: "completed", evidence: undefined }), /Completion evidence/);
     await assert.rejects(recorder.recordFrame(undefined), /Frame payload/);
+    assert.throws(() => recorder.recordFrame({ ok: true }, "now", " "), /Raw frame text/);
     assert.throws(() => recorder.recordNotification({ source: "fake-harness", method: "event", observedAt: "" }), /Observation timestamp/);
     assert.throws(() => recorder.recordNotification({ source: "fake-harness", method: "event", sourceIdentity: "" }), /Protocol source identity/);
     await recorder.close();

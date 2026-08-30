@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { readFileSync, rmSync, mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -1750,4 +1750,64 @@ test("a synchronous cleanup error honors an elapsed coordinator budget", async (
   });
   assert.equal(result.terminal.state, "stopped");
   assert.equal(result.terminal.stopReason, "budget");
+});
+
+test("cleanup timeouts after budget preserve the budget-stop classification", async () => {
+  const result = await executeRunAttempt({
+    run,
+    maxWallClockMs: 10,
+    shutdownGraceMs: 5,
+    workspace: {
+      setup: async () => ({ status: "ready", artifactId: "workspace-1" }),
+      cleanup: async () => new Promise<void>(() => undefined),
+    },
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => ({ status: "passed" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.record.cleanup?.status, "timed-out");
+  assert.equal(result.terminal.state, "stopped");
+  assert.equal(result.terminal.stopReason, "budget");
+});
+
+test("workspace shutdown failures gate cleanup", async () => {
+  let cleanupCalls = 0;
+  const result = await executeRunAttempt({
+    run,
+    workspace: {
+      setup: async () => ({ status: "failed", artifactId: "failed-workspace", retained: true, shutdownResult: { status: "timed-out" as const } }),
+      cleanup: async () => { cleanupCalls += 1; },
+    },
+    harness: async () => ({ status: "completed" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(cleanupCalls, 0);
+  assert.equal(result.record.workspace?.shutdownResult?.status, "timed-out");
+  assert.equal(result.record.cleanup?.status, "timed-out");
+});
+
+test("lifecycle clock failures still release attempt resources", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-clock-failure-"));
+  let calls = 0;
+  try {
+    const recordPath = join(root, "attempt.json");
+    const result = await executeRunAttempt({
+      run,
+      recordPath,
+      now: () => {
+        calls += 1;
+        if (calls >= 6) throw new Error("clock failed");
+        return `timestamp-${calls}`;
+      },
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    assert.equal(result.terminal.failureClass, "infrastructure");
+    assert.equal((await readAttemptRecord(recordPath)).lifecycle.state, "terminal");
+    assert.equal(existsSync(`${recordPath}.lock`), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
