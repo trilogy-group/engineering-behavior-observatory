@@ -85,4 +85,9 @@ export type {
   VerifierWorkspace,
 } from "./verifiers.js";
 export { cleanupWorkspace, materializeWorkspace } from "./workspaces.js";
-export type { WorkspaceMaterialization, WorkspaceMaterializationOptions, WorkspaceSetupStep } from "./workspaces.js";
+export type {
+  WorkspaceMaterialization,
+  WorkspaceMaterializationOptions,
+  WorkspaceSetupContext,
+  WorkspaceSetupStep,
+} from "./workspaces.js";

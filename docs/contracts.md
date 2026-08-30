@@ -98,12 +98,18 @@ the declared fixture digest; `workspaceDigest` is the normalized tree
 fingerprint. Attempt roots and non-executable files use `0700` and `0600`;
 executable archive or setup files retain the owner execute bit.
 
-Setup callbacks receive only the disposable workspace path and run before the
-fingerprint is calculated. Call `cleanupWorkspace(result, "success")` (or
-`result.cleanup("success")`) after a successful attempt. A failed setup returns
-a failed lifecycle result; `retainOnFailure: true` keeps its attempt path for
-inspection, while the default removes it. Failure retention never changes the
-model-visible input surface or the frozen packet.
+Setup callbacks receive the disposable workspace path and an invocation-owned
+`{ spawn }` context. Child processes that setup needs to create must use that
+context: each child is placed in a private process group and its group is
+terminated before the fingerprint is calculated. This prevents cleanup from
+mistaking unrelated coordinator processes for setup descendants. A setup step
+must not leave ambient child processes behind; stronger process isolation can
+still be supplied by the evaluation environment. Call
+`cleanupWorkspace(result, "success")` (or `result.cleanup("success")`) after a
+successful attempt. A failed setup returns a failed lifecycle result;
+`retainOnFailure: true` keeps its attempt path for inspection, while the
+default removes it. Failure retention never changes the model-visible input
+surface or the frozen packet.
 
 ## Experiments
 

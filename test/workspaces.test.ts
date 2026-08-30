@@ -26,6 +26,7 @@ import {
   freezeTaskPacket,
   materializeWorkspace,
   type TaskPacket,
+  type WorkspaceSetupContext,
 } from "../src/index.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -154,8 +155,8 @@ test("materializes concurrent attempts without process-wide directory interferen
 
   try {
     freezeTaskPacket(root, "packet.json");
-    const setup = () => {
-      const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+    const setup = (_workspacePath: string, { spawn: spawnSetupChild }: WorkspaceSetupContext) => {
+      const child = spawnSetupChild(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
       closed.push(new Promise((resolve) => child.once("close", () => resolve())));
     };
     const [first, second] = await Promise.all([
@@ -221,8 +222,8 @@ test("reaps setup descendants before returning a workspace", async () => {
       packetLocator: "packet.json",
       attemptId: "reap-setup",
       workspaceParent: parent,
-      setup: () => {
-        setupChild = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+      setup: (_workspacePath, { spawn: spawnSetupChild }) => {
+        setupChild = spawnSetupChild(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
         childPid = setupChild.pid;
         childClosed = new Promise((resolve) => setupChild!.once("close", () => resolve()));
       },
@@ -264,33 +265,33 @@ test("rejects a setup FIFO without blocking", { skip: process.platform === "win3
   }
 });
 
-test("releases setup serialization when process reaping fails", { skip: process.platform === "win32" }, async () => {
+test("reaps only process groups registered by the setup invocation", { skip: process.platform === "win32" }, async () => {
   const { root } = createBundle();
   const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
-  const originalPath = process.env.PATH;
+  const unrelated = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+  let managed: ReturnType<typeof spawn> | undefined;
+  let managedClosed: Promise<void> | undefined;
 
   try {
     freezeTaskPacket(root, "packet.json");
-    const failed = await materializeWorkspace({
+    const result = await materializeWorkspace({
       bundleRoot: root,
       packetLocator: "packet.json",
-      attemptId: "reap-failure",
+      attemptId: "reap-owned",
       workspaceParent: parent,
-      setup: () => { process.env.PATH = ""; },
+      setup: (_workspacePath, { spawn: spawnSetupChild }) => {
+        managed = spawnSetupChild(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+        managedClosed = new Promise((resolve) => managed!.once("close", () => resolve()));
+      },
     });
-    assert.equal(failed.state, "failed");
-    process.env.PATH = originalPath;
-    const recovered = await materializeWorkspace({
-      bundleRoot: root,
-      packetLocator: "packet.json",
-      attemptId: "reap-recovered",
-      workspaceParent: parent,
-      setup: () => {},
-    });
-    assert.equal(recovered.state, "ready");
-    await recovered.cleanup("success");
+    assert.equal(result.state, "ready");
+    assert.ok(managedClosed !== undefined);
+    await managedClosed;
+    assert.equal(managed?.signalCode, "SIGKILL");
+    assert.equal(unrelated.exitCode, null);
+    await result.cleanup("success");
   } finally {
-    process.env.PATH = originalPath;
+    if (unrelated.exitCode === null) unrelated.kill("SIGKILL");
     rmSync(root, { force: true, recursive: true });
     rmSync(parent, { force: true, recursive: true });
   }

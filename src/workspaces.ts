@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { spawn as spawnProcess, type ChildProcess, type SpawnOptions } from "node:child_process";
 import {
   closeSync,
   constants,
@@ -33,9 +33,19 @@ const ATTEMPT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 const EPOCH_SECONDS = 0;
-let setupQueue = Promise.resolve();
 
-export type WorkspaceSetupStep = (workspacePath: string) => void | Promise<void>;
+/**
+ * Process primitives owned by one setup invocation. Child processes started
+ * here are placed in a private process group and reaped before setup returns.
+ */
+export type WorkspaceSetupContext = {
+  spawn: (command: string, args?: readonly string[], options?: SpawnOptions) => ChildProcess;
+};
+
+export type WorkspaceSetupStep = (
+  workspacePath: string,
+  context: WorkspaceSetupContext,
+) => void | Promise<void>;
 
 export type WorkspaceMaterializationOptions = {
   bundleRoot: string;
@@ -557,81 +567,50 @@ async function runSetup(
   const allSteps = [...steps, ...(setupSteps ?? [])];
   if (allSteps.length === 0) return;
   if (process.platform === "win32") throw new Error("Workspace setup process tracking is unavailable on this platform.");
-  let releaseSetup: (() => void) | undefined;
-  const previousSetup = setupQueue;
-  // ponytail: serialize setup process accounting; per-invocation process
-  // groups when concurrent setup throughput matters.
-  setupQueue = new Promise<void>((resolve) => { releaseSetup = resolve; });
-  await previousSetup;
-  let processTreeBefore: Map<number, number> | undefined;
-  try {
-    processTreeBefore = processTree();
-  } catch {
-    releaseSetup?.();
-    throw new Error("Workspace setup process tracking is unavailable.");
-  }
+  const children = new Set<number>();
+  const context: WorkspaceSetupContext = {
+    spawn(command, args, options) {
+      const child = spawnOwnedProcess(command, args, options);
+      if (child.pid === undefined) {
+        child.kill("SIGKILL");
+        throw new Error("Workspace setup process tracking is unavailable.");
+      }
+      children.add(child.pid);
+      return child;
+    },
+  };
   try {
     for (const step of allSteps) {
       if (typeof step !== "function") throw new Error("Workspace setup steps must be functions.");
-      await step(workspacePath);
+      await step(workspacePath, context);
     }
   } finally {
-    try {
-      if (processTreeBefore !== undefined) {
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        reapSetupDescendants(processTreeBefore);
-      }
-    } finally {
-      releaseSetup?.();
-    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    reapSetupChildren(children);
   }
 }
 
-function processTree(): Map<number, number> {
-  const output = execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" });
-  const tree = new Map<number, number>();
-  for (const line of output.split("\n")) {
-    const match = line.trim().match(/^(\d+)\s+(\d+)$/);
-    if (match !== null) tree.set(Number(match[1]), Number(match[2]));
-  }
-  return tree;
+function spawnOwnedProcess(
+  command: string,
+  args: readonly string[] | undefined,
+  options: SpawnOptions | undefined,
+): ChildProcess {
+  const ownedOptions = { ...options, detached: true };
+  return args === undefined
+    ? spawnProcess(command, ownedOptions) as ChildProcess
+    : spawnProcess(command, args, ownedOptions) as ChildProcess;
 }
 
-function reapSetupDescendants(before: ReadonlyMap<number, number>): void {
-  let after: Map<number, number>;
-  try {
-    after = processTree();
-  } catch {
-    throw new Error("Workspace setup process tracking is unavailable.");
-  }
-  const descendants = [...after.keys()].filter((pid) => !before.has(pid) && isDescendant(pid, process.pid, after));
-  descendants.sort((left, right) => processDepth(right, after) - processDepth(left, after));
-  for (const pid of descendants) {
+function reapSetupChildren(children: ReadonlySet<number>): void {
+  for (const pid of children) {
     try {
-      process.kill(pid, "SIGKILL");
+      // A detached child is the leader of its own process group. Killing the
+      // group also covers descendants that outlive their direct parent.
+      process.kill(-pid, "SIGKILL");
     } catch {
       // The setup child may have exited between the process snapshot and kill.
     }
   }
-}
-
-function isDescendant(pid: number, ancestor: number, tree: ReadonlyMap<number, number>): boolean {
-  const seen = new Set<number>();
-  for (let current: number | undefined = pid; current !== undefined && !seen.has(current); current = tree.get(current)) {
-    if (current === ancestor) return true;
-    seen.add(current);
-  }
-  return false;
-}
-
-function processDepth(pid: number, tree: ReadonlyMap<number, number>): number {
-  let depth = 0;
-  const seen = new Set<number>();
-  for (let current: number | undefined = pid; current !== undefined && !seen.has(current); current = tree.get(current)) {
-    depth += 1;
-    seen.add(current);
-  }
-  return depth;
 }
 
 function assertModelVisibleEntries(entries: readonly TaskArchiveEntry[]): void {
