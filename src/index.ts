@@ -79,6 +79,7 @@ export type {
   RunQueue,
   RunQueueEntry,
   RunQueueInspection,
+  RunQueueMatrix,
   ValidateRunQueueOptions,
 } from "./scheduler.js";
 export {

@@ -19,6 +19,7 @@ import {
   resolveBundleArtifact,
   resolveBundleArtifactDigest,
   type ArtifactReference,
+  type DeclaredOrder,
   type DeclaredMatrixCell,
   type Digest,
   type ExperimentConfiguration,
@@ -81,12 +82,15 @@ export type RunQueueEntry = DeclaredMatrixCell & {
   trial: { index: number };
 };
 
+export type RunQueueMatrix = DeclaredOrder & { trialCount: number };
+
 export type RunQueue = {
   schemaVersion: "ebo.run-queue/v1";
   experimentId: string;
   experimentDigest: Digest;
   captureProfile: ArtifactReference;
   coordinatorBudget: { maxWallClockMs: number };
+  matrix: RunQueueMatrix;
   seed: string;
   ordering: {
     strategy: QueueOrderingStrategy;
@@ -188,6 +192,7 @@ export function compileRunQueue(
     experimentDigest,
     captureProfile: experiment.captureProfile,
     coordinatorBudget: experiment.coordinatorBudget,
+    matrix: { ...matrixOrder(experiment), trialCount: experiment.trialCount },
     seed: experiment.ordering.seed,
     ordering: persistedOrdering,
     entries,
@@ -373,6 +378,24 @@ export function validateRunQueue(
     }
   }
 
+  if (experiment === undefined) {
+    const expectedCells = [...declaredMatrixCells(runQueue.matrix, runQueue.matrix.trialCount)];
+    const expectedKeys = new Set(expectedCells.map(cellKeyOf));
+    const expectedOrder = orderCells(
+      expectedCells,
+      queueMatrixOrdering(runQueue),
+      runQueue.ordering.permutationAlgorithm ?? "fisher-yates-v1",
+    ).map(cellKeyOf);
+    const actualOrder = runQueue.entries.map(cellKeyOf);
+    if (expectedKeys.size !== cells.size || [...expectedKeys].some((key) => !cells.has(key))) {
+      semanticErrors.push(queueError(artifact, "/entries", "Run queue cells do not match its persisted matrix."));
+    }
+    if (expectedOrder.length !== actualOrder.length
+        || expectedOrder.some((key, index) => key !== actualOrder[index])) {
+      semanticErrors.push(queueError(artifact, "/entries", "Run queue order does not match its persisted ordering policy."));
+    }
+  }
+
   if (experiment !== undefined) {
     if (runQueue.experimentId !== experiment.id) {
       semanticErrors.push(queueError(artifact, "/experimentId", "Run queue experiment ID does not match the experiment."));
@@ -385,6 +408,9 @@ export function validateRunQueue(
     }
     if (runQueue.coordinatorBudget.maxWallClockMs !== experiment.coordinatorBudget.maxWallClockMs) {
       semanticErrors.push(queueError(artifact, "/coordinatorBudget", "Run queue coordinator budget does not match the experiment."));
+    }
+    if (!sameMatrix(runQueue.matrix, { ...matrixOrder(experiment), trialCount: experiment.trialCount })) {
+      semanticErrors.push(queueError(artifact, "/matrix", "Run queue matrix metadata does not match the experiment."));
     }
     const expectedOrdering = normalizeOrdering(experiment.ordering);
     if (runQueue.seed !== experiment.ordering.seed || runQueue.ordering.strategy !== expectedOrdering.strategy
@@ -500,6 +526,29 @@ function normalizeOrdering(ordering: ExperimentOrdering): RunQueue["ordering"] {
     case "balanced-interleaved":
     case "interleaved":
       return { strategy: "balanced", ...(ordering.balanceBy === undefined ? {} : { balanceBy: ordering.balanceBy }) };
+  }
+}
+
+function queueMatrixOrdering(queue: RunQueue): ExperimentOrdering {
+  switch (queue.ordering.strategy) {
+    case "sequential":
+      return { seed: queue.seed, strategy: "sequential", declaredOrder: queue.matrix };
+    case "seeded-shuffle":
+      return {
+        seed: queue.seed,
+        strategy: "seeded-shuffle",
+        declaredOrder: queue.matrix,
+        ...(queue.ordering.permutationAlgorithmRef === undefined
+          ? {}
+          : { permutationAlgorithmRef: queue.ordering.permutationAlgorithmRef }),
+      };
+    case "balanced":
+      return {
+        seed: queue.seed,
+        strategy: "balanced",
+        declaredOrder: queue.matrix,
+        ...(queue.ordering.balanceBy === undefined ? {} : { balanceBy: queue.ordering.balanceBy }),
+      };
   }
 }
 
@@ -893,6 +942,17 @@ function cellKeyOf(cell: DeclaredMatrixCell): string {
 
 function sameReference(left: ArtifactReference, right: ArtifactReference): boolean {
   return left.locator === right.locator && sameDigest(left.digest, right.digest);
+}
+
+function sameMatrix(left: RunQueueMatrix, right: RunQueueMatrix): boolean {
+  return left.trialCount === right.trialCount
+    && sameIdList(left.taskIds, right.taskIds)
+    && sameIdList(left.modelIds, right.modelIds)
+    && sameIdList(left.harnessIds, right.harnessIds);
+}
+
+function sameIdList(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((id, index) => id === right[index]);
 }
 
 function sameFrozenTask(left: FrozenTaskIdentity, right: FrozenTaskIdentity): boolean {

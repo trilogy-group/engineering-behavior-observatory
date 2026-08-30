@@ -379,6 +379,13 @@ test("standalone queues reject conflicting identities for one condition ID", () 
     digest: { algorithm: "sha256", value: "0".repeat(64) },
   };
   assert.match(validateRunQueue(conflictingLocator).map((error) => error.message).join("\n"), /conflicting digests/);
+
+  const missingEntry = structuredClone(queue);
+  missingEntry.entries.pop();
+  assert.match(validateRunQueue(missingEntry).map((error) => error.message).join("\n"), /persisted matrix/);
+  const reordered = structuredClone(queue);
+  [reordered.entries[0], reordered.entries[1]] = [reordered.entries[1]!, reordered.entries[0]!];
+  assert.match(validateRunQueue(reordered).map((error) => error.message).join("\n"), /persisted ordering/);
 });
 
 test("queue validation rejects another valid artifact schema", () => {
@@ -436,7 +443,10 @@ test("a persisted local queue is validated and consumed in order", () => {
     writeFileSync(experimentPath, canonicalizeMetadata(experiment));
     writeRunQueue(path, queue);
     assert.doesNotThrow(() => writeRunQueue(path, queue));
-    assert.throws(() => writeRunQueue(path, { ...queue, seed: "changed" }), /different queue/);
+    assert.throws(() => writeRunQueue(path, {
+      ...queue,
+      captureProfile: { ...queue.captureProfile, digest: { algorithm: "sha256", value: "0".repeat(64) } },
+    }), /different queue/);
     assert.equal(readFileSync(path, "utf8"), canonicalizeMetadata(queue));
     const loaded = readRunQueue(path, experiment, compileOptions(experiment));
     let output = "";
