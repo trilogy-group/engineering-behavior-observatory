@@ -115,7 +115,7 @@ test("a JSONL writer cannot be reused by multiple protocol recorders", async () 
   }
 });
 
-test("a closed recorder cannot be replaced by a new writer for the same path", async () => {
+test("a closed recorder resumes the sequence with a new writer for the same path", async () => {
   const root = temporaryRoot();
   try {
     const path = join(root, "reopened.jsonl");
@@ -124,7 +124,10 @@ test("a closed recorder cannot be replaced by a new writer for the same path", a
     await firstRecorder.recordProcess("exited");
     await firstWriter.close();
     const secondWriter = new JsonlEvidenceWriter(path);
-    assert.throws(() => new ProtocolEvidenceRecorder(secondWriter, "second-harness"), /path is already claimed/);
+    const secondRecorder = new ProtocolEvidenceRecorder(secondWriter, "second-harness");
+    const observation = await secondRecorder.recordProcess("exited");
+    assert.equal(observation.sequence, 2);
+    await secondWriter.close();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -141,7 +144,10 @@ test("writer claims follow symlinked evidence paths", async () => {
     await firstWriter.close();
     symlinkSync(target, alias);
     const secondWriter = new JsonlEvidenceWriter(alias);
-    assert.throws(() => new ProtocolEvidenceRecorder(secondWriter, "second-harness"), /path is already claimed/);
+    const secondRecorder = new ProtocolEvidenceRecorder(secondWriter, "second-harness");
+    const observation = await secondRecorder.recordProcess("exited");
+    assert.equal(observation.sequence, 2);
+    await secondWriter.close();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
-import { closeSync, constants, fsyncSync, mkdirSync, openSync, realpathSync } from "node:fs";
+import { closeSync, constants, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, unlinkSync, writeSync } from "node:fs";
 import { mkdir, open, type FileHandle } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 
@@ -88,6 +88,9 @@ export class JsonlEvidenceWriter {
   private closed = false;
   private claimed = false;
   private hasWrites = false;
+  private claimLockFd: number | undefined;
+  private claimLockPath: string | undefined;
+  private claimCanonicalPath: string | undefined;
   private _count = 0;
 
   public constructor(path: string, options: JsonlEvidenceWriterOptions = {}) {
@@ -145,6 +148,7 @@ export class JsonlEvidenceWriter {
         await this.handle.close();
         this.handle = undefined;
       }
+      this.releaseClaim();
     });
     this.queue = operation.catch(() => undefined);
     return operation;
@@ -159,14 +163,55 @@ export class JsonlEvidenceWriter {
     return operation;
   }
 
-  public claim(token?: typeof INTERNAL_RECORDER_TOKEN): void {
+  public claim(token?: typeof INTERNAL_RECORDER_TOKEN): number {
     if (this.claimed) throw new Error("JSONL evidence writer is already claimed by a protocol recorder.");
     const canonicalPath = canonicalWriterPath(this.path);
     if (CLAIMED_WRITER_PATHS.has(canonicalPath)) throw new Error("JSONL evidence path is already claimed by a protocol recorder.");
     if (this.hasWrites) throw new Error("JSONL evidence writer cannot be claimed after direct writes.");
     if (token !== INTERNAL_RECORDER_TOKEN) throw new Error("JSONL evidence writer claim is internal.");
-    this.claimed = true;
-    CLAIMED_WRITER_PATHS.add(canonicalPath);
+    mkdirSync(dirname(canonicalPath), { recursive: true, mode: 0o700 });
+    const lockPath = `${canonicalPath}.protocol.lock`;
+    let lockFd: number | undefined;
+    try {
+      lockFd = openSync(lockPath, "wx", 0o600);
+      writeSync(lockFd, `${process.pid}\n`, undefined, "utf8");
+      fsyncSync(lockFd);
+      syncDirectory(dirname(lockPath));
+      const sequence = recoverWriterSequence(this.path);
+      this.claimed = true;
+      this.claimLockFd = lockFd;
+      this.claimLockPath = lockPath;
+      this.claimCanonicalPath = canonicalPath;
+      CLAIMED_WRITER_PATHS.add(canonicalPath);
+      return sequence;
+    } catch (error) {
+      if (lockFd !== undefined) closeSync(lockFd);
+      try {
+        unlinkSync(lockPath);
+        syncDirectory(dirname(lockPath));
+      } catch {
+        // Preserve the original claim/recovery error.
+      }
+      throw error;
+    }
+  }
+
+  private releaseClaim(): void {
+    if (this.claimLockFd === undefined || this.claimLockPath === undefined) return;
+    const lockFd = this.claimLockFd;
+    const lockPath = this.claimLockPath;
+    const canonicalPath = this.claimCanonicalPath;
+    this.claimLockFd = undefined;
+    this.claimLockPath = undefined;
+    this.claimCanonicalPath = undefined;
+    if (canonicalPath !== undefined) CLAIMED_WRITER_PATHS.delete(canonicalPath);
+    closeSync(lockFd);
+    try {
+      unlinkSync(lockPath);
+      syncDirectory(dirname(lockPath));
+    } catch {
+      // A missing lock is already released; other errors do not change the closed writer state.
+    }
   }
 
   private async openHandle(): Promise<FileHandle> {
@@ -310,7 +355,7 @@ export class ProtocolEvidenceRecorder {
   ) {
     assertNonEmpty(source, "Protocol source");
     this.maxInMemoryObservations = positiveInteger(maxInMemoryObservations, "In-memory observation limit");
-    writer.claim(INTERNAL_RECORDER_TOKEN);
+    this.sequence = writer.claim(INTERNAL_RECORDER_TOKEN);
   }
 
   public get observations(): readonly ProtocolObservation[] {
@@ -882,6 +927,34 @@ function canonicalWriterPath(path: string): string {
     }
     return resolve(parent, basename(path));
   }
+}
+
+function recoverWriterSequence(path: string): number {
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw error;
+  }
+  if (bytes.length === 0) return 0;
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  let sequence = 0;
+  for (const [index, line] of text.split("\n").entries()) {
+    if (line.trim() === "") continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch (error) {
+      throw new Error(`Existing JSONL evidence line ${index + 1} is malformed: ${errorMessage(error)}`);
+    }
+    const candidate = isRecord(value) ? value.sequence : undefined;
+    if (typeof candidate !== "number" || !Number.isSafeInteger(candidate) || candidate < 1) {
+      throw new Error(`Existing JSONL evidence line ${index + 1} has no valid sequence.`);
+    }
+    sequence = Math.max(sequence, candidate);
+  }
+  return sequence;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
