@@ -1487,6 +1487,32 @@ test("harness interruption records require native interrupted harness evidence",
   }
 });
 
+test("harness interruption records require a viable workspace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-interruption-workspace-evidence-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "interrupted", reason: "harness interrupted" }),
+      evidence: { flush: () => undefined },
+    });
+    for (const [name, replacement, errorPattern] of [
+      ["missing", undefined, /ready workspace/],
+      ["failed", { status: "failed", artifactId: "workspace-1", retained: true }, /ready workspace|Workspace failure records/],
+      ["shutdown-failed", { status: "ready", artifactId: "workspace-1", shutdownResult: { status: "failed", error: "workspace shutdown failed" } }, /confirmed workspace|Workspace failure records/],
+    ] as const) {
+      const record = structuredClone(result.record);
+      if (replacement === undefined) delete record.workspace;
+      else record.workspace = replacement;
+      const path = join(root, `${name}.json`);
+      writeFileSync(path, `${JSON.stringify(record)}\n`);
+      await assert.rejects(readAttemptRecord(path), errorPattern);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("harness infrastructure failures require native failed harness evidence", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-harness-failure-evidence-"));
   try {

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { link, lstat, mkdir, open, readFile, rename, rm, unlink, type FileHandle } from "node:fs/promises";
+import { closeSync, fsyncSync, linkSync, openSync, readFileSync, renameSync, unlinkSync } from "node:fs";
+import { lstat, mkdir, open, readFile, rm, type FileHandle } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 export type RunIdentity = {
@@ -967,12 +968,12 @@ async function writeAttemptRecordInternal(
     try {
       publicationGate?.();
       try {
-        await link(temporary, destination);
-        await unlink(temporary);
-        await syncDirectory(dirname(destination));
+        linkSync(temporary, destination);
+        unlinkSync(temporary);
+        syncDirectory(dirname(destination));
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        const existing = await readAttemptRecord(destination);
+        const existing = readAttemptRecordSync(destination);
         if (existing.run.id !== record.run.id || existing.attempt.id !== record.attempt.id) {
           throw new Error(`Attempt record "${path}" already belongs to another attempt.`);
         }
@@ -980,8 +981,9 @@ async function writeAttemptRecordInternal(
           throw new Error(`Attempt record "${path}" is already terminal.`);
         }
         if (!allowTerminalReplacement) assertCheckpointDoesNotRegress(existing, record);
-        await rename(temporary, destination);
-        await syncDirectory(dirname(destination));
+        publicationGate?.();
+        renameSync(temporary, destination);
+        syncDirectory(dirname(destination));
       }
     } catch (error) {
       await rm(temporary, { force: true });
@@ -1022,12 +1024,12 @@ async function withRecordPublicationLock<T>(destination: string, operation: () =
   }
 }
 
-async function syncDirectory(path: string): Promise<void> {
-  const directory = await open(path, "r");
+function syncDirectory(path: string): void {
+  const directory = openSync(path, "r");
   try {
-    await directory.sync();
+    fsyncSync(directory);
   } finally {
-    await directory.close();
+    closeSync(directory);
   }
 }
 
@@ -1042,6 +1044,14 @@ async function writeFileHandleFully(handle: FileHandle, bytes: Uint8Array, label
 
 export async function readAttemptRecord(path: string): Promise<AttemptRecord> {
   const bytes = await readFile(resolve(path));
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  const value = JSON.parse(text) as unknown;
+  assertRecord(value);
+  return value;
+}
+
+function readAttemptRecordSync(path: string): AttemptRecord {
+  const bytes = readFileSync(resolve(path));
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   const value = JSON.parse(text) as unknown;
   assertRecord(value);
@@ -1662,6 +1672,10 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       if (!visitedStates.has("running")) {
         throw new Error("Harness interruption terminal records require the running lifecycle phase.");
       }
+      if (!isRecord(value.workspace) || value.workspace.status !== "ready") {
+        throw new Error("Harness interruption terminal records require a ready workspace result.");
+      }
+      assertShutdownCompleted(value.workspace, "Workspace");
       if (!isRecord(value.harness) || value.harness.status !== "interrupted") {
         throw new Error("Harness interruption terminal records require an interrupted harness result.");
       }
