@@ -490,6 +490,25 @@ test("cleanup timeout is retained and prevents false completion", async () => {
   assert.equal(result.classification.source, "cleanup");
 });
 
+test("a synchronous cleanup past the coordinator budget is stopped", async () => {
+  const result = await executeRunAttempt({
+    run,
+    maxWallClockMs: 1,
+    workspace: {
+      setup: async () => ({ status: "ready", artifactId: "workspace-1" }),
+      cleanup: () => {
+        const end = Date.now() + 5;
+        while (Date.now() < end) {}
+      },
+    },
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => ({ status: "passed" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.state, "stopped");
+  assert.equal(result.terminal.stopReason, "budget");
+});
+
 test("a verifier result that settles during interruption remains in the partial record", async () => {
   const controller = new AbortController();
   let verifierStartedResolve: (() => void) | undefined;

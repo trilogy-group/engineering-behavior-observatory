@@ -430,6 +430,7 @@ export class ProtocolProcess {
   private shutdownStarted = false;
   private interruptionStarted = false;
   private childError: string | undefined;
+  private signalQueue: Promise<void> = Promise.resolve();
 
   public constructor(private readonly options: ProtocolProcessOptions) {
     assertNonEmpty(options.command, "Protocol command");
@@ -511,7 +512,7 @@ export class ProtocolProcess {
   public async shutdown(): Promise<ProtocolProcessResult> {
     if (this.child.exitCode !== null || this.child.signalCode !== null) return this.wait();
     this.shutdownStarted = true;
-    this.termination = "shutdown";
+    this.setTermination("shutdown");
     await this.sendSignal("SIGTERM", this.shutdownGraceMs);
     return this.wait();
   }
@@ -519,7 +520,7 @@ export class ProtocolProcess {
   public async interrupt(): Promise<ProtocolProcessResult> {
     if (this.child.exitCode !== null || this.child.signalCode !== null) return this.wait();
     this.interruptionStarted = true;
-    this.termination = "interrupted";
+    this.setTermination("interrupted");
     await this.sendSignal("SIGINT", this.shutdownGraceMs);
     return this.wait();
   }
@@ -616,7 +617,7 @@ export class ProtocolProcess {
   private async failProtocol(message: string, raw?: string, line = this.nextLineNumber): Promise<void> {
     if (this.protocolError !== undefined) return;
     this.protocolError = { line, message, ...(raw === undefined ? {} : { raw }) };
-    this.termination = "malformed";
+    this.setTermination("malformed");
     try {
       await this.recorder.recordError(message, raw === undefined ? undefined : { raw });
     } catch (error) {
@@ -628,7 +629,7 @@ export class ProtocolProcess {
   private async failRecorder(message: string): Promise<void> {
     if (this.recorderError !== undefined || this.protocolError !== undefined) return;
     this.recorderError = message;
-    this.termination = "recorder-error";
+    this.setTermination("recorder-error");
     try {
       await this.recorder.recordError(message);
     } catch (error) {
@@ -637,7 +638,17 @@ export class ProtocolProcess {
     void this.sendSignal("SIGTERM", this.shutdownGraceMs);
   }
 
-  private async sendSignal(signal: NodeJS.Signals, graceMs: number): Promise<void> {
+  private setTermination(termination: ProcessTermination): void {
+    if (this.termination === "natural") this.termination = termination;
+  }
+
+  private sendSignal(signal: NodeJS.Signals, graceMs: number): Promise<void> {
+    const operation = this.signalQueue.then(() => this.sendSignalNow(signal, graceMs));
+    this.signalQueue = operation.catch(() => undefined);
+    return operation;
+  }
+
+  private async sendSignalNow(signal: NodeJS.Signals, graceMs: number): Promise<void> {
     if (this.child.exitCode !== null || this.child.signalCode !== null) return;
     const pid = this.child.pid;
     if (pid === undefined) return;

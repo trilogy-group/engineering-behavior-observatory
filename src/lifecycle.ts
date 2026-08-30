@@ -597,6 +597,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         classification = infrastructureClassification(errorMessage(error), "cleanup", workspace);
       }
     }
+    markCoordinatorBudgetIfExpired();
     if (cleanupStatus?.status === "timed-out" && classificationUnderlyingKind(classification ?? infrastructureClassification("Run did not produce a terminal outcome.", "runner")) === "completed") {
       classification = infrastructureClassification(cleanupStatus.error ?? "Workspace cleanup timed out.", "cleanup", workspace);
     }

@@ -394,6 +394,24 @@ test("shutdown with diagnostic persistence failure remains failed and partial", 
   }
 });
 
+test("the first process termination cause wins concurrent shutdown requests", async () => {
+  const root = temporaryRoot();
+  try {
+    const protocol = spawnProtocolProcess({
+      ...nodeScript("setTimeout(()=>{}, 10000)"),
+      source: "fake-harness",
+      evidencePath: join(root, "termination-order.jsonl"),
+    });
+    const interrupt = protocol.interrupt();
+    const shutdown = protocol.shutdown();
+    const result = await Promise.all([interrupt, shutdown]).then(([first]) => first);
+    assert.equal(result.status, "interrupted");
+    assert.equal(result.termination, "interrupted");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("an already-aborted process signal still produces a partial result", async () => {
   const root = temporaryRoot();
   try {
