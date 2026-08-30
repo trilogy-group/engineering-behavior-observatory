@@ -19,7 +19,6 @@ import {
   MAX_RUN_QUEUE_BYTES,
   validateRunQueue,
   writeRunQueue,
-  type RunQueue,
 } from "./scheduler.js";
 
 const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <command> ...
@@ -78,9 +77,7 @@ export function main(
 
     const artifacts = args.slice(1).map((artifact) => {
       try {
-        const parsed = readJson(artifact);
-        const document = isRunQueueDocument(parsed) ? readRunQueue(artifact) : parsed;
-        return { artifact, document };
+        return { artifact, document: readJson(artifact) };
       } catch (error) {
         return {
           artifact,
@@ -259,11 +256,6 @@ function readBoundedFile(path: string): Buffer {
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
-}
-
-function isRunQueueDocument(document: unknown): document is RunQueue {
-  return typeof document === "object" && document !== null && !Array.isArray(document)
-    && (document as { schemaVersion?: unknown }).schemaVersion === "ebo.run-queue/v1";
 }
 
 function errorMessage(error: unknown): string {

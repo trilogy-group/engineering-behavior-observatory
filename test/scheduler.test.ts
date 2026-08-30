@@ -673,6 +673,14 @@ test("a persisted local queue is validated and consumed in order", () => {
     oversizedOutput = "";
     assert.equal(main(["validate", oversizedFile], (message) => (oversizedOutput += message)), 1);
     assert.match(oversizedOutput, /local byte limit/);
+    const invalidQueuePath = join(root, "invalid-queue.json");
+    const invalidQueue = structuredClone(queue) as Partial<typeof queue>;
+    delete invalidQueue.schedulingDigest;
+    writeFileSync(invalidQueuePath, canonicalizeMetadata(invalidQueue));
+    let invalidQueueOutput = "";
+    assert.equal(main(["validate", invalidQueuePath], (message) => (invalidQueueOutput += message)), 1);
+    assert.match(invalidQueueOutput, /ebo\.run-queue\/v1/);
+    assert.match(invalidQueueOutput, /schedulingDigest/);
     const alteredExperiment = structuredClone(experiment);
     alteredExperiment.coordinatorBudget.maxWallClockMs += 1;
     const alteredQueue = compileRunQueue(alteredExperiment, compileOptions(alteredExperiment));
