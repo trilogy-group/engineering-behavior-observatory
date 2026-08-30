@@ -265,6 +265,14 @@ export function validateRunQueue(
   const taskIdentities = new Map<string, string>();
   const modelIdentities = new Map<string, string>();
   const harnessIdentities = new Map<string, string>();
+  const taskCompositions = new Map<string, string>();
+  const modelCompositions = new Map<string, string>();
+  const harnessCompositions = new Map<string, string>();
+  const locatorDigests = new Map<string, string>();
+  checkLocatorDigest(artifact, "/captureProfile", runQueue.captureProfile, locatorDigests, semanticErrors);
+  if (runQueue.ordering.permutationAlgorithmRef !== undefined) {
+    checkLocatorDigest(artifact, "/ordering/permutationAlgorithmRef", runQueue.ordering.permutationAlgorithmRef, locatorDigests, semanticErrors);
+  }
   let expectedTasks: Map<string, FrozenTaskIdentity> | undefined;
   if (experiment !== undefined) {
     if (options.resolvedPackets !== undefined) {
@@ -311,6 +319,27 @@ export function validateRunQueue(
     checkConditionIdentity(artifact, field, "task", entry.taskId, entry.task, taskIdentities, semanticErrors);
     checkConditionIdentity(artifact, field, "model", entry.modelId, entry.model, modelIdentities, semanticErrors);
     checkConditionIdentity(artifact, field, "harness", entry.harnessId, entry.harness, harnessIdentities, semanticErrors);
+    checkCompositionIdentity(artifact, field, "task", entry.taskId, digestIdentity(entry.task.packetRef.digest), taskCompositions, semanticErrors);
+    checkCompositionIdentity(artifact, field, "model", entry.modelId, digestIdentity(entry.model.configurationRef.digest), modelCompositions, semanticErrors);
+    checkCompositionIdentity(
+      artifact,
+      field,
+      "harness",
+      entry.harnessId,
+      [entry.harness.configurationRef, entry.harness.nativeLimitsRef, entry.harness.nativeToolPolicyRef]
+        .map((reference) => digestIdentity(reference.digest)).join("|"),
+      harnessCompositions,
+      semanticErrors,
+    );
+    for (const [label, reference] of [
+      ["task", entry.task.packetRef] as const,
+      ["model", entry.model.configurationRef] as const,
+      ["harness", entry.harness.configurationRef] as const,
+      ["harness limits", entry.harness.nativeLimitsRef] as const,
+      ["harness tools", entry.harness.nativeToolPolicyRef] as const,
+    ]) {
+      checkLocatorDigest(artifact, `${field}/${label}`, reference, locatorDigests, semanticErrors);
+    }
     if (experiment !== undefined) {
       const taskCondition = experiment.taskSet[entry.taskId];
       const modelCondition = experiment.modelSet[entry.modelId];
@@ -823,6 +852,38 @@ function checkConditionIdentity(
   if (previous === undefined) identities.set(id, signature);
   else if (previous !== signature) {
     errors.push(queueError(artifact, `${field}/${label}`, `Conflicting ${label} identity for condition ID "${id}".`));
+  }
+}
+
+function checkCompositionIdentity(
+  artifact: string,
+  field: string,
+  label: string,
+  id: string,
+  signature: string,
+  compositions: Map<string, string>,
+  errors: ArtifactValidationError[],
+): void {
+  const previous = compositions.get(signature);
+  if (previous === undefined) compositions.set(signature, id);
+  else if (previous !== id) {
+    errors.push(queueError(artifact, `${field}/${label}`, `Duplicate ${label} composition for condition IDs "${previous}" and "${id}".`));
+  }
+}
+
+function checkLocatorDigest(
+  artifact: string,
+  field: string,
+  reference: ArtifactReference,
+  locators: Map<string, string>,
+  errors: ArtifactValidationError[],
+): void {
+  const locator = reference.locator.toLowerCase();
+  const signature = digestIdentity(reference.digest);
+  const previous = locators.get(locator);
+  if (previous === undefined) locators.set(locator, signature);
+  else if (previous !== signature) {
+    errors.push(queueError(artifact, field, `Locator "${reference.locator}" is bound to conflicting digests.`));
   }
 }
 

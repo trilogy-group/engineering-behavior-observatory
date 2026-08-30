@@ -370,7 +370,15 @@ test("standalone queues reject conflicting identities for one condition ID", () 
   const sameModel = invalid.entries.find((entry, index) => index > 0 && entry.modelId === invalid.entries[0]!.modelId)!;
   const otherModel = invalid.entries.find((entry) => entry.modelId !== sameModel.modelId)!;
   sameModel.model.configurationRef = structuredClone(otherModel.model.configurationRef);
+  sameModel.configuration.model = structuredClone(otherModel.model.configurationRef);
   assert.match(validateRunQueue(invalid).map((error) => error.message).join("\n"), /Conflicting model identity/);
+
+  const conflictingLocator = structuredClone(queue);
+  conflictingLocator.captureProfile = {
+    locator: conflictingLocator.entries[0]!.model.configurationRef.locator,
+    digest: { algorithm: "sha256", value: "0".repeat(64) },
+  };
+  assert.match(validateRunQueue(conflictingLocator).map((error) => error.message).join("\n"), /conflicting digests/);
 });
 
 test("queue validation rejects another valid artifact schema", () => {
