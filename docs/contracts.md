@@ -152,7 +152,9 @@ The CLI exposes `ebo matrix compile <experiment.json> <bundle-root>
 <queue.json> [experiment.json] [--bundle-root <bundle-root>]`. Supplying the
 bundle root lets queue validation recheck each freeze and pinned algorithm
 artifact. The 18-cell fixture is only a generality test;
-the compiler has no fixed task, model, harness, or trial count.
+the compiler has no fixed task, model, harness, or trial count, subject to the
+bounded 100,000-entry local queue limit; larger matrices require a future
+streaming queue implementation.
 
 Unknown schema versions and sharing classifications are invalid. Consumers must
 validate a document before materializing a workspace or scheduling a run.

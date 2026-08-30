@@ -110,7 +110,7 @@ export type CompileRunQueueOptions = {
 
 export type ValidateRunQueueOptions = Pick<CompileRunQueueOptions,
   "bundleRoot" | "resolvedDigests" | "frozenTasks" | "taskFreezeRecords" | "taskPackets"
-  | "permutationAlgorithm" | "permutationAlgorithms" | "freezeLocators">;
+  | "permutationAlgorithm" | "permutationAlgorithms" | "freezeLocators" | "resolvedPackets">;
 
 export type RunQueueInspection = {
   experimentId: string;
@@ -144,7 +144,12 @@ export function compileRunQueue(
     ? { ...ordering, permutationAlgorithm }
     : ordering;
   const tasks = resolveFrozenTasks(experiment, options);
-  if (options.resolvedPackets !== undefined) {
+  if (options.bundleRoot === undefined) {
+    if (options.resolvedPackets === undefined) {
+      throw new Error("Resolved admitted task packets are required when no bundle root is supplied.");
+    }
+    assertAdmittedTaskPackets(experiment.taskSet, options.resolvedPackets);
+  } else if (options.resolvedPackets !== undefined) {
     assertAdmittedTaskPackets(experiment.taskSet, options.resolvedPackets);
   }
 
@@ -248,12 +253,21 @@ export function validateRunQueue(
 
   const runQueue = queue as unknown as RunQueue;
   const semanticErrors: ArtifactValidationError[] = [];
+  if (experiment === undefined && options.bundleRoot !== undefined) {
+    semanticErrors.push(...validateQueueBundleRoot(runQueue, options.bundleRoot, artifact));
+  }
   const runIds = new Set<string>();
   const cells = new Set<string>();
   let expectedTasks: Map<string, FrozenTaskIdentity> | undefined;
   if (experiment !== undefined) {
     if (hasFrozenTaskInputs(options)) {
       try {
+        if (options.bundleRoot === undefined && options.resolvedPackets === undefined) {
+          throw new Error("Resolved admitted task packets are required for API-supplied freeze identities.");
+        }
+        if (options.bundleRoot === undefined && options.resolvedPackets !== undefined) {
+          assertAdmittedTaskPackets(experiment.taskSet, options.resolvedPackets);
+        }
         expectedTasks = resolveFrozenTasks(experiment, provenanceOptions(runQueue, options));
       } catch (error) {
         semanticErrors.push(queueError(artifact, "/entries/task", error instanceof Error ? error.message : "Frozen task records could not be resolved."));
@@ -474,6 +488,14 @@ function resolvePermutationAlgorithm(
     : undefined;
   if (reference === undefined) return "fisher-yates-v1";
 
+  return resolvePermutationDefinition(reference, options);
+}
+
+function resolvePermutationDefinition(
+  reference: ArtifactReference,
+  options: CompileRunQueueOptions,
+): PermutationAlgorithm {
+
   let definition: unknown = options.permutationAlgorithm;
   if (definition === undefined) definition = options.permutationAlgorithms?.[reference.locator];
   if (definition === undefined && options.bundleRoot !== undefined) {
@@ -499,6 +521,79 @@ function canResolvePermutationAlgorithm(options: ValidateRunQueueOptions): boole
   return options.bundleRoot !== undefined
     || options.permutationAlgorithm !== undefined
     || options.permutationAlgorithms !== undefined;
+}
+
+function validateQueueBundleRoot(
+  queue: RunQueue,
+  bundleRoot: string,
+  artifact: string,
+): ArtifactValidationError[] {
+  const errors: ArtifactValidationError[] = [];
+  const references = new Map<string, ArtifactReference>();
+  const addReference = (reference: ArtifactReference) => references.set(
+    `${reference.locator}\u0000${digestIdentity(reference.digest)}`,
+    reference,
+  );
+  addReference(queue.captureProfile);
+  for (const entry of queue.entries) {
+    addReference(entry.model.configurationRef);
+    addReference(entry.harness.configurationRef);
+    addReference(entry.harness.nativeLimitsRef);
+    addReference(entry.harness.nativeToolPolicyRef);
+  }
+  if (queue.ordering.permutationAlgorithmRef !== undefined) addReference(queue.ordering.permutationAlgorithmRef);
+  for (const [index, reference] of [...references.values()].entries()) {
+    try {
+      resolveBundleArtifactDigest(bundleRoot, reference);
+    } catch (error) {
+      errors.push(queueError(artifact, `/references/${index}`, error instanceof Error ? error.message : "Reference could not be resolved."));
+    }
+  }
+
+  const observed = new Map<string, FrozenTaskIdentity | Error>();
+  for (const [index, entry] of queue.entries.entries()) {
+    const key = `${entry.task.packetRef.locator}\u0000${entry.task.freezeLocator}`;
+    let resolved = observed.get(key);
+    if (resolved === undefined) {
+      try {
+        const status = statusTaskPacket(bundleRoot, entry.task.packetRef.locator, entry.task.freezeLocator);
+        if (status.status !== "frozen" || status.packetId === null || status.packetDigest === null || status.aggregateDigest === null) {
+          const details = status.errors.length > 0 ? ` ${formatErrors(status.errors)}` : "";
+          resolved = new Error(`Task packet is not frozen.${details}`);
+        } else if (!sameDigest(status.packetDigest, entry.task.packetRef.digest)) {
+          resolved = new Error("Task packet digest does not match its queue reference.");
+        } else {
+          resolved = {
+            id: entry.task.id,
+            packetId: status.packetId,
+            packetRef: entry.task.packetRef,
+            freezeLocator: status.freezeLocator,
+            aggregateDigest: status.aggregateDigest,
+          };
+        }
+      } catch (error) {
+        resolved = error instanceof Error ? error : new Error("Task packet freeze could not be resolved.");
+      }
+      observed.set(key, resolved);
+    }
+    if (resolved instanceof Error || !sameFrozenTask(entry.task, resolved)) {
+      errors.push(queueError(artifact, `/entries/${index}/task`, resolved instanceof Error
+        ? resolved.message
+        : "Frozen task identity does not match its referenced freeze record."));
+    }
+  }
+
+  if (queue.ordering.strategy === "seeded-shuffle" && queue.ordering.permutationAlgorithmRef !== undefined) {
+    try {
+      const algorithm = resolvePermutationDefinition(queue.ordering.permutationAlgorithmRef, { bundleRoot });
+      if (queue.ordering.permutationAlgorithm !== algorithm) {
+        errors.push(queueError(artifact, "/ordering", "Persisted permutation algorithm does not match its referenced artifact."));
+      }
+    } catch (error) {
+      errors.push(queueError(artifact, "/ordering/permutationAlgorithmRef", error instanceof Error ? error.message : "Permutation algorithm could not be resolved."));
+    }
+  }
+  return errors;
 }
 
 function experimentReferences(experiment: ExperimentConfiguration): ArtifactReference[] {

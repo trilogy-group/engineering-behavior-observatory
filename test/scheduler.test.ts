@@ -17,6 +17,7 @@ import {
   writeRunQueue,
   type ExperimentConfiguration,
   type FrozenTaskInput,
+  type ResolvedTaskPacket,
 } from "../src/index.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -28,6 +29,7 @@ function fixture(name: string): ExperimentConfiguration {
 function compileOptions(experiment: ExperimentConfiguration): {
   resolvedDigests: Record<string, ExperimentConfiguration["captureProfile"]["digest"]>;
   frozenTasks: Record<string, FrozenTaskInput>;
+  resolvedPackets: Record<string, ResolvedTaskPacket>;
   permutationAlgorithms?: Record<string, unknown>;
 } {
   const references = [
@@ -51,9 +53,30 @@ function compileOptions(experiment: ExperimentConfiguration): {
       aggregateDigest: { algorithm: "sha256", value: String(index + 1).padStart(64, "0") },
     }]),
   ) as Record<string, FrozenTaskInput>;
+  const resolvedPackets = Object.fromEntries(
+    Object.entries(experiment.taskSet).map(([id, condition]) => [id, {
+      digest: condition.packetRef.digest,
+      preAdmissionDigest: { algorithm: "sha256", value: "1".repeat(64) },
+      reviewRecordDigest: condition.packetRef.digest,
+      resolvedReviewRecordDigest: condition.packetRef.digest,
+      reviewRecordPreAdmissionDigest: { algorithm: "sha256", value: "1".repeat(64) },
+      controlledPerturbation: {
+        declaration: { status: "not-applied" as const },
+        resolvedDigest: null,
+      },
+      referenceSolution: {
+        declaration: { status: "not-provided" as const },
+        resolvedDigest: null,
+      },
+      verifierDigest: condition.packetRef.digest,
+      resolvedVerifierDigest: condition.packetRef.digest,
+      admission: { status: "admitted" as const, reviewedAt: "2026-08-26T00:00:00Z" },
+    }]),
+  ) as Record<string, ResolvedTaskPacket>;
   const options = {
     resolvedDigests: Object.fromEntries(references.map((reference) => [reference.locator, reference.digest])),
     frozenTasks,
+    resolvedPackets,
   };
   if (experiment.ordering.strategy === "permuted" && experiment.ordering.permutationAlgorithmRef !== undefined) {
     return {
