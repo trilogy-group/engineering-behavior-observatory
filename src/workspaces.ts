@@ -1,6 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, fstatSync, lstatSync } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, open, readdir, realpath, rm, utimes } from "node:fs/promises";
+import {
+  closeSync,
+  constants,
+  fchmodSync,
+  fstatSync,
+  futimesSync,
+  lstatSync,
+  openSync,
+  readSync,
+  readdirSync,
+  realpathSync,
+} from "node:fs";
+import { chmod, lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 
@@ -99,9 +110,9 @@ export async function materializeWorkspace(
     await chmod(workspacePath, DIRECTORY_MODE);
     for (const entry of entries) await materializeEntry(workspacePath, entry);
     await runSetup(options.setup, options.setupSteps, workspacePath);
-    await normalizeWorkspace(workspacePath, workspaceIdentity);
+    normalizeWorkspace(workspacePath, workspaceIdentity);
     assertWorkspaceRoot(workspacePath, workspaceIdentity);
-    const workspaceFingerprint = await digestMaterializedWorkspace(workspacePath, workspaceIdentity);
+    const workspaceFingerprint = digestMaterializedWorkspace(workspacePath, workspaceIdentity);
     assertWorkspaceRoot(workspacePath, workspaceIdentity);
     result = createResult({
       attemptId,
@@ -260,71 +271,73 @@ async function ensureDirectory(root: string, relativePath: string): Promise<void
   }
 }
 
-async function normalizeWorkspace(root: string, expectedIdentity: WorkspaceIdentity): Promise<void> {
+function normalizeWorkspace(root: string, expectedIdentity: WorkspaceIdentity): void {
   assertWorkspaceRoot(root, expectedIdentity);
-  await normalizeDirectory(root, root, "");
+  normalizeDirectory(root, root, "");
   assertWorkspaceRoot(root, expectedIdentity);
 }
 
-async function normalizeDirectory(
+function normalizeDirectory(
   root: string,
   directory: string,
   relativeDirectory: string,
-  verifiedHandle?: Awaited<ReturnType<typeof open>>,
-): Promise<void> {
-  const directoryHandle = verifiedHandle
-    ?? await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-  const ownsHandle = verifiedHandle === undefined;
+  verifiedFd?: number,
+): void {
+  const directoryFd = verifiedFd
+    ?? openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  const ownsFd = verifiedFd === undefined;
   try {
-    await withVerifiedDirectoryHandle(root, directory, directoryHandle, async () => {
-      const entries = await readdir(".", { withFileTypes: true });
-      entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-      for (const entry of entries) {
-        const path = join(directory, entry.name);
-        const relativePath = relativeDirectory === "" ? entry.name : `${relativeDirectory}/${entry.name}`;
-        if (relativePath.split("/", 1)[0]?.toLowerCase() === "restricted") {
-          throw new Error(`Restricted packet content cannot enter the workspace: "${relativePath}".`);
-        }
-        const current = await lstat(entry.name);
-        const childHandle = await openChild(entry.name, entry.isDirectory());
-        try {
-          const metadata = await childHandle.stat();
-          await assertContainedRealpath(root, path);
-          if (current.isSymbolicLink() || !sameIdentity(metadata, current)) {
-            throw new Error(`Workspace entry "${relativePath}" changed during materialization.`);
-          }
-          if (metadata.isDirectory()) {
-            await normalizeDirectory(root, path, relativePath, childHandle);
-            await childHandle.chmod(DIRECTORY_MODE);
-            await childHandle.utimes(EPOCH_SECONDS, EPOCH_SECONDS);
-          } else if (metadata.isFile()) {
-            if (metadata.nlink > 1) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
-            await childHandle.chmod(normalizedFileMode(metadata.mode));
-            await childHandle.utimes(EPOCH_SECONDS, EPOCH_SECONDS);
-          } else {
-            throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
-          }
-          const completed = await childHandle.stat();
-          const finalPath = await lstat(entry.name);
-          if (!sameIdentity(metadata, completed) || !sameIdentity(metadata, finalPath)
-              || finalPath.isSymbolicLink()) {
-            throw new Error(`Workspace entry "${relativePath}" changed during materialization.`);
-          }
-        } finally {
-          await childHandle.close();
-        }
+    assertContainedRealpathSync(root, directory);
+    if (!sameIdentity(fstatSync(directoryFd), lstatSync(directory))) {
+      throw new Error(`Workspace directory "${relativeDirectory}" changed during materialization.`);
+    }
+    const entries = readdirSync(directory, { withFileTypes: true });
+    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    for (const entry of entries) {
+      const path = join(directory, entry.name);
+      const relativePath = relativeDirectory === "" ? entry.name : `${relativeDirectory}/${entry.name}`;
+      if (relativePath.split("/", 1)[0]?.toLowerCase() === "restricted") {
+        throw new Error(`Restricted packet content cannot enter the workspace: "${relativePath}".`);
       }
-      await directoryHandle.chmod(DIRECTORY_MODE);
-      await directoryHandle.utimes(EPOCH_SECONDS, EPOCH_SECONDS);
-    });
+      const current = lstatSync(path);
+      const childFd = openChildSync(path, entry.isDirectory());
+      try {
+        const metadata = fstatSync(childFd);
+        assertContainedRealpathSync(root, path);
+        if (current.isSymbolicLink() || !sameIdentity(metadata, current)) {
+          throw new Error(`Workspace entry "${relativePath}" changed during materialization.`);
+        }
+        if (metadata.isDirectory()) {
+          normalizeDirectory(root, path, relativePath, childFd);
+          fchmodSync(childFd, DIRECTORY_MODE);
+          futimesSync(childFd, EPOCH_SECONDS, EPOCH_SECONDS);
+        } else if (metadata.isFile()) {
+          if (metadata.nlink > 1) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
+          fchmodSync(childFd, normalizedFileMode(metadata.mode));
+          futimesSync(childFd, EPOCH_SECONDS, EPOCH_SECONDS);
+        } else {
+          throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
+        }
+        const completed = fstatSync(childFd);
+        const finalPath = lstatSync(path);
+        if (!sameIdentity(metadata, completed) || !sameIdentity(metadata, finalPath)
+            || finalPath.isSymbolicLink()) {
+          throw new Error(`Workspace entry "${relativePath}" changed during materialization.`);
+        }
+      } finally {
+        closeSync(childFd);
+      }
+    }
+    fchmodSync(directoryFd, DIRECTORY_MODE);
+    futimesSync(directoryFd, EPOCH_SECONDS, EPOCH_SECONDS);
   } finally {
-    if (ownsHandle) await directoryHandle.close();
+    if (ownsFd) closeSync(directoryFd);
   }
 }
 
-async function openChild(path: string, directory: boolean): Promise<Awaited<ReturnType<typeof open>>> {
+function openChildSync(path: string, directory: boolean): number {
   try {
-    return await open(
+    return openSync(
       path,
       constants.O_RDONLY | constants.O_NOFOLLOW | (directory ? constants.O_DIRECTORY : 0),
     );
@@ -336,108 +349,93 @@ async function openChild(path: string, directory: boolean): Promise<Awaited<Retu
   }
 }
 
-async function withVerifiedDirectoryHandle<T>(
-  root: string,
-  directory: string,
-  handle: Awaited<ReturnType<typeof open>>,
-  callback: () => Promise<T>,
-): Promise<T> {
-  const originalCwd = process.cwd();
-  let changedCwd = false;
-  try {
-    process.chdir(directory);
-    changedCwd = true;
-    await assertContainedRealpath(root, directory);
-    if (!sameIdentity(fstatSync(handle.fd), lstatSync("."))) {
-      throw new Error(`Workspace directory "${directory}" changed during materialization.`);
-    }
-    return await callback();
-  } finally {
-    if (changedCwd) process.chdir(originalCwd);
-  }
-}
-
-async function assertContainedRealpath(root: string, path: string): Promise<void> {
-  const resolved = await realpath(path);
+function assertContainedRealpathSync(root: string, path: string): void {
+  const resolved = realpathSync(path);
   if (resolved !== path || !isContained(root, resolved)) {
     throw new Error(`Workspace path "${path}" escapes its root.`);
   }
 }
 
-async function digestMaterializedWorkspace(root: string, expectedIdentity: WorkspaceIdentity): Promise<string> {
+function digestMaterializedWorkspace(root: string, expectedIdentity: WorkspaceIdentity): string {
   const hash = createHash("sha256");
-  const rootHandle = await open(root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  const rootFd = openSync(root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   try {
-    const metadata = await rootHandle.stat({ bigint: true });
+    const metadata = fstatSync(rootFd, { bigint: true });
     assertWorkspaceRoot(root, expectedIdentity);
-    await assertContainedRealpath(root, root);
+    assertContainedRealpathSync(root, root);
     if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("Workspace root is not a directory.");
     hash.update("ebo.workspace/v1\0");
     hash.update(`root\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0`);
-    await hashWorkspaceDirectory(root, root, "", hash, rootHandle);
+    hashWorkspaceDirectory(root, root, "", hash, rootFd);
   } finally {
-    await rootHandle.close();
+    closeSync(rootFd);
   }
   assertWorkspaceRoot(root, expectedIdentity);
   return `sha256:${hash.digest("hex")}`;
 }
 
-async function hashWorkspaceDirectory(
+function hashWorkspaceDirectory(
   root: string,
   directory: string,
   relativeDirectory: string,
   hash: ReturnType<typeof createHash>,
-  verifiedHandle?: Awaited<ReturnType<typeof open>>,
-): Promise<void> {
-  const directoryHandle = verifiedHandle
-    ?? await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-  const ownsHandle = verifiedHandle === undefined;
+  verifiedFd?: number,
+): void {
+  const directoryFd = verifiedFd
+    ?? openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  const ownsFd = verifiedFd === undefined;
   try {
-    await withVerifiedDirectoryHandle(root, directory, directoryHandle, async () => {
-      const openedDirectory = await directoryHandle.stat({ bigint: true });
-      if (!openedDirectory.isDirectory() || openedDirectory.isSymbolicLink()) {
-        throw new Error(`Workspace directory "${relativeDirectory}" is unsafe.`);
+    assertContainedRealpathSync(root, directory);
+    const openedDirectory = fstatSync(directoryFd, { bigint: true });
+    if (!openedDirectory.isDirectory() || openedDirectory.isSymbolicLink()) {
+      throw new Error(`Workspace directory "${relativeDirectory}" is unsafe.`);
+    }
+    const entries = readdirSync(directory, { withFileTypes: true });
+    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    for (const entry of entries) {
+      const path = join(directory, entry.name);
+      const relativePath = relativeDirectory === "" ? entry.name : `${relativeDirectory}/${entry.name}`;
+      if (relativePath.split("/", 1)[0]?.toLowerCase() === "restricted") {
+        throw new Error(`Restricted packet content cannot enter the workspace: "${relativePath}".`);
       }
-      const entries = await readdir(".", { withFileTypes: true });
-      entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-      for (const entry of entries) {
-        const path = join(directory, entry.name);
-        const relativePath = relativeDirectory === "" ? entry.name : `${relativeDirectory}/${entry.name}`;
-        if (relativePath.split("/", 1)[0]?.toLowerCase() === "restricted") {
-          throw new Error(`Restricted packet content cannot enter the workspace: "${relativePath}".`);
+      const current = lstatSync(path, { bigint: true });
+      const childFd = openChildSync(path, entry.isDirectory());
+      try {
+        const metadata = fstatSync(childFd, { bigint: true });
+        assertContainedRealpathSync(root, path);
+        if (current.isSymbolicLink() || !sameIdentity(metadata, current)) {
+          throw new Error(`Workspace entry "${relativePath}" changed during fingerprinting.`);
         }
-        const current = await lstat(entry.name, { bigint: true });
-        const childHandle = await openChild(entry.name, entry.isDirectory());
-        try {
-          const metadata = await childHandle.stat({ bigint: true });
-          await assertContainedRealpath(root, path);
-          if (current.isSymbolicLink() || !sameIdentity(metadata, current)) {
-            throw new Error(`Workspace entry "${relativePath}" changed during fingerprinting.`);
+        if (metadata.isDirectory()) {
+          hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0`);
+          hashWorkspaceDirectory(root, path, relativePath, hash, childFd);
+        } else if (metadata.isFile()) {
+          if (metadata.nlink > 1n) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
+          const size = Number(metadata.size);
+          if (!Number.isSafeInteger(size) || size < 0) throw new Error(`Workspace file "${relativePath}" is too large.`);
+          const bytes = Buffer.alloc(size);
+          for (let offset = 0; offset < size;) {
+            const read = readSync(childFd, bytes, offset, size - offset, offset);
+            if (read === 0) throw new Error(`Workspace file "${relativePath}" changed during fingerprinting.`);
+            offset += read;
           }
-          if (metadata.isDirectory()) {
-            hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0`);
-            await hashWorkspaceDirectory(root, path, relativePath, hash, childHandle);
-          } else if (metadata.isFile()) {
-            if (metadata.nlink > 1n) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
-            const bytes = await childHandle.readFile();
-            hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0${bytes.length}\0`);
-            hash.update(bytes);
-          } else {
-            throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
-          }
-          const completed = await childHandle.stat({ bigint: true });
-          const finalPath = await lstat(entry.name, { bigint: true });
-          if (!sameIdentity(metadata, completed) || !sameIdentity(metadata, finalPath)
-              || finalPath.isSymbolicLink() || (metadata.isFile() && !sameFileSnapshot(metadata, completed))) {
-            throw new Error(`Workspace entry "${relativePath}" changed during fingerprinting.`);
-          }
-        } finally {
-          await childHandle.close();
+          hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0${bytes.length}\0`);
+          hash.update(bytes);
+        } else {
+          throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
         }
+        const completed = fstatSync(childFd, { bigint: true });
+        const finalPath = lstatSync(path, { bigint: true });
+        if (!sameIdentity(metadata, completed) || !sameIdentity(metadata, finalPath)
+            || finalPath.isSymbolicLink() || (metadata.isFile() && !sameFileSnapshot(metadata, completed))) {
+          throw new Error(`Workspace entry "${relativePath}" changed during fingerprinting.`);
+        }
+      } finally {
+        closeSync(childFd);
       }
-    });
+    }
   } finally {
-    if (ownsHandle) await directoryHandle.close();
+    if (ownsFd) closeSync(directoryFd);
   }
 }
 
@@ -481,46 +479,50 @@ async function isSafeWorkspaceRoot(path: string, expected: WorkspaceIdentity): P
   }
 }
 
-async function isSafeWorkspaceTree(
+function isSafeWorkspaceTree(
   directory: string,
   relativeDirectory = "",
   root = directory,
-  verifiedHandle?: Awaited<ReturnType<typeof open>>,
-): Promise<boolean> {
-  const directoryHandle = verifiedHandle
-    ?? await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW).catch(() => undefined);
-  if (directoryHandle === undefined) return false;
-  const ownsHandle = verifiedHandle === undefined;
+  verifiedFd?: number,
+): boolean {
+  let directoryFd: number;
   try {
-    return await withVerifiedDirectoryHandle(root, directory, directoryHandle, async () => {
-      for (const entry of await readdir(".", { withFileTypes: true })) {
-        const path = join(directory, entry.name);
-        const relativePath = relativeDirectory === "" ? entry.name : `${relativeDirectory}/${entry.name}`;
-        if (relativePath.split("/", 1)[0]?.toLowerCase() === "restricted") return false;
-        const current = await lstat(entry.name);
-        const childHandle = await openChild(entry.name, entry.isDirectory()).catch(() => undefined);
-        if (childHandle === undefined) return false;
-        try {
-          const metadata = await childHandle.stat();
-          await assertContainedRealpath(root, path);
-          if (current.isSymbolicLink() || !sameIdentity(metadata, current)) return false;
-          if (metadata.isDirectory()) {
-            if ((metadata.mode & 0o7777) !== DIRECTORY_MODE
-                || !await isSafeWorkspaceTree(path, relativePath, root, childHandle)) return false;
-          } else if (!metadata.isFile() || metadata.nlink > 1
-              || (metadata.mode & 0o7777) !== normalizedFileMode(metadata.mode)) {
-            return false;
-          }
-        } finally {
-          await childHandle.close();
+    directoryFd = verifiedFd
+      ?? openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  } catch {
+    return false;
+  }
+  const ownsFd = verifiedFd === undefined;
+  try {
+    assertContainedRealpathSync(root, directory);
+    const directoryMetadata = fstatSync(directoryFd);
+    if (!directoryMetadata.isDirectory() || directoryMetadata.isSymbolicLink()) return false;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      const relativePath = relativeDirectory === "" ? entry.name : `${relativeDirectory}/${entry.name}`;
+      if (relativePath.split("/", 1)[0]?.toLowerCase() === "restricted") return false;
+      const current = lstatSync(path);
+      const childFd = openChildSync(path, entry.isDirectory());
+      try {
+        const metadata = fstatSync(childFd);
+        assertContainedRealpathSync(root, path);
+        if (current.isSymbolicLink() || !sameIdentity(metadata, current)) return false;
+        if (metadata.isDirectory()) {
+          if ((metadata.mode & 0o7777) !== DIRECTORY_MODE
+              || !isSafeWorkspaceTree(path, relativePath, root, childFd)) return false;
+        } else if (!metadata.isFile() || metadata.nlink > 1
+            || (metadata.mode & 0o7777) !== normalizedFileMode(metadata.mode)) {
+          return false;
         }
+      } finally {
+        closeSync(childFd);
       }
-      return true;
-    });
+    }
+    return true;
   } catch {
     return false;
   } finally {
-    if (ownsHandle) await directoryHandle.close();
+    if (ownsFd) closeSync(directoryFd);
   }
 }
 

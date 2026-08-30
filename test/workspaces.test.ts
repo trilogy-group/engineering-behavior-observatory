@@ -146,6 +146,26 @@ test("materializes frozen fixtures reproducibly and cleans successful attempts",
   }
 });
 
+test("materializes concurrent attempts without process-wide directory interference", async () => {
+  const { root } = createBundle();
+  const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+
+  try {
+    freezeTaskPacket(root, "packet.json");
+    const [first, second] = await Promise.all([
+      materializeWorkspace({ bundleRoot: root, packetLocator: "packet.json", attemptId: "concurrent-one", workspaceParent: parent }),
+      materializeWorkspace({ bundleRoot: root, packetLocator: "packet.json", attemptId: "concurrent-two", workspaceParent: parent }),
+    ]);
+    assert.equal(first.workspaceFingerprint, second.workspaceFingerprint);
+    await Promise.all([first.cleanup("success"), second.cleanup("success")]);
+    assert.equal(existsSync(first.workspacePath), false);
+    assert.equal(existsSync(second.workspacePath), false);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(parent, { force: true, recursive: true });
+  }
+});
+
 test("keeps workspaces private while preserving executable fixture and setup modes", async () => {
   const { root } = createBundle(
     fixtureArchive([{ path: "tool.sh", bytes: Buffer.from("#!/bin/sh\n"), mode: 0o755 }]),
