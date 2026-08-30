@@ -21,7 +21,7 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs";
-import { chmod, lstat, mkdir, realpath } from "node:fs/promises";
+import { lstat, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 
@@ -130,7 +130,6 @@ export async function materializeWorkspace(
   let result: WorkspaceMaterialization | undefined;
   try {
     workspaceIdentity = await readWorkspaceRootIdentity(workspacePath);
-    await chmod(workspacePath, DIRECTORY_MODE);
     materializeEntries(workspacePath, workspaceIdentity, entries);
     workspacePath = sealWorkspace(workspacePath, join(parent.path, `.ebo-${attemptId}-sealed-${randomUUID()}`), workspaceIdentity);
     await runSetup(options.setup, options.setupSteps, workspacePath);
