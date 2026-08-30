@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -26,6 +26,7 @@ import {
   type ResolvedTaskPacket,
   type TaskPacket,
 } from "../src/index.js";
+import { readBoundedFile } from "../src/scheduler.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const overlongFreezeLocator = `${"a".repeat(250)}/${"b".repeat(250)}/${"c".repeat(250)}/${"d".repeat(199)}`;
@@ -688,6 +689,15 @@ test("a persisted local queue is validated and consumed in order", () => {
     writeFileSync(experimentPath, canonicalizeMetadata(experiment));
     writeRunQueue(path, queue);
     assert.doesNotThrow(() => writeRunQueue(path, queue));
+    const racedPath = `${path}.raced`;
+    try {
+      assert.throws(
+        () => readBoundedFile(path, "Run queue", () => renameSync(path, racedPath)),
+        /changed while being read/,
+      );
+    } finally {
+      renameSync(racedPath, path);
+    }
     const oversizedFile = join(root, "oversized.json");
     writeFileSync(oversizedFile, "");
     truncateSync(oversizedFile, MAX_RUN_QUEUE_BYTES + 1);

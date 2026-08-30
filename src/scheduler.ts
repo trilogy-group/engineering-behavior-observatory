@@ -264,7 +264,7 @@ export function readRunQueue(
   experiment?: ExperimentConfiguration,
   options: ValidateRunQueueOptions = {},
 ): RunQueue {
-  const bytes = readRunQueueBytes(path);
+  const bytes = readBoundedFile(path, "Run queue");
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   assertNoDuplicateJsonKeys(text);
   const queue = JSON.parse(text) as unknown;
@@ -272,37 +272,43 @@ export function readRunQueue(
   return queue as RunQueue;
 }
 
-function readRunQueueBytes(path: string): Buffer {
+export function readBoundedFile(path: string, label = "Artifact", afterOpen?: () => void): Buffer {
   let descriptor: number | undefined;
   try {
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const opened = fstatSync(descriptor);
-    if (!opened.isFile()) throw new Error(`Run queue path "${path}" is not a regular file.`);
+    if (!opened.isFile()) throw new Error(`${label} path "${path}" is not a regular file.`);
     const namedBefore = lstatSync(path);
     if (!namedBefore.isFile() || !sameFileIdentity(namedBefore, opened)) {
-      throw new Error(`Run queue file "${path}" changed while being opened.`);
+      throw new Error(`${label} file "${path}" changed while being opened.`);
     }
     if (!Number.isSafeInteger(opened.size) || opened.size > MAX_RUN_QUEUE_BYTES) {
-      throw new Error(`Run queue file exceeds the local byte limit of ${MAX_RUN_QUEUE_BYTES}.`);
+      throw new Error(`${label} file exceeds the local byte limit of ${MAX_RUN_QUEUE_BYTES}.`);
     }
     const openedTimes = fstatSync(descriptor, { bigint: true });
+    afterOpen?.();
     const bytes = Buffer.alloc(opened.size);
     for (let offset = 0; offset < opened.size;) {
       const read = readSync(descriptor, bytes, offset, opened.size - offset, offset);
-      if (read === 0) throw new Error(`Run queue file "${path}" was truncated while being read.`);
+      if (read === 0) throw new Error(`${label} file "${path}" was truncated while being read.`);
       offset += read;
     }
     const trailing = Buffer.allocUnsafe(1);
     if (readSync(descriptor, trailing, 0, 1, opened.size) !== 0) {
-      throw new Error(`Run queue file "${path}" grew while being read.`);
+      throw new Error(`${label} file "${path}" grew while being read.`);
     }
     const completed = fstatSync(descriptor);
     const completedTimes = fstatSync(descriptor, { bigint: true });
-    const namedAfter = lstatSync(path);
+    let namedAfter;
+    try {
+      namedAfter = lstatSync(path);
+    } catch {
+      throw new Error(`${label} file "${path}" changed while being read.`);
+    }
     if (!completed.isFile() || completed.dev !== opened.dev || completed.ino !== opened.ino
         || completed.size !== opened.size || !namedAfter.isFile() || !sameFileIdentity(namedAfter, completed)
         || completedTimes.mtimeNs !== openedTimes.mtimeNs || completedTimes.ctimeNs !== openedTimes.ctimeNs) {
-      throw new Error(`Run queue file "${path}" changed while being read.`);
+      throw new Error(`${label} file "${path}" changed while being read.`);
     }
     return bytes;
   } finally {
