@@ -274,6 +274,25 @@ test("keeps frame limits independent from the evidence envelope", async () => {
   }
 });
 
+test("bounds frames to the envelope capacity of a caller-owned writer", async () => {
+  const root = temporaryRoot();
+  try {
+    const evidencePath = join(root, "caller-writer.jsonl");
+    const writer = new JsonlEvidenceWriter(evidencePath);
+    const processResult = await runProtocolProcess({
+      ...nodeScript("process.stdout.write(JSON.stringify('x'.repeat(2_100_000)) + '\\n')"),
+      source: "fake-harness",
+      writer,
+    });
+    assert.equal(processResult.status, "malformed");
+    assert.equal(processResult.recorderError, undefined);
+    assert.match(processResult.protocolError?.message ?? "", /exceeds/);
+    await writer.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("does not expose a pre-existing diagnostic path as this process evidence", async () => {
   const root = temporaryRoot();
   try {

@@ -119,6 +119,35 @@ test("verifier errors shut down their registered helper", async () => {
   assert.equal(result.record.verifierTerminationConfirmed, true);
 });
 
+test("verifier task failures with failed shutdown retain verifier-error provenance", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-verifier-shutdown-failure-"));
+  try {
+    const recordPath = join(root, "attempt.json");
+    const result = await executeRunAttempt({
+      run,
+      recordPath,
+      shutdownGraceMs: 10,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({
+        status: "failed",
+        error: "assertion failed",
+        shutdownResult: { status: "failed" as const, error: "verifier shutdown failed" },
+      }),
+      evidence: { flush: () => undefined },
+    });
+    assert.equal(result.classification.kind, "verifier-error");
+    assert.equal(result.terminal.failureClass, "infrastructure");
+    assert.equal(result.record.verifier?.status, "error");
+    assert.equal((result.record.verifier?.evidence as { nativeStatus?: string }).nativeStatus, "failed");
+    assert.equal(result.record.verifier?.shutdownResult?.status, "failed");
+    assert.equal(result.record.cleanup?.status, "timed-out");
+    assert.equal((await readAttemptRecord(recordPath)).classification?.kind, "verifier-error");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("passed verifier results reject an error field", async () => {
   const result = await executeRunAttempt({
     run,
@@ -1421,6 +1450,31 @@ test("verifier-error terminals require native verifier evidence", async () => {
     const path = join(root, "missing-verifier-error.json");
     writeFileSync(path, `${JSON.stringify(record)}\n`);
     await assert.rejects(readAttemptRecord(path), /error or not-run verifier result/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("verifier-error terminals require a viable workspace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-verifier-workspace-evidence-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "error", error: "verifier failed" }),
+      evidence: { flush: () => undefined },
+    });
+    for (const [name, replacement, errorPattern] of [
+      ["failed", { status: "failed", artifactId: "workspace-1", retained: true }, /ready workspace/],
+      ["shutdown-failed", { status: "ready", artifactId: "workspace-1", shutdownResult: { status: "failed", error: "workspace shutdown failed" } }, /confirmed workspace/],
+    ] as const) {
+      const record = structuredClone(result.record);
+      record.workspace = replacement;
+      const path = join(root, `${name}.json`);
+      writeFileSync(path, `${JSON.stringify(record)}\n`);
+      await assert.rejects(readAttemptRecord(path), errorPattern);
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

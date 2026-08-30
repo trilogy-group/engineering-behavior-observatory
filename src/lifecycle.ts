@@ -1418,13 +1418,14 @@ function normalizeHarnessShutdownFailure(result: HarnessExecutionResult): Harnes
 }
 
 function normalizeVerifierShutdownFailure(result: VerifierExecutionResult): VerifierExecutionResult {
-  if (result.status !== "passed" || result.shutdownResult === undefined || result.shutdownResult.status === "completed") return result;
+  if ((result.status !== "passed" && result.status !== "failed")
+      || result.shutdownResult === undefined || result.shutdownResult.status === "completed") return result;
   return {
     ...result,
     status: "error",
     error: result.error ?? "Verifier shutdown did not complete.",
     evidence: {
-      nativeStatus: "passed",
+      nativeStatus: result.status,
       ...(result.evidence === undefined ? {} : { nativeEvidence: result.evidence }),
     },
   };
@@ -1667,6 +1668,10 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       if (!isRecord(value.harness) || value.harness.status !== "completed") {
         throw new Error("Verifier-error terminal records require a completed harness result.");
       }
+      if (!isRecord(value.workspace) || value.workspace.status !== "ready") {
+        throw new Error("Verifier-error terminal records require a ready workspace result.");
+      }
+      assertShutdownCompleted(value.workspace, "Workspace");
       if (!isRecord(value.verifier) || (value.verifier.status !== "error" && value.verifier.status !== "not-run")) {
         throw new Error("Verifier-error terminal records require an error or not-run verifier result.");
       }

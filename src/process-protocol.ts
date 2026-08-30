@@ -70,6 +70,11 @@ const DEFAULT_MAX_STDERR_BYTES = 64 * 1024;
 const DEFAULT_SHUTDOWN_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 250;
 const DEFAULT_MAX_IN_MEMORY_OBSERVATIONS = 1024;
+// A frame observation retains both the original line and parsed payload. Keep
+// the same conservative envelope sizing used for internally owned writers
+// when a caller supplies a writer with a smaller record bound.
+const PROTOCOL_RECORD_ENVELOPE_MULTIPLIER = 8;
+const PROTOCOL_RECORD_ENVELOPE_OVERHEAD = 4096;
 const MAX_TIMER_MS = 2_147_483_647;
 const INTERNAL_RECORDER_TOKEN = Symbol("internal recorder event");
 const CLAIMED_WRITER_PATHS = new Set<string>();
@@ -104,6 +109,10 @@ export class JsonlEvidenceWriter {
 
   public get count(): number {
     return this._count;
+  }
+
+  public get maxRecordBytes(): number {
+    return this.maxLineBytes;
   }
 
   public append(record: unknown, token?: typeof INTERNAL_RECORDER_TOKEN): Promise<void> {
@@ -601,7 +610,7 @@ export class ProtocolProcess {
   public constructor(private readonly options: ProtocolProcessOptions) {
     assertNonEmpty(options.command, "Protocol command");
     assertNonEmpty(options.source, "Protocol source");
-    this.stdoutLineLimit = positiveInteger(options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES, "Protocol line limit");
+    const requestedLineLimit = positiveInteger(options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES, "Protocol line limit");
     this.stderrCapture = new BoundedDiagnosticCapture(options.maxStderrBytes ?? DEFAULT_MAX_STDERR_BYTES);
     this.shutdownGraceMs = nonnegativeInteger(options.shutdownGraceMs ?? DEFAULT_SHUTDOWN_GRACE_MS, "Shutdown grace period");
     this.killGraceMs = nonnegativeInteger(options.killGraceMs ?? DEFAULT_KILL_GRACE_MS, "Kill grace period");
@@ -625,13 +634,18 @@ export class ProtocolProcess {
       closeSync(descriptor);
       syncDirectory(dirname(resolve(evidencePath)));
       writer = new JsonlEvidenceWriter(evidencePath, {
-        maxLineBytes: Math.min(Number.MAX_SAFE_INTEGER, this.stdoutLineLimit * 8 + 4096),
+        maxLineBytes: Math.min(Number.MAX_SAFE_INTEGER, requestedLineLimit * 8 + 4096),
       });
     }
     const configuredEvidencePath = options.evidencePath === undefined ? undefined : resolve(options.evidencePath);
     if (options.writer !== undefined && configuredEvidencePath !== undefined && configuredEvidencePath !== writer.path) {
       throw new Error("Protocol writer path conflicts with evidencePath.");
     }
+    this.stdoutLineLimit = protocolLineLimitForWriter(
+      requestedLineLimit,
+      writer.maxRecordBytes,
+      options.writer !== undefined,
+    );
     this.ownsWriter = options.writer === undefined;
     this.evidencePath = writer.path;
     this.stderrPath = options.stderrPath === undefined ? undefined : resolve(options.stderrPath);
@@ -988,6 +1002,20 @@ function syncDirectory(path: string): void {
   } finally {
     closeSync(descriptor);
   }
+}
+
+function protocolLineLimitForWriter(
+  requestedLineLimit: number,
+  writerMaxRecordBytes: number,
+  callerSuppliedWriter: boolean,
+): number {
+  if (!callerSuppliedWriter) return requestedLineLimit;
+  const available = writerMaxRecordBytes - PROTOCOL_RECORD_ENVELOPE_OVERHEAD;
+  const envelopeSafeLimit = Math.max(
+    1,
+    Math.floor(available / PROTOCOL_RECORD_ENVELOPE_MULTIPLIER),
+  );
+  return Math.min(requestedLineLimit, envelopeSafeLimit);
 }
 
 function canonicalWriterPath(path: string): string {
