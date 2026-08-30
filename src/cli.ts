@@ -22,7 +22,7 @@ import {
 } from "./scheduler.js";
 
 const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <command> ...
-       ebo matrix compile <experiment.json> <bundle-root> <queue.json>
+       ebo matrix compile <experiment.json> <bundle-root> <queue.json> [--freeze-locator <task-id>=<path>]
        ebo queue inspect <queue.json>
        ebo queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
 
@@ -135,32 +135,44 @@ function compileQueue(
   const positional: string[] = [];
   let bundleRoot: string | undefined;
   let outputPath: string | undefined;
+  const freezeLocators: Record<string, string> = {};
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
     if (argument === "--bundle-root") {
       bundleRoot = args[++index];
     } else if (argument === "--output") {
       outputPath = args[++index];
+    } else if (argument === "--freeze-locator") {
+      const value = args[++index];
+      const separator = value?.indexOf("=") ?? -1;
+      if (separator <= 0 || separator === value!.length - 1) {
+        write("Usage: ebo matrix compile <experiment.json> <bundle-root> <queue.json> [--freeze-locator <task-id>=<path>]\n");
+        return 1;
+      }
+      freezeLocators[value!.slice(0, separator)] = value!.slice(separator + 1);
     } else {
       positional.push(argument);
     }
   }
   const experimentPath = positional.shift();
   if (experimentPath === undefined) {
-    write("Usage: ebo matrix compile <experiment.json> <bundle-root> <queue.json>\n");
+    write("Usage: ebo matrix compile <experiment.json> <bundle-root> <queue.json> [--freeze-locator <task-id>=<path>]\n");
     return 1;
   }
   if (bundleRoot === undefined && positional.length === 2) bundleRoot = positional.shift();
   if (outputPath === undefined && positional.length === 1) outputPath = positional.shift();
   if (bundleRoot === undefined) bundleRoot = dirname(experimentPath);
   if (outputPath === undefined) {
-    write("Usage: ebo matrix compile <experiment.json> <bundle-root> <queue.json>\n");
+    write("Usage: ebo matrix compile <experiment.json> <bundle-root> <queue.json> [--freeze-locator <task-id>=<path>]\n");
     return 1;
   }
 
   try {
     const experiment = readJson(experimentPath);
-    const queue = compileRunQueue(experiment as Parameters<typeof compileRunQueue>[0], { bundleRoot });
+    const queue = compileRunQueue(experiment as Parameters<typeof compileRunQueue>[0], {
+      bundleRoot,
+      ...(Object.keys(freezeLocators).length === 0 ? {} : { freezeLocators }),
+    });
     writeRunQueue(outputPath, queue);
     write(`Compiled ${queue.entries.length} run entr${queue.entries.length === 1 ? "y" : "ies"} into ${outputPath}. Seed: ${queue.seed}.\n`);
     return 0;

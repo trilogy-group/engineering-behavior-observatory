@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,6 +10,7 @@ import {
   compileRunQueue,
   inspectRunQueue,
   LocalRunQueue,
+  main,
   MAX_RUN_QUEUE_ENTRIES,
   readRunQueue,
   validateRunQueue,
@@ -93,6 +94,7 @@ test("compiles arbitrary matrices with stable serialized identities", () => {
   assert.equal(first.entries[0]!.task.packetRef.digest.value, "a".repeat(64));
   assert.equal(first.entries[0]!.configuration.model.digest.value, "d".repeat(64));
   assert.deepEqual(first.captureProfile, experiment.captureProfile);
+  assert.deepEqual(first.coordinatorBudget, experiment.coordinatorBudget);
   assert.equal(first.entries[0]!.trial.index, first.entries[0]!.trialIndex);
 
   const changedExperiment = structuredClone(experiment);
@@ -250,11 +252,16 @@ test("a persisted local queue is validated and consumed in order", () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-run-queue-"));
   try {
     const path = join(root, "queue.json");
+    const experimentPath = join(root, "experiment.json");
+    writeFileSync(experimentPath, canonicalizeMetadata(experiment));
     writeRunQueue(path, queue);
     assert.doesNotThrow(() => writeRunQueue(path, queue));
     assert.throws(() => writeRunQueue(path, { ...queue, seed: "changed" }), /different queue/);
     assert.equal(readFileSync(path, "utf8"), canonicalizeMetadata(queue));
     const loaded = readRunQueue(path, experiment, compileOptions(experiment));
+    let output = "";
+    assert.equal(main(["queue", "validate", path, experimentPath], (message) => (output += message)), 0);
+    assert.match(output, /Validated run queue/);
     assert.deepEqual(inspectRunQueue(loaded), inspectRunQueue(queue));
     const local = new LocalRunQueue(loaded);
     assert.equal(local.remaining, 18);

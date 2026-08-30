@@ -64,7 +64,7 @@ node dist/src/cli.js task-packet validate <bundle-root> <packet.json>
 node dist/src/cli.js task-packet admit <bundle-root> <packet.json>
 node dist/src/cli.js task-packet freeze <bundle-root> <packet.json>
 node dist/src/cli.js task-packet status <bundle-root> <packet.json>
-node dist/src/cli.js matrix compile <experiment.json> <bundle-root> <queue.json>
+node dist/src/cli.js matrix compile <experiment.json> <bundle-root> <queue.json> [--freeze-locator <task-id>=<path>]
 node dist/src/cli.js queue inspect <queue.json>
 node dist/src/cli.js queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
 ```

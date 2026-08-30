@@ -85,10 +85,12 @@ export type RunQueue = {
   experimentId: string;
   experimentDigest: Digest;
   captureProfile: ArtifactReference;
+  coordinatorBudget: { maxWallClockMs: number };
   seed: string;
   ordering: {
     strategy: QueueOrderingStrategy;
     balanceBy?: "task" | "model" | "harness";
+    permutationAlgorithm?: PermutationAlgorithm;
     permutationAlgorithmRef?: ArtifactReference;
   };
   entries: RunQueueEntry[];
@@ -99,6 +101,7 @@ export type CompileRunQueueOptions = {
   resolvedDigests?: Record<string, Digest>;
   permutationAlgorithm?: unknown;
   permutationAlgorithms?: Record<string, unknown>;
+  freezeLocators?: Record<string, string>;
   frozenTasks?: Record<string, FrozenTaskInput>;
   taskFreezeRecords?: Record<string, FrozenTaskInput>;
   taskPackets?: Record<string, FrozenTaskInput>;
@@ -107,7 +110,7 @@ export type CompileRunQueueOptions = {
 
 export type ValidateRunQueueOptions = Pick<CompileRunQueueOptions,
   "bundleRoot" | "resolvedDigests" | "frozenTasks" | "taskFreezeRecords" | "taskPackets"
-  | "permutationAlgorithm" | "permutationAlgorithms">;
+  | "permutationAlgorithm" | "permutationAlgorithms" | "freezeLocators">;
 
 export type RunQueueInspection = {
   experimentId: string;
@@ -137,6 +140,9 @@ export function compileRunQueue(
   const resolvedDigests = resolveConfigurationDigests(experiment, options);
   assertResolvedExperimentConfigurationDigests(experiment, resolvedDigests);
   const permutationAlgorithm = resolvePermutationAlgorithm(experiment, options);
+  const persistedOrdering = ordering.strategy === "seeded-shuffle"
+    ? { ...ordering, permutationAlgorithm }
+    : ordering;
   const tasks = resolveFrozenTasks(experiment, options);
   if (options.resolvedPackets !== undefined) {
     assertAdmittedTaskPackets(experiment.taskSet, options.resolvedPackets);
@@ -175,8 +181,9 @@ export function compileRunQueue(
     experimentId: experiment.id,
     experimentDigest,
     captureProfile: experiment.captureProfile,
+    coordinatorBudget: experiment.coordinatorBudget,
     seed: experiment.ordering.seed,
-    ordering,
+    ordering: persistedOrdering,
     entries,
   };
   assertValidRunQueue(queue, experiment, "run-queue.json", options);
@@ -219,6 +226,7 @@ export function validateRunQueue(
   artifact = "run-queue.json",
   options: ValidateRunQueueOptions = {},
 ): ArtifactValidationError[] {
+  let validatedPermutationAlgorithm: PermutationAlgorithm | undefined;
   if (experiment !== undefined) {
     const experimentErrors = validateArtifact("experiment.json", experiment);
     if (experimentErrors.length > 0) return experimentErrors;
@@ -227,7 +235,9 @@ export function validateRunQueue(
       if (options.bundleRoot !== undefined || options.resolvedDigests !== undefined) {
         assertResolvedExperimentConfigurationDigests(experiment, resolveConfigurationDigests(experiment, options));
       }
-      resolvePermutationAlgorithm(experiment, options);
+      if (canResolvePermutationAlgorithm(options)) {
+        validatedPermutationAlgorithm = resolvePermutationAlgorithm(experiment, options);
+      }
     } catch (error) {
       return [queueError(artifact, "/experiment", error instanceof Error ? error.message : "Experiment cannot be scheduled.")];
     }
@@ -242,11 +252,9 @@ export function validateRunQueue(
   const cells = new Set<string>();
   let expectedTasks: Map<string, FrozenTaskIdentity> | undefined;
   if (experiment !== undefined) {
-    if (!hasFrozenTaskInputs(options)) {
-      semanticErrors.push(queueError(artifact, "/entries/task", "Frozen task records or a bundle root are required for queue validation."));
-    } else {
+    if (hasFrozenTaskInputs(options)) {
       try {
-        expectedTasks = resolveFrozenTasks(experiment, options);
+        expectedTasks = resolveFrozenTasks(experiment, provenanceOptions(runQueue, options));
       } catch (error) {
         semanticErrors.push(queueError(artifact, "/entries/task", error instanceof Error ? error.message : "Frozen task records could not be resolved."));
       }
@@ -318,10 +326,16 @@ export function validateRunQueue(
     if (!sameReference(runQueue.captureProfile, experiment.captureProfile)) {
       semanticErrors.push(queueError(artifact, "/captureProfile", "Run queue capture profile does not match the experiment."));
     }
+    if (runQueue.coordinatorBudget.maxWallClockMs !== experiment.coordinatorBudget.maxWallClockMs) {
+      semanticErrors.push(queueError(artifact, "/coordinatorBudget", "Run queue coordinator budget does not match the experiment."));
+    }
     const expectedOrdering = normalizeOrdering(experiment.ordering);
     if (runQueue.seed !== experiment.ordering.seed || runQueue.ordering.strategy !== expectedOrdering.strategy
         || runQueue.ordering.balanceBy !== expectedOrdering.balanceBy
-        || !sameOptionalReference(runQueue.ordering.permutationAlgorithmRef, expectedOrdering.permutationAlgorithmRef)) {
+        || !sameOptionalReference(runQueue.ordering.permutationAlgorithmRef, expectedOrdering.permutationAlgorithmRef)
+        || (validatedPermutationAlgorithm !== undefined
+          && runQueue.ordering.permutationAlgorithm !== validatedPermutationAlgorithm)
+        || (expectedOrdering.strategy === "seeded-shuffle" && runQueue.ordering.permutationAlgorithm === undefined)) {
       semanticErrors.push(queueError(artifact, "/ordering", "Run queue ordering does not match the experiment."));
     }
     const expectedCells = new Set(expandMatrixCells(experiment).map(cellKeyOf));
@@ -331,7 +345,7 @@ export function validateRunQueue(
     const expectedOrder = orderCells(
       expandMatrixCells(experiment),
       experiment.ordering,
-      resolvePermutationAlgorithm(experiment, options),
+      validatedPermutationAlgorithm ?? runQueue.ordering.permutationAlgorithm ?? "fisher-yates-v1",
     ).map(cellKeyOf);
     const actualOrder = runQueue.entries.map(cellKeyOf);
     if (expectedOrder.length !== actualOrder.length
@@ -481,6 +495,12 @@ function resolvePermutationAlgorithm(
   throw new Error(`Unsupported permutation algorithm "${String(name)}".`);
 }
 
+function canResolvePermutationAlgorithm(options: ValidateRunQueueOptions): boolean {
+  return options.bundleRoot !== undefined
+    || options.permutationAlgorithm !== undefined
+    || options.permutationAlgorithms !== undefined;
+}
+
 function experimentReferences(experiment: ExperimentConfiguration): ArtifactReference[] {
   return [
     ...Object.values(experiment.modelSet).map((condition) => condition.configurationRef),
@@ -512,7 +532,7 @@ function resolveFrozenTasks(
         taskId,
         condition.packetRef.locator,
         condition.packetRef,
-        freezeLocatorOf(suppliedInput),
+        options.freezeLocators?.[taskId] ?? freezeLocatorOf(suppliedInput),
       )
       : frozenTaskFromInput(taskId, condition.packetRef, suppliedInput);
     if (packetDigests.has(digestIdentity(identity.packetRef.digest))) {
@@ -525,6 +545,22 @@ function resolveFrozenTasks(
     throw new Error("Every task packet must have a frozen task-packet record before scheduling.");
   }
   return tasks;
+}
+
+function provenanceOptions(
+  queue: RunQueue,
+  options: ValidateRunQueueOptions,
+): ValidateRunQueueOptions {
+  if (options.bundleRoot === undefined || hasExplicitFrozenTaskInputs(options)) return options;
+  const frozenTasks = Object.fromEntries(queue.entries.map((entry) => [entry.taskId, {
+    status: "frozen" as const,
+    packetId: entry.task.packetId,
+    packetLocator: entry.task.packetRef.locator,
+    packetDigest: entry.task.packetRef.digest,
+    freezeLocator: entry.task.freezeLocator,
+    aggregateDigest: entry.task.aggregateDigest,
+  }]));
+  return { ...options, frozenTasks };
 }
 
 function frozenTaskFromBundle(
@@ -693,6 +729,12 @@ function digestIdentity(digest: Digest): string {
 function hasFrozenTaskInputs(options: ValidateRunQueueOptions): boolean {
   return options.bundleRoot !== undefined
     || options.frozenTasks !== undefined
+    || options.taskFreezeRecords !== undefined
+    || options.taskPackets !== undefined;
+}
+
+function hasExplicitFrozenTaskInputs(options: ValidateRunQueueOptions): boolean {
+  return options.frozenTasks !== undefined
     || options.taskFreezeRecords !== undefined
     || options.taskPackets !== undefined;
 }

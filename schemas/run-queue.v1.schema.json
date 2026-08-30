@@ -4,12 +4,24 @@
   "title": "EBO run queue v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "experimentId", "experimentDigest", "captureProfile", "seed", "ordering", "entries"],
+  "required": ["schemaVersion", "experimentId", "experimentDigest", "captureProfile", "coordinatorBudget", "seed", "ordering", "entries"],
   "properties": {
     "schemaVersion": { "const": "ebo.run-queue/v1" },
     "experimentId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
     "experimentDigest": { "$ref": "#/$defs/digest" },
     "captureProfile": { "$ref": "#/$defs/reference" },
+    "coordinatorBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxWallClockMs"],
+      "properties": {
+        "maxWallClockMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        }
+      }
+    },
     "seed": { "type": "string", "minLength": 1 },
     "ordering": {
       "type": "object",
@@ -18,6 +30,7 @@
       "properties": {
         "strategy": { "enum": ["sequential", "seeded-shuffle", "balanced"] },
         "balanceBy": { "enum": ["task", "model", "harness"] },
+        "permutationAlgorithm": { "const": "fisher-yates-v1" },
         "permutationAlgorithmRef": { "$ref": "#/$defs/reference" }
       },
       "allOf": [
@@ -44,7 +57,18 @@
           "if": {
             "properties": { "strategy": { "enum": ["seeded-shuffle"] } }
           },
-          "then": { "not": { "required": ["balanceBy"] } }
+          "then": {
+            "allOf": [
+              { "required": ["permutationAlgorithm"] },
+              { "not": { "required": ["balanceBy"] } }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": { "strategy": { "enum": ["sequential", "balanced"] } }
+          },
+          "then": { "not": { "required": ["permutationAlgorithm"] } }
         }
       ]
     },
