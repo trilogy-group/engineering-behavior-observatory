@@ -282,6 +282,29 @@ test("retains the original JSONL frame text when parsed values lose precision", 
   }
 });
 
+test("retains valid frames with out-of-range JSON numbers", async () => {
+  const root = temporaryRoot();
+  try {
+    const raw = '{"n":1e400}';
+    const evidencePath = join(root, "non-finite-number.jsonl");
+    const processResult = await runProtocolProcess({
+      ...nodeScript(`console.log(${JSON.stringify(raw)})`),
+      source: "fake-harness",
+      evidencePath,
+    });
+    const frame = processResult.observations.find((record) => record.kind === "frame");
+    assert.equal(processResult.status, "completed");
+    assert.equal(processResult.recorderError, undefined);
+    assert.equal(processResult.stdoutFrames, 1);
+    assert.equal(frame?.raw, raw);
+    assert.match(frame?.parseError ?? "", /non-finite number/);
+    assert.equal("payload" in (frame ?? {}), false);
+    assert.match(readFileSync(evidencePath, "utf8"), /non-finite number/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("rejects conflicting writer and evidence paths", () => {
   const root = temporaryRoot();
   try {

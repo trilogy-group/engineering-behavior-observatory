@@ -1388,7 +1388,32 @@ test("completed attempt records require harness and verification lifecycle phase
     delete record.harness;
     const path = join(root, "missing-phases.json");
     writeFileSync(path, `${JSON.stringify(record)}\n`);
-    await assert.rejects(readAttemptRecord(path), /running and verifying lifecycle phases/);
+    await assert.rejects(readAttemptRecord(path), /running and verifying lifecycle phases|Verifier evidence requires/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("verifier evidence requires the verifying lifecycle phase", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-verifier-phase-evidence-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    const record = structuredClone(result.record);
+    const lifecycle = new LifecycleController(() => "created");
+    lifecycle.transition("setup", "setup");
+    lifecycle.transition("running", "running");
+    lifecycle.transition("cleaning", "cleaning");
+    lifecycle.transition("terminal", "terminal");
+    record.lifecycle = lifecycle.snapshot();
+    const path = join(root, "verifier-before-phase.json");
+    writeFileSync(path, `${JSON.stringify(record)}\n`);
+    await assert.rejects(readAttemptRecord(path), /Verifier evidence requires the verifying lifecycle phase/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1412,7 +1437,7 @@ test("task-failure attempt records require harness execution phases", async () =
     record.lifecycle = lifecycle.snapshot();
     const path = join(root, "missing-task-phases.json");
     writeFileSync(path, `${JSON.stringify(record)}\n`);
-    await assert.rejects(readAttemptRecord(path), /Task-failure terminal records require/);
+    await assert.rejects(readAttemptRecord(path), /Task-failure terminal records require|Verifier evidence requires/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1525,6 +1550,32 @@ test("harness budget-stop records require compatible harness evidence", async ()
     const path = join(root, "missing-budget-harness.json");
     writeFileSync(path, `${JSON.stringify(record)}\n`);
     await assert.rejects(readAttemptRecord(path), /compatible harness evidence/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("harness budget-stop records require a viable workspace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-budget-workspace-evidence-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "stopped", stopReason: "budget", reason: "harness budget" }),
+      evidence: { flush: () => undefined },
+    });
+    for (const [name, replacement, errorPattern] of [
+      ["missing", undefined, /ready workspace/],
+      ["failed", { status: "failed", artifactId: "workspace-1", retained: true }, /ready workspace|Workspace failure records/],
+      ["shutdown-failed", { status: "ready", artifactId: "workspace-1", shutdownResult: { status: "timed-out", error: "workspace shutdown timed out" } }, /confirmed workspace|Workspace failure records/],
+    ] as const) {
+      const record = structuredClone(result.record);
+      if (replacement === undefined) delete record.workspace;
+      else record.workspace = replacement;
+      const path = join(root, `${name}.json`);
+      writeFileSync(path, `${JSON.stringify(record)}\n`);
+      await assert.rejects(readAttemptRecord(path), errorPattern);
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

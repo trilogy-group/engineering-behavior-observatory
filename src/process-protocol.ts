@@ -27,6 +27,7 @@ export type ProtocolObservation = {
   id?: ProtocolIdentity;
   sourceIdentity?: string;
   raw?: string;
+  parseError?: string;
   payload?: unknown;
   evidence?: unknown;
   status?: string;
@@ -455,10 +456,18 @@ export class ProtocolEvidenceRecorder {
     this.fenced = true;
   }
 
-  public recordFrame(payload: unknown, observedAt = this.now(), raw?: string): Promise<ProtocolObservation> {
-    if (payload === undefined) return Promise.reject(new Error("Frame payload is required."));
+  public recordFrame(payload: unknown, observedAt = this.now(), raw?: string, parseError?: string): Promise<ProtocolObservation> {
+    if (payload === undefined && parseError === undefined) return Promise.reject(new Error("Frame payload is required."));
     if (raw !== undefined) assertNonEmpty(raw, "Raw frame text");
-    return this.record({ kind: "frame", source: this.source, stream: "stdout", ...(raw === undefined ? {} : { raw }), payload, observedAt });
+    if (parseError !== undefined) assertNonEmpty(parseError, "Frame parse error");
+    return this.record({
+      kind: "frame",
+      source: this.source,
+      stream: "stdout",
+      ...(raw === undefined ? {} : { raw }),
+      ...(parseError === undefined ? { payload } : { parseError }),
+      observedAt,
+    });
   }
 
   public recordRequest(input: ProtocolObservationInput): Promise<ProtocolObservation> {
@@ -541,6 +550,7 @@ export class ProtocolEvidenceRecorder {
     id?: ProtocolIdentity;
     sourceIdentity?: string;
     raw?: string;
+    parseError?: string;
     payload?: unknown;
     evidence?: unknown;
     status?: string;
@@ -577,6 +587,7 @@ export class ProtocolEvidenceRecorder {
         ...(input.id === undefined ? {} : { id: input.id }),
         ...(input.sourceIdentity === undefined ? {} : { sourceIdentity: input.sourceIdentity }),
         ...(input.raw === undefined ? {} : { raw: input.raw }),
+        ...(input.parseError === undefined ? {} : { parseError: input.parseError }),
         ...(payload === undefined ? {} : { payload }),
         ...(evidence === undefined ? {} : { evidence }),
         ...(input.status === undefined ? {} : { status: input.status }),
@@ -845,7 +856,16 @@ export class ProtocolProcess {
       return;
     }
     this.frameCount += 1;
-    await this.recorder.recordFrame(payload, this.now(), line);
+    const nonFiniteNumberPath = findNonFiniteJsonNumber(payload);
+    const parseError = nonFiniteNumberPath === undefined
+      ? undefined
+      : `Parsed JSON contains a non-finite number at ${nonFiniteNumberPath}; raw frame retained without a JSON-safe payload.`;
+    await this.recorder.recordFrame(
+      nonFiniteNumberPath === undefined ? payload : undefined,
+      this.now(),
+      line,
+      parseError,
+    );
     if (this.onFrame !== undefined) {
       const observer = Promise.resolve(this.onFrame(payload, this.recorder));
       const outcome = await settleObserver(observer, this.shutdownGraceMs);
@@ -1230,7 +1250,7 @@ function assertRecoveredObservation(value: Record<string, unknown>, line: number
   if (value.stream !== undefined && value.stream !== "stdout" && value.stream !== "stderr") {
     throw new Error(`Existing JSONL evidence line ${line} has an invalid observation stream.`);
   }
-  for (const field of ["method", "sourceIdentity", "raw", "status", "capability"] as const) {
+  for (const field of ["method", "sourceIdentity", "raw", "parseError", "status", "capability"] as const) {
     if (value[field] !== undefined && (typeof value[field] !== "string" || value[field].trim() === "")) {
       throw new Error(`Existing JSONL evidence line ${line} has an invalid ${field}.`);
     }
@@ -1240,7 +1260,13 @@ function assertRecoveredObservation(value: Record<string, unknown>, line: number
     throw new Error(`Existing JSONL evidence line ${line} has an invalid protocol identity.`);
   }
   if (kind === "frame" && !Object.hasOwn(value, "payload")) {
-    throw new Error(`Existing JSONL evidence line ${line} is missing frame payload.`);
+    if (typeof value.parseError !== "string" || value.parseError.trim() === "") {
+      throw new Error(`Existing JSONL evidence line ${line} is missing frame payload.`);
+    }
+  } else if (kind === "frame" && value.parseError !== undefined) {
+    throw new Error(`Existing JSONL evidence line ${line} has contradictory frame payload evidence.`);
+  } else if (kind !== "frame" && value.parseError !== undefined) {
+    throw new Error(`Existing JSONL evidence line ${line} has an unexpected frame parse error.`);
   }
   if ((kind === "request" || kind === "response" || kind === "notification")
       && (typeof value.method !== "string" || value.method.trim() === "")) {
@@ -1287,6 +1313,26 @@ function errorMessage(error: unknown): string {
 function cloneJsonValue(value: unknown, label: string): unknown {
   assertJsonValue(value, label, new Set<object>());
   return structuredClone(value);
+}
+
+function findNonFiniteJsonNumber(value: unknown, path = "$", seen = new Set<object>()): string | undefined {
+  if (typeof value === "number") return Number.isFinite(value) ? undefined : path;
+  if (value === null || typeof value !== "object") return undefined;
+  if (seen.has(value)) return undefined;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const [index, item] of value.entries()) {
+      const result = findNonFiniteJsonNumber(item, `${path}[${index}]`, seen);
+      if (result !== undefined) return result;
+    }
+  } else {
+    for (const [key, item] of Object.entries(value)) {
+      const result = findNonFiniteJsonNumber(item, `${path}.${key}`, seen);
+      if (result !== undefined) return result;
+    }
+  }
+  seen.delete(value);
+  return undefined;
 }
 
 function assertJsonValue(value: unknown, path: string, seen: Set<object>): void {

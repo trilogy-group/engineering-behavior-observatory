@@ -1592,6 +1592,10 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       && (visitedStates.has("running") || visitedStates.has("verifying"))) {
     throw new Error("Workspace failure records cannot include execution lifecycle phases.");
   }
+  if ((value.verifier !== undefined || value.verifierTerminationConfirmed !== undefined)
+      && !visitedStates.has("verifying")) {
+    throw new Error("Verifier evidence requires the verifying lifecycle phase.");
+  }
   if (value.harnessTerminationConfirmed !== undefined && typeof value.harnessTerminationConfirmed !== "boolean") {
     throw new Error("Harness termination confirmation is invalid.");
   }
@@ -1673,6 +1677,10 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
         if (!visitedStates.has("running")) {
           throw new Error("Harness budget-stop terminal records require the running lifecycle phase.");
         }
+        if (!isRecord(value.workspace) || value.workspace.status !== "ready") {
+          throw new Error("Harness budget-stop terminal records require a ready workspace result.");
+        }
+        assertShutdownCompleted(value.workspace, "Workspace");
         if (!isRecord(value.harness)
             || !((value.harness.status === "stopped" && value.harness.stopReason === "budget")
               || value.harness.status === "interrupted")) {
