@@ -113,6 +113,18 @@ test("verifier errors shut down their registered helper", async () => {
   assert.equal(result.record.verifierTerminationConfirmed, true);
 });
 
+test("passed verifier results reject an error field", async () => {
+  const result = await executeRunAttempt({
+    run,
+    workspace: workspace(),
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => ({ status: "passed", error: "verification failed" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.failureClass, "infrastructure");
+  assert.equal(result.record.verifier?.status, "error");
+});
+
 test("harness infrastructure, policy, and cleanup outcomes stay classified", async () => {
   const harnessFailure = await executeRunAttempt({
     run,
@@ -1166,6 +1178,26 @@ test("capture-incomplete classifications require incomplete capture evidence", a
     const path = join(root, "contradictory-capture.json");
     writeFileSync(path, `${JSON.stringify(record)}\n`);
     await assert.rejects(readAttemptRecord(path), /Capture-incomplete classifications require/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("terminal attempt records require explicit capture status", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-terminal-capture-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    const record = structuredClone(result.record);
+    delete record.capture;
+    const path = join(root, "missing-capture.json");
+    writeFileSync(path, `${JSON.stringify(record)}\n`);
+    await assert.rejects(readAttemptRecord(path), /explicit capture status/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

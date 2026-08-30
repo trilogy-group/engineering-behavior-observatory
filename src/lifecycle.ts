@@ -1202,6 +1202,7 @@ function snapshotWorkspace(workspace: WorkspaceExecutionResult): WorkspaceExecut
 }
 
 function snapshotVerifier(verifier: VerifierExecutionResult): VerifierExecutionResult {
+  assertVerifierResult(verifier);
   assertJsonValue(verifier, "verifier", new Set<object>());
   return structuredClone(verifier);
 }
@@ -1449,6 +1450,10 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     }
     if (value.cleanup.error !== undefined) assertTimestampValue(value.cleanup.error, "Attempt cleanup error");
   }
+  if (lifecycle.state === "terminal"
+      && (!isRecord(value.capture) || !["complete", "incomplete"].includes(String(value.capture.status)))) {
+    throw new Error("Terminal attempt records require explicit capture status.");
+  }
   if (value.classification?.kind === "capture-incomplete"
       && (!isRecord(value.capture) || value.capture.status !== "incomplete" || value.partial !== true)) {
     throw new Error("Capture-incomplete classifications require incomplete capture evidence and partial state.");
@@ -1578,6 +1583,9 @@ function assertHarnessResult(value: unknown): asserts value is HarnessExecutionR
 function assertVerifierResult(value: unknown): asserts value is VerifierExecutionResult {
   if (!isRecord(value) || !["passed", "failed", "error", "not-run"].includes(String(value.status))) {
     throw new Error("Attempt verifier evidence is invalid.");
+  }
+  if (value.status === "passed" && value.error !== undefined) {
+    throw new Error("Passed verifier evidence cannot include an error.");
   }
   if (value.error !== undefined) assertTimestampValue(value.error, "Verifier error");
   if (value.shutdownResult !== undefined) assertShutdownResult(value.shutdownResult, "Verifier shutdown");
