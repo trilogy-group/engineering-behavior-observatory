@@ -33,6 +33,7 @@ const ATTEMPT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 const EPOCH_SECONDS = 0;
+let setupQueue = Promise.resolve();
 
 export type WorkspaceSetupStep = (workspacePath: string) => void | Promise<void>;
 
@@ -548,7 +549,18 @@ async function runSetup(
   workspacePath: string,
 ): Promise<void> {
   const steps = setup === undefined ? [] : typeof setup === "function" ? [setup] : [...setup];
-  const processTreeBefore = process.platform === "win32" ? undefined : processTree();
+  let releaseSetup: (() => void) | undefined;
+  const previousSetup = setupQueue;
+  // ponytail: serialize setup process accounting; per-invocation process
+  // groups when concurrent setup throughput matters.
+  setupQueue = new Promise<void>((resolve) => { releaseSetup = resolve; });
+  await previousSetup;
+  let processTreeBefore: Map<number, number> | undefined;
+  try {
+    processTreeBefore = process.platform === "win32" ? undefined : processTree();
+  } catch {
+    processTreeBefore = undefined;
+  }
   try {
     for (const step of [...steps, ...(setupSteps ?? [])]) {
       if (typeof step !== "function") throw new Error("Workspace setup steps must be functions.");
@@ -559,6 +571,7 @@ async function runSetup(
       await new Promise<void>((resolve) => setImmediate(resolve));
       reapSetupDescendants(processTreeBefore);
     }
+    releaseSetup?.();
   }
 }
 

@@ -150,14 +150,21 @@ test("materializes frozen fixtures reproducibly and cleans successful attempts",
 test("materializes concurrent attempts without process-wide directory interference", async () => {
   const { root } = createBundle();
   const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+  const closed: Array<Promise<void>> = [];
 
   try {
     freezeTaskPacket(root, "packet.json");
+    const setup = () => {
+      const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+      closed.push(new Promise((resolve) => child.once("close", () => resolve())));
+    };
     const [first, second] = await Promise.all([
-      materializeWorkspace({ bundleRoot: root, packetLocator: "packet.json", attemptId: "concurrent-one", workspaceParent: parent }),
-      materializeWorkspace({ bundleRoot: root, packetLocator: "packet.json", attemptId: "concurrent-two", workspaceParent: parent }),
+      materializeWorkspace({ bundleRoot: root, packetLocator: "packet.json", attemptId: "concurrent-one", workspaceParent: parent, setup }),
+      materializeWorkspace({ bundleRoot: root, packetLocator: "packet.json", attemptId: "concurrent-two", workspaceParent: parent, setup }),
     ]);
     assert.equal(first.workspaceFingerprint, second.workspaceFingerprint);
+    await Promise.all(closed);
+    assert.equal(closed.length, 2);
     await Promise.all([first.cleanup("success"), second.cleanup("success")]);
     assert.equal(existsSync(first.workspacePath), false);
     assert.equal(existsSync(second.workspacePath), false);
