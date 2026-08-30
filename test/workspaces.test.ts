@@ -293,3 +293,19 @@ test("rejects a packet replacement that no longer matches the frozen snapshot", 
     rmSync(parent, { force: true, recursive: true });
   }
 });
+
+test("rejects a workspace parent inside the bundle before creating it", async () => {
+  const { root } = createBundle();
+  const parent = join(root, "generated-workspaces");
+
+  try {
+    freezeTaskPacket(root, "packet.json");
+    await assert.rejects(
+      materializeWorkspace({ bundleRoot: root, packetLocator: "packet.json", attemptId: "nested-parent", workspaceParent: parent }),
+      /Workspace parent must be outside/,
+    );
+    assert.equal(existsSync(parent), false);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});

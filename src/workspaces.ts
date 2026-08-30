@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, open, readdir, realpath, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 
 import { digestWorkspace } from "./verifiers.js";
 import {
@@ -84,7 +84,7 @@ export async function materializeWorkspace(
   assertFrozenSnapshot(options, freeze.packetDigest, freeze.aggregateDigest);
 
   const bundleRoot = await realpath(options.bundleRoot);
-  const parent = await prepareWorkspaceParent(options.workspaceParent ?? options.workspaceRoot ?? tmpdir());
+  const parent = await prepareWorkspaceParent(options.workspaceParent ?? options.workspaceRoot ?? tmpdir(), bundleRoot);
   const workspacePath = await realpath(await mkdtemp(join(parent, `ebo-${attemptId}-`)));
   if (!isDisjoint(bundleRoot, workspacePath)) {
     await rm(workspacePath, { force: true, recursive: true });
@@ -176,15 +176,32 @@ function createResult(input: {
   return result;
 }
 
-async function prepareWorkspaceParent(parent: string): Promise<string> {
+async function prepareWorkspaceParent(parent: string, bundleRoot: string): Promise<string> {
   const absolute = resolve(parent);
+  if (isContained(bundleRoot, await resolveFuturePath(absolute))) {
+    throw new Error("Workspace parent must be outside the task-bundle root.");
+  }
   await mkdir(absolute, { recursive: true, mode: 0o700 });
   const resolved = await realpath(absolute);
+  if (isContained(bundleRoot, resolved)) {
+    throw new Error("Workspace parent must be outside the task-bundle root.");
+  }
   const metadata = await lstat(resolved);
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
     throw new Error("Workspace parent is not a directory.");
   }
   return resolved;
+}
+
+async function resolveFuturePath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const parent = dirname(path);
+    if (parent === path) return path;
+    return resolve(await resolveFuturePath(parent), basename(path));
+  }
 }
 
 async function materializeEntry(root: string, entry: TaskArchiveEntry): Promise<void> {
