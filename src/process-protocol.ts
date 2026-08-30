@@ -615,7 +615,7 @@ export class ProtocolProcess {
       closeSync(descriptor);
       syncDirectory(dirname(resolve(evidencePath)));
       writer = new JsonlEvidenceWriter(evidencePath, {
-        maxLineBytes: Math.min(Number.MAX_SAFE_INTEGER, this.stdoutLineLimit * 4 + 1024),
+        maxLineBytes: Math.min(Number.MAX_SAFE_INTEGER, this.stdoutLineLimit * 8 + 4096),
       });
     }
     const configuredEvidencePath = options.evidencePath === undefined ? undefined : resolve(options.evidencePath);

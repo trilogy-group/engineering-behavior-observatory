@@ -491,8 +491,11 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           workspace = snapshotWorkspace(setupOutcome.value);
           record.workspace = snapshotWorkspace(workspace);
           workspaceTerminationConfirmed = workspace.shutdownResult === undefined || workspace.shutdownResult.status === "completed";
+          if (!workspaceTerminationConfirmed) {
+            classification = infrastructureClassification("Workspace shutdown did not complete.", "workspace", workspace);
+          }
           if (workspace.status === "failed") {
-            classification = infrastructureClassification("Workspace setup failed.", "workspace", workspace);
+            classification ??= infrastructureClassification("Workspace setup failed.", "workspace", workspace);
             if (workspaceShutdown !== undefined) {
               workspaceTerminationConfirmed = false;
               const shutdownResult = await shutdownWorkspace(workspaceShutdown, options.shutdownGraceMs ?? 250);
@@ -1588,14 +1591,22 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
         throw new Error("Policy-stop terminal records require a matching stopped harness result.");
       }
     }
-    if (classificationKind === "budget-stop" && classificationSource !== "runner") {
-      if (!visitedStates.has("running")) {
-        throw new Error("Harness budget-stop terminal records require the running lifecycle phase.");
+    if (classificationKind === "budget-stop") {
+      if (classificationSource !== "runner" && classificationSource !== "harness") {
+        throw new Error("Budget-stop terminal records require runner or harness attribution.");
       }
-      if (!isRecord(value.harness)
-          || !((value.harness.status === "stopped" && value.harness.stopReason === "budget")
-            || value.harness.status === "interrupted")) {
-        throw new Error("Harness budget-stop terminal records require compatible harness evidence.");
+      if (classificationSource === "runner") {
+        // Coordinator budgets do not require a harness result when the harness
+        // was never started.
+      } else {
+        if (!visitedStates.has("running")) {
+          throw new Error("Harness budget-stop terminal records require the running lifecycle phase.");
+        }
+        if (!isRecord(value.harness)
+            || !((value.harness.status === "stopped" && value.harness.stopReason === "budget")
+              || value.harness.status === "interrupted")) {
+          throw new Error("Harness budget-stop terminal records require compatible harness evidence.");
+        }
       }
     }
     if (classificationKind === "interrupted" && classificationSource === "harness") {
