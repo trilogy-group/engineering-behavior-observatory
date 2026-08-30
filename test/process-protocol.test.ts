@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { readFileSync, rmSync, mkdtempSync } from "node:fs";
+import { readFileSync, rmSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -69,6 +69,7 @@ test("records JSONL frames, source-owned observations, and bounded stderr", asyn
     assert.equal(processResult.stdoutFrames, 1);
     assert.equal(processResult.stderr.text, "1234");
     assert.equal(processResult.stderr.truncated, true);
+    assert.equal(processResult.stderrPath, stderrPath);
     assert.equal(readFileSync(stderrPath, "utf8"), "1234");
     assert.deepEqual(
       processResult.observations.filter((record) => ["request", "response", "notification"].includes(record.kind)).map((record) => [record.kind, record.method, record.id, record.sourceIdentity]),
@@ -129,6 +130,25 @@ test("keeps frame limits independent from the evidence envelope", async () => {
     });
     assert.equal(processResult.status, "completed");
     assert.equal(processResult.stdoutFrames, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("does not expose a pre-existing diagnostic path as this process evidence", async () => {
+  const root = temporaryRoot();
+  try {
+    const stderrPath = join(root, "existing.log");
+    writeFileSync(stderrPath, "previous attempt");
+    const processResult = await runProtocolProcess({
+      ...nodeScript("console.error('new diagnostic')"),
+      source: "fake-harness",
+      evidencePath: join(root, "protocol.jsonl"),
+      stderrPath,
+    });
+    assert.equal(processResult.stderrPath, undefined);
+    assert.match(processResult.error ?? "", /stderr evidence could not be persisted/);
+    assert.equal(readFileSync(stderrPath, "utf8"), "previous attempt");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

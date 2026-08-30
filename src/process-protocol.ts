@@ -408,6 +408,7 @@ export class ProtocolProcess {
   private readonly ownsWriter: boolean;
   private readonly evidencePath?: string;
   private readonly stderrPath?: string;
+  private stderrPersisted = false;
   private readonly startedAt: string;
   private readonly cwd: string;
   private readonly args: string[];
@@ -513,7 +514,15 @@ export class ProtocolProcess {
       this.child.stderr.on("data", (chunk: Buffer) => this.stderrCapture.write(chunk));
     }
     if (this.child.stdout === null) return;
-    this.child.stdout.on("data", (chunk: Buffer) => this.consumeStdout(chunk));
+    this.child.stdout.on("data", (chunk: Buffer) => {
+      this.child.stdout?.pause();
+      try {
+        this.consumeStdout(chunk);
+      } catch (error) {
+        void this.failRecorder(`Protocol output processing failed: ${errorMessage(error)}`);
+      }
+      void this.lineQueue.finally(() => this.child.stdout?.resume()).catch(() => undefined);
+    });
     this.child.stdout.on("end", () => this.flushPendingLine());
   }
 
@@ -658,8 +667,17 @@ export class ProtocolProcess {
       try {
         await mkdir(dirname(this.stderrPath), { recursive: true, mode: 0o700 });
         await writeFile(this.stderrPath, stderr.bytes, { mode: 0o600, flag: "wx" });
+        this.stderrPersisted = true;
       } catch (error) {
         this.childError ??= `stderr evidence could not be persisted: ${errorMessage(error)}`;
+      }
+    }
+    if (this.ownsWriter) {
+      // The process record above is durable before the writer is closed.
+      try {
+        await this.recorder.close();
+      } catch (error) {
+        this.childError ??= `Protocol evidence could not be closed: ${errorMessage(error)}`;
       }
     }
     const endedAt = this.now();
@@ -696,18 +714,10 @@ export class ProtocolProcess {
       ...(this.childError === undefined && this.recorderError === undefined ? {} : { error: this.childError ?? this.recorderError }),
       ...(this.recorderError === undefined ? {} : { recorderError: this.recorderError }),
       ...(this.evidencePath === undefined ? {} : { evidencePath: this.evidencePath }),
-      ...(this.stderrPath === undefined ? {} : { stderrPath: this.stderrPath }),
+      ...(this.stderrPersisted && this.stderrPath !== undefined ? { stderrPath: this.stderrPath } : {}),
       droppedObservations: this.recorder.droppedObservations,
       observations: [...this.recorder.observations],
     };
-    if (this.ownsWriter) {
-      // The process record above is durable before the writer is closed.
-      try {
-        await this.recorder.close();
-      } catch (error) {
-        this.childError ??= `Protocol evidence could not be closed: ${errorMessage(error)}`;
-      }
-    }
     resolveResult(result);
   }
 }

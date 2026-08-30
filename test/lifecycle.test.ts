@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { readFileSync, rmSync, mkdtempSync } from "node:fs";
+import { readFileSync, rmSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -378,6 +378,17 @@ test("record persistence failure does not bypass cleanup", async () => {
     assert.equal(cleaned, true);
     assert.equal(result.terminal.failureClass, "infrastructure");
     assert.equal(result.record.persistence?.status, "incomplete");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("attempt records are validated when read", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-invalid-record-"));
+  try {
+    const path = join(root, "invalid.json");
+    writeFileSync(path, "{}\n");
+    await assert.rejects(readAttemptRecord(path), /schemaVersion|run|attempt|lifecycle/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

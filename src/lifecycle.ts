@@ -531,11 +531,22 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     classification ??= infrastructureClassification("Run did not produce a terminal outcome.", "runner", workspace?.artifactId);
     record.classification = classification;
     record.terminal = classification.terminal;
-    const underlying = classification.kind === "capture-incomplete"
-      ? classification.underlying ?? classification.kind
-      : classification.kind;
-    record.partial = underlying !== "completed";
+    record.partial = classificationUnderlyingKind(classification) !== "completed";
+    const persistenceBeforeTerminal = persistenceError;
     await persist();
+    if (persistenceError !== undefined && persistenceBeforeTerminal === undefined
+        && classificationUnderlyingKind(classification) === "completed") {
+      const failedPersistence = infrastructureClassification(persistenceError, "runner", workspace?.artifactId);
+      classification = record.capture?.status === "incomplete"
+        ? { ...failedPersistence, kind: "capture-incomplete", source: "capture", underlying: failedPersistence.kind }
+        : failedPersistence;
+      record.classification = classification;
+      record.terminal = classification.terminal;
+      record.partial = true;
+      // The second write may still fail, but the returned record retains the
+      // persistence failure rather than reporting an unverified completion.
+      await persist();
+    }
     options.signal?.removeEventListener("abort", externalAbort);
   }
 
@@ -644,7 +655,7 @@ function classifyVerifier(result: VerifierExecutionResult, workspace: WorkspaceE
 }
 
 function completedClassification(workspace: WorkspaceExecutionResult | undefined): AttemptClassification {
-  if (workspace === undefined || workspace.status === "failed" || workspace.retained === false
+  if (workspace === undefined || workspace.status !== "ready" || workspace.retained === false
       || workspace.artifactId === undefined) {
     return infrastructureClassification("Completed run requires a retained workspace artifact.", "workspace", workspace?.artifactId);
   }
@@ -723,6 +734,12 @@ function abortClassification(
     : budgetClassification(budget ?? "coordinator", reason);
 }
 
+function classificationUnderlyingKind(classification: AttemptClassification): AttemptClassificationKind {
+  return classification.kind === "capture-incomplete"
+    ? classification.underlying ?? classification.kind
+    : classification.kind;
+}
+
 async function shutdownHarness(result: HarnessExecutionResult | undefined, graceMs: number): Promise<void> {
   if (result?.shutdown === undefined) return;
   const shutdown = Promise.resolve(result.shutdown());
@@ -748,8 +765,115 @@ function assertIdentity(value: string, label: string): void {
 }
 
 function assertRecord(value: unknown): asserts value is AttemptRecord {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new Error("Attempt record must be a JSON object.");
+  }
+  if (value.schemaVersion !== "ebo.attempt/v1") throw new Error("Attempt record schemaVersion is invalid.");
+  const run = value.run;
+  if (!isRecord(run)) throw new Error("Attempt record run is invalid.");
+  assertIdentityValue(run.id, "Run ID");
+  assertIdentityValue(run.taskId, "Task ID");
+  assertIdentityValue(run.modelId, "Model ID");
+  assertIdentityValue(run.harnessId, "Harness ID");
+  const attempt = value.attempt;
+  if (!isRecord(attempt)) throw new Error("Attempt record attempt is invalid.");
+  assertIdentityValue(attempt.id, "Attempt ID");
+  const attemptNumber = typeof attempt.number === "number" ? attempt.number : NaN;
+  if (!Number.isSafeInteger(attemptNumber) || attemptNumber < 1) throw new Error("Attempt number is invalid.");
+  if (attempt.retryOf !== undefined) assertIdentityValue(attempt.retryOf, "Retry attempt ID");
+  if ((attemptNumber > 1) !== (attempt.retryOf !== undefined)) throw new Error("Attempt retry lineage is invalid.");
+  if (attempt.retryOf === attempt.id) throw new Error("Attempt retry lineage is self-referential.");
+  const lifecycle = value.lifecycle;
+  if (!isRecord(lifecycle)) throw new Error("Attempt record lifecycle is invalid.");
+  if (!isLifecycleState(lifecycle.state)) throw new Error("Attempt lifecycle state is invalid.");
+  assertTimestampValue(lifecycle.createdAt, "Lifecycle createdAt");
+  assertTimestampValue(lifecycle.startedAt, "Lifecycle startedAt");
+  if (lifecycle.endedAt !== undefined) assertTimestampValue(lifecycle.endedAt, "Lifecycle endedAt");
+  if (!isRecord(lifecycle.timestamps)) throw new Error("Lifecycle timestamps are invalid.");
+  if (!Array.isArray(lifecycle.transitions)) throw new Error("Lifecycle transitions are invalid.");
+  let state: LifecycleState = "created";
+  for (const transition of lifecycle.transitions) {
+    if (!isRecord(transition) || !isLifecycleState(transition.from) || !isLifecycleState(transition.to)) {
+      throw new Error("Lifecycle transition is invalid.");
+    }
+    assertTimestampValue(transition.at, "Lifecycle transition timestamp");
+    if (transition.from !== state || !ALLOWED_TRANSITIONS[state].includes(transition.to)) {
+      throw new Error("Lifecycle transition sequence is invalid.");
+    }
+    state = transition.to;
+  }
+  if (state !== lifecycle.state) throw new Error("Lifecycle state does not match its transitions.");
+  if (typeof value.partial !== "boolean") throw new Error("Attempt record partial state is invalid.");
+  if (value.terminal !== undefined) assertTerminalRecord(value.terminal);
+  if (value.terminal !== undefined && lifecycle.state !== "terminal") {
+    throw new Error("Terminal attempt records must have terminal lifecycle state.");
+  }
+  if (value.classification !== undefined) {
+    if (!isRecord(value.classification) || !isClassificationKind(value.classification.kind)) {
+      throw new Error("Attempt classification is invalid.");
+    }
+    assertTerminalRecord(value.classification.terminal);
+  }
+  for (const field of ["capture", "persistence"] as const) {
+    const status = value[field];
+    if (status !== undefined) {
+      if (!isRecord(status) || !["complete", "incomplete"].includes(String(status.status))) {
+        throw new Error(`Attempt ${field} status is invalid.`);
+      }
+      if (status.error !== undefined) assertTimestampValue(status.error, `Attempt ${field} error`);
+    }
+  }
+  if (value.cleanup !== undefined) {
+    if (!isRecord(value.cleanup) || !["completed", "failed"].includes(String(value.cleanup.status))) {
+      throw new Error("Attempt cleanup status is invalid.");
+    }
+    if (value.cleanup.error !== undefined) assertTimestampValue(value.cleanup.error, "Attempt cleanup error");
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertIdentityValue(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string") throw new Error(`${label} is invalid.`);
+  assertIdentity(value, label);
+}
+
+function assertTimestampValue(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.trim() === "") throw new Error(`${label} is invalid.`);
+}
+
+function isLifecycleState(value: unknown): value is LifecycleState {
+  return typeof value === "string" && Object.hasOwn(ALLOWED_TRANSITIONS, value);
+}
+
+function isClassificationKind(value: unknown): value is AttemptClassificationKind {
+  return ["completed", "task-failure", "infrastructure-failure", "verifier-error", "budget-stop", "policy-stop", "interrupted", "capture-incomplete"].includes(String(value));
+}
+
+function assertTerminalRecord(value: unknown): asserts value is TerminalRecord {
+  if (!isRecord(value) || !["completed", "failed", "stopped", "interrupted"].includes(String(value.state))) {
+    throw new Error("Attempt terminal record is invalid.");
+  }
+  if (!["none", "infrastructure", "task"].includes(String(value.failureClass))) {
+    throw new Error("Attempt terminal failure class is invalid.");
+  }
+  if (!["none", "budget", "policy"].includes(String(value.stopReason))) {
+    throw new Error("Attempt terminal stop reason is invalid.");
+  }
+  if (value.workspaceArtifactId !== undefined) assertIdentityValue(value.workspaceArtifactId, "Workspace artifact ID");
+  if (value.state === "completed" && (value.failureClass !== "none" || value.stopReason !== "none" || value.workspaceArtifactId === undefined)) {
+    throw new Error("Completed terminal record is incomplete.");
+  }
+  if (value.state === "failed" && (value.failureClass !== "infrastructure" && value.failureClass !== "task" || value.stopReason !== "none")) {
+    throw new Error("Failed terminal record is invalid.");
+  }
+  if (value.state === "stopped" && (value.failureClass !== "none" || (value.stopReason !== "budget" && value.stopReason !== "policy"))) {
+    throw new Error("Stopped terminal record is invalid.");
+  }
+  if (value.state === "interrupted" && (value.failureClass !== "infrastructure" || value.stopReason !== "none")) {
+    throw new Error("Interrupted terminal record is invalid.");
   }
 }
 
