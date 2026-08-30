@@ -297,6 +297,31 @@ test("reaps only process groups registered by the setup invocation", { skip: pro
   }
 });
 
+test("turns setup spawn errors into failed attempts", { skip: process.platform === "win32" }, async () => {
+  const { root } = createBundle();
+  const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+
+  try {
+    freezeTaskPacket(root, "packet.json");
+    const result = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "spawn-error",
+      workspaceParent: parent,
+      setup: (_workspacePath, { spawn: spawnSetupChild }) => {
+        spawnSetupChild("/definitely/missing/ebo-setup-command", [], { stdio: "ignore" });
+      },
+    });
+    assert.equal(result.state, "failed");
+    assert.match(result.error ?? "", /Workspace setup child failed/);
+    assert.equal(result.retained, false);
+    assert.equal(existsSync(result.workspacePath), false);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(parent, { force: true, recursive: true });
+  }
+});
+
 test("rejects malicious archive paths and selected links before creating a workspace", async () => {
   const cases = [
     fixtureArchive([{ path: "src/../../outside.txt", bytes: Buffer.from("escape") }]),

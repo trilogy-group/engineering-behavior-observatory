@@ -455,16 +455,96 @@ function openChildSync(path: string, directory: boolean): number {
 }
 
 function readDirectoryEntries(directory: string, directoryFd: number): import("node:fs").Dirent[] {
-  const handle = opendirSync(directory);
+  const alias = join(dirname(directory), `.ebo-enumeration-${randomUUID()}`);
+  let moved = false;
+  let handle: ReturnType<typeof opendirSync> | undefined;
+  let expected: ReturnType<typeof fstatSync> | undefined;
+  let parentFd: number | undefined;
+  let parentExpected: ReturnType<typeof fstatSync> | undefined;
   try {
-    if (!sameIdentity(fstatSync(directoryFd), lstatSync(directory))) {
+    expected = fstatSync(directoryFd);
+    if (!sameIdentity(expected, lstatSync(directory))) {
+      throw new Error(`Workspace directory "${directory}" changed during traversal.`);
+    }
+    parentFd = openSync(dirname(directory), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    parentExpected = fstatSync(parentFd);
+    if (!sameIdentity(parentExpected, lstatSync(dirname(directory)))) {
+      throw new Error(`Workspace parent "${dirname(directory)}" changed during traversal.`);
+    }
+    // Node's public Dir API does not expose its descriptor. Temporarily move
+    // the already-verified inode to a private, unique pathname so opendirSync
+    // opens that inode, then restore the public path while retaining the
+    // handle. A raced replacement makes restoration or identity validation
+    // fail closed instead of enumerating an unbound pathname.
+    try {
+      lstatSync(alias);
+      throw new Error(`Workspace enumeration alias already exists: "${alias}".`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    renameSync(directory, alias);
+    moved = true;
+    if (!sameIdentity(expected, lstatSync(alias))) {
+      throw new Error(`Workspace directory "${directory}" changed during traversal.`);
+    }
+    handle = opendirSync(alias);
+    if (!sameIdentity(expected, lstatSync(alias))) {
+      throw new Error(`Workspace directory "${directory}" changed during traversal.`);
+    }
+    renameSync(alias, directory);
+    moved = false;
+    // Renaming a child updates the parent directory's mtime. Restore the
+    // opened directory's timestamp so the operation stays digest-neutral.
+    futimesSync(directoryFd, expected.atime, expected.mtime);
+    if (parentFd !== undefined && parentExpected !== undefined) {
+      futimesSync(parentFd, parentExpected.atime, parentExpected.mtime);
+    }
+    if (!sameIdentity(expected, lstatSync(directory))) {
       throw new Error(`Workspace directory "${directory}" changed during traversal.`);
     }
     const entries: import("node:fs").Dirent[] = [];
-    for (let entry = handle.readSync(); entry !== null; entry = handle.readSync()) entries.push(entry);
+    for (let entry = handle.readSync(); entry !== null; entry = handle.readSync()) {
+      if (!sameIdentity(expected, fstatSync(directoryFd)) || !sameIdentity(expected, lstatSync(directory))) {
+        throw new Error(`Workspace directory "${directory}" changed during traversal.`);
+      }
+      entries.push(entry);
+    }
+    if (!sameIdentity(expected, fstatSync(directoryFd)) || !sameIdentity(expected, lstatSync(directory))) {
+      throw new Error(`Workspace directory "${directory}" changed during traversal.`);
+    }
     return entries;
   } finally {
-    handle.closeSync();
+    handle?.closeSync();
+    if (moved) {
+      let aliasIsOwned = false;
+      try {
+        aliasIsOwned = expected !== undefined && sameIdentity(expected, lstatSync(alias));
+      } catch {
+        aliasIsOwned = false;
+      }
+      if (aliasIsOwned) {
+        let destinationAbsent = false;
+        try {
+          lstatSync(directory);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") destinationAbsent = true;
+          else throw error;
+        }
+        if (destinationAbsent) {
+          try {
+            renameSync(alias, directory);
+          } catch {
+            if (expected !== undefined) {
+              removeWorkspaceIfOwned(alias, { dev: Number(expected.dev), ino: Number(expected.ino) });
+            }
+          }
+        } else if (expected !== undefined) {
+          // Do not overwrite a raced replacement at the public path.
+          removeWorkspaceIfOwned(alias, { dev: Number(expected.dev), ino: Number(expected.ino) });
+        }
+      }
+    }
+    if (parentFd !== undefined) closeSync(parentFd);
   }
 }
 
@@ -568,14 +648,14 @@ async function runSetup(
   if (allSteps.length === 0) return;
   if (process.platform === "win32") throw new Error("Workspace setup process tracking is unavailable on this platform.");
   const children = new Set<number>();
+  let spawnError: Error | undefined;
   const context: WorkspaceSetupContext = {
     spawn(command, args, options) {
       const child = spawnOwnedProcess(command, args, options);
-      if (child.pid === undefined) {
-        child.kill("SIGKILL");
-        throw new Error("Workspace setup process tracking is unavailable.");
-      }
-      children.add(child.pid);
+      child.once("error", (error: unknown) => {
+        spawnError = error instanceof Error ? error : new Error("Workspace setup child failed.");
+      });
+      if (child.pid !== undefined) children.add(child.pid);
       return child;
     },
   };
@@ -587,6 +667,7 @@ async function runSetup(
   } finally {
     await new Promise<void>((resolve) => setImmediate(resolve));
     reapSetupChildren(children);
+    if (spawnError !== undefined) throw new Error(`Workspace setup child failed: ${spawnError.message}`);
   }
 }
 
