@@ -29,6 +29,7 @@ import {
 } from "./contracts.js";
 import {
   assertTaskPacketFreezeRecord,
+  assertFreezeLocatorPathWithinLimits,
   defaultFreezeLocator,
   formatErrors,
   statusTaskPacket,
@@ -798,10 +799,6 @@ function resolveFrozenTasks(
   );
   const tasks = new Map<string, FrozenTaskIdentity>();
   const packetDigests = new Set<string>();
-  const freezeLocators = new Map<string, string>();
-  const packetLocators = new Map(
-    Object.entries(experiment.taskSet).map(([taskId, condition]) => [condition.packetRef.locator.toLowerCase(), taskId]),
-  );
 
   for (const [taskId, condition] of Object.entries(experiment.taskSet)) {
     const suppliedInput = supplied?.[taskId] ?? supplied?.[condition.packetRef.locator];
@@ -817,16 +814,6 @@ function resolveFrozenTasks(
     if (packetDigests.has(digestIdentity(identity.packetRef.digest))) {
       throw new Error(`Task packet "${taskId}" duplicates a packet digest.`);
     }
-    const freezeLocatorKey = identity.freezeLocator.toLowerCase();
-    const packetOwner = packetLocators.get(freezeLocatorKey);
-    if (packetOwner !== undefined) {
-      throw new Error(`Task packet "${taskId}" freeze locator aliases packet locator for task "${packetOwner}".`);
-    }
-    const previousTask = freezeLocators.get(freezeLocatorKey);
-    if (previousTask !== undefined && previousTask !== taskId) {
-      throw new Error(`Task packet "${taskId}" shares a freeze locator with task "${previousTask}".`);
-    }
-    freezeLocators.set(freezeLocatorKey, taskId);
     packetDigests.add(digestIdentity(identity.packetRef.digest));
     tasks.set(taskId, identity);
   }
@@ -838,26 +825,19 @@ function assertDistinctFreezeLocatorBindings(
   experiment: ExperimentConfiguration,
   tasks: Map<string, FrozenTaskIdentity>,
 ): void {
-  const artifactLocators = [
+  const artifactBindings: LocatorBinding[] = [
     ...experimentReferences(experiment),
     ...Object.values(experiment.taskSet).map((condition) => condition.packetRef),
-  ].map((reference) => reference.locator.toLowerCase());
-  const freezeLocators = [...tasks.values()].map((task) => ({
+  ].map((reference) => ({ kind: "artifact" as const, path: reference.locator, field: reference.locator }));
+  const freezeBindings: LocatorBinding[] = [...tasks.values()].map((task) => ({
+    kind: "freeze" as const,
     taskId: task.id,
-    locator: task.freezeLocator.toLowerCase(),
+    path: task.freezeLocator,
+    field: task.freezeLocator,
+    packetLocator: task.packetRef.locator,
   }));
-  for (const freeze of freezeLocators) {
-    for (const artifact of artifactLocators) {
-      if (pathsAlias(freeze.locator, artifact)) {
-        throw new Error(`Task packet "${freeze.taskId}" freeze locator aliases persisted artifact path "${artifact}".`);
-      }
-    }
-    for (const other of freezeLocators) {
-      if (freeze.taskId !== other.taskId && pathsAlias(freeze.locator, other.locator)) {
-        throw new Error(`Task packet "${freeze.taskId}" freeze locator aliases task "${other.taskId}" freeze locator.`);
-      }
-    }
-  }
+  const collision = findLocatorCollisions([...artifactBindings, ...freezeBindings])[0];
+  if (collision !== undefined) throw new Error(locatorCollisionMessage(collision.left, collision.right));
 }
 
 function pathsAlias(left: string, right: string): boolean {
@@ -866,9 +846,9 @@ function pathsAlias(left: string, right: string): boolean {
 
 function validateQueueLocatorBindings(queue: RunQueue, artifact: string): ArtifactValidationError[] {
   const errors: ArtifactValidationError[] = [];
-  const artifactPaths = new Map<string, { path: string; field: string }>();
+  const artifacts = new Map<string, LocatorBinding>();
   const addArtifact = (path: string, field: string) => {
-    if (!artifactPaths.has(path)) artifactPaths.set(path, { path, field });
+    if (!artifacts.has(path)) artifacts.set(path, { kind: "artifact", path, field });
   };
   addArtifact(queue.captureProfile.locator, "/captureProfile");
   if (queue.ordering.permutationAlgorithmRef !== undefined) {
@@ -882,43 +862,98 @@ function validateQueueLocatorBindings(queue: RunQueue, artifact: string): Artifa
     addArtifact(entry.harness.nativeToolPolicyRef.locator, `/entries/${index}/harness/nativeToolPolicy`);
   }
 
-  const ordinary = [...artifactPaths.values()];
-  for (let index = 0; index < ordinary.length; index += 1) {
-    for (let otherIndex = index + 1; otherIndex < ordinary.length; otherIndex += 1) {
-      const left = ordinary[index]!;
-      const right = ordinary[otherIndex]!;
-      const leftKey = left.path.toLowerCase();
-      const rightKey = right.path.toLowerCase();
-      if (leftKey === rightKey && left.path !== right.path) {
-        errors.push(queueError(artifact, right.field, `Persisted artifact path "${right.path}" case-aliases "${left.path}".`));
-      } else if (leftKey !== rightKey && pathsAlias(leftKey, rightKey)) {
-        errors.push(queueError(artifact, right.field, `Persisted artifact path "${right.path}" aliases "${left.path}".`));
-      }
-    }
-  }
-
-  const freezePaths = new Map<string, { taskId: string; path: string; field: string }>();
+  const freezePaths = new Map<string, LocatorBinding>();
   for (const [index, entry] of queue.entries.entries()) {
     const key = `${entry.taskId}\u0000${entry.task.freezeLocator}`;
     if (!freezePaths.has(key)) {
-      freezePaths.set(key, { taskId: entry.taskId, path: entry.task.freezeLocator, field: `/entries/${index}/task/freezeLocator` });
+      freezePaths.set(key, {
+        kind: "freeze",
+        taskId: entry.taskId,
+        path: entry.task.freezeLocator,
+        field: `/entries/${index}/task/freezeLocator`,
+        packetLocator: entry.task.packetRef.locator,
+      });
     }
   }
-  const freezes = [...freezePaths.values()];
-  for (const freeze of freezes) {
-    const freezeKey = freeze.path.toLowerCase();
-    for (const persisted of ordinary) {
-      if (pathsAlias(freezeKey, persisted.path.toLowerCase())) {
-        errors.push(queueError(artifact, freeze.field, `Freeze locator "${freeze.path}" aliases persisted artifact path "${persisted.path}".`));
-      }
-    }
-    for (const other of freezes) {
-      if (freeze.taskId !== other.taskId && pathsAlias(freezeKey, other.path.toLowerCase())) {
-        errors.push(queueError(artifact, freeze.field, `Freeze locator "${freeze.path}" aliases task "${other.taskId}" freeze locator "${other.path}".`));
-      }
+  for (const freeze of freezePaths.values()) {
+    try {
+      assertFreezeLocatorPathWithinLimits(freeze.path, freeze.packetLocator!);
+    } catch (error) {
+      errors.push(queueError(artifact, freeze.field, error instanceof Error ? error.message : "Freeze locator exceeds safe path limits."));
     }
   }
+  errors.push(...findLocatorCollisions([...artifacts.values(), ...freezePaths.values()]).map(({ left, right }) => {
+    const field = left.kind === "freeze" ? left.field : right.kind === "freeze" ? right.field : right.field;
+    return queueError(artifact, field, locatorCollisionMessage(left, right));
+  }));
   return errors;
+}
+
+type LocatorBinding = {
+  kind: "artifact" | "freeze";
+  path: string;
+  field: string;
+  taskId?: string;
+  packetLocator?: string;
+};
+
+type LocatorCollision = { left: LocatorBinding; right: LocatorBinding };
+
+function findLocatorCollisions(bindings: readonly LocatorBinding[]): LocatorCollision[] {
+  const exact = new Map<string, LocatorBinding>();
+  const descendantPrefixes = new Map<string, LocatorBinding>();
+  const collisions: LocatorCollision[] = [];
+  const seen = new Set<string>();
+  const addCollision = (left: LocatorBinding, right: LocatorBinding) => {
+    const key = [left, right]
+      .map((binding) => `${binding.kind}\u0000${binding.taskId ?? ""}\u0000${binding.path}`)
+      .sort()
+      .join("\u0001");
+    if (seen.has(key)) return;
+    seen.add(key);
+    collisions.push({ left, right });
+  };
+
+  for (const binding of bindings) {
+    const key = binding.path.toLowerCase();
+    const existing = exact.get(key);
+    if (existing !== undefined) {
+      if (existing.path !== binding.path || !allowExactLocatorDuplicate(existing, binding)) {
+        addCollision(existing, binding);
+      }
+      continue;
+    }
+    const descendant = descendantPrefixes.get(key);
+    if (descendant !== undefined) addCollision(binding, descendant);
+    for (let boundary = key.lastIndexOf("/"); boundary > 0; boundary = key.lastIndexOf("/", boundary - 1)) {
+      const prefix = key.slice(0, boundary);
+      const ancestor = exact.get(prefix);
+      if (ancestor !== undefined) addCollision(ancestor, binding);
+      if (!descendantPrefixes.has(prefix)) descendantPrefixes.set(prefix, binding);
+    }
+    exact.set(key, binding);
+  }
+  return collisions;
+}
+
+function allowExactLocatorDuplicate(left: LocatorBinding, right: LocatorBinding): boolean {
+  return (left.kind === "artifact" && right.kind === "artifact")
+    || (left.kind === "freeze" && right.kind === "freeze" && left.taskId === right.taskId);
+}
+
+function locatorCollisionMessage(left: LocatorBinding, right: LocatorBinding): string {
+  if (left.kind === "freeze" || right.kind === "freeze") {
+    const freeze = left.kind === "freeze" ? left : right;
+    const other = left.kind === "freeze" ? right : left;
+    if (other.kind === "freeze") {
+      return `Freeze locator "${freeze.path}" aliases task "${other.taskId}" freeze locator "${other.path}".`;
+    }
+    return `Freeze locator "${freeze.path}" aliases persisted artifact path "${other.path}".`;
+  }
+  if (left.path.toLowerCase() === right.path.toLowerCase() && left.path !== right.path) {
+    return `Persisted artifact path "${right.path}" case-aliases "${left.path}".`;
+  }
+  return `Persisted artifact path "${right.path}" aliases "${left.path}".`;
 }
 
 function assertAdmittedFreezeRecords(
@@ -1005,6 +1040,7 @@ function frozenTaskFromBundle(
   if (freezeLocator !== undefined && freezeLocator.toLowerCase() === packetLocator.toLowerCase()) {
     throw new Error(`Task packet "${taskId}" freeze locator must differ from its packet locator.`);
   }
+  if (freezeLocator !== undefined) assertFreezeLocatorPathWithinLimits(freezeLocator, packetLocator);
   const status = statusTaskPacket(bundleRoot, packetLocator, freezeLocator ?? defaultFreezeLocator(packetLocator));
   if (status.status !== "frozen" || status.packetId === null || status.packetDigest === null || status.aggregateDigest === null) {
     const details = status.errors.length > 0 ? ` ${formatErrors(status.errors)}` : "";
@@ -1067,6 +1103,7 @@ function frozenTaskFromInput(
   if (!isSafeArtifactRelativePath(freezeLocator)) {
     throw new Error(`Task packet "${taskId}" freeze locator is unsafe.`);
   }
+  assertFreezeLocatorPathWithinLimits(freezeLocator, packetLocator);
   if (freezeLocator.toLowerCase() === packetLocator.toLowerCase()) {
     throw new Error(`Task packet "${taskId}" freeze locator must differ from its packet locator.`);
   }

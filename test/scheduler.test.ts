@@ -26,6 +26,7 @@ import {
 } from "../src/index.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
+const overlongFreezeLocator = `${"a".repeat(250)}/${"b".repeat(250)}/${"c".repeat(250)}/${"d".repeat(199)}`;
 
 function fixture(name: string): ExperimentConfiguration {
   return JSON.parse(readFileSync(join(repositoryRoot, "tests", "fixtures", name), "utf8")) as ExperimentConfiguration;
@@ -273,28 +274,35 @@ test("compiles arbitrary matrices with stable serialized identities", () => {
       ...compileOptions(experiment),
       freezeLocators: { "task-a": "freezes/shared.json", "task-b": "freezes/shared.json" },
     }),
-    /task-b.*shares a freeze locator/,
+    /Freeze locator.*aliases task.*task-b.*freeze locator/,
   );
   assert.throws(
     () => compileRunQueue(experiment, {
       ...compileOptions(experiment),
       freezeLocators: { "task-a": "packets/task-b.json" },
     }),
-    /task-a.*aliases packet locator.*task-b/,
+    /Freeze locator.*aliases persisted artifact path.*packets\/task-b\.json/,
   );
   assert.throws(
     () => compileRunQueue(experiment, {
       ...compileOptions(experiment),
       freezeLocators: { "task-a": "packets" },
     }),
-    /task-a.*aliases persisted artifact path/,
+    /Freeze locator.*aliases persisted artifact path.*packets/,
   );
   assert.throws(
     () => compileRunQueue(experiment, {
       ...compileOptions(experiment),
       freezeLocators: { "task-a": "freezes/a", "task-b": "freezes/a/record.json" },
     }),
-    /task-a.*aliases task.*task-b.*freeze locator/,
+    /Freeze locator.*aliases task.*task-b.*freeze locator/,
+  );
+  assert.throws(
+    () => compileRunQueue(experiment, {
+      ...compileOptions(experiment),
+      freezeLocators: { "task-a": overlongFreezeLocator },
+    }),
+    /task-a.*exceeds safe path limits/,
   );
 
   const changedExperiment = structuredClone(experiment);
@@ -533,6 +541,12 @@ test("standalone queues reject conflicting identities for one condition ID", () 
   assert.match(
     validateRunQueue(collidingArtifactPath).map((error) => error.message).join("\n"),
     /Persisted artifact path.*aliases/,
+  );
+  const overlongFreezePath = structuredClone(queue);
+  overlongFreezePath.entries[0]!.task.freezeLocator = overlongFreezeLocator;
+  assert.match(
+    validateRunQueue(overlongFreezePath).map((error) => error.message).join("\n"),
+    /exceeds safe path limits/,
   );
 });
 

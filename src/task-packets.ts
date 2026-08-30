@@ -712,7 +712,7 @@ function freezeCandidate(packetLocator: string, inspection: TaskPacketInspection
   };
 }
 
-function assertFreezeLocatorPathWithinLimits(freezeLocator: string, packetLocator: string): void {
+export function assertFreezeLocatorPathWithinLimits(freezeLocator: string, packetLocator: string): void {
   const leafLength = freezeLocator.slice(freezeLocator.lastIndexOf("/") + 1).length;
   if (freezeLocator.length + FREEZE_QUARANTINE_SUFFIX.length > 960
       || leafLength + FREEZE_QUARANTINE_SUFFIX.length > 255) {
