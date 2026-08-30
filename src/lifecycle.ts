@@ -726,8 +726,9 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                   record.verifierTerminationConfirmed = shutdownResult.status === "completed";
                 }
               }
+              markCoordinatorBudgetIfExpired();
               classification = controller.signal.aborted
-                  ? abortClassification(abortCause, budgetExpired, verifierError, workspace)
+                ? abortClassification(abortCause, budgetExpired, verifierError, workspace)
                 : verifierErrorClassification(verifierError, workspace);
             }
           }
@@ -1512,6 +1513,14 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       }
       if (!isRecord(value.harness) || value.harness.status !== "interrupted") {
         throw new Error("Harness interruption terminal records require an interrupted harness result.");
+      }
+    }
+    if (classificationKind === "infrastructure-failure" && classificationSource === "harness") {
+      if (!visitedStates.has("running")) {
+        throw new Error("Harness infrastructure-failure records require the running lifecycle phase.");
+      }
+      if (!isRecord(value.harness) || value.harness.status !== "failed") {
+        throw new Error("Harness infrastructure-failure records require a failed harness result.");
       }
     }
     const expectedPartial = classificationUnderlyingKind(value.classification as unknown as AttemptClassification) !== "completed"

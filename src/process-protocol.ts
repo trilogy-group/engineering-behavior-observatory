@@ -130,15 +130,12 @@ export class JsonlEvidenceWriter {
       try {
         if (token !== INTERNAL_RECORDER_TOKEN) {
           const canonicalPath = canonicalWriterPath(this.path);
-          directLockPath = `${canonicalPath}.protocol.direct.lock`;
+          directLockPath = `${canonicalPath}.protocol.lock`;
           mkdirSync(dirname(canonicalPath), { recursive: true, mode: 0o700 });
           try {
             directLockFd = openSync(directLockPath, "wx", 0o600);
           } catch (error) {
             throw new Error(`JSONL evidence path is reserved by a protocol recorder: ${errorMessage(error)}`);
-          }
-          if (writerPathIsReserved(this.path)) {
-            throw new Error("JSONL evidence path is reserved by a protocol recorder.");
           }
         }
         if (this.closed) throw new Error("JSONL evidence writer is closed.");
@@ -196,7 +193,6 @@ export class JsonlEvidenceWriter {
     if (this.claimed) throw new Error("JSONL evidence writer is already claimed by a protocol recorder.");
     const canonicalPath = canonicalWriterPath(this.path);
     if (CLAIMED_WRITER_PATHS.has(canonicalPath)) throw new Error("JSONL evidence path is already claimed by a protocol recorder.");
-    if (writerDirectPathIsReserved(canonicalPath)) throw new Error("JSONL evidence path is reserved by a direct writer append.");
     if (this.hasWrites) throw new Error("JSONL evidence writer cannot be claimed after direct writes.");
     if (token !== INTERNAL_RECORDER_TOKEN) throw new Error("JSONL evidence writer claim is internal.");
     mkdirSync(dirname(canonicalPath), { recursive: true, mode: 0o700 });
@@ -966,16 +962,6 @@ function writerPathIsReserved(path: string): boolean {
   if (CLAIMED_WRITER_PATHS.has(canonicalPath)) return true;
   try {
     lstatSync(`${canonicalPath}.protocol.lock`);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
-  }
-}
-
-function writerDirectPathIsReserved(canonicalPath: string): boolean {
-  try {
-    lstatSync(`${canonicalPath}.protocol.direct.lock`);
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;

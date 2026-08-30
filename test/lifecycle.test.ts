@@ -1349,6 +1349,25 @@ test("harness interruption records require native interrupted harness evidence",
   }
 });
 
+test("harness infrastructure failures require native failed harness evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-harness-failure-evidence-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "failed", failureClass: "infrastructure", reason: "harness failed" }),
+      evidence: { flush: () => undefined },
+    });
+    const record = structuredClone(result.record);
+    delete record.harness;
+    const path = join(root, "missing-harness-failure.json");
+    writeFileSync(path, `${JSON.stringify(record)}\n`);
+    await assert.rejects(readAttemptRecord(path), /failed harness result/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("completed terminal records reject incomplete persistence", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-persistence-status-"));
   try {
@@ -1586,6 +1605,23 @@ test("a synchronously over-budget verifier cannot produce completion", async () 
       const end = Date.now() + 5;
       while (Date.now() < end) {}
       return { status: "passed" };
+    },
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.state, "stopped");
+  assert.equal(result.terminal.stopReason, "budget");
+});
+
+test("synchronous verifier errors honor an elapsed coordinator budget", async () => {
+  const result = await executeRunAttempt({
+    run,
+    maxWallClockMs: 1,
+    workspace: workspace(),
+    harness: async () => ({ status: "completed" }),
+    verifier: () => {
+      const end = Date.now() + 5;
+      while (Date.now() < end) {}
+      throw new Error("verifier failed after deadline");
     },
     evidence: { flush: () => undefined },
   });
