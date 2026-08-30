@@ -777,7 +777,10 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       }
     } catch (error) {
       cleanupStatus = { status: "failed", error: errorMessage(error) };
-      if (classification === undefined || classificationUnderlyingKind(classification) === "completed") {
+      markCoordinatorBudgetIfExpired();
+      if (abortCause === "budget" && classificationUnderlyingKind(classification ?? completedClassification(workspace)) === "completed") {
+        classification = abortClassification(abortCause, budgetExpired, errorMessage(error), workspace);
+      } else if (classification === undefined || classificationUnderlyingKind(classification) === "completed") {
         classification = infrastructureClassification(errorMessage(error), "cleanup", workspace);
       }
     }
@@ -787,6 +790,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     }
     record.cleanup = cleanupStatus;
     await flush();
+    markCoordinatorBudgetIfExpired();
     if (record.capture?.status !== "incomplete" && options.evidence?.flush !== undefined) {
       record.capture = { status: "complete" };
     }
@@ -1531,6 +1535,11 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       }
       if (!isRecord(value.workspace) || (value.workspace.status !== "ready" && value.workspace.status !== "failed")) {
         throw new Error("Workspace infrastructure-failure records require a native workspace result.");
+      }
+    }
+    if (classificationKind === "infrastructure-failure" && classificationSource === "cleanup") {
+      if (!isRecord(value.cleanup) || (value.cleanup.status !== "failed" && value.cleanup.status !== "timed-out")) {
+        throw new Error("Cleanup infrastructure-failure records require failed or timed-out cleanup evidence.");
       }
     }
     if (classificationKind === "verifier-error" && classificationSource === "verifier") {

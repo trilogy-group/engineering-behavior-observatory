@@ -1419,6 +1419,29 @@ test("completed terminal records reject incomplete persistence", async () => {
   }
 });
 
+test("cleanup-origin failures require failed or timed-out cleanup evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-cleanup-evidence-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: {
+        setup: async () => ({ status: "ready", artifactId: "workspace-1" }),
+        cleanup: async () => { throw new Error("cleanup failed"); },
+      },
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    const record = structuredClone(result.record);
+    record.cleanup = { status: "completed" };
+    const path = join(root, "invalid-cleanup-evidence.json");
+    writeFileSync(path, `${JSON.stringify(record)}\n`);
+    await assert.rejects(readAttemptRecord(path), /failed or timed-out cleanup evidence/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("terminal attempt records require matching terminal classification", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-terminal-record-"));
   try {
@@ -1654,6 +1677,48 @@ test("synchronous verifier errors honor an elapsed coordinator budget", async ()
       while (Date.now() < end) {}
       throw new Error("verifier failed after deadline");
     },
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.state, "stopped");
+  assert.equal(result.terminal.stopReason, "budget");
+});
+
+test("a synchronous final flush honors an elapsed coordinator budget", async () => {
+  let flushes = 0;
+  const result = await executeRunAttempt({
+    run,
+    maxWallClockMs: 10,
+    workspace: workspace(),
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => ({ status: "passed" }),
+    evidence: {
+      flush: () => {
+        flushes += 1;
+        if (flushes >= 4) {
+          const end = Date.now() + 20;
+          while (Date.now() < end) {}
+        }
+      },
+    },
+  });
+  assert.equal(result.terminal.state, "stopped");
+  assert.equal(result.terminal.stopReason, "budget");
+});
+
+test("a synchronous cleanup error honors an elapsed coordinator budget", async () => {
+  const result = await executeRunAttempt({
+    run,
+    maxWallClockMs: 10,
+    workspace: {
+      setup: async () => ({ status: "ready", artifactId: "workspace-1" }),
+      cleanup: () => {
+        const end = Date.now() + 20;
+        while (Date.now() < end) {}
+        throw new Error("cleanup failed after deadline");
+      },
+    },
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => ({ status: "passed" }),
     evidence: { flush: () => undefined },
   });
   assert.equal(result.terminal.state, "stopped");

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
-import { closeSync, constants, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, constants, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { mkdir, open, type FileHandle } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 
@@ -202,6 +202,7 @@ export class JsonlEvidenceWriter {
     if (this.claimed) throw new Error("JSONL evidence writer is already claimed by a protocol recorder.");
     const canonicalPath = canonicalWriterPath(this.path);
     if (CLAIMED_WRITER_PATHS.has(canonicalPath)) throw new Error("JSONL evidence path is already claimed by a protocol recorder.");
+    rejectHardLinkedPath(canonicalPath);
     if (this.hasWrites) throw new Error("JSONL evidence writer cannot be claimed after direct writes.");
     if (token !== INTERNAL_RECORDER_TOKEN) throw new Error("JSONL evidence writer claim is internal.");
     mkdirSync(dirname(canonicalPath), { recursive: true, mode: 0o700 });
@@ -970,6 +971,7 @@ function canonicalWriterPath(path: string): string {
 function writerPathIsReserved(path: string): boolean {
   const canonicalPath = canonicalWriterPath(path);
   if (CLAIMED_WRITER_PATHS.has(canonicalPath)) return true;
+  if (isHardLinkedPath(canonicalPath)) return true;
   try {
     lstatSync(`${canonicalPath}.protocol.lock`);
     return true;
@@ -977,6 +979,19 @@ function writerPathIsReserved(path: string): boolean {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
   }
+}
+
+function isHardLinkedPath(path: string): boolean {
+  try {
+    return statSync(path).nlink > 1;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function rejectHardLinkedPath(path: string): void {
+  if (isHardLinkedPath(path)) throw new Error("JSONL evidence path has multiple hard links and cannot be claimed safely.");
 }
 
 function recoverWriterSequence(path: string): number {
@@ -1003,9 +1018,52 @@ function recoverWriterSequence(path: string): number {
         || typeof candidate !== "number" || !Number.isSafeInteger(candidate) || candidate !== sequence + 1) {
       throw new Error(`Existing JSONL evidence line ${index + 1} is not a contiguous protocol observation.`);
     }
+    assertRecoveredObservation(value, index + 1);
     sequence = candidate;
   }
   return sequence;
+}
+
+function assertRecoveredObservation(value: Record<string, unknown>, line: number): void {
+  if (typeof value.observedAt !== "string" || value.observedAt.trim() === "") {
+    throw new Error(`Existing JSONL evidence line ${line} has no valid observation timestamp.`);
+  }
+  const kind = value.kind;
+  if (!["frame", "request", "response", "notification", "completion", "capability", "error", "process"].includes(String(kind))) {
+    throw new Error(`Existing JSONL evidence line ${line} has an invalid observation kind.`);
+  }
+  if (typeof value.source !== "string" || value.source.trim() === "") {
+    throw new Error(`Existing JSONL evidence line ${line} has no valid observation source.`);
+  }
+  if (value.stream !== undefined && value.stream !== "stdout" && value.stream !== "stderr") {
+    throw new Error(`Existing JSONL evidence line ${line} has an invalid observation stream.`);
+  }
+  for (const field of ["method", "sourceIdentity", "raw", "status", "capability"] as const) {
+    if (value[field] !== undefined && (typeof value[field] !== "string" || value[field].trim() === "")) {
+      throw new Error(`Existing JSONL evidence line ${line} has an invalid ${field}.`);
+    }
+  }
+  if (value.id !== undefined && (typeof value.id === "number" && !Number.isFinite(value.id)
+      || typeof value.id !== "string" && typeof value.id !== "number" && value.id !== null)) {
+    throw new Error(`Existing JSONL evidence line ${line} has an invalid protocol identity.`);
+  }
+  if (kind === "frame" && !Object.hasOwn(value, "payload")) {
+    throw new Error(`Existing JSONL evidence line ${line} is missing frame payload.`);
+  }
+  if ((kind === "request" || kind === "response" || kind === "notification")
+      && (typeof value.method !== "string" || value.method.trim() === "")) {
+    throw new Error(`Existing JSONL evidence line ${line} is missing protocol method.`);
+  }
+  if (kind === "completion" && (!Object.hasOwn(value, "evidence") || typeof value.status !== "string" || value.status.trim() === "")) {
+    throw new Error(`Existing JSONL evidence line ${line} is missing completion evidence.`);
+  }
+  if (kind === "capability" && (typeof value.capability !== "string" || value.capability.trim() === ""
+      || !["available", "unsupported", "missing", "not-checked"].includes(String(value.status)))) {
+    throw new Error(`Existing JSONL evidence line ${line} has invalid capability evidence.`);
+  }
+  if ((kind === "error" || kind === "process") && (typeof value.status !== "string" || value.status.trim() === "")) {
+    throw new Error(`Existing JSONL evidence line ${line} is missing status evidence.`);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
