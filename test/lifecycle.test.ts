@@ -12,6 +12,7 @@ import {
   LifecycleController,
   readAttemptRecord,
   retryAttempt,
+  type RunAttemptOptions,
   writeAttemptRecord,
 } from "../src/index.js";
 
@@ -905,6 +906,39 @@ test("callbacks cannot mutate the identities retained by an attempt", async () =
   assert.equal(result.run.modelId, "model-original");
   assert.equal(result.attempt.number, 1);
   assert.equal(result.record.run.harnessId, "harness-original");
+});
+
+test("snapshots runner callbacks before asynchronous setup yields", async () => {
+  let setupStartedResolve: (() => void) | undefined;
+  const setupStarted = new Promise<void>((resolvePromise) => { setupStartedResolve = resolvePromise; });
+  let releaseSetup: (() => void) | undefined;
+  const setupRelease = new Promise<void>((resolvePromise) => { releaseSetup = resolvePromise; });
+  const calls: string[] = [];
+  const options: RunAttemptOptions = {
+    run,
+    workspace: {
+      setup: async () => {
+        calls.push("setup");
+        setupStartedResolve?.();
+        await setupRelease;
+        return { status: "ready" as const, artifactId: "workspace-1" };
+      },
+      cleanup: async () => { calls.push("cleanup"); },
+    },
+    harness: async () => { calls.push("harness"); return { status: "completed" as const }; },
+    verifier: async () => { calls.push("verifier"); return { status: "passed" as const }; },
+    evidence: { flush: () => undefined },
+  };
+  const resultPromise = executeRunAttempt(options);
+  await setupStarted;
+  options.harness = async () => { calls.push("mutated-harness"); return { status: "failed" as const }; };
+  options.verifier = async () => { calls.push("mutated-verifier"); return { status: "error" as const }; };
+  options.workspace.cleanup = async () => { calls.push("mutated-cleanup"); };
+  options.evidence!.flush = () => { calls.push("mutated-flush"); };
+  releaseSetup?.();
+  const result = await resultPromise;
+  assert.equal(result.terminal.state, "completed");
+  assert.deepEqual(calls, ["setup", "harness", "verifier", "cleanup"]);
 });
 
 test("retry creates a new linked identity and never replaces the prior attempt", () => {

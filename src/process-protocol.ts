@@ -632,6 +632,8 @@ export class ProtocolProcess {
   private signalQueue: Promise<void> = Promise.resolve();
   private abortListener: (() => void) | undefined;
   private closeObserved = false;
+  private finishStarted = false;
+  private resolveResult: ((result: ProtocolProcessResult) => void) | undefined;
 
   public constructor(private readonly options: ProtocolProcessOptions) {
     assertNonEmpty(options.command, "Protocol command");
@@ -702,9 +704,9 @@ export class ProtocolProcess {
     });
     this.attachStreams();
     this.waitPromise = new Promise<ProtocolProcessResult>((resolveResult) => {
+      this.resolveResult = resolveResult;
       this.child.once("close", (exitCode, signal) => {
-        this.closeObserved = true;
-        void this.finish(exitCode, signal, resolveResult);
+        this.beginFinish(exitCode, signal);
       });
     });
     const abort = () => {
@@ -734,7 +736,7 @@ export class ProtocolProcess {
   }
 
   public async shutdown(): Promise<ProtocolProcessResult> {
-    if (this.closeObserved || !this.detached && (this.child.exitCode !== null || this.child.signalCode !== null)) return this.wait();
+    if (this.closeObserved) return this.wait();
     this.shutdownStarted = true;
     this.setTermination("shutdown");
     await this.sendSignal("SIGTERM", this.shutdownGraceMs);
@@ -742,7 +744,7 @@ export class ProtocolProcess {
   }
 
   public async interrupt(): Promise<ProtocolProcessResult> {
-    if (this.closeObserved || !this.detached && (this.child.exitCode !== null || this.child.signalCode !== null)) return this.wait();
+    if (this.closeObserved) return this.wait();
     this.interruptionStarted = true;
     this.setTermination("interrupted");
     await this.sendSignal("SIGINT", this.shutdownGraceMs);
@@ -889,9 +891,12 @@ export class ProtocolProcess {
   }
 
   private async sendSignalNow(signal: NodeJS.Signals, graceMs: number): Promise<void> {
-    if (this.closeObserved || !this.detached && (this.child.exitCode !== null || this.child.signalCode !== null)) return;
+    if (this.closeObserved) return;
     const pid = this.child.pid;
-    if (pid === undefined) return;
+    if (pid === undefined) {
+      this.forceFinish();
+      return;
+    }
     try {
       if (process.platform !== "win32" && this.detached) {
         process.kill(-pid, signal);
@@ -900,6 +905,7 @@ export class ProtocolProcess {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ESRCH") this.childError ??= errorMessage(error);
+      if (!this.closeObserved) this.forceFinish();
       return;
     }
     if (graceMs > 0) await this.waitForClose(graceMs);
@@ -915,6 +921,9 @@ export class ProtocolProcess {
       }
       if (this.killGraceMs > 0) await this.waitForClose(this.killGraceMs);
     }
+    if (!this.closeObserved && (this.detached || this.child.exitCode !== null || this.child.signalCode !== null)) {
+      this.forceFinish();
+    }
   }
 
   private async waitForClose(milliseconds: number): Promise<void> {
@@ -926,6 +935,20 @@ export class ProtocolProcess {
         resolvePromise();
       });
     });
+  }
+
+  private beginFinish(exitCode: number | null, signal: NodeJS.Signals | null): void {
+    if (this.finishStarted || this.resolveResult === undefined) return;
+    this.finishStarted = true;
+    this.closeObserved = true;
+    void this.finish(exitCode, signal, this.resolveResult);
+  }
+
+  private forceFinish(): void {
+    if (this.closeObserved) return;
+    this.child.stdout?.destroy();
+    this.child.stderr?.destroy();
+    this.beginFinish(this.child.exitCode, this.child.signalCode);
   }
 
   private async finish(

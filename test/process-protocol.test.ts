@@ -775,6 +775,29 @@ test("shutdown signals a detached group after the root exits", { skip: process.p
   }
 });
 
+test("shutdown remains bounded when a non-detached descendant holds pipes open", async () => {
+  const root = temporaryRoot();
+  try {
+    const protocol = spawnProtocolProcess({
+      ...nodeScript("const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e','setTimeout(()=>{},200)'],{stdio:['ignore','inherit','inherit']}); child.unref(); process.exit(0)"),
+      source: "fake-harness",
+      spawnOptions: { detached: false },
+      shutdownGraceMs: 25,
+      killGraceMs: 25,
+      evidencePath: join(root, "nondetached-root-exit.jsonl"),
+    });
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 25));
+    const processResult = await Promise.race([
+      protocol.shutdown(),
+      new Promise<never>((_resolvePromise, reject) => setTimeout(() => reject(new Error("shutdown did not settle")), 500)),
+    ]);
+    assert.equal(processResult.status, "shutdown");
+    assert.equal(processResult.termination, "shutdown");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("fences caller-owned recorders before publishing process completion", async () => {
   const root = temporaryRoot();
   try {

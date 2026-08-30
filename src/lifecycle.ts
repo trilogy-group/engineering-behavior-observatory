@@ -331,6 +331,13 @@ export class RunOrchestrator {
 
 export async function executeRunAttempt(options: RunAttemptOptions): Promise<RunAttemptResult> {
   validateOptions(options);
+  const workspaceCoordinator = options.workspace;
+  const workspaceSetup = workspaceCoordinator.setup;
+  const workspaceCleanup = workspaceCoordinator.cleanup;
+  const harnessExecutor = options.harness;
+  const verifierExecutor = options.verifier;
+  const evidenceSink = options.evidence;
+  const evidenceFlush = evidenceSink?.flush;
   const now = options.now ?? (() => new Date().toISOString());
   const attempt = options.attempt ?? createAttemptIdentity(options.run.id);
   const runSnapshot = structuredClone(options.run);
@@ -345,7 +352,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     lifecycle: lifecycle.snapshot(),
     partial: true,
   };
-  if (options.evidence?.flush === undefined) {
+  if (evidenceFlush === undefined) {
     record.capture = { status: "incomplete", error: "Evidence flush boundary is unavailable." };
   }
   let persistenceError: string | undefined;
@@ -381,14 +388,14 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   };
   const flush = async (): Promise<void> => {
     try {
-      if (options.evidence?.flush !== undefined) {
-        const evidenceFlush = Promise.resolve(options.evidence.flush());
+      if (evidenceFlush !== undefined) {
+        const evidenceFlushPromise = Promise.resolve(evidenceFlush.call(evidenceSink));
         const outcome = await Promise.race([
-          evidenceFlush.then(() => "complete" as const),
+          evidenceFlushPromise.then(() => "complete" as const),
           abortPromise.then(() => "aborted" as const),
         ]);
         if (outcome === "aborted") {
-          const settledFlush = await settleWithTimeout(evidenceFlush, options.shutdownGraceMs ?? 250);
+          const settledFlush = await settleWithTimeout(evidenceFlushPromise, options.shutdownGraceMs ?? 250);
           if (settledFlush.status === "failed") throw settledFlush.error;
           if (settledFlush.status === "timed-out") throw new Error("Evidence flush interrupted.");
         }
@@ -462,7 +469,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         classification = abortClassification(abortCause, budgetExpired, undefined, workspace);
       } else {
         setupStarted = true;
-        const setupPromise = Promise.resolve(options.workspace.setup({
+        const setupPromise = Promise.resolve(workspaceSetup.call(workspaceCoordinator, {
           run: structuredClone(runSnapshot),
           attempt: structuredClone(attemptSnapshot),
           signal: controller.signal,
@@ -571,7 +578,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       let harnessPromise: Promise<HarnessExecutionResult>;
       let harnessError: string | undefined;
       try {
-        harnessPromise = Promise.resolve(options.harness({
+        harnessPromise = Promise.resolve(harnessExecutor.call(options, {
           run: structuredClone(runSnapshot),
           attempt: structuredClone(attemptSnapshot),
           signal: controller.signal,
@@ -680,12 +687,12 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           markCoordinatorBudgetIfExpired();
           if (controller.signal.aborted) {
             classification = abortClassification(abortCause, budgetExpired, undefined, workspace);
-          } else if (options.verifier === undefined) {
+          } else if (verifierExecutor === undefined) {
             record.verifier = { status: "not-run" };
             classification = infrastructureClassification("Verifier did not run.", "verifier", workspace);
           } else {
             try {
-              const verifierPromise = Promise.resolve(options.verifier({
+              const verifierPromise = Promise.resolve(verifierExecutor.call(options, {
                 run: structuredClone(runSnapshot),
                 attempt: structuredClone(attemptSnapshot),
                 signal: controller.signal,
@@ -787,7 +794,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     } else if (!workspaceTerminationConfirmed) {
       cleanupStatus = { status: "timed-out", error: "Workspace setup did not terminate before cleanup." };
     } else try {
-      const cleanupPromise = Promise.resolve(options.workspace.cleanup?.({
+      const cleanupPromise = Promise.resolve(workspaceCleanup?.call(workspaceCoordinator, {
         run: structuredClone(runSnapshot),
         attempt: structuredClone(attemptSnapshot),
         signal: controller.signal,
@@ -829,7 +836,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     record.cleanup = cleanupStatus;
     await flush();
     markCoordinatorBudgetIfExpired();
-    if (record.capture?.status !== "incomplete" && options.evidence?.flush !== undefined) {
+    if (record.capture?.status !== "incomplete" && evidenceFlush !== undefined) {
       record.capture = { status: "complete" };
     }
     if (budgetExpired !== undefined && classification?.kind === "completed") {
