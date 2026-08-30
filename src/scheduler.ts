@@ -33,6 +33,7 @@ import {
 
 export type QueueOrderingStrategy = "sequential" | "seeded-shuffle" | "balanced";
 export type PermutationAlgorithm = "fisher-yates-v1";
+export const MAX_RUN_QUEUE_ENTRIES = 100_000;
 
 export type FrozenTaskIdentity = {
   id: string;
@@ -104,6 +105,10 @@ export type CompileRunQueueOptions = {
   resolvedPackets?: Record<string, ResolvedTaskPacket>;
 };
 
+export type ValidateRunQueueOptions = Pick<CompileRunQueueOptions,
+  "bundleRoot" | "resolvedDigests" | "frozenTasks" | "taskFreezeRecords" | "taskPackets"
+  | "permutationAlgorithm" | "permutationAlgorithms">;
+
 export type RunQueueInspection = {
   experimentId: string;
   seed: string;
@@ -114,6 +119,7 @@ export type RunQueueInspection = {
 };
 
 export function expandMatrixCells(experiment: ExperimentConfiguration): DeclaredMatrixCell[] {
+  assertMatrixSize(experiment);
   const order = matrixOrder(experiment);
   return [...declaredMatrixCells(order, experiment.trialCount)];
 }
@@ -124,6 +130,7 @@ export function compileRunQueue(
 ): RunQueue {
   const experimentErrors = validateArtifact("experiment.json", experiment);
   if (experimentErrors.length > 0) throw new Error(formatErrors(experimentErrors));
+  assertMatrixSize(experiment);
 
   const ordering = normalizeOrdering(experiment.ordering);
   const resolvedDigests = resolveConfigurationDigests(experiment, options);
@@ -171,7 +178,7 @@ export function compileRunQueue(
     ordering,
     entries,
   };
-  assertValidRunQueue(queue, experiment);
+  assertValidRunQueue(queue, experiment, "run-queue.json", options);
   return queue;
 }
 
@@ -192,12 +199,16 @@ export function writeRunQueue(path: string, queue: RunQueue): Digest {
   return published;
 }
 
-export function readRunQueue(path: string, experiment?: ExperimentConfiguration): RunQueue {
+export function readRunQueue(
+  path: string,
+  experiment?: ExperimentConfiguration,
+  options: ValidateRunQueueOptions = {},
+): RunQueue {
   const bytes = readFileSync(path);
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   assertNoDuplicateJsonKeys(text);
   const queue = JSON.parse(text) as unknown;
-  assertValidRunQueue(queue, experiment, path);
+  assertValidRunQueue(queue, experiment, path, options);
   return queue as RunQueue;
 }
 
@@ -205,7 +216,21 @@ export function validateRunQueue(
   queue: unknown,
   experiment?: ExperimentConfiguration,
   artifact = "run-queue.json",
+  options: ValidateRunQueueOptions = {},
 ): ArtifactValidationError[] {
+  if (experiment !== undefined) {
+    const experimentErrors = validateArtifact("experiment.json", experiment);
+    if (experimentErrors.length > 0) return experimentErrors;
+    try {
+      assertMatrixSize(experiment);
+      if (options.bundleRoot !== undefined || options.resolvedDigests !== undefined) {
+        assertResolvedExperimentConfigurationDigests(experiment, resolveConfigurationDigests(experiment, options));
+      }
+      resolvePermutationAlgorithm(experiment, options);
+    } catch (error) {
+      return [queueError(artifact, "/experiment", error instanceof Error ? error.message : "Experiment cannot be scheduled.")];
+    }
+  }
   const errors = validateArtifact(artifact, queue);
   if (errors.length > 0) return errors;
   if (!isRecord(queue)) return [queueError(artifact, "/", "Run queue must be an object.")];
@@ -214,6 +239,18 @@ export function validateRunQueue(
   const semanticErrors: ArtifactValidationError[] = [];
   const runIds = new Set<string>();
   const cells = new Set<string>();
+  let expectedTasks: Map<string, FrozenTaskIdentity> | undefined;
+  if (experiment !== undefined) {
+    if (!hasFrozenTaskInputs(options)) {
+      semanticErrors.push(queueError(artifact, "/entries/task", "Frozen task records or a bundle root are required for queue validation."));
+    } else {
+      try {
+        expectedTasks = resolveFrozenTasks(experiment, options);
+      } catch (error) {
+        semanticErrors.push(queueError(artifact, "/entries/task", error instanceof Error ? error.message : "Frozen task records could not be resolved."));
+      }
+    }
+  }
   for (const [index, entry] of runQueue.entries.entries()) {
     const field = `/entries/${index}`;
     if (runIds.has(entry.runId)) {
@@ -253,6 +290,10 @@ export function validateRunQueue(
           || !sameReference(entry.harness.nativeToolPolicyRef, harnessCondition.nativeToolPolicyRef)) {
         semanticErrors.push(queueError(artifact, `${field}/harness`, "Harness configuration references do not match the experiment."));
       }
+      const expectedTask = expectedTasks?.get(entry.taskId);
+      if (expectedTask !== undefined && !sameFrozenTask(entry.task, expectedTask)) {
+        semanticErrors.push(queueError(artifact, `${field}/task`, "Frozen task identity does not match its referenced freeze record."));
+      }
     }
     if (entry.runId !== runId(runQueue.experimentId, entry.task, entry.model, entry.harness, entry.trialIndex)) {
       semanticErrors.push(queueError(artifact, `${field}/runId`, "Run ID does not match its frozen cell identities."));
@@ -279,7 +320,11 @@ export function validateRunQueue(
     if (expectedCells.size !== cells.size || [...expectedCells].some((key) => !cells.has(key))) {
       semanticErrors.push(queueError(artifact, "/entries", "Run queue cells do not match the experiment matrix."));
     }
-    const expectedOrder = orderCells(expandMatrixCells(experiment), experiment.ordering, "fisher-yates-v1").map(cellKeyOf);
+    const expectedOrder = orderCells(
+      expandMatrixCells(experiment),
+      experiment.ordering,
+      resolvePermutationAlgorithm(experiment, options),
+    ).map(cellKeyOf);
     const actualOrder = runQueue.entries.map(cellKeyOf);
     if (expectedOrder.length !== actualOrder.length
         || expectedOrder.some((key, index) => key !== actualOrder[index])) {
@@ -293,8 +338,9 @@ export function assertValidRunQueue(
   queue: unknown,
   experiment?: ExperimentConfiguration,
   artifact = "run-queue.json",
+  options: ValidateRunQueueOptions = {},
 ): asserts queue is RunQueue {
-  const errors = validateRunQueue(queue, experiment, artifact);
+  const errors = validateRunQueue(queue, experiment, artifact, options);
   if (errors.length > 0) throw new Error(formatErrors(errors));
 }
 
@@ -324,6 +370,22 @@ export class LocalRunQueue {
   public next(): RunQueueEntry | undefined {
     if (this.position >= this.queue.entries.length) return undefined;
     return this.queue.entries[this.position++];
+  }
+}
+
+function assertMatrixSize(experiment: ExperimentConfiguration): void {
+  let cellCount = 1;
+  for (const dimension of [
+    Object.keys(experiment.taskSet).length,
+    Object.keys(experiment.modelSet).length,
+    Object.keys(experiment.harnessSet).length,
+    experiment.trialCount,
+  ]) {
+    if (cellCount > Math.floor(MAX_RUN_QUEUE_ENTRIES / dimension)) {
+      // ponytail: fixed local queue cap; stream to disk if larger matrices become required.
+      throw new Error(`Run matrix exceeds the local queue limit of ${MAX_RUN_QUEUE_ENTRIES} entries.`);
+    }
+    cellCount *= dimension;
   }
 }
 
@@ -585,6 +647,14 @@ function sameReference(left: ArtifactReference, right: ArtifactReference): boole
   return left.locator === right.locator && sameDigest(left.digest, right.digest);
 }
 
+function sameFrozenTask(left: FrozenTaskIdentity, right: FrozenTaskIdentity): boolean {
+  return left.id === right.id
+    && left.packetId === right.packetId
+    && sameReference(left.packetRef, right.packetRef)
+    && left.freezeLocator === right.freezeLocator
+    && sameDigest(left.aggregateDigest, right.aggregateDigest);
+}
+
 function sameOptionalReference(left: ArtifactReference | undefined, right: ArtifactReference | undefined): boolean {
   return left === undefined ? right === undefined : right !== undefined && sameReference(left, right);
 }
@@ -595,6 +665,13 @@ function sameDigest(left: Digest, right: Digest): boolean {
 
 function digestIdentity(digest: Digest): string {
   return `${digest.algorithm}:${digest.value}`;
+}
+
+function hasFrozenTaskInputs(options: ValidateRunQueueOptions): boolean {
+  return options.bundleRoot !== undefined
+    || options.frozenTasks !== undefined
+    || options.taskFreezeRecords !== undefined
+    || options.taskPackets !== undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

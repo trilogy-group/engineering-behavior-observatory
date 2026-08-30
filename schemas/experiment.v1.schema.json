@@ -136,6 +136,31 @@
             "properties": { "strategy": { "enum": ["permuted"] } }
           },
           "then": { "required": ["permutationAlgorithmRef"] }
+        },
+        {
+          "if": {
+            "properties": { "strategy": { "enum": ["declared", "sequential"] } }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["permutationAlgorithmRef"] },
+                { "required": ["balanceBy"] }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "strategy": { "enum": ["balanced", "balanced-interleaved", "interleaved"] } }
+          },
+          "then": { "not": { "required": ["permutationAlgorithmRef"] } }
+        },
+        {
+          "if": {
+            "properties": { "strategy": { "enum": ["permuted", "seeded-shuffle"] } }
+          },
+          "then": { "not": { "required": ["balanceBy"] } }
         }
       ]
     },

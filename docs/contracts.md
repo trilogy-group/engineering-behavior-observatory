@@ -144,7 +144,9 @@ atomic artifact writer and do not execute work or coordinate across machines.
 
 The CLI exposes `ebo matrix compile <experiment.json> <bundle-root>
 <queue.json>`, `ebo queue inspect <queue.json>`, and `ebo queue validate
-<queue.json> [experiment.json]`. The 18-cell fixture is only a generality test;
+<queue.json> [experiment.json] [--bundle-root <bundle-root>]`. Supplying the
+bundle root lets queue validation recheck each freeze and pinned algorithm
+artifact. The 18-cell fixture is only a generality test;
 the compiler has no fixed task, model, harness, or trial count.
 
 Unknown schema versions and sharing classifications are invalid. Consumers must

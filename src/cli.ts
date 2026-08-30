@@ -24,7 +24,7 @@ import {
 const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <command> ...
        ebo matrix compile <experiment.json> <bundle-root> <queue.json>
        ebo queue inspect <queue.json>
-       ebo queue validate <queue.json> [experiment.json]
+       ebo queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
 
 Engineering Behavior Observatory
 `;
@@ -174,15 +174,26 @@ function validateQueue(
   args: string[],
   write: (message: string) => void,
 ): number {
-  const queuePath = args[0];
-  if (queuePath === undefined || args.length > 2) {
-    write("Usage: ebo queue validate <queue.json> [experiment.json]\n");
+  const positional: string[] = [];
+  let bundleRoot: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === "--bundle-root") bundleRoot = args[++index];
+    else positional.push(args[index]!);
+  }
+  const queuePath = positional[0];
+  if (queuePath === undefined || positional.length > 2) {
+    write("Usage: ebo queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]\n");
     return 1;
   }
   try {
     const queue = readJson(queuePath);
-    const experiment = args[1] === undefined ? undefined : readJson(args[1]);
-    const errors = validateRunQueue(queue, experiment as Parameters<typeof compileRunQueue>[0] | undefined, queuePath);
+    const experiment = positional[1] === undefined ? undefined : readJson(positional[1]);
+    const errors = validateRunQueue(
+      queue,
+      experiment as Parameters<typeof compileRunQueue>[0] | undefined,
+      queuePath,
+      bundleRoot === undefined ? {} : { bundleRoot },
+    );
     if (errors.length > 0) {
       for (const error of errors) write(`${error.artifact} [${error.schemaVersion}] ${error.field}: ${error.message}\n`);
       return 1;

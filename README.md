@@ -66,7 +66,7 @@ node dist/src/cli.js task-packet freeze <bundle-root> <packet.json>
 node dist/src/cli.js task-packet status <bundle-root> <packet.json>
 node dist/src/cli.js matrix compile <experiment.json> <bundle-root> <queue.json>
 node dist/src/cli.js queue inspect <queue.json>
-node dist/src/cli.js queue validate <queue.json> [experiment.json]
+node dist/src/cli.js queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
 ```
 
 `ebo validate` checks the supported task-packet, experiment, and run-bundle

@@ -10,6 +10,7 @@ import {
   compileRunQueue,
   inspectRunQueue,
   LocalRunQueue,
+  MAX_RUN_QUEUE_ENTRIES,
   readRunQueue,
   validateRunQueue,
   writeRunQueue,
@@ -166,7 +167,58 @@ test("queue validation binds entry references to the supplied experiment", () =>
   const altered = structuredClone(queue);
   altered.entries[0]!.task.packetRef = structuredClone(altered.entries[1]!.task.packetRef);
   altered.entries[0]!.configuration.model = structuredClone(altered.entries[0]!.model.configurationRef);
-  assert.match(validateRunQueue(altered, experiment).map((error) => error.message).join("\n"), /Task packet reference/);
+  assert.match(
+    validateRunQueue(altered, experiment, "run-queue.json", compileOptions(experiment)).map((error) => error.message).join("\n"),
+    /Task packet reference/,
+  );
+});
+
+test("queue validation checks the supplied experiment and frozen task record", () => {
+  const experiment = fixture("experiment.18-cell.v1.json");
+  const queue = compileRunQueue(experiment, compileOptions(experiment));
+  const altered = structuredClone(queue);
+  altered.entries[0]!.task.packetId = "changed-task";
+  assert.match(
+    validateRunQueue(altered, experiment, "run-queue.json", compileOptions(experiment)).map((error) => error.message).join("\n"),
+    /Frozen task identity/,
+  );
+
+  const invalidExperiment = structuredClone(experiment) as ExperimentConfiguration & { extra?: boolean };
+  invalidExperiment.extra = true;
+  assert.match(validateRunQueue(queue, invalidExperiment).map((error) => error.message).join("\n"), /must NOT have additional properties/);
+
+  const unsupported = compileOptions(experiment);
+  unsupported.permutationAlgorithms = {
+    [experiment.ordering.strategy === "permuted" ? experiment.ordering.permutationAlgorithmRef!.locator : "algorithm.json"]: "unknown",
+  };
+  assert.match(
+    validateRunQueue(queue, experiment, "run-queue.json", unsupported).map((error) => error.message).join("\n"),
+    /Unsupported permutation algorithm/,
+  );
+});
+
+test("oversized matrices fail before eager expansion", () => {
+  const experiment = fixture("experiment.18-cell.v1.json");
+  experiment.trialCount = MAX_RUN_QUEUE_ENTRIES + 1;
+  assert.throws(() => compileRunQueue(experiment), /local queue limit/);
+
+  const queue = compileRunQueue(fixture("experiment.18-cell.v1.json"), compileOptions(fixture("experiment.18-cell.v1.json")));
+  assert.match(validateRunQueue(queue, experiment).map((error) => error.message).join("\n"), /local queue limit/);
+});
+
+test("strategy-inapplicable ordering fields are rejected", () => {
+  const experiment = fixture("experiment.18-cell.v1.json") as ExperimentConfiguration & { ordering: Record<string, unknown> };
+  experiment.ordering = {
+    seed: "fixed",
+    strategy: "sequential",
+    declaredOrder: {
+      taskIds: Object.keys(experiment.taskSet),
+      modelIds: Object.keys(experiment.modelSet),
+      harnessIds: Object.keys(experiment.harnessSet),
+    },
+    balanceBy: "model",
+  };
+  assert.match(validateRunQueue(experiment).map((error) => error.message).join("\n"), /must NOT be valid/);
 });
 
 test("a persisted local queue is validated and consumed in order", () => {
@@ -179,7 +231,7 @@ test("a persisted local queue is validated and consumed in order", () => {
     assert.doesNotThrow(() => writeRunQueue(path, queue));
     assert.throws(() => writeRunQueue(path, { ...queue, seed: "changed" }), /different queue/);
     assert.equal(readFileSync(path, "utf8"), canonicalizeMetadata(queue));
-    const loaded = readRunQueue(path, experiment);
+    const loaded = readRunQueue(path, experiment, compileOptions(experiment));
     assert.deepEqual(inspectRunQueue(loaded), inspectRunQueue(queue));
     const local = new LocalRunQueue(loaded);
     assert.equal(local.remaining, 18);

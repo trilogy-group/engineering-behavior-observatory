@@ -65,6 +65,7 @@ export {
   expandMatrixCells,
   inspectRunQueue,
   LocalRunQueue,
+  MAX_RUN_QUEUE_ENTRIES,
   readRunQueue,
   validateRunQueue,
   writeRunQueue,
@@ -78,6 +79,7 @@ export type {
   RunQueue,
   RunQueueEntry,
   RunQueueInspection,
+  ValidateRunQueueOptions,
 } from "./scheduler.js";
 export {
   digestWorkspace,
