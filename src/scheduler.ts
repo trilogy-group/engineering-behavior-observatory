@@ -485,7 +485,7 @@ export class LocalRunQueue {
 
   public next(): RunQueueEntry | undefined {
     if (this.position >= this.snapshot.entries.length) return undefined;
-    return this.snapshot.entries[this.position++];
+    return structuredClone(this.snapshot.entries[this.position++]);
   }
 }
 
@@ -739,7 +739,7 @@ function resolveFrozenTasks(
         condition.packetRef,
         options.freezeLocators?.[taskId] ?? freezeLocatorOf(suppliedInput),
       )
-      : frozenTaskFromInput(taskId, condition.packetRef, suppliedInput);
+      : frozenTaskFromInput(taskId, condition.packetRef, suppliedInput, options.freezeLocators?.[taskId]);
     if (packetDigests.has(digestIdentity(identity.packetRef.digest))) {
       throw new Error(`Task packet "${taskId}" duplicates a packet digest.`);
     }
@@ -802,6 +802,7 @@ function frozenTaskFromInput(
   taskId: string,
   packetRef: ArtifactReference,
   input: FrozenTaskInput | undefined,
+  freezeLocatorOverride?: string,
 ): FrozenTaskIdentity {
   if (input === undefined) {
     throw new Error(`Task packet "${taskId}" has no frozen record.`);
@@ -813,7 +814,7 @@ function frozenTaskFromInput(
   const packetLocator = record.packetLocator ?? record.packetRef?.locator ?? packetRef.locator;
   const packetDigest = record.packetDigest ?? record.packetRef?.digest;
   const packetId = record.packetId;
-  const freezeLocator = record.freezeLocator
+  const freezeLocator = freezeLocatorOverride ?? record.freezeLocator
     ?? (typeof packetLocator === "string" ? defaultFreezeLocator(packetLocator) : undefined);
   const aggregateDigest = record.aggregateDigest;
   if (typeof packetLocator !== "string" || packetDigest === undefined || typeof packetId !== "string"

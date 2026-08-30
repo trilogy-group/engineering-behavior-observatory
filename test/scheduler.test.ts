@@ -206,6 +206,12 @@ test("compiles arbitrary matrices with stable serialized identities", () => {
   assert.deepEqual(first.coordinatorBudget, experiment.coordinatorBudget);
   assert.equal(first.entries[0]!.trial.index, first.entries[0]!.trialIndex);
 
+  const customFreezeQueue = compileRunQueue(experiment, {
+    ...compileOptions(experiment),
+    freezeLocators: { "task-a": "freezes/task-a.json" },
+  });
+  assert.equal(customFreezeQueue.entries.find((entry) => entry.taskId === "task-a")!.task.freezeLocator, "freezes/task-a.json");
+
   const changedExperiment = structuredClone(experiment);
   changedExperiment.captureProfile = {
     ...changedExperiment.captureProfile,
@@ -461,7 +467,10 @@ test("a persisted local queue is validated and consumed in order", () => {
     const local = new LocalRunQueue(loaded);
     assert.equal(local.remaining, 18);
     local.queue.entries[0]!.task.packetId = "caller-mutation";
-    assert.equal(local.next()!.runId, queue.entries[0]!.runId);
+    const dequeued = local.next()!;
+    dequeued.task.packetId = "dequeued-mutation";
+    assert.equal(dequeued.runId, queue.entries[0]!.runId);
+    assert.equal(local.queue.entries[0]!.task.packetId, queue.entries[0]!.task.packetId);
     for (let index = 1; index < queue.entries.length; index += 1) local.next();
     assert.equal(local.remaining, 0);
     assert.equal(local.next(), undefined);
