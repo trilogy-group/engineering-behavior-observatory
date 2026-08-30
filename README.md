@@ -60,12 +60,20 @@ npm test
 node dist/src/cli.js --help
 node dist/src/cli.js validate tests/fixtures/task-packet.valid.v1.json \
   test/fixtures/run-bundles/complete/manifest.json
+node dist/src/cli.js task-packet validate <bundle-root> <packet.json>
+node dist/src/cli.js task-packet admit <bundle-root> <packet.json>
+node dist/src/cli.js task-packet freeze <bundle-root> <packet.json>
+node dist/src/cli.js task-packet status <bundle-root> <packet.json>
 ```
 
 `ebo validate` checks the supported task-packet, experiment, and run-bundle
 artifact versions. On failure it identifies the artifact, schema version, and
 failing JSON field. Capture, runner, adapter, evaluation, and Atlas behavior
 are introduced by their separately scoped tasks.
+
+Task-packet commands validate externally authored packets, enforce their
+recorded admission decision, persist a digest-based freeze record, and report
+component changes. They do not generate tasks or perform human review.
 
 Start with [AGENTS.md](AGENTS.md) and the assigned Linear issue. `WORKFLOW.md`
 contains OpenSymphony orchestration configuration and should not be treated as

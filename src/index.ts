@@ -11,6 +11,7 @@ export {
   validateRunManifestEvidence,
   verifyDigest,
   writeMetadataAtomically,
+  writeMetadataAtomicallyIfAbsentSync,
 } from "./artifacts.js";
 export type { ArtifactIdentity, ArtifactValidationError } from "./artifacts.js";
 export {
@@ -25,8 +26,23 @@ export {
   MAX_CONFIGURATION_BYTES,
   resolveBundleConfiguration,
   resolveBundleArtifact,
+  resolveBundleArtifactDigest,
   resolveTaskArchive,
+  validateTaskArchive,
 } from "./contracts.js";
+export {
+  admitTaskPacket,
+  assertTaskPacketAdmitted,
+  defaultFreezeLocator,
+  formatErrors,
+  freezeTaskPacket,
+  inspectTaskPacket,
+  modelVisibleTaskPacket,
+  statusTaskPacket,
+  MAX_TASK_PACKET_METADATA_BYTES,
+  TASK_PACKET_FREEZE_SCHEMA_VERSION,
+} from "./task-packets.js";
+export type { TaskPacket, TaskPacketComponent, TaskPacketComponents, TaskPacketFreezeRecord, TaskPacketInspection, TaskPacketStatus } from "./task-packets.js";
 export type {
   ArtifactReference,
   ArchiveEntry,

@@ -5,10 +5,19 @@ import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { assertNoDuplicateJsonKeys, validateArtifact, validateExportManifest, validateRunManifestEvidence } from "./artifacts.js";
+import {
+  admitTaskPacket,
+  formatErrors,
+  freezeTaskPacket,
+  inspectTaskPacket,
+  statusTaskPacket,
+} from "./task-packets.js";
 
-const usage = `Usage: ebo [--help] | validate <artifact.json>...
+const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <command> ...
 
 Engineering Behavior Observatory
+`;
+const taskPacketUsage = `Usage: ebo task-packet <validate|admit|freeze|status> <bundle-root> <packet.json> [freeze-record.json]
 `;
 
 export function main(
@@ -20,6 +29,10 @@ export function main(
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     write(usage);
     return 0;
+  }
+
+  if (args[0] === "task-packet") {
+    return runTaskPacketCommand(args.slice(1), write);
   }
 
   if (args[0] === "validate") {
@@ -75,6 +88,58 @@ export function main(
 
   process.stderr.write(`Unknown argument: ${args[0]}\n`);
   return 1;
+}
+
+function runTaskPacketCommand(
+  args: string[],
+  write: (message: string) => void,
+): number {
+  const [command, bundleRoot, packetLocator, freezeLocator] = args;
+  if (command === undefined || bundleRoot === undefined || packetLocator === undefined
+      || !["validate", "admit", "freeze", "status"].includes(command)) {
+    write(taskPacketUsage);
+    return 1;
+  }
+
+  try {
+    if (command === "validate") {
+      const inspection = inspectTaskPacket(bundleRoot, packetLocator);
+      if (inspection.errors.length > 0) {
+        write(`${formatErrors(inspection.errors)}\n`);
+        return 1;
+      }
+      write(`Validated task packet "${inspection.packet!.id}".\n`);
+      return 0;
+    }
+
+    if (command === "admit") {
+      const inspection = admitTaskPacket(bundleRoot, packetLocator);
+      if (inspection.errors.length > 0) {
+        write(`${formatErrors(inspection.errors)}\n`);
+        return 1;
+      }
+      write(`Admitted task packet "${inspection.packet!.id}".\n`);
+      return 0;
+    }
+
+    if (command === "freeze") {
+      const record = freezeTaskPacket(bundleRoot, packetLocator, freezeLocator);
+      write(`Frozen task packet "${record.packetId}" (aggregate ${record.aggregateDigest.algorithm}:${record.aggregateDigest.value}).\n`);
+      return 0;
+    }
+
+    const status = statusTaskPacket(bundleRoot, packetLocator, freezeLocator);
+    write(`Task packet status: ${status.status}\n`);
+    if (status.packetId !== null) write(`Packet: ${status.packetId}\n`);
+    if (status.packetDigest !== null) write(`Packet digest: ${status.packetDigest.algorithm}:${status.packetDigest.value}\n`);
+    if (status.aggregateDigest !== null) write(`Aggregate digest: ${status.aggregateDigest.algorithm}:${status.aggregateDigest.value}\n`);
+    for (const mismatch of status.mismatches) write(`Mismatch: ${mismatch}\n`);
+    if (status.errors.length > 0) write(`${formatErrors(status.errors)}\n`);
+    return status.status === "frozen" ? 0 : 1;
+  } catch (error) {
+    write(`${error instanceof Error ? error.message : "Task packet command failed."}\n`);
+    return 1;
+  }
 }
 
 function isDirectExecution(entryPath = process.argv[1]): boolean {

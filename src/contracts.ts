@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
-import { isAbsolute, posix, relative, resolve, sep } from "node:path";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
+import { gunzipSync } from "node:zlib";
 
 export type Digest = {
   algorithm: "sha256";
@@ -10,6 +11,11 @@ export type Digest = {
 export type ArtifactReference = {
   locator: string;
   digest: Digest;
+};
+
+export type BundleRootHandle = {
+  path: string;
+  descriptor: number;
 };
 
 export type ArchiveEntry = {
@@ -32,6 +38,22 @@ export type ArchiveMeasurements = {
 export const MAX_CONFIGURATION_BYTES = 1_048_576;
 const MAX_ARCHIVE_PATH_COMPONENTS = 64;
 const MAX_ARCHIVE_PATH_LENGTH = 960;
+const TAR_BLOCK_BYTES = 512;
+const MAX_TAR_OVERHEAD_PER_MEMBER = 4096;
+const PUBLICATION_MARKER_SCHEMA_VERSION = "ebo.publication-staging/v1";
+const PUBLICATION_ATTEMPT_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const PUBLICATION_STAGING_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
+const MAX_PUBLICATION_MARKER_BYTES = 4096;
+
+export type PublicationOwnership = {
+  marker: Record<string, unknown>;
+  binding: Record<string, unknown>;
+  markerIdentity: { dev: number; ino: number };
+  bindingIdentity: { dev: number; ino: number };
+  stagingIdentity: { dev: number; ino: number };
+};
+
+type FileIdentity = { dev: number; ino: number; nlink?: number };
 
 export type TaskCondition = {
   packetRef: {
@@ -233,36 +255,175 @@ export function assertArchiveMeasurements(limits: ArchiveLimits, measurements: A
   }
 }
 
+export function validateTaskArchive(
+  bytes: Uint8Array,
+  limits: ArchiveLimits,
+  includePaths: readonly string[],
+): void {
+  if (![limits.maxCompressedBytes, limits.maxExpandedBytes, limits.maxMembers]
+    .every((value) => Number.isSafeInteger(value) && value >= 1)) {
+    throw new Error("Sanitized archive limits must be positive safe integers.");
+  }
+  if (bytes.byteLength > limits.maxCompressedBytes) {
+    throw new Error("Sanitized archive exceeds its declared materialization limits.");
+  }
+
+  let archive: Buffer;
+  try {
+    archive = gunzipSync(Buffer.from(bytes), { maxOutputLength: archiveInspectionLimit(limits) });
+  } catch {
+    throw new Error("Sanitized task archive is not a valid gzip stream or exceeds the inspection limit.");
+  }
+  const parsed = parseTarArchive(archive, limits.maxMembers);
+  assertArchiveMeasurements(limits, {
+    compressedBytes: bytes.byteLength,
+    expandedBytes: parsed.expandedBytes,
+    memberCount: parsed.entries.length,
+  });
+  const selected = parsed.entries.filter((entry) => includePaths.some((includePath) => {
+    const selectedPath = canonicalArchiveMemberPath(includePath);
+    const entryPath = canonicalArchiveMemberPath(entry.path);
+    return entryPath === selectedPath || entryPath.startsWith(`${selectedPath}/`);
+  }));
+  assertNoSelectedSymlinks(selected, includePaths, parsed.entries);
+}
+
 export function resolveBundleConfiguration(
   bundleRoot: string,
   reference: ArtifactReference,
   maxBytes = MAX_CONFIGURATION_BYTES,
+  rootHandle?: BundleRootHandle,
 ): Buffer {
   assertPositiveSafeInteger(maxBytes, "Configuration maximum bytes");
-  return readVerifiedBundleFile(
-    openBundleRegularFile(bundleRoot, reference.locator, "Configuration locator"),
-    reference,
-    "Configuration",
-    maxBytes,
-  );
+  const root = rootHandle ?? openBundleRoot(bundleRoot);
+  const ownsRoot = rootHandle === undefined;
+  try {
+    return readVerifiedBundleFile(
+      openBundleRegularFile(bundleRoot, reference.locator, "Configuration locator", root),
+      reference,
+      "Configuration",
+      maxBytes,
+      root,
+      bundleRoot,
+    );
+  } finally {
+    if (ownsRoot) closeBundleRoot(root);
+  }
 }
 
-export function resolveTaskArchive(bundleRoot: string, source: ArtifactReference, maxCompressedBytes: number): Buffer {
+export function resolveTaskArchive(
+  bundleRoot: string,
+  source: ArtifactReference,
+  maxCompressedBytes: number,
+  rootHandle?: BundleRootHandle,
+): Buffer {
   assertPositiveSafeInteger(maxCompressedBytes, "Task archive maximum compressed bytes");
-  return readVerifiedBundleFile(
-    openBundleRegularFile(bundleRoot, source.locator, "Task archive locator"),
-    source,
-    "Task archive",
-    maxCompressedBytes,
-  );
+  const root = rootHandle ?? openBundleRoot(bundleRoot);
+  const ownsRoot = rootHandle === undefined;
+  try {
+    return readVerifiedBundleFile(
+      openBundleRegularFile(bundleRoot, source.locator, "Task archive locator", root),
+      source,
+      "Task archive",
+      maxCompressedBytes,
+      root,
+      bundleRoot,
+    );
+  } finally {
+    if (ownsRoot) closeBundleRoot(root);
+  }
 }
 
-export function resolveBundleArtifact(bundleRoot: string, reference: ArtifactReference): Buffer {
-  return readVerifiedBundleFile(
-    openBundleRegularFile(bundleRoot, reference.locator, "Artifact locator"),
-    reference,
-    "Artifact",
-  );
+export function resolveBundleArtifact(
+  bundleRoot: string,
+  reference: ArtifactReference,
+  maxBytes?: number,
+  rootHandle?: BundleRootHandle,
+): Buffer {
+  const root = rootHandle ?? openBundleRoot(bundleRoot);
+  const ownsRoot = rootHandle === undefined;
+  try {
+    return readVerifiedBundleFile(
+      openBundleRegularFile(bundleRoot, reference.locator, "Artifact locator", root),
+      reference,
+      "Artifact",
+      maxBytes,
+      root,
+      bundleRoot,
+    );
+  } finally {
+    if (ownsRoot) closeBundleRoot(root);
+  }
+}
+
+export function resolveBundleArtifactDigest(
+  bundleRoot: string,
+  reference: ArtifactReference,
+  rootHandle?: BundleRootHandle,
+): Digest {
+  const root = rootHandle ?? openBundleRoot(bundleRoot);
+  const ownsRoot = rootHandle === undefined;
+  let descriptor: number | undefined;
+  try {
+    descriptor = openBundleRegularFile(bundleRoot, reference.locator, "Artifact locator", root);
+    const opened = fstatSync(descriptor);
+    const openedTimes = fstatSync(descriptor, { bigint: true });
+    const size = opened.size;
+    if (!opened.isFile() || !isReadableBundleFile(resolve(root.path, reference.locator), opened)
+        || !Number.isSafeInteger(size) || size < 0) {
+      throw new Error("Artifact is not an isolated regular file.");
+    }
+    const hash = createHash("sha256");
+    const chunk = Buffer.allocUnsafe(64 * 1024);
+    for (let offset = 0; offset < size;) {
+      const read = readSync(descriptor, chunk, 0, Math.min(chunk.length, size - offset), offset);
+      if (read === 0) throw new Error("Artifact changed while its digest was being read.");
+      hash.update(chunk.subarray(0, read));
+      offset += read;
+    }
+    const trailing = Buffer.allocUnsafe(1);
+    if (readSync(descriptor, trailing, 0, 1, size) !== 0) {
+      throw new Error("Artifact changed while its digest was being read.");
+    }
+    const completed = fstatSync(descriptor);
+    const completedTimes = fstatSync(descriptor, { bigint: true });
+    if (!completed.isFile() || !isReadableBundleFile(resolve(root.path, reference.locator), completed)
+        || completed.dev !== opened.dev || completed.ino !== opened.ino
+        || completed.size !== size || completedTimes.mtimeNs !== openedTimes.mtimeNs
+        || completedTimes.ctimeNs !== openedTimes.ctimeNs) {
+      throw new Error("Artifact changed while its digest was being read.");
+    }
+    assertBundleRootHandle(root, bundleRoot, reference.locator);
+    const current = lstatSync(assertBundlePathWithoutLinks(root.path, reference.locator, "Artifact locator"));
+    if (current.dev !== completed.dev || current.ino !== completed.ino) {
+      throw new Error("Artifact changed after bundle-root verification.");
+    }
+    const resolvedDigest: Digest = { algorithm: "sha256", value: hash.digest("hex") };
+    if (reference.digest.algorithm !== resolvedDigest.algorithm || reference.digest.value !== resolvedDigest.value) {
+      throw new Error("Artifact digest does not match its source reference.");
+    }
+    return resolvedDigest;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+    if (ownsRoot) closeBundleRoot(root);
+  }
+}
+
+export function openBundleRoot(bundleRoot: string): BundleRootHandle {
+  const path = realpathSync(bundleRoot);
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const root = { path, descriptor };
+  try {
+    assertBundleRootHandle(root, bundleRoot, "bundle root");
+    return root;
+  } catch (error) {
+    closeSync(descriptor);
+    throw error;
+  }
+}
+
+export function closeBundleRoot(root: BundleRootHandle): void {
+  closeSync(root.descriptor);
 }
 
 function readVerifiedBundleFile(
@@ -270,10 +431,16 @@ function readVerifiedBundleFile(
   reference: ArtifactReference,
   label: string,
   maxBytes?: number,
+  root?: BundleRootHandle,
+  bundleRoot?: string,
 ): Buffer {
   try {
-    const size = fstatSync(descriptor).size;
-    if (!Number.isSafeInteger(size) || size < 0 || (maxBytes !== undefined && size > maxBytes)) {
+    const opened = fstatSync(descriptor);
+    const openedTimes = fstatSync(descriptor, { bigint: true });
+    const size = opened.size;
+    if (!opened.isFile() || !isReadableBundleFile(root === undefined ? undefined : resolve(root.path, reference.locator), opened)
+        || !Number.isSafeInteger(size) || size < 0
+        || (maxBytes !== undefined && size > maxBytes)) {
       throw new Error(`${label} exceeds its maximum bytes.`);
     }
     const bytes = Buffer.alloc(size);
@@ -281,6 +448,26 @@ function readVerifiedBundleFile(
       const read = readSync(descriptor, bytes, offset, size - offset, offset);
       if (read === 0) throw new Error(`${label} changed while it was being read.`);
       offset += read;
+    }
+    const trailing = Buffer.allocUnsafe(1);
+    if (readSync(descriptor, trailing, 0, 1, size) !== 0) {
+      throw new Error(`${label} changed while it was being read.`);
+    }
+    const completed = fstatSync(descriptor);
+    const completedTimes = fstatSync(descriptor, { bigint: true });
+    if (!completed.isFile() || !isReadableBundleFile(root === undefined ? undefined : resolve(root.path, reference.locator), completed)
+        || completed.dev !== opened.dev || completed.ino !== opened.ino
+        || completed.size !== size || completedTimes.mtimeNs !== openedTimes.mtimeNs
+        || completedTimes.ctimeNs !== openedTimes.ctimeNs
+        || (maxBytes !== undefined && completed.size > maxBytes)) {
+      throw new Error(`${label} changed while it was being read.`);
+    }
+    if (root !== undefined && bundleRoot !== undefined) {
+      assertBundleRootHandle(root, bundleRoot, reference.locator);
+      const current = lstatSync(assertBundlePathWithoutLinks(root.path, reference.locator, `${label} locator`));
+      if (current.dev !== completed.dev || current.ino !== completed.ino) {
+        throw new Error(`${label} changed after bundle-root verification.`);
+      }
     }
     const resolvedDigest: Digest = {
       algorithm: "sha256",
@@ -297,29 +484,96 @@ function readVerifiedBundleFile(
   }
 }
 
-function openBundleRegularFile(bundleRoot: string, locator: string, label: string): number {
+export function openBundleRegularFile(
+  bundleRoot: string,
+  locator: string,
+  label: string,
+  root: BundleRootHandle,
+): number {
   if (!isSafeArtifactRelativePath(locator)) {
     throw new Error(`${label} "${locator}" is unsafe.`);
   }
 
-  const resolvedRoot = realpathSync(bundleRoot);
-  const selectedPath = assertBundlePathWithoutLinks(resolvedRoot, locator, label);
-
+  assertBundleRootHandle(root, bundleRoot, locator);
   let descriptor: number | undefined;
+  const originalCwd = process.cwd();
+  let changedCwd = false;
   try {
-    descriptor = openSync(selectedPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    // Node does not expose openat. Keep the verified root/parent directory as
+    // the process cwd while opening each next component with O_NOFOLLOW; once
+    // chdir has entered a verified directory, later lookups are inode-relative.
+    process.chdir(root.path);
+    changedCwd = true;
+    if (!sameFileIdentity(fstatSync(root.descriptor), lstatSync("."))) {
+      throw new Error(`${label} "${locator}" bundle root changed during verification.`);
+    }
+    let currentPath = root.path;
+    const segments = locator.split("/");
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      const segment = segments[index]!;
+      let childDescriptor: number;
+      try {
+        childDescriptor = openSync(segment, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+          throw new Error(`${label} "${locator}" escapes its declared root.`);
+        }
+        throw error;
+      }
+      try {
+        const openedDirectory = fstatSync(childDescriptor);
+        const namedDirectory = lstatSync(segment);
+        if (!openedDirectory.isDirectory() || namedDirectory.isSymbolicLink()
+            || !sameFileIdentity(openedDirectory, namedDirectory)) {
+          throw new Error(`${label} "${locator}" crosses a symbolic link.`);
+        }
+        process.chdir(segment);
+        const currentDirectory = lstatSync(".");
+        if (!sameFileIdentity(openedDirectory, currentDirectory)) {
+          throw new Error(`${label} "${locator}" parent changed during verification.`);
+        }
+        currentPath = resolve(currentPath, segment);
+      } finally {
+        closeSync(childDescriptor);
+      }
+    }
+    const leaf = segments[segments.length - 1]!;
+    try {
+      descriptor = openSync(leaf, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+        throw new Error(`${label} "${locator}" escapes its declared root.`);
+      }
+      throw error;
+    }
     const opened = fstatSync(descriptor);
-    if (!opened.isFile() || opened.nlink > 1) {
+    const current = lstatSync(leaf);
+    if (!opened.isFile() || current.isSymbolicLink() || !sameFileIdentity(opened, current)
+        || !isReadableBundleFile(resolve(currentPath, leaf), opened)) {
       throw new Error(`${label} "${locator}" is not an isolated regular file.`);
     }
-    const current = lstatSync(assertBundlePathWithoutLinks(resolvedRoot, locator, label));
-    if (opened.dev !== current.dev || opened.ino !== current.ino) {
-      throw new Error(`${label} "${locator}" changed after bundle-root verification.`);
-    }
+    assertBundleRootHandle(root, root.path, locator);
     return descriptor;
   } catch (error) {
     if (descriptor !== undefined) closeSync(descriptor);
     throw error;
+  } finally {
+    if (changedCwd) process.chdir(originalCwd);
+  }
+}
+
+function assertBundleRootHandle(root: BundleRootHandle, bundleRoot: string, locator: string): void {
+  let requestedRoot: string;
+  try {
+    requestedRoot = realpathSync(bundleRoot);
+  } catch {
+    throw new Error(`Artifact path "${locator}" bundle root changed during verification.`);
+  }
+  const opened = fstatSync(root.descriptor);
+  const current = lstatSync(root.path);
+  if (requestedRoot !== root.path || !opened.isDirectory() || current.isSymbolicLink()
+      || opened.dev !== current.dev || opened.ino !== current.ino) {
+    throw new Error(`Artifact path "${locator}" bundle root changed during verification.`);
   }
 }
 
@@ -339,6 +593,187 @@ function assertBundlePathWithoutLinks(bundleRoot: string, locator: string, label
   }
 
   return selectedPath;
+}
+
+function isReadableBundleFile(path: string | undefined, target: { dev: number; ino: number; nlink: number }): boolean {
+  return path !== undefined && isPublicationFileReadable(path, target);
+}
+
+export function isPublicationFileReadable(
+  path: string,
+  target: { dev: number; ino: number; nlink: number },
+  expectedRelativePath?: string,
+): boolean {
+  if (target.nlink === 1) return true;
+  const ownership = readPublicationOwnership(path, target, expectedRelativePath);
+  if (ownership === undefined) return false;
+  const openedTarget = aliasIdentity(path, target);
+  const quarantine = aliasIdentity(path + ".quarantine", target);
+  const recovered = aliasIdentity(path + ".recovered", target);
+  const staging = hasStagingAlias(path, target, ownership);
+  const accounted = Number(quarantine !== undefined) + Number(recovered !== undefined) + Number(staging !== undefined);
+  if (openedTarget === undefined || !isPublicationOwnershipCurrent(path, ownership, expectedRelativePath)
+      || accounted === 0) return false;
+  const currentTarget = aliasIdentity(path, target);
+  const currentQuarantine = aliasIdentity(path + ".quarantine", target);
+  const currentRecovered = aliasIdentity(path + ".recovered", target);
+  const currentStaging = hasStagingAlias(path, target, ownership);
+  return currentTarget !== undefined && sameFileIdentity(openedTarget, currentTarget)
+    && sameOptionalIdentity(quarantine, currentQuarantine)
+    && sameOptionalIdentity(recovered, currentRecovered)
+    && sameOptionalIdentity(staging, currentStaging)
+    && isPublicationOwnershipCurrent(path, ownership, expectedRelativePath)
+    && currentTarget.nlink === 1 + accounted;
+}
+
+export function isOwnedPublicationAlias(
+  path: string,
+  target: { dev: number; ino: number },
+  expectedRelativePath?: string,
+): boolean {
+  return readPublicationOwnership(path, target, expectedRelativePath) !== undefined;
+}
+
+export function readPublicationOwnership(
+  path: string,
+  target: { dev: number; ino: number },
+  expectedRelativePath?: string,
+): PublicationOwnership | undefined {
+  const markerMetadata = readPublicationMarkerWithIdentity(`${path}.quarantine.marker`);
+  const bindingMetadata = readPublicationMarkerWithIdentity(`${path}.quarantine.marker.binding`);
+  if (markerMetadata === undefined || bindingMetadata === undefined
+      || !isPublicationMarker(markerMetadata.value, expectedRelativePath)
+      || !isPublicationMarker(bindingMetadata.value, expectedRelativePath)
+      || !samePublicationMarkerFields(markerMetadata.value, bindingMetadata.value)
+      || !isRecord(bindingMetadata.value.stagingIdentity)) return undefined;
+  const { dev, ino } = bindingMetadata.value.stagingIdentity;
+  if (!Number.isSafeInteger(dev) || !Number.isSafeInteger(ino)
+      || dev !== target.dev || ino !== target.ino) return undefined;
+  return {
+    marker: markerMetadata.value,
+    binding: bindingMetadata.value,
+    markerIdentity: markerMetadata.identity,
+    bindingIdentity: bindingMetadata.identity,
+    stagingIdentity: { dev, ino },
+  };
+}
+
+export function isPublicationOwnershipCurrent(
+  path: string,
+  ownership: PublicationOwnership,
+  expectedRelativePath?: string,
+): boolean {
+  const current = readPublicationOwnership(path, ownership.stagingIdentity, expectedRelativePath);
+  return current !== undefined
+    && sameFileIdentity(current.markerIdentity, ownership.markerIdentity)
+    && sameFileIdentity(current.bindingIdentity, ownership.bindingIdentity)
+    && sameFileIdentity(current.stagingIdentity, ownership.stagingIdentity)
+    && samePublicationMarkerFields(current.marker, ownership.marker)
+    && samePublicationMarkerFields(current.binding, ownership.binding);
+}
+
+export function readPublicationStagingPath(path: string, expectedRelativePath?: string): string | undefined {
+  const marker = readPublicationMarker(`${path}.quarantine.marker`);
+  return marker !== undefined && isPublicationMarker(marker, expectedRelativePath)
+    ? marker.stagingPath as string
+    : undefined;
+}
+
+function readPublicationMarker(path: string): Record<string, unknown> | undefined {
+  return readPublicationMarkerWithIdentity(path)?.value;
+}
+
+function readPublicationMarkerWithIdentity(
+  path: string,
+): { value: Record<string, unknown>; identity: { dev: number; ino: number } } | undefined {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile() || (opened.mode & 0o777) !== 0o600
+        || !Number.isSafeInteger(opened.size) || opened.size > MAX_PUBLICATION_MARKER_BYTES) return undefined;
+    const bytes = Buffer.alloc(opened.size);
+    for (let offset = 0; offset < opened.size;) {
+      const read = readSync(descriptor, bytes, offset, opened.size - offset, offset);
+      if (read === 0) return undefined;
+      offset += read;
+    }
+    const trailing = Buffer.allocUnsafe(1);
+    if (readSync(descriptor, trailing, 0, 1, opened.size) !== 0) return undefined;
+    const completed = fstatSync(descriptor);
+    if (!completed.isFile() || completed.dev !== opened.dev || completed.ino !== opened.ino
+        || completed.size !== opened.size) return undefined;
+    const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+    return isRecord(value) ? { value, identity: opened } : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function isPublicationMarker(value: Record<string, unknown>, expectedRelativePath?: string): boolean {
+  return value.schemaVersion === PUBLICATION_MARKER_SCHEMA_VERSION
+    && typeof value.relativePath === "string"
+    && isSafeArtifactRelativePath(value.relativePath)
+    && (expectedRelativePath === undefined || value.relativePath === expectedRelativePath)
+    && typeof value.stagingPath === "string"
+    && PUBLICATION_STAGING_PATTERN.test(value.stagingPath)
+    && typeof value.attemptId === "string"
+    && PUBLICATION_ATTEMPT_PATTERN.test(value.attemptId)
+    && typeof value.ownerPid === "number"
+    && Number.isSafeInteger(value.ownerPid)
+    && value.ownerPid > 0
+    && typeof value.ownerStart === "string"
+    && value.ownerStart.length > 0;
+}
+
+function samePublicationMarkerFields(
+  marker: Record<string, unknown>,
+  binding: Record<string, unknown>,
+): boolean {
+  return ["schemaVersion", "relativePath", "stagingPath", "attemptId", "ownerPid", "ownerStart"]
+    .every((field) => marker[field] === binding[field]);
+}
+
+function aliasIdentity(path: string, target: FileIdentity): FileIdentity | undefined {
+  try {
+    const alias = lstatSync(path);
+    return sameFileIdentity(target, alias) ? alias : undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+function sameOptionalIdentity(left: FileIdentity | undefined, right: FileIdentity | undefined): boolean {
+  return left === undefined ? right === undefined : right !== undefined && sameFileIdentity(left, right);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasStagingAlias(
+  path: string,
+  target: { dev: number; ino: number },
+  ownership: PublicationOwnership,
+): FileIdentity | undefined {
+  try {
+    const marker = ownership.marker;
+    if (marker === undefined
+        || marker.schemaVersion !== "ebo.publication-staging/v1"
+        || typeof marker.stagingPath !== "string"
+        || !/^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(marker.stagingPath)) return undefined;
+    return aliasIdentity(resolve(dirname(path), marker.stagingPath), target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    return undefined;
+  }
+}
+
+function sameFileIdentity(left: { dev: number; ino: number }, right: { dev: number; ino: number }): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
 }
 
 export function assertControlledPerturbationDigest(
@@ -528,6 +963,165 @@ export function isSafeArtifactRelativePath(path: string): boolean {
 function assertPositiveSafeInteger(value: number, label: string): void {
   if (!Number.isSafeInteger(value) || value < 1) {
     throw new Error(`${label} must be a positive safe integer.`);
+  }
+}
+
+function parseTarArchive(bytes: Buffer, maxMembers: number): { entries: ArchiveEntry[]; expandedBytes: number } {
+  const entries: ArchiveEntry[] = [];
+  let expandedBytes = 0;
+  let offset = 0;
+  let pendingPath: string | undefined;
+  let pendingPax: { path?: string; size?: number } | undefined;
+
+  while (offset + TAR_BLOCK_BYTES <= bytes.length) {
+    const header = bytes.subarray(offset, offset + TAR_BLOCK_BYTES);
+    if (header.every((value) => value === 0)) {
+      if (bytes.subarray(offset).every((value) => value === 0)) return { entries, expandedBytes };
+      throw new Error("Sanitized task archive has nonzero data after its end marker.");
+    }
+    verifyTarHeaderChecksum(header);
+    const headerSize = parseTarOctal(header.subarray(124, 136), "size");
+    const dataOffset = offset + TAR_BLOCK_BYTES;
+    const paddedSize = headerSize + ((TAR_BLOCK_BYTES - (headerSize % TAR_BLOCK_BYTES)) % TAR_BLOCK_BYTES);
+    if (!Number.isSafeInteger(paddedSize) || dataOffset + paddedSize > bytes.length) {
+      throw new Error("Sanitized task archive contains a truncated member.");
+    }
+    const data = bytes.subarray(dataOffset, dataOffset + headerSize);
+    const type = String.fromCharCode(header[156] ?? 0);
+    if (type === "L") {
+      pendingPath = readTarText(data);
+      offset = dataOffset + paddedSize;
+      continue;
+    }
+    if (type === "K") {
+      offset = dataOffset + paddedSize;
+      continue;
+    }
+    if (type === "x") {
+      pendingPax = parsePaxAttributes(data);
+      offset = dataOffset + paddedSize;
+      continue;
+    }
+    if (type === "X") {
+      throw new Error("Sanitized task archive contains an unsupported uppercase local PAX header.");
+    }
+    if (type === "g") {
+      throw new Error("Sanitized task archive contains an unsupported global PAX header.");
+    }
+
+    const rawName = readTarText(header.subarray(0, 100));
+    const prefix = readTarText(header.subarray(345, 500));
+    const magic = readTarText(header.subarray(257, 263));
+    const version = readTarText(header.subarray(263, 265));
+    if (magic !== "" && magic !== "ustar" && magic !== "ustar ") {
+      throw new Error("Sanitized task archive contains an unsupported TAR header format.");
+    }
+    if (prefix !== "" && !(magic === "ustar" && version === "00")) {
+      throw new Error("Sanitized task archive contains a TAR prefix without USTAR magic.");
+    }
+    const headerPath = prefix === "" ? rawName : `${prefix}/${rawName}`;
+    const path = pendingPax?.path ?? pendingPath ?? headerPath;
+    if (pendingPax?.size !== undefined && pendingPax.size !== headerSize) {
+      throw new Error("Sanitized task archive PAX size does not match TAR member framing.");
+    }
+    const size = pendingPax?.size ?? headerSize;
+    if (!Number.isSafeInteger(size) || size < 0) throw new Error("Sanitized task archive contains an invalid member size.");
+    const kind = tarEntryKind(type);
+    entries.push({ path, kind });
+    if (entries.length > maxMembers) throw new Error("Sanitized archive exceeds its declared materialization limits.");
+    if (kind === "file") {
+      if (!Number.isSafeInteger(expandedBytes + size)) throw new Error("Sanitized task archive exceeds safe expanded size.");
+      expandedBytes += size;
+    }
+    pendingPath = undefined;
+    pendingPax = undefined;
+    offset = dataOffset + paddedSize;
+  }
+  throw new Error("Sanitized task archive is not a complete TAR stream.");
+}
+
+function archiveInspectionLimit(limits: ArchiveLimits): number {
+  const overhead = MAX_TAR_OVERHEAD_PER_MEMBER * (limits.maxMembers + 2);
+  const limit = limits.maxExpandedBytes + overhead;
+  if (!Number.isSafeInteger(limit)) throw new Error("Sanitized archive inspection limit is not a safe integer.");
+  return limit;
+}
+
+function verifyTarHeaderChecksum(header: Buffer): void {
+  const expected = parseTarOctal(header.subarray(148, 156), "checksum");
+  let actual = 0;
+  for (let index = 0; index < header.length; index += 1) {
+    actual += index >= 148 && index < 156 ? 0x20 : header[index]!;
+  }
+  if (actual !== expected) throw new Error("Sanitized task archive contains an invalid TAR header checksum.");
+}
+
+function parseTarOctal(field: Uint8Array, label: string): number {
+  const raw = new TextDecoder("utf-8", { fatal: true }).decode(field).replace(/\0.*$/s, "");
+  const text = raw.replace(/^ +| +$/g, "");
+  if (text === "" || !/^[0-7]+$/.test(text)) throw new Error(`Sanitized task archive contains an invalid TAR ${label}.`);
+  const value = Number.parseInt(text, 8);
+  if (!Number.isSafeInteger(value)) throw new Error(`Sanitized task archive contains an unsafe TAR ${label}.`);
+  return value;
+}
+
+function readTarText(bytes: Uint8Array): string {
+  const end = bytes.indexOf(0);
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, end < 0 ? bytes.length : end));
+}
+
+function parsePaxAttributes(bytes: Uint8Array): { path?: string; size?: number } {
+  const attributes: { path?: string; size?: number } = {};
+  for (let offset = 0; offset < bytes.length;) {
+    const space = bytes.indexOf(0x20, offset);
+    if (space <= offset) throw new Error("Sanitized task archive contains an invalid PAX header.");
+    const lengthText = new TextDecoder("ascii", { fatal: true }).decode(bytes.subarray(offset, space));
+    if (!/^[0-9]+$/.test(lengthText)) throw new Error("Sanitized task archive contains an invalid PAX record length.");
+    const length = Number.parseInt(lengthText, 10);
+    if (!Number.isSafeInteger(length) || length <= space - offset || offset + length > bytes.length) {
+      throw new Error("Sanitized task archive contains an invalid PAX record length.");
+    }
+    const record = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(space + 1, offset + length));
+    const equals = record.indexOf("=");
+    if (equals <= 0 || !record.endsWith("\n")) throw new Error("Sanitized task archive contains an invalid PAX record.");
+    const key = record.slice(0, equals);
+    const value = record.slice(equals + 1, -1);
+    if (/^(?:GNU\.sparse(?:\.|$)|SCHILY\.(?:sparse(?:\.|$)|realsize$)|SUN\.holesdata$)/.test(key)) {
+      throw new Error("Sanitized task archive contains unsupported sparse PAX metadata.");
+    }
+    if (key === "path") attributes.path = value;
+    if (key === "size") {
+      if (!/^[0-9]+$/.test(value)) throw new Error("Sanitized task archive contains an invalid PAX size.");
+      const size = Number(value);
+      if (!Number.isSafeInteger(size) || size < 0) throw new Error("Sanitized task archive contains an invalid PAX size.");
+      attributes.size = size;
+    }
+    offset += length;
+  }
+  return attributes;
+}
+
+function tarEntryKind(type: string): string {
+  switch (type) {
+    case "\0":
+    case "0":
+      return "file";
+    case "5":
+      return "directory";
+    case "1":
+      return "hardlink";
+    case "2":
+      return "symlink";
+    case "3":
+      return "character-device";
+    case "4":
+      return "block-device";
+    case "6":
+      return "fifo";
+    case "7":
+      return "contiguous-file";
+    default:
+      return "special";
   }
 }
 
