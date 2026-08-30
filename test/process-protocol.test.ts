@@ -181,6 +181,25 @@ test("writer sequence recovery rejects non-observation records", async () => {
   }
 });
 
+test("writer sequence recovery rejects an unterminated final observation", async () => {
+  const root = temporaryRoot();
+  try {
+    const path = join(root, "unterminated.jsonl");
+    writeFileSync(path, JSON.stringify({
+      schemaVersion: "ebo.protocol-observation/v1",
+      sequence: 1,
+      observedAt: "now",
+      kind: "process",
+      source: "fake-harness",
+      status: "exited",
+    }));
+    const writer = new JsonlEvidenceWriter(path);
+    assert.throws(() => new ProtocolEvidenceRecorder(writer, "fake-harness"), /unterminated final record/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("process timer grace periods reject values above Node's maximum", () => {
   assert.throws(() => spawnProtocolProcess({
     ...nodeScript(""),
@@ -475,6 +494,7 @@ test("rejects values that JSONL cannot preserve", async () => {
     await assert.rejects(recorder.recordCompletion({ source: "fake-harness", status: "completed", evidence: undefined }), /Completion evidence/);
     await assert.rejects(recorder.recordFrame(undefined), /Frame payload/);
     assert.throws(() => recorder.recordNotification({ source: "fake-harness", method: "event", observedAt: "" }), /Observation timestamp/);
+    assert.throws(() => recorder.recordNotification({ source: "fake-harness", method: "event", sourceIdentity: "" }), /Protocol source identity/);
     await recorder.close();
   } finally {
     rmSync(root, { recursive: true, force: true });

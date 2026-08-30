@@ -505,6 +505,7 @@ export class ProtocolEvidenceRecorder {
     assertNonEmpty(input.source, "Protocol source");
     assertNonEmpty(input.observedAt, "Observation timestamp");
     if (input.method !== undefined) assertNonEmpty(input.method, "Protocol method");
+    if (input.sourceIdentity !== undefined) assertNonEmpty(input.sourceIdentity, "Protocol source identity");
     if (input.id !== undefined && (typeof input.id === "number" && !Number.isFinite(input.id)
         || typeof input.id !== "string" && typeof input.id !== "number" && input.id !== null)) {
       return Promise.reject(new Error("Protocol identity must be a finite JSON string, number, or null."));
@@ -1003,6 +1004,9 @@ function recoverWriterSequence(path: string): number {
     throw error;
   }
   if (bytes.length === 0) return 0;
+  if (bytes[bytes.length - 1] !== 0x0a) {
+    throw new Error("Existing JSONL evidence stream has an unterminated final record.");
+  }
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   let sequence = 0;
   for (const [index, line] of text.split("\n").entries()) {

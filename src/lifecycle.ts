@@ -1059,7 +1059,6 @@ function assertCheckpointDoesNotRegress(existing: AttemptRecord, incoming: Attem
     "verifierTerminationConfirmed",
     "cleanup",
     "capture",
-    "persistence",
   ] as const) {
     if (existing[field] !== undefined && (incoming[field] === undefined || !sameJsonValue(existing[field], incoming[field]))) {
       throw new Error(`Attempt record update changes retained ${field} evidence.`);
@@ -1619,6 +1618,10 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
   if (value.classification?.kind === "capture-incomplete"
       && (!isRecord(value.capture) || value.capture.status !== "incomplete" || value.partial !== true)) {
     throw new Error("Capture-incomplete classifications require incomplete capture evidence and partial state.");
+  }
+  if (lifecycle.state === "terminal" && isRecord(value.capture) && value.capture.status === "incomplete"
+      && value.classification?.kind !== "capture-incomplete") {
+    throw new Error("Incomplete terminal capture requires a capture-incomplete classification.");
   }
 }
 

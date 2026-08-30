@@ -1221,6 +1221,27 @@ test("terminal attempt records require explicit capture status", async () => {
   }
 });
 
+test("terminal incomplete capture requires a capture-incomplete classification", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-capture-wrapper-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    const record = structuredClone(result.record);
+    record.capture = { status: "incomplete", error: "capture failed" };
+    record.partial = true;
+    const path = join(root, "missing-capture-wrapper.json");
+    writeFileSync(path, `${JSON.stringify(record)}\n`);
+    await assert.rejects(readAttemptRecord(path), /capture-incomplete classification/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("completed attempt records require harness and verification lifecycle phases", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-completed-phases-"));
   try {
