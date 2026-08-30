@@ -94,6 +94,7 @@ export class JsonlEvidenceWriter {
   private closed = false;
   private poisoned = false;
   private claimed = false;
+  private preparedExclusive = false;
   private hasWrites = false;
   private claimLockFd: number | undefined;
   private claimLockPath: string | undefined;
@@ -235,6 +236,7 @@ export class JsonlEvidenceWriter {
       writeSync(lockFd, `${process.pid}\n`, undefined, "utf8");
       fsyncSync(lockFd);
       syncDirectory(dirname(lockPath));
+      this.prepareForClaim();
       const sequence = recoverWriterSequence(this.path, this.maxLineBytes);
       this.claimed = true;
       this.claimLockFd = lockFd;
@@ -283,15 +285,30 @@ export class JsonlEvidenceWriter {
   private async openHandle(): Promise<FileHandle> {
     if (this.handle !== undefined) return this.handle;
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-    const handle = await open(this.path, this.exclusive ? "wx" : "a", 0o600);
+    const mode = this.preparedExclusive ? "a" : this.exclusive ? "wx" : "a";
+    const handle = await open(this.path, mode, 0o600);
     try {
       syncDirectory(dirname(this.path));
+      this.preparedExclusive = false;
       this.handle = handle;
       return handle;
     } catch (error) {
       await handle.close().catch(() => undefined);
       throw error;
     }
+  }
+
+  private prepareForClaim(): void {
+    if (this.handle !== undefined) return;
+    mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
+    const descriptor = openSync(this.path, this.exclusive ? "wx" : "a", 0o600);
+    try {
+      fsyncSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+    syncDirectory(dirname(this.path));
+    this.preparedExclusive = this.exclusive;
   }
 }
 

@@ -223,6 +223,13 @@ const LIFECYCLE_PROGRESS: Record<LifecycleState, number> = {
 };
 const MAX_TIMER_MS = 2_147_483_647;
 
+class TerminalPublicationCancelled extends Error {
+  public constructor() {
+    super("Terminal publication was cancelled before installation.");
+    this.name = "TerminalPublicationCancelled";
+  }
+}
+
 export function createRunIdentity(input: {
   id?: string;
   taskId: string;
@@ -353,8 +360,20 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     if (options.recordPath === undefined) return;
     try {
       record.persistence = { status: "complete" };
-      await writeAttemptRecordInternal(options.recordPath, record, allowTerminalReplacement);
+      const publicationGate = lifecycle.state === "terminal"
+        && classification !== undefined
+        && classificationUnderlyingKind(classification) === "completed"
+        ? () => {
+          markCoordinatorBudgetIfExpired();
+          if (controller.signal.aborted || budgetExpired !== undefined) throw new TerminalPublicationCancelled();
+        }
+        : undefined;
+      await writeAttemptRecordInternal(options.recordPath, record, allowTerminalReplacement, publicationGate);
     } catch (error) {
+      if (error instanceof TerminalPublicationCancelled) {
+        record.persistence = { status: "complete" };
+        return;
+      }
       persistenceError ??= errorMessage(error);
       record.persistence = { status: "incomplete", error: persistenceError };
     }
@@ -927,7 +946,12 @@ export async function writeAttemptRecord(path: string, record: AttemptRecord): P
   await withRecordReservationLock(destination, () => writeAttemptRecordInternal(path, record));
 }
 
-async function writeAttemptRecordInternal(path: string, record: AttemptRecord, allowTerminalReplacement = false): Promise<void> {
+async function writeAttemptRecordInternal(
+  path: string,
+  record: AttemptRecord,
+  allowTerminalReplacement = false,
+  publicationGate?: () => void,
+): Promise<void> {
   assertRecord(record);
   const destination = resolve(path);
   await withRecordPublicationLock(destination, async () => {
@@ -941,6 +965,7 @@ async function writeAttemptRecordInternal(path: string, record: AttemptRecord, a
       await handle.close();
     }
     try {
+      publicationGate?.();
       try {
         await link(temporary, destination);
         await unlink(temporary);

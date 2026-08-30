@@ -1162,6 +1162,36 @@ test("record persistence failure does not bypass cleanup", async () => {
   }
 });
 
+test("cancellation during terminal publication never installs completion", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-terminal-publication-cancel-"));
+  const controller = new AbortController();
+  let nowCalls = 0;
+  try {
+    const recordPath = join(root, "attempt.json");
+    const result = await executeRunAttempt({
+      run,
+      recordPath,
+      signal: controller.signal,
+      now: () => {
+        nowCalls += 1;
+        const timestamp = `timestamp-${nowCalls}`;
+        if (nowCalls === 6) setTimeout(() => controller.abort(), 0);
+        return timestamp;
+      },
+      workspace: {
+        setup: async () => ({ status: "ready", artifactId: "workspace-1", evidence: { padding: "x".repeat(8 * 1024 * 1024) } }),
+      },
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    assert.equal(result.terminal.state, "interrupted");
+    assert.equal((await readAttemptRecord(recordPath)).terminal?.state, "interrupted");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("attempt records are validated when read", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-invalid-record-"));
   try {

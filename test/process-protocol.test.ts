@@ -364,6 +364,23 @@ test("rejects a caller-owned writer too small for protocol observations", () => 
   }
 });
 
+test("validates caller-owned writer paths before spawning", async () => {
+  const root = temporaryRoot();
+  try {
+    const path = join(root, "existing.jsonl");
+    writeFileSync(path, "existing evidence\n");
+    const writer = new JsonlEvidenceWriter(path, { exclusive: true });
+    assert.throws(() => spawnProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({shouldNotRun:true}))"),
+      source: "fake-harness",
+      writer,
+    }), /EEXIST|already exists/);
+    await writer.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("does not expose a pre-existing diagnostic path as this process evidence", async () => {
   const root = temporaryRoot();
   try {
