@@ -38,9 +38,13 @@ not infer prompt completion or map records into EBO event families.
 JSONL records are flushed and fsynced as they arrive. Valid frames retain their
 original line text alongside parsed data, so duplicate keys or large numeric
 IDs cannot be silently rewritten by a JavaScript round trip. The stdout line
-limit is enforced while bytes are consumed, and in-memory observations use a
-bounded tail; the JSONL file remains the complete source record. Interruption
-and malformed output therefore leave a readable partial evidence file and a
-process result with launch identity, exit/signal state, and termination reason.
+limit is enforced while bytes are consumed. When a caller supplies a JSONL
+writer, the process derives a conservative effective stdout limit from that
+writer's per-record envelope capacity so retaining both raw and parsed frame
+evidence cannot turn a valid frame into an append failure. In-memory
+observations use a bounded tail; the JSONL file remains the complete source
+record. Interruption and malformed output therefore leave a readable partial
+evidence file and a process result with launch identity, exit/signal state, and
+termination reason.
 `shutdown()` and `interrupt()` are explicit operations; no process retry is
 performed.
