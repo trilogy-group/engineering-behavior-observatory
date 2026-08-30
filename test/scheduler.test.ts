@@ -363,6 +363,16 @@ test("standalone queue ordering rejects inapplicable fields", () => {
   assert.match(validateRunQueue(invalid).map((error) => error.message).join("\n"), /must NOT be valid/);
 });
 
+test("standalone queues reject conflicting identities for one condition ID", () => {
+  const experiment = fixture("experiment.18-cell.v1.json");
+  const queue = compileRunQueue(experiment, compileOptions(experiment));
+  const invalid = structuredClone(queue);
+  const sameModel = invalid.entries.find((entry, index) => index > 0 && entry.modelId === invalid.entries[0]!.modelId)!;
+  const otherModel = invalid.entries.find((entry) => entry.modelId !== sameModel.modelId)!;
+  sameModel.model.configurationRef = structuredClone(otherModel.model.configurationRef);
+  assert.match(validateRunQueue(invalid).map((error) => error.message).join("\n"), /Conflicting model identity/);
+});
+
 test("queue validation rejects another valid artifact schema", () => {
   assert.match(
     validateRunQueue(fixture("experiment.18-cell.v1.json")).map((error) => error.message).join("\n"),

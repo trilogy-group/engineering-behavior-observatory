@@ -15,6 +15,7 @@ import {
   assertResolvedExperimentConfigurationDigests,
   declaredMatrixCells,
   isSafeArtifactRelativePath,
+  MAX_CONFIGURATION_BYTES,
   resolveBundleArtifact,
   resolveBundleArtifactDigest,
   type ArtifactReference,
@@ -261,6 +262,9 @@ export function validateRunQueue(
   }
   const runIds = new Set<string>();
   const cells = new Set<string>();
+  const taskIdentities = new Map<string, string>();
+  const modelIdentities = new Map<string, string>();
+  const harnessIdentities = new Map<string, string>();
   let expectedTasks: Map<string, FrozenTaskIdentity> | undefined;
   if (experiment !== undefined) {
     if (options.resolvedPackets !== undefined) {
@@ -304,6 +308,9 @@ export function validateRunQueue(
         || !sameReference(entry.configuration.nativeToolPolicy, entry.harness.nativeToolPolicyRef)) {
       semanticErrors.push(queueError(artifact, `${field}/configuration`, "Configuration identity does not match its model or harness."));
     }
+    checkConditionIdentity(artifact, field, "task", entry.taskId, entry.task, taskIdentities, semanticErrors);
+    checkConditionIdentity(artifact, field, "model", entry.modelId, entry.model, modelIdentities, semanticErrors);
+    checkConditionIdentity(artifact, field, "harness", entry.harnessId, entry.harness, harnessIdentities, semanticErrors);
     if (experiment !== undefined) {
       const taskCondition = experiment.taskSet[entry.taskId];
       const modelCondition = experiment.modelSet[entry.modelId];
@@ -505,7 +512,7 @@ function resolvePermutationDefinition(
 
   let definition: unknown;
   if (options.bundleRoot !== undefined) {
-    const bytes = resolveBundleArtifact(options.bundleRoot, reference);
+    const bytes = resolveBundleArtifact(options.bundleRoot, reference, MAX_CONFIGURATION_BYTES);
     const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     assertNoDuplicateJsonKeys(text);
     definition = JSON.parse(text) as unknown;
@@ -800,6 +807,23 @@ function runId(
 
 function queueError(artifact: string, field: string, message: string): ArtifactValidationError {
   return { artifact, schemaVersion: "ebo.run-queue/v1", field, message };
+}
+
+function checkConditionIdentity(
+  artifact: string,
+  field: string,
+  label: string,
+  id: string,
+  identity: unknown,
+  identities: Map<string, string>,
+  errors: ArtifactValidationError[],
+): void {
+  const signature = digestMetadata(identity).value;
+  const previous = identities.get(id);
+  if (previous === undefined) identities.set(id, signature);
+  else if (previous !== signature) {
+    errors.push(queueError(artifact, `${field}/${label}`, `Conflicting ${label} identity for condition ID "${id}".`));
+  }
 }
 
 function cellKeyOf(cell: DeclaredMatrixCell): string {
