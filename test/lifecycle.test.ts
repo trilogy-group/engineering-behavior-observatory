@@ -892,3 +892,20 @@ test("a synchronously over-budget harness is stopped before its result is accept
   assert.equal(result.terminal.state, "stopped");
   assert.equal(result.terminal.stopReason, "budget");
 });
+
+test("a synchronously over-budget verifier cannot produce completion", async () => {
+  const result = await executeRunAttempt({
+    run,
+    maxWallClockMs: 1,
+    workspace: workspace(),
+    harness: async () => ({ status: "completed" }),
+    verifier: () => {
+      const end = Date.now() + 5;
+      while (Date.now() < end) {}
+      return { status: "passed" };
+    },
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.state, "stopped");
+  assert.equal(result.terminal.stopReason, "budget");
+});

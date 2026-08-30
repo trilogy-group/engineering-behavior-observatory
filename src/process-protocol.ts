@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { closeSync, mkdirSync, openSync } from "node:fs";
 import { mkdir, open, writeFile, type FileHandle } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
@@ -385,8 +386,8 @@ export class ProtocolEvidenceRecorder {
       ...(input.id === undefined ? {} : { id: input.id }),
       ...(input.sourceIdentity === undefined ? {} : { sourceIdentity: input.sourceIdentity }),
       ...(input.raw === undefined ? {} : { raw: input.raw }),
-      ...(input.payload === undefined ? {} : { payload: input.payload }),
-      ...(input.evidence === undefined ? {} : { evidence: input.evidence }),
+      ...(input.payload === undefined ? {} : { payload: structuredClone(input.payload) }),
+      ...(input.evidence === undefined ? {} : { evidence: structuredClone(input.evidence) }),
       ...(input.status === undefined ? {} : { status: input.status }),
       ...(input.capability === undefined ? {} : { capability: input.capability }),
     };
@@ -442,10 +443,18 @@ export class ProtocolProcess {
     this.startedAt = this.now();
     this.cwd = resolve(options.cwd ?? process.cwd());
     this.args = [...(options.args ?? [])];
-    const writer = options.writer ?? new JsonlEvidenceWriter(
-      options.evidencePath ?? resolve(process.cwd(), `.ebo-protocol-${randomUUID()}.jsonl`),
-      { maxLineBytes: Math.min(Number.MAX_SAFE_INTEGER, this.stdoutLineLimit * 4 + 1024), exclusive: true },
-    );
+    let writer: JsonlEvidenceWriter;
+    if (options.writer !== undefined) {
+      writer = options.writer;
+    } else {
+      const evidencePath = options.evidencePath ?? resolve(process.cwd(), `.ebo-protocol-${randomUUID()}.jsonl`);
+      mkdirSync(dirname(evidencePath), { recursive: true, mode: 0o700 });
+      const descriptor = openSync(evidencePath, "wx", 0o600);
+      closeSync(descriptor);
+      writer = new JsonlEvidenceWriter(evidencePath, {
+        maxLineBytes: Math.min(Number.MAX_SAFE_INTEGER, this.stdoutLineLimit * 4 + 1024),
+      });
+    }
     const configuredEvidencePath = options.evidencePath === undefined ? undefined : resolve(options.evidencePath);
     if (options.writer !== undefined && configuredEvidencePath !== undefined && configuredEvidencePath !== writer.path) {
       throw new Error("Protocol writer path conflicts with evidencePath.");
@@ -596,7 +605,12 @@ export class ProtocolProcess {
     }
     this.frameCount += 1;
     await this.recorder.recordFrame(payload, this.now(), line);
-    if (this.options.onFrame !== undefined) await this.options.onFrame(payload, this.recorder);
+    if (this.options.onFrame !== undefined) {
+      const observer = Promise.resolve(this.options.onFrame(payload, this.recorder));
+      const outcome = await settleObserver(observer, this.shutdownGraceMs);
+      if (outcome.status === "failed") throw outcome.error;
+      if (outcome.status === "timed-out") throw new Error("Protocol frame observer exceeded its grace period.");
+    }
   }
 
   private async failProtocol(message: string, raw?: string, line = this.nextLineNumber): Promise<void> {
@@ -762,6 +776,23 @@ function nonnegativeInteger(value: number, label: string): number {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function settleObserver<T>(
+  promise: Promise<T>,
+  milliseconds: number,
+): Promise<{ status: "completed"; value: T } | { status: "failed"; error: unknown } | { status: "timed-out" }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then((value) => ({ status: "completed" as const, value }), (error) => ({ status: "failed" as const, error })),
+      new Promise<{ status: "timed-out" }>((resolvePromise) => {
+        timer = setTimeout(() => resolvePromise({ status: "timed-out" }), milliseconds);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 async function waitForExit(child: ChildProcess, milliseconds: number): Promise<void> {

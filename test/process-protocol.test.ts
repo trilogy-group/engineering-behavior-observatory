@@ -164,14 +164,12 @@ test("creates each internally owned protocol evidence file exclusively", async (
       evidencePath,
     });
     const original = readFileSync(evidencePath, "utf8");
-    const second = await runProtocolProcess({
+    await assert.rejects(runProtocolProcess({
       ...nodeScript(""),
       source: "fake-harness",
       evidencePath,
-    });
+    }), /EEXIST|already exists/);
     assert.equal(first.status, "completed");
-    assert.equal(second.status, "failed");
-    assert.equal(second.evidencePath, undefined);
     assert.equal(readFileSync(evidencePath, "utf8"), original);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -208,6 +206,39 @@ test("keeps recorder failures separate from malformed protocol output", async ()
     assert.equal(processResult.status, "failed");
     assert.equal(processResult.protocolError, undefined);
     assert.match(processResult.recorderError ?? "", /adapter observer failed/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bounds a frame observer that never settles", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({ok:true}))"),
+      source: "fake-harness",
+      shutdownGraceMs: 10,
+      evidencePath: join(root, "observer-timeout.jsonl"),
+      onFrame: async () => new Promise<void>(() => undefined),
+    });
+    assert.equal(processResult.status, "failed");
+    assert.match(processResult.recorderError ?? "", /observer exceeded/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("snapshots caller payloads before observer mutation", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({state:'before'}))"),
+      source: "fake-harness",
+      evidencePath: join(root, "payload.jsonl"),
+      onFrame: (payload) => { (payload as { state: string }).state = "after"; },
+    });
+    const frame = processResult.observations.find((record) => record.kind === "frame");
+    assert.equal((frame?.payload as { state?: string }).state, "before");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

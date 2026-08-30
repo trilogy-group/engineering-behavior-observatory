@@ -306,6 +306,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     record.capture = { status: "incomplete", error: "Evidence flush boundary is unavailable." };
   }
   let persistenceError: string | undefined;
+  let initialCheckpointError: string | undefined;
   let reservationPath: string | undefined;
   if (options.recordPath !== undefined) {
     await assertAttemptRecordPathAvailable(options.recordPath, runSnapshot, attemptSnapshot);
@@ -378,11 +379,13 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   try {
     await flush();
     if (persistenceError !== undefined) {
+      initialCheckpointError = persistenceError;
       throw new Error(`Initial attempt checkpoint could not be persisted: ${persistenceError}`);
     }
     lifecycle.transition("setup");
     await persist();
     if (persistenceError !== undefined) {
+      initialCheckpointError ??= persistenceError;
       throw new Error(`Initial attempt checkpoint could not be persisted: ${persistenceError}`);
     }
     try {
@@ -531,7 +534,10 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
               } else {
                 const verifier = snapshotVerifier(verifierOutcome.value);
                 record.verifier = verifier;
-                classification = classifyVerifier(verifier, workspace);
+                markCoordinatorBudgetIfExpired();
+                classification = controller.signal.aborted
+                  ? abortClassification(abortCause, budgetExpired)
+                  : classifyVerifier(verifier, workspace);
               }
             } catch (error) {
               record.verifier = { status: "error", error: errorMessage(error) };
@@ -634,6 +640,9 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     }
     options.signal?.removeEventListener("abort", externalAbort);
     if (reservationPath !== undefined) await rm(reservationPath, { force: true });
+    if (initialCheckpointError !== undefined) {
+      throw new Error(`Initial attempt checkpoint could not be persisted: ${initialCheckpointError}`);
+    }
   }
 
   return {
