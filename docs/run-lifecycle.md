@@ -14,8 +14,10 @@ created -> setup -> running -> verifying -> cleaning -> terminal
 ```
 
 Setup, harness execution, verifier execution, cleanup, and evidence flushing
-are injected callbacks. `executeRunAttempt` passes an `AbortSignal`, enforces
-the coordinator and harness budgets, and records phase timestamps in an
+are injected callbacks. Setup and harness drivers can register independent
+shutdown handles for in-flight processes. `executeRunAttempt` passes an
+`AbortSignal`, enforces the coordinator and harness budgets, and records phase
+timestamps in an
 `ebo.attempt/v1` record. Only a failed verifier with retained workspace
 evidence is a task failure; a harness-declared task result without verifier
 evidence remains an infrastructure failure. A verifier execution error, setup

@@ -7,6 +7,7 @@ import { test } from "node:test";
 import {
   BoundedDiagnosticCapture,
   JsonlEvidenceWriter,
+  ProtocolEvidenceRecorder,
   runProtocolProcess,
   spawnProtocolProcess,
 } from "../src/index.js";
@@ -272,6 +273,22 @@ test("snapshots direct writer records when append is called", async () => {
     await append;
     await writer.close();
     assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), { state: "before" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("returns detached recorder observations", async () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "detached.jsonl"));
+    const recorder = new ProtocolEvidenceRecorder(writer, "fake-harness");
+    const returned = await recorder.recordNotification({ source: "fake-harness", method: "event", payload: { value: 1 } });
+    returned.method = "mutated";
+    (returned.payload as { value: number }).value = 2;
+    assert.equal(recorder.observations[0]?.method, "event");
+    assert.equal((recorder.observations[0]?.payload as { value: number }).value, 1);
+    await recorder.close();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

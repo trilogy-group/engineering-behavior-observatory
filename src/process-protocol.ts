@@ -284,7 +284,7 @@ export class ProtocolEvidenceRecorder {
   }
 
   public get observations(): readonly ProtocolObservation[] {
-    return this.records;
+    return this.records.map((record) => structuredClone(record));
   }
 
   public get droppedObservations(): number {
@@ -401,7 +401,7 @@ export class ProtocolEvidenceRecorder {
       this._dropped += 1;
     }
     this.records.push(observation);
-    return this.writer.append(observation).then(() => observation);
+    return this.writer.append(observation).then(() => structuredClone(observation));
   }
 }
 

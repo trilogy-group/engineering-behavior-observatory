@@ -444,9 +444,20 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         }
       }
     } catch (error) {
+      const setupError = errorMessage(error);
+      if (workspaceShutdown !== undefined) {
+        workspaceTerminationConfirmed = false;
+        const shutdownResult = await shutdownWorkspace(workspaceShutdown, options.shutdownGraceMs ?? 250);
+        record.workspace = {
+          status: "failed",
+          error: setupError,
+          ...(shutdownResult === undefined ? {} : { shutdownResult }),
+        };
+        workspaceTerminationConfirmed = shutdownResult?.status === "completed";
+      }
       classification = controller.signal.aborted
-        ? abortClassification(abortCause, budgetExpired, errorMessage(error))
-        : infrastructureClassification(errorMessage(error), "workspace");
+        ? abortClassification(abortCause, budgetExpired, setupError)
+        : infrastructureClassification(setupError, "workspace", workspace);
     }
     markCoordinatorBudgetIfExpired();
     if (classification === undefined && controller.signal.aborted) {
@@ -969,10 +980,7 @@ function classificationUnderlyingKind(classification: AttemptClassification): At
 }
 
 function snapshotWorkspace(workspace: WorkspaceExecutionResult): WorkspaceExecutionResult {
-  return {
-    ...workspace,
-    ...(workspace.evidence === undefined ? {} : { evidence: structuredClone(workspace.evidence) }),
-  };
+  return structuredClone(workspace);
 }
 
 function snapshotVerifier(verifier: VerifierExecutionResult): VerifierExecutionResult {

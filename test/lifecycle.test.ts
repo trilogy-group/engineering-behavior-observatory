@@ -379,6 +379,27 @@ test("a rejected harness still receives its registered shutdown", async () => {
   assert.equal(result.record.harness?.shutdownResult?.status, "completed");
 });
 
+test("a rejected workspace setup still receives its registered shutdown", async () => {
+  let shutdownCalls = 0;
+  const result = await executeRunAttempt({
+    run,
+    workspace: {
+      setup: async ({ registerShutdown }) => {
+        registerShutdown(() => { shutdownCalls += 1; });
+        throw new Error("workspace setup rejected");
+      },
+      cleanup: async () => undefined,
+    },
+    harness: async () => ({ status: "completed" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(shutdownCalls, 1);
+  assert.equal(result.record.workspace?.error, "workspace setup rejected");
+  assert.equal(result.record.workspace?.shutdownResult?.status, "completed");
+  assert.equal(result.record.cleanup?.status, "completed");
+  assert.equal(result.terminal.failureClass, "infrastructure");
+});
+
 test("in-flight harness shutdown is available before an eventual result", async () => {
   const controller = new AbortController();
   let harnessStartedResolve: (() => void) | undefined;
@@ -409,11 +430,12 @@ test("cleanup receives a workspace snapshot and cannot rewrite retained evidence
   const result = await executeRunAttempt({
     run,
     workspace: {
-      setup: async () => ({ status: "ready", artifactId: "workspace-1", evidence: { owner: "setup" } }),
+      setup: async () => ({ status: "ready", artifactId: "workspace-1", evidence: { owner: "setup" }, shutdownResult: { status: "completed" as const } }),
       cleanup: async ({ workspace: cleanupWorkspace }) => {
         if (cleanupWorkspace !== undefined) {
           cleanupWorkspace.artifactId = "rewritten";
           (cleanupWorkspace.evidence as { owner: string }).owner = "cleanup";
+          cleanupWorkspace.shutdownResult!.status = "failed";
         }
       },
     },
@@ -423,6 +445,7 @@ test("cleanup receives a workspace snapshot and cannot rewrite retained evidence
   });
   assert.equal(result.record.workspace?.artifactId, "workspace-1");
   assert.deepEqual(result.record.workspace?.evidence, { owner: "setup" });
+  assert.equal(result.record.workspace?.shutdownResult?.status, "completed");
 });
 
 test("verifier results are snapshotted before cleanup can mutate them", async () => {
