@@ -127,8 +127,9 @@ controls are limited to JavaScript safe integers.
 `compileRunQueue` expands an experiment into a persisted
 `ebo.run-queue/v1` document. Every entry contains the task-packet freeze
 identity, digest-pinned model and harness configuration references, and a
-one-based trial identity. Run IDs are hashes of those identities, so compiling
-the same experiment with the same seed produces byte-identical queue metadata.
+one-based trial identity; the queue also retains the selected capture-profile
+reference. Run IDs are hashes of those identities, so compiling the same
+experiment with the same seed produces byte-identical queue metadata.
 
 The compiler supports sequential (`declared` is retained as its legacy name),
 seeded-shuffle (`permuted` is retained as its legacy name), and balanced
@@ -136,8 +137,10 @@ interleaving. Interleaving round-robins the selected dimension (model by
 default) and preserves every cell exactly once, including matrices whose
 groups have different sizes. Configuration references are resolved before
 compilation, and every task packet must have a matching, admitted freeze
-record. Queue writes use the existing atomic artifact writer and do not
-execute work or coordinate across machines.
+record. A seeded-shuffle with a permutation reference reads that verified
+artifact and currently accepts the declared `fisher-yates-v1` algorithm;
+unknown algorithm definitions fail closed. Queue writes use the existing
+atomic artifact writer and do not execute work or coordinate across machines.
 
 The CLI exposes `ebo matrix compile <experiment.json> <bundle-root>
 <queue.json>`, `ebo queue inspect <queue.json>`, and `ebo queue validate

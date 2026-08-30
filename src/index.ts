@@ -73,6 +73,7 @@ export type {
   CompileRunQueueOptions,
   FrozenTaskIdentity,
   FrozenTaskInput,
+  PermutationAlgorithm,
   QueueOrderingStrategy,
   RunQueue,
   RunQueueEntry,

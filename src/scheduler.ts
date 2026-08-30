@@ -15,6 +15,7 @@ import {
   assertResolvedExperimentConfigurationDigests,
   declaredMatrixCells,
   isSafeArtifactRelativePath,
+  resolveBundleArtifact,
   resolveBundleArtifactDigest,
   type ArtifactReference,
   type DeclaredMatrixCell,
@@ -31,6 +32,7 @@ import {
 } from "./task-packets.js";
 
 export type QueueOrderingStrategy = "sequential" | "seeded-shuffle" | "balanced";
+export type PermutationAlgorithm = "fisher-yates-v1";
 
 export type FrozenTaskIdentity = {
   id: string;
@@ -81,6 +83,7 @@ export type RunQueue = {
   schemaVersion: "ebo.run-queue/v1";
   experimentId: string;
   experimentDigest: Digest;
+  captureProfile: ArtifactReference;
   seed: string;
   ordering: {
     strategy: QueueOrderingStrategy;
@@ -93,6 +96,8 @@ export type RunQueue = {
 export type CompileRunQueueOptions = {
   bundleRoot?: string;
   resolvedDigests?: Record<string, Digest>;
+  permutationAlgorithm?: unknown;
+  permutationAlgorithms?: Record<string, unknown>;
   frozenTasks?: Record<string, FrozenTaskInput>;
   taskFreezeRecords?: Record<string, FrozenTaskInput>;
   taskPackets?: Record<string, FrozenTaskInput>;
@@ -123,6 +128,7 @@ export function compileRunQueue(
   const ordering = normalizeOrdering(experiment.ordering);
   const resolvedDigests = resolveConfigurationDigests(experiment, options);
   assertResolvedExperimentConfigurationDigests(experiment, resolvedDigests);
+  const permutationAlgorithm = resolvePermutationAlgorithm(experiment, options);
   const tasks = resolveFrozenTasks(experiment, options);
   if (options.resolvedPackets !== undefined) {
     assertAdmittedTaskPackets(experiment.taskSet, options.resolvedPackets);
@@ -131,6 +137,7 @@ export function compileRunQueue(
   const cells = orderCells(
     expandMatrixCells(experiment),
     experiment.ordering,
+    permutationAlgorithm,
   );
   const entries = cells.map((cell) => {
     const task = tasks.get(cell.taskId)!;
@@ -159,6 +166,7 @@ export function compileRunQueue(
     schemaVersion: "ebo.run-queue/v1",
     experimentId: experiment.id,
     experimentDigest: digestMetadata(experiment),
+    captureProfile: experiment.captureProfile,
     seed: experiment.ordering.seed,
     ordering,
     entries,
@@ -229,6 +237,23 @@ export function validateRunQueue(
         || !sameReference(entry.configuration.nativeToolPolicy, entry.harness.nativeToolPolicyRef)) {
       semanticErrors.push(queueError(artifact, `${field}/configuration`, "Configuration identity does not match its model or harness."));
     }
+    if (experiment !== undefined) {
+      const taskCondition = experiment.taskSet[entry.taskId];
+      const modelCondition = experiment.modelSet[entry.modelId];
+      const harnessCondition = experiment.harnessSet[entry.harnessId];
+      if (taskCondition === undefined || !sameReference(entry.task.packetRef, taskCondition.packetRef)) {
+        semanticErrors.push(queueError(artifact, `${field}/task`, "Task packet reference does not match the experiment."));
+      }
+      if (modelCondition === undefined || !sameReference(entry.model.configurationRef, modelCondition.configurationRef)) {
+        semanticErrors.push(queueError(artifact, `${field}/model`, "Model configuration reference does not match the experiment."));
+      }
+      if (harnessCondition === undefined
+          || !sameReference(entry.harness.configurationRef, harnessCondition.configurationRef)
+          || !sameReference(entry.harness.nativeLimitsRef, harnessCondition.nativeLimitsRef)
+          || !sameReference(entry.harness.nativeToolPolicyRef, harnessCondition.nativeToolPolicyRef)) {
+        semanticErrors.push(queueError(artifact, `${field}/harness`, "Harness configuration references do not match the experiment."));
+      }
+    }
     if (entry.runId !== runId(runQueue.experimentId, entry.task, entry.model, entry.harness, entry.trialIndex)) {
       semanticErrors.push(queueError(artifact, `${field}/runId`, "Run ID does not match its frozen cell identities."));
     }
@@ -241,6 +266,9 @@ export function validateRunQueue(
     if (!sameDigest(runQueue.experimentDigest, digestMetadata(experiment))) {
       semanticErrors.push(queueError(artifact, "/experimentDigest", "Run queue experiment digest does not match the experiment."));
     }
+    if (!sameReference(runQueue.captureProfile, experiment.captureProfile)) {
+      semanticErrors.push(queueError(artifact, "/captureProfile", "Run queue capture profile does not match the experiment."));
+    }
     const expectedOrdering = normalizeOrdering(experiment.ordering);
     if (runQueue.seed !== experiment.ordering.seed || runQueue.ordering.strategy !== expectedOrdering.strategy
         || runQueue.ordering.balanceBy !== expectedOrdering.balanceBy
@@ -251,7 +279,7 @@ export function validateRunQueue(
     if (expectedCells.size !== cells.size || [...expectedCells].some((key) => !cells.has(key))) {
       semanticErrors.push(queueError(artifact, "/entries", "Run queue cells do not match the experiment matrix."));
     }
-    const expectedOrder = orderCells(expandMatrixCells(experiment), experiment.ordering).map(cellKeyOf);
+    const expectedOrder = orderCells(expandMatrixCells(experiment), experiment.ordering, "fisher-yates-v1").map(cellKeyOf);
     const actualOrder = runQueue.entries.map(cellKeyOf);
     if (expectedOrder.length !== actualOrder.length
         || expectedOrder.some((key, index) => key !== actualOrder[index])) {
@@ -353,6 +381,36 @@ function resolveConfigurationDigests(
   return resolved;
 }
 
+function resolvePermutationAlgorithm(
+  experiment: ExperimentConfiguration,
+  options: CompileRunQueueOptions,
+): PermutationAlgorithm {
+  const reference = "permutationAlgorithmRef" in experiment.ordering
+    ? experiment.ordering.permutationAlgorithmRef
+    : undefined;
+  if (reference === undefined) return "fisher-yates-v1";
+
+  let definition: unknown = options.permutationAlgorithm;
+  if (definition === undefined) definition = options.permutationAlgorithms?.[reference.locator];
+  if (definition === undefined && options.bundleRoot !== undefined) {
+    const bytes = resolveBundleArtifact(options.bundleRoot, reference);
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    assertNoDuplicateJsonKeys(text);
+    definition = JSON.parse(text) as unknown;
+  }
+  if (definition === undefined) {
+    throw new Error(`Permutation algorithm "${reference.locator}" content must be supplied before scheduling.`);
+  }
+
+  const name = typeof definition === "string"
+    ? definition
+    : isRecord(definition)
+      ? definition.algorithm ?? definition.name ?? definition.id ?? definition.kind
+      : undefined;
+  if (name === "fisher-yates-v1" || name === "fisher-yates") return "fisher-yates-v1";
+  throw new Error(`Unsupported permutation algorithm "${String(name)}".`);
+}
+
 function experimentReferences(experiment: ExperimentConfiguration): ArtifactReference[] {
   return [
     ...Object.values(experiment.modelSet).map((condition) => condition.configurationRef),
@@ -449,6 +507,7 @@ function frozenTaskFromInput(
 function orderCells(
   cells: DeclaredMatrixCell[],
   ordering: ExperimentOrdering,
+  permutationAlgorithm: PermutationAlgorithm = "fisher-yates-v1",
 ): DeclaredMatrixCell[] {
   switch (ordering.strategy) {
     case "declared":
@@ -456,7 +515,7 @@ function orderCells(
       return cells;
     case "permuted":
     case "seeded-shuffle":
-      return shuffle(cells, ordering.seed);
+      return shuffle(cells, ordering.seed, permutationAlgorithm);
     case "balanced":
     case "balanced-interleaved":
     case "interleaved":
@@ -464,7 +523,8 @@ function orderCells(
   }
 }
 
-function shuffle<T>(values: T[], seed: string): T[] {
+function shuffle<T>(values: T[], seed: string, algorithm: PermutationAlgorithm): T[] {
+  if (algorithm !== "fisher-yates-v1") throw new Error(`Unsupported permutation algorithm "${algorithm}".`);
   const shuffled = [...values];
   let state = createHash("sha256").update(seed).digest().readUInt32BE(0) || 0x9e3779b9;
   for (let index = shuffled.length - 1; index > 0; index -= 1) {
@@ -482,7 +542,9 @@ function interleave(cells: DeclaredMatrixCell[], dimension: "task" | "model" | "
   const groups = new Map<string, DeclaredMatrixCell[]>();
   for (const cell of cells) {
     const id = dimension === "task" ? cell.taskId : dimension === "model" ? cell.modelId : cell.harnessId;
-    groups.set(id, [...(groups.get(id) ?? []), cell]);
+    const group = groups.get(id);
+    if (group === undefined) groups.set(id, [cell]);
+    else group.push(cell);
   }
   const keys = [...groups.keys()];
   const positions = new Map(keys.map((key) => [key, 0]));

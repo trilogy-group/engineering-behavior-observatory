@@ -4,11 +4,12 @@
   "title": "EBO run queue v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "experimentId", "experimentDigest", "seed", "ordering", "entries"],
+  "required": ["schemaVersion", "experimentId", "experimentDigest", "captureProfile", "seed", "ordering", "entries"],
   "properties": {
     "schemaVersion": { "const": "ebo.run-queue/v1" },
     "experimentId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
     "experimentDigest": { "$ref": "#/$defs/digest" },
+    "captureProfile": { "$ref": "#/$defs/reference" },
     "seed": { "type": "string", "minLength": 1 },
     "ordering": {
       "type": "object",

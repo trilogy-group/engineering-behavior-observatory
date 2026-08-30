@@ -26,6 +26,7 @@ function fixture(name: string): ExperimentConfiguration {
 function compileOptions(experiment: ExperimentConfiguration): {
   resolvedDigests: Record<string, ExperimentConfiguration["captureProfile"]["digest"]>;
   frozenTasks: Record<string, FrozenTaskInput>;
+  permutationAlgorithms?: Record<string, unknown>;
 } {
   const references = [
     ...Object.values(experiment.modelSet).map((condition) => condition.configurationRef),
@@ -48,10 +49,17 @@ function compileOptions(experiment: ExperimentConfiguration): {
       aggregateDigest: { algorithm: "sha256", value: String(index + 1).padStart(64, "0") },
     }]),
   ) as Record<string, FrozenTaskInput>;
-  return {
+  const options = {
     resolvedDigests: Object.fromEntries(references.map((reference) => [reference.locator, reference.digest])),
     frozenTasks,
   };
+  if (experiment.ordering.strategy === "permuted" && experiment.ordering.permutationAlgorithmRef !== undefined) {
+    return {
+      ...options,
+      permutationAlgorithms: { [experiment.ordering.permutationAlgorithmRef.locator]: "fisher-yates-v1" },
+    };
+  }
+  return options;
 }
 
 function withOrdering(
@@ -83,6 +91,7 @@ test("compiles arbitrary matrices with stable serialized identities", () => {
   assert.equal(new Set(first.entries.map((entry) => entry.runId)).size, 18);
   assert.equal(first.entries[0]!.task.packetRef.digest.value, "a".repeat(64));
   assert.equal(first.entries[0]!.configuration.model.digest.value, "d".repeat(64));
+  assert.deepEqual(first.captureProfile, experiment.captureProfile);
   assert.equal(first.entries[0]!.trial.index, first.entries[0]!.trialIndex);
 
   const twentyFour = fixture("experiment.24-cell.v1.json");
@@ -143,6 +152,21 @@ test("matrix compilation rejects unfrozen, duplicate, and unresolved inputs", ()
   const unresolved = compileOptions(experiment);
   unresolved.resolvedDigests["models/model-a.json"] = { algorithm: "sha256", value: "0".repeat(64) };
   assert.throws(() => compileRunQueue(experiment, unresolved), /model "model-a" digest/);
+
+  const unsupported = compileOptions(experiment);
+  unsupported.permutationAlgorithms = {
+    [experiment.ordering.strategy === "permuted" ? experiment.ordering.permutationAlgorithmRef!.locator : "algorithm.json"]: "unknown",
+  };
+  assert.throws(() => compileRunQueue(experiment, unsupported), /Unsupported permutation algorithm/);
+});
+
+test("queue validation binds entry references to the supplied experiment", () => {
+  const experiment = fixture("experiment.18-cell.v1.json");
+  const queue = compileRunQueue(experiment, compileOptions(experiment));
+  const altered = structuredClone(queue);
+  altered.entries[0]!.task.packetRef = structuredClone(altered.entries[1]!.task.packetRef);
+  altered.entries[0]!.configuration.model = structuredClone(altered.entries[0]!.model.configurationRef);
+  assert.match(validateRunQueue(altered, experiment).map((error) => error.message).join("\n"), /Task packet reference/);
 });
 
 test("a persisted local queue is validated and consumed in order", () => {
