@@ -66,6 +66,7 @@ export {
   expandMatrixCells,
   inspectRunQueue,
   LocalRunQueue,
+  MAX_RUN_QUEUE_BYTES,
   MAX_RUN_QUEUE_ENTRIES,
   readRunQueue,
   validateRunQueue,

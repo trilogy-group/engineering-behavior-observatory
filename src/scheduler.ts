@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, mkdirSync, openSync, readSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 
 import {
   assertNoDuplicateJsonKeys,
+  canonicalizeMetadata,
   digestMetadata,
   validateArtifact,
   verifyDigest,
@@ -39,6 +40,7 @@ import {
 export type QueueOrderingStrategy = "sequential" | "seeded-shuffle" | "balanced";
 export type PermutationAlgorithm = "fisher-yates-v1";
 export const MAX_RUN_QUEUE_ENTRIES = 100_000;
+export const MAX_RUN_QUEUE_BYTES = 128 * 1024 * 1024;
 const FREEZE_PUBLICATION_SUFFIXES = [
   "",
   ".quarantine",
@@ -235,6 +237,7 @@ export function compileRunQueue(
 
 export function writeRunQueue(path: string, queue: RunQueue): Digest {
   assertValidRunQueue(queue);
+  assertRunQueueByteLimit(queue);
   const absolutePath = resolve(path);
   const relativePath = basename(absolutePath);
   if (!isSafeArtifactRelativePath(relativePath)) {
@@ -250,17 +253,53 @@ export function writeRunQueue(path: string, queue: RunQueue): Digest {
   return published;
 }
 
+function assertRunQueueByteLimit(queue: RunQueue): void {
+  if (Buffer.byteLength(canonicalizeMetadata(queue)) > MAX_RUN_QUEUE_BYTES) {
+    throw new Error(`Run queue exceeds the local byte limit of ${MAX_RUN_QUEUE_BYTES}.`);
+  }
+}
+
 export function readRunQueue(
   path: string,
   experiment?: ExperimentConfiguration,
   options: ValidateRunQueueOptions = {},
 ): RunQueue {
-  const bytes = readFileSync(path);
+  const bytes = readRunQueueBytes(path);
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   assertNoDuplicateJsonKeys(text);
   const queue = JSON.parse(text) as unknown;
   assertValidRunQueue(queue, experiment, path, options);
   return queue as RunQueue;
+}
+
+function readRunQueueBytes(path: string): Buffer {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile()) throw new Error(`Run queue path "${path}" is not a regular file.`);
+    if (!Number.isSafeInteger(opened.size) || opened.size > MAX_RUN_QUEUE_BYTES) {
+      throw new Error(`Run queue file exceeds the local byte limit of ${MAX_RUN_QUEUE_BYTES}.`);
+    }
+    const bytes = Buffer.alloc(opened.size);
+    for (let offset = 0; offset < opened.size;) {
+      const read = readSync(descriptor, bytes, offset, opened.size - offset, offset);
+      if (read === 0) throw new Error(`Run queue file "${path}" was truncated while being read.`);
+      offset += read;
+    }
+    const trailing = Buffer.allocUnsafe(1);
+    if (readSync(descriptor, trailing, 0, 1, opened.size) !== 0) {
+      throw new Error(`Run queue file "${path}" grew while being read.`);
+    }
+    const completed = fstatSync(descriptor);
+    if (!completed.isFile() || completed.dev !== opened.dev || completed.ino !== opened.ino
+        || completed.size !== opened.size) {
+      throw new Error(`Run queue file "${path}" changed while being read.`);
+    }
+    return bytes;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
 }
 
 export function validateRunQueue(
@@ -680,6 +719,9 @@ function resolvePermutationDefinition(
     if (definition === undefined) definition = options.permutationAlgorithms?.[reference.locator];
     if (!(definition instanceof Uint8Array)) {
       throw new Error(`Permutation algorithm "${reference.locator}" must be supplied as verified bytes.`);
+    }
+    if (definition.byteLength > MAX_CONFIGURATION_BYTES) {
+      throw new Error(`Permutation algorithm "${reference.locator}" exceeds maximum bytes.`);
     }
     const bytes = Buffer.from(definition);
     if (!verifyDigest(bytes, reference.digest)) {

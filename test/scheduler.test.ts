@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -15,6 +15,8 @@ import {
   inspectRunQueue,
   LocalRunQueue,
   main,
+  MAX_CONFIGURATION_BYTES,
+  MAX_RUN_QUEUE_BYTES,
   MAX_RUN_QUEUE_ENTRIES,
   readRunQueue,
   validateRunQueue,
@@ -429,6 +431,13 @@ test("matrix compilation rejects unfrozen, duplicate, and unresolved inputs", ()
   const unversionedExperiment = fixture("experiment.18-cell.v1.json");
   const unversioned = compileOptions(unversionedExperiment, Buffer.from("{\"algorithm\":\"fisher-yates\"}"));
   assert.throws(() => compileRunQueue(unversionedExperiment, unversioned), /Unsupported permutation algorithm/);
+
+  const oversizedDefinitionExperiment = fixture("experiment.18-cell.v1.json");
+  const oversizedDefinition = compileOptions(oversizedDefinitionExperiment, Buffer.alloc(MAX_CONFIGURATION_BYTES + 1));
+  assert.throws(
+    () => compileRunQueue(oversizedDefinitionExperiment, oversizedDefinition),
+    /Permutation algorithm.*exceeds maximum bytes/,
+  );
 });
 
 test("queue validation binds entry references to the supplied experiment", () => {
@@ -654,6 +663,10 @@ test("a persisted local queue is validated and consumed in order", () => {
     writeFileSync(experimentPath, canonicalizeMetadata(experiment));
     writeRunQueue(path, queue);
     assert.doesNotThrow(() => writeRunQueue(path, queue));
+    const oversizedFile = join(root, "oversized.json");
+    writeFileSync(oversizedFile, "");
+    truncateSync(oversizedFile, MAX_RUN_QUEUE_BYTES + 1);
+    assert.throws(() => readRunQueue(oversizedFile), /local byte limit/);
     const alteredExperiment = structuredClone(experiment);
     alteredExperiment.coordinatorBudget.maxWallClockMs += 1;
     const alteredQueue = compileRunQueue(alteredExperiment, compileOptions(alteredExperiment));
