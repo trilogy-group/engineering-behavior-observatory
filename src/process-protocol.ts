@@ -222,6 +222,7 @@ export class JsonlEvidenceWriter {
   }
 
   public claim(token?: typeof INTERNAL_RECORDER_TOKEN): number {
+    if (this.closed) throw new Error("JSONL evidence writer is closed.");
     if (this.claimed) throw new Error("JSONL evidence writer is already claimed by a protocol recorder.");
     const canonicalPath = canonicalWriterPath(this.path);
     if (CLAIMED_WRITER_PATHS.has(canonicalPath)) throw new Error("JSONL evidence path is already claimed by a protocol recorder.");

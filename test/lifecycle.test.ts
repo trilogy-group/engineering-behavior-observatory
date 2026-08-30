@@ -1226,6 +1226,34 @@ test("cancellation during terminal publication never installs completion", async
   }
 });
 
+test("snapshots the attempt record path before callbacks run", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-record-path-snapshot-"));
+  try {
+    const recordPath = join(root, "attempt.json");
+    const replacementPath = join(root, "replacement.json");
+    const options: RunAttemptOptions = {
+      run,
+      recordPath,
+      workspace: {
+        setup: async () => {
+          options.recordPath = replacementPath;
+          return { status: "ready", artifactId: "workspace-1" };
+        },
+      },
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    };
+    const result = await executeRunAttempt(options);
+    assert.equal(result.terminal.state, "completed");
+    assert.equal(existsSync(recordPath), true);
+    assert.equal(existsSync(replacementPath), false);
+    assert.equal((await readAttemptRecord(recordPath)).terminal?.state, "completed");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("attempt records are validated when read", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-invalid-record-"));
   try {
@@ -1561,6 +1589,32 @@ test("harness infrastructure failures require native failed harness evidence", a
     const path = join(root, "missing-harness-failure.json");
     writeFileSync(path, `${JSON.stringify(record)}\n`);
     await assert.rejects(readAttemptRecord(path), /failed or unreasoned stopped harness result/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("harness infrastructure failures require a viable workspace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-harness-workspace-evidence-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "failed", failureClass: "infrastructure", reason: "harness failed" }),
+      evidence: { flush: () => undefined },
+    });
+    for (const [name, replacement, errorPattern] of [
+      ["missing", undefined, /ready workspace/],
+      ["failed", { status: "failed", artifactId: "workspace-1", retained: true }, /ready workspace|Workspace failure records/],
+      ["shutdown-failed", { status: "ready", artifactId: "workspace-1", shutdownResult: { status: "timed-out", error: "workspace shutdown timed out" } }, /confirmed workspace|Workspace failure records/],
+    ] as const) {
+      const record = structuredClone(result.record);
+      if (replacement === undefined) delete record.workspace;
+      else record.workspace = replacement;
+      const path = join(root, `${name}.json`);
+      writeFileSync(path, `${JSON.stringify(record)}\n`);
+      await assert.rejects(readAttemptRecord(path), errorPattern);
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

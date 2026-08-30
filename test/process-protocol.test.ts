@@ -381,6 +381,21 @@ test("validates caller-owned writer paths before spawning", async () => {
   }
 });
 
+test("rejects closed caller-owned writers before spawning", async () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "closed.jsonl"));
+    await writer.close();
+    assert.throws(() => spawnProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({shouldNotRun:true}))"),
+      source: "fake-harness",
+      writer,
+    }), /writer is closed/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("does not expose a pre-existing diagnostic path as this process evidence", async () => {
   const root = temporaryRoot();
   try {

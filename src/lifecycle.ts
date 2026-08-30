@@ -338,6 +338,11 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   const verifierExecutor = options.verifier;
   const evidenceSink = options.evidence;
   const evidenceFlush = evidenceSink?.flush;
+  const signal = options.signal;
+  const recordPath = options.recordPath;
+  const maxWallClockMs = options.maxWallClockMs;
+  const harnessBudgetMs = options.harnessBudgetMs;
+  const shutdownGraceMs = options.shutdownGraceMs ?? 250;
   const now = options.now ?? (() => new Date().toISOString());
   const attempt = options.attempt ?? createAttemptIdentity(options.run.id);
   const runSnapshot = structuredClone(options.run);
@@ -359,13 +364,13 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   let initialCheckpointError: string | undefined;
   let reservationPath: string | undefined;
   let allowTerminalReplacement = false;
-  if (options.recordPath !== undefined) {
-    await assertAttemptRecordPathAvailable(options.recordPath, runSnapshot, attemptSnapshot);
-    reservationPath = await reserveAttemptRecordPath(options.recordPath);
+  if (recordPath !== undefined) {
+    await assertAttemptRecordPathAvailable(recordPath, runSnapshot, attemptSnapshot);
+    reservationPath = await reserveAttemptRecordPath(recordPath);
   }
   const persist = async (): Promise<void> => {
     record.lifecycle = lifecycle.snapshot();
-    if (options.recordPath === undefined) return;
+    if (recordPath === undefined) return;
     try {
       record.persistence = { status: "complete" };
       const publicationGate = lifecycle.state === "terminal"
@@ -376,7 +381,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           if (controller.signal.aborted || budgetExpired !== undefined) throw new TerminalPublicationCancelled();
         }
         : undefined;
-      await writeAttemptRecordInternal(options.recordPath, record, allowTerminalReplacement, publicationGate);
+      await writeAttemptRecordInternal(recordPath, record, allowTerminalReplacement, publicationGate);
     } catch (error) {
       if (error instanceof TerminalPublicationCancelled) {
         record.persistence = { status: "complete" };
@@ -395,7 +400,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           abortPromise.then(() => "aborted" as const),
         ]);
         if (outcome === "aborted") {
-          const settledFlush = await settleWithTimeout(evidenceFlushPromise, options.shutdownGraceMs ?? 250);
+          const settledFlush = await settleWithTimeout(evidenceFlushPromise, shutdownGraceMs);
           if (settledFlush.status === "failed") throw settledFlush.error;
           if (settledFlush.status === "timed-out") throw new Error("Evidence flush interrupted.");
         }
@@ -412,8 +417,8 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     abortCause ??= "interrupted";
     controller.abort("interrupted");
   };
-  if (options.signal?.aborted) externalAbort();
-  else options.signal?.addEventListener("abort", externalAbort, { once: true });
+  if (signal?.aborted) externalAbort();
+  else signal?.addEventListener("abort", externalAbort, { once: true });
   let budgetTimer: ReturnType<typeof setTimeout> | undefined;
   let budgetExpired: "coordinator" | "harness" | undefined;
   let harnessDeadlineAt: number | undefined;
@@ -433,7 +438,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   const noteBudgetStop = (requested: "coordinator" | "harness") => {
     if (abortCause === "interrupted") return;
     const nowMs = Date.now();
-    const coordinatorDeadlineAt = options.maxWallClockMs === undefined ? undefined : executionStartedAt + options.maxWallClockMs;
+    const coordinatorDeadlineAt = maxWallClockMs === undefined ? undefined : executionStartedAt + maxWallClockMs;
     const source = coordinatorDeadlineAt !== undefined && harnessDeadlineAt !== undefined
       && nowMs >= coordinatorDeadlineAt && nowMs >= harnessDeadlineAt
       ? coordinatorDeadlineAt <= harnessDeadlineAt ? "coordinator" : "harness"
@@ -442,11 +447,11 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     budgetExpired = source;
     controller.abort("budget");
   };
-  if (options.maxWallClockMs !== undefined) {
-    budgetTimer = setTimeout(() => noteBudgetStop("coordinator"), options.maxWallClockMs);
+  if (maxWallClockMs !== undefined) {
+    budgetTimer = setTimeout(() => noteBudgetStop("coordinator"), maxWallClockMs);
   }
   const markCoordinatorBudgetIfExpired = () => {
-    if (options.maxWallClockMs !== undefined && Date.now() - executionStartedAt >= options.maxWallClockMs) {
+    if (maxWallClockMs !== undefined && Date.now() - executionStartedAt >= maxWallClockMs) {
       noteBudgetStop("coordinator");
     }
   };
@@ -480,14 +485,14 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           abortPromise.then((value) => ({ kind: value })),
         ]);
         if (setupOutcome.kind === "aborted" || controller.signal.aborted) {
-          const settledSetup = await settleWithTimeout(setupPromise, options.shutdownGraceMs ?? 250);
+          const settledSetup = await settleWithTimeout(setupPromise, shutdownGraceMs);
           if (settledSetup.status === "completed") {
           workspace = snapshotWorkspace(settledSetup.value);
           record.workspace = snapshotWorkspace(workspace);
           workspaceTerminationConfirmed = workspace.shutdownResult === undefined || workspace.shutdownResult.status === "completed";
           if (workspaceShutdown !== undefined) {
               workspaceTerminationConfirmed = false;
-              const shutdownResult = await shutdownWorkspace(workspaceShutdown, options.shutdownGraceMs ?? 250);
+              const shutdownResult = await shutdownWorkspace(workspaceShutdown, shutdownGraceMs);
               if (shutdownResult !== undefined) {
                 workspace = { ...workspace, shutdownResult };
                 record.workspace = snapshotWorkspace(workspace);
@@ -498,7 +503,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
             record.workspace = { status: "failed", error: errorMessage(settledSetup.error) };
             if (workspaceShutdown !== undefined) {
               workspaceTerminationConfirmed = false;
-              const shutdownResult = await shutdownWorkspace(workspaceShutdown, options.shutdownGraceMs ?? 250);
+              const shutdownResult = await shutdownWorkspace(workspaceShutdown, shutdownGraceMs);
               if (shutdownResult !== undefined) {
                 record.workspace.shutdownResult = shutdownResult;
                 workspaceTerminationConfirmed = shutdownResult.status === "completed";
@@ -507,7 +512,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           } else {
             record.workspace = { status: "failed", error: settledSetup.error };
             workspaceTerminationConfirmed = false;
-            const shutdownResult = await shutdownWorkspace(workspaceShutdown, options.shutdownGraceMs ?? 250);
+            const shutdownResult = await shutdownWorkspace(workspaceShutdown, shutdownGraceMs);
             if (shutdownResult !== undefined) {
               record.workspace.shutdownResult = shutdownResult;
               workspaceTerminationConfirmed = shutdownResult.status === "completed";
@@ -525,7 +530,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
             classification ??= infrastructureClassification("Workspace setup failed.", "workspace", workspace);
             if (workspaceShutdown !== undefined) {
               workspaceTerminationConfirmed = false;
-              const shutdownResult = await shutdownWorkspace(workspaceShutdown, options.shutdownGraceMs ?? 250);
+              const shutdownResult = await shutdownWorkspace(workspaceShutdown, shutdownGraceMs);
               if (shutdownResult !== undefined) {
                 workspace = { ...workspace, shutdownResult };
                 record.workspace = snapshotWorkspace(workspace);
@@ -541,7 +546,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       record.workspace = { status: "failed", error: setupError };
       if (workspaceShutdown !== undefined) {
         workspaceTerminationConfirmed = false;
-        const shutdownResult = await shutdownWorkspace(workspaceShutdown, options.shutdownGraceMs ?? 250);
+        const shutdownResult = await shutdownWorkspace(workspaceShutdown, shutdownGraceMs);
         if (shutdownResult !== undefined) record.workspace = { ...record.workspace, shutdownResult };
         workspaceTerminationConfirmed = shutdownResult?.status === "completed";
       }
@@ -573,8 +578,8 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         timers.push(timer);
       };
       const harnessStartedAt = Date.now();
-      harnessDeadlineAt = options.harnessBudgetMs === undefined ? undefined : harnessStartedAt + options.harnessBudgetMs;
-      installBudget(options.harnessBudgetMs);
+      harnessDeadlineAt = harnessBudgetMs === undefined ? undefined : harnessStartedAt + harnessBudgetMs;
+      installBudget(harnessBudgetMs);
       let harnessPromise: Promise<HarnessExecutionResult>;
       let harnessError: string | undefined;
       try {
@@ -582,14 +587,14 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           run: structuredClone(runSnapshot),
           attempt: structuredClone(attemptSnapshot),
           signal: controller.signal,
-          ...(options.harnessBudgetMs === undefined ? {} : { budgetMs: options.harnessBudgetMs }),
+          ...(harnessBudgetMs === undefined ? {} : { budgetMs: harnessBudgetMs }),
           ...(workspace === undefined ? {} : { workspace: snapshotWorkspace(workspace) }),
           registerShutdown: (shutdown) => { harnessShutdown = shutdown; },
         }));
       } catch (error) {
         harnessPromise = Promise.reject(error);
       }
-      if (options.harnessBudgetMs !== undefined && Date.now() - harnessStartedAt >= options.harnessBudgetMs) {
+      if (harnessBudgetMs !== undefined && Date.now() - harnessStartedAt >= harnessBudgetMs) {
         noteBudgetStop("harness");
       }
       markCoordinatorBudgetIfExpired();
@@ -621,7 +626,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       };
       if (outcome === undefined) record.harness = rejectedHarness;
       if (outcome === undefined && harnessShutdown !== undefined) {
-        const shutdownResult = await shutdownHarness(undefined, harnessShutdown, options.shutdownGraceMs ?? 250);
+        const shutdownResult = await shutdownHarness(undefined, harnessShutdown, shutdownGraceMs);
         record.harness = {
           ...rejectedHarness,
           ...(shutdownResult === undefined ? {} : { shutdownResult }),
@@ -637,7 +642,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           record.harness = durableHarnessResult(harnessResult);
           harnessTerminationConfirmed = harnessResult.shutdownResult === undefined || harnessResult.shutdownResult.status === "completed";
         }
-        const settledHarness = await settleWithTimeout(harnessPromise, options.shutdownGraceMs ?? 250);
+        const settledHarness = await settleWithTimeout(harnessPromise, shutdownGraceMs);
         if (settledHarness.status === "completed" && harnessResult === undefined) {
           harnessResult = normalizeHarnessBudgetResult(settledHarness.value, budgetExpired);
           record.harness = durableHarnessResult(harnessResult);
@@ -649,7 +654,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           record.harness = { status: "interrupted", error: settledHarness.error };
         }
         classification = abortClassification(abortCause, budgetExpired, undefined, workspace);
-        const shutdownResult = await shutdownHarness(harnessResult, harnessShutdown, options.shutdownGraceMs ?? 250);
+        const shutdownResult = await shutdownHarness(harnessResult, harnessShutdown, shutdownGraceMs);
         if (shutdownResult !== undefined) {
           if (harnessResult !== undefined) {
             harnessResult = { ...harnessResult, shutdownResult };
@@ -672,7 +677,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           let harnessTerminationConfirmed = harnessResult.shutdownResult === undefined || harnessResult.shutdownResult.status === "completed";
           if (harnessShutdown !== undefined || harnessResult.shutdown !== undefined) {
             harnessTerminationConfirmed = false;
-            const shutdownResult = await shutdownHarness(harnessResult, harnessShutdown, options.shutdownGraceMs ?? 250);
+            const shutdownResult = await shutdownHarness(harnessResult, harnessShutdown, shutdownGraceMs);
             if (shutdownResult !== undefined) {
               harnessResult = { ...harnessResult, shutdownResult };
               record.harness = durableHarnessResult(harnessResult);
@@ -709,7 +714,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                   record.verifier = snapshotVerifier(verifierOutcome.value);
                   verifierTerminationConfirmed = record.verifier.shutdownResult === undefined || record.verifier.shutdownResult.status === "completed";
                 }
-                const settledVerifier = await settleWithTimeout(verifierPromise, options.shutdownGraceMs ?? 250);
+                const settledVerifier = await settleWithTimeout(verifierPromise, shutdownGraceMs);
                 if (settledVerifier.status === "completed" && record.verifier === undefined) {
                   record.verifier = snapshotVerifier(settledVerifier.value);
                   verifierTerminationConfirmed = record.verifier.shutdownResult === undefined || record.verifier.shutdownResult.status === "completed";
@@ -721,7 +726,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                 if (settledVerifier.status === "timed-out" && record.verifier === undefined) {
                   record.verifier = { status: "error", error: settledVerifier.error };
                 }
-                const shutdownResult = await shutdownVerifier(verifierShutdown, options.shutdownGraceMs ?? 250);
+                const shutdownResult = await shutdownVerifier(verifierShutdown, shutdownGraceMs);
                 if (shutdownResult !== undefined) {
                   record.verifier = {
                     ...(record.verifier ?? { status: "error" }),
@@ -738,7 +743,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                   let verifierTerminationConfirmed = verifier.shutdownResult === undefined || verifier.shutdownResult.status === "completed";
                   if (verifierShutdown !== undefined) {
                     verifierTerminationConfirmed = false;
-                    const shutdownResult = await shutdownVerifier(verifierShutdown, options.shutdownGraceMs ?? 250);
+                    const shutdownResult = await shutdownVerifier(verifierShutdown, shutdownGraceMs);
                     if (shutdownResult !== undefined) {
                       record.verifier = { ...verifier, shutdownResult };
                       verifierTerminationConfirmed = shutdownResult.status === "completed";
@@ -756,7 +761,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
               record.verifier = { status: "error", error: verifierError };
               record.verifierTerminationConfirmed = true;
               if (verifierShutdown !== undefined) {
-                const shutdownResult = await shutdownVerifier(verifierShutdown, options.shutdownGraceMs ?? 250);
+                const shutdownResult = await shutdownVerifier(verifierShutdown, shutdownGraceMs);
                 if (shutdownResult !== undefined) {
                   record.verifier.shutdownResult = shutdownResult;
                   record.verifierTerminationConfirmed = shutdownResult.status === "completed";
@@ -806,7 +811,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         abortPromise.then(() => "aborted" as const),
       ]);
       if (cleanupOutcome === "aborted") {
-        const settledCleanup = await settleWithTimeout(cleanupPromise, options.shutdownGraceMs ?? 250);
+        const settledCleanup = await settleWithTimeout(cleanupPromise, shutdownGraceMs);
         if (settledCleanup.status === "timed-out") {
           cleanupStatus = { status: "timed-out", error: settledCleanup.error };
         } else if (settledCleanup.status === "failed") {
@@ -926,7 +931,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       allowTerminalReplacement = false;
     }
     if (budgetTimer !== undefined) clearTimeout(budgetTimer);
-    options.signal?.removeEventListener("abort", externalAbort);
+    signal?.removeEventListener("abort", externalAbort);
     if (reservationPath !== undefined) await rm(reservationPath, { force: true });
     if (initialCheckpointError !== undefined) {
       throw new Error(`Initial attempt checkpoint could not be persisted: ${initialCheckpointError}`);
@@ -1699,6 +1704,10 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       if (!visitedStates.has("running")) {
         throw new Error("Harness infrastructure-failure records require the running lifecycle phase.");
       }
+      if (!isRecord(value.workspace) || value.workspace.status !== "ready") {
+        throw new Error("Harness infrastructure-failure records require a ready workspace result.");
+      }
+      assertShutdownCompleted(value.workspace, "Workspace");
       if (!isRecord(value.harness)
           || !(value.harness.status === "failed"
             || value.harness.status === "stopped" && value.harness.stopReason === undefined)) {
