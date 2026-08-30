@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { readFileSync, rmSync, mkdtempSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -226,6 +226,51 @@ test("external interruption remains the first cause when budget expires during s
   const result = await resultPromise;
   assert.equal(result.terminal.state, "interrupted");
   assert.equal(result.terminal.stopReason, "none");
+});
+
+test("callback rejections during cancellation remain in partial evidence", async () => {
+  const setupController = new AbortController();
+  let setupStartedResolve: (() => void) | undefined;
+  const setupStarted = new Promise<void>((resolvePromise) => { setupStartedResolve = resolvePromise; });
+  const setupRun = executeRunAttempt({
+    run,
+    signal: setupController.signal,
+    shutdownGraceMs: 50,
+    workspace: {
+      setup: async () => {
+        setupStartedResolve?.();
+        await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
+        throw new Error("setup rejected");
+      },
+    },
+    harness: async () => ({ status: "completed" }),
+    evidence: { flush: () => undefined },
+  });
+  await setupStarted;
+  setupController.abort();
+  const setupResult = await setupRun;
+  assert.equal(setupResult.record.workspace?.error, "setup rejected");
+
+  const verifierController = new AbortController();
+  let verifierStartedResolve: (() => void) | undefined;
+  const verifierStarted = new Promise<void>((resolvePromise) => { verifierStartedResolve = resolvePromise; });
+  const verifierRun = executeRunAttempt({
+    run,
+    signal: verifierController.signal,
+    shutdownGraceMs: 50,
+    workspace: workspace(),
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => {
+      verifierStartedResolve?.();
+      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
+      throw new Error("verifier rejected");
+    },
+    evidence: { flush: () => undefined },
+  });
+  await verifierStarted;
+  verifierController.abort();
+  const verifierResult = await verifierRun;
+  assert.equal(verifierResult.record.verifier?.error, "verifier rejected");
 });
 
 test("the harness is not launched after the coordinator deadline", async () => {
@@ -581,10 +626,14 @@ test("record persistence failure does not bypass cleanup", async () => {
   try {
     const result = await executeRunAttempt({
       run,
-      recordPath: root,
+      recordPath: join(root, "attempt.json"),
       workspace: {
         setup: async () => ({ status: "ready", artifactId: "workspace-1" }),
-        cleanup: async () => { cleaned = true; },
+        cleanup: async () => {
+          cleaned = true;
+          rmSync(join(root, "attempt.json"), { force: true });
+          mkdirSync(join(root, "attempt.json"));
+        },
       },
       harness: async () => ({ status: "completed" }),
       verifier: async () => ({ status: "passed" }),

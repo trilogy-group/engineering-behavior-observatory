@@ -61,6 +61,7 @@ export type ProtocolCapability = {
 export type JsonlEvidenceWriterOptions = {
   maxLineBytes?: number;
   fsync?: boolean;
+  exclusive?: boolean;
 };
 
 const DEFAULT_MAX_LINE_BYTES = 4 * 1024 * 1024;
@@ -77,6 +78,7 @@ export class JsonlEvidenceWriter {
   public readonly path: string;
   private readonly maxLineBytes: number;
   private readonly shouldFsync: boolean;
+  private readonly exclusive: boolean;
   private handle: FileHandle | undefined;
   private queue: Promise<void> = Promise.resolve();
   private closed = false;
@@ -87,6 +89,7 @@ export class JsonlEvidenceWriter {
     this.path = resolve(path);
     this.maxLineBytes = positiveInteger(options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES, "JSONL line limit");
     this.shouldFsync = options.fsync ?? true;
+    this.exclusive = options.exclusive ?? false;
   }
 
   public get count(): number {
@@ -143,7 +146,7 @@ export class JsonlEvidenceWriter {
   private async openHandle(): Promise<FileHandle> {
     if (this.handle !== undefined) return this.handle;
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-    this.handle = await open(this.path, "a", 0o600);
+    this.handle = await open(this.path, this.exclusive ? "wx" : "a", 0o600);
     return this.handle;
   }
 }
@@ -404,6 +407,7 @@ export class ProtocolProcess {
   private readonly shutdownGraceMs: number;
   private readonly killGraceMs: number;
   private readonly maxInMemoryObservations: number;
+  private readonly writer: JsonlEvidenceWriter;
   private readonly now: () => string;
   private readonly ownsWriter: boolean;
   private readonly evidencePath?: string;
@@ -440,7 +444,7 @@ export class ProtocolProcess {
     this.args = [...(options.args ?? [])];
     const writer = options.writer ?? new JsonlEvidenceWriter(
       options.evidencePath ?? resolve(process.cwd(), `.ebo-protocol-${randomUUID()}.jsonl`),
-      { maxLineBytes: Math.min(Number.MAX_SAFE_INTEGER, this.stdoutLineLimit * 4 + 1024) },
+      { maxLineBytes: Math.min(Number.MAX_SAFE_INTEGER, this.stdoutLineLimit * 4 + 1024), exclusive: true },
     );
     const configuredEvidencePath = options.evidencePath === undefined ? undefined : resolve(options.evidencePath);
     if (options.writer !== undefined && configuredEvidencePath !== undefined && configuredEvidencePath !== writer.path) {
@@ -449,6 +453,7 @@ export class ProtocolProcess {
     this.ownsWriter = options.writer === undefined;
     this.evidencePath = writer.path;
     this.stderrPath = options.stderrPath === undefined ? undefined : resolve(options.stderrPath);
+    this.writer = writer;
     this.recorder = new ProtocolEvidenceRecorder(writer, options.source, this.now, this.maxInMemoryObservations);
 
     const spawnOptions: SpawnOptions = {
@@ -717,7 +722,7 @@ export class ProtocolProcess {
       ...(this.protocolError === undefined ? {} : { protocolError: this.protocolError }),
       ...(this.childError === undefined && this.recorderError === undefined ? {} : { error: this.childError ?? this.recorderError }),
       ...(this.recorderError === undefined ? {} : { recorderError: this.recorderError }),
-      ...(this.evidencePath === undefined ? {} : { evidencePath: this.evidencePath }),
+      ...(this.evidencePath === undefined || this.writer.count === 0 ? {} : { evidencePath: this.evidencePath }),
       ...(this.stderrPersisted && this.stderrPath !== undefined ? { stderrPath: this.stderrPath } : {}),
       droppedObservations: this.recorder.droppedObservations,
       observations: [...this.recorder.observations],

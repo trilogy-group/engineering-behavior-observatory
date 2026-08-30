@@ -154,6 +154,30 @@ test("does not expose a pre-existing diagnostic path as this process evidence", 
   }
 });
 
+test("creates each internally owned protocol evidence file exclusively", async () => {
+  const root = temporaryRoot();
+  try {
+    const evidencePath = join(root, "exclusive.jsonl");
+    const first = await runProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({first:true}))"),
+      source: "fake-harness",
+      evidencePath,
+    });
+    const original = readFileSync(evidencePath, "utf8");
+    const second = await runProtocolProcess({
+      ...nodeScript(""),
+      source: "fake-harness",
+      evidencePath,
+    });
+    assert.equal(first.status, "completed");
+    assert.equal(second.status, "failed");
+    assert.equal(second.evidencePath, undefined);
+    assert.equal(readFileSync(evidencePath, "utf8"), original);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("bounds an unterminated stdout frame before accumulating it", async () => {
   const root = temporaryRoot();
   try {
