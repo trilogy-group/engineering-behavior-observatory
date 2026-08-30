@@ -294,6 +294,19 @@ test("returns detached recorder observations", async () => {
   }
 });
 
+test("rejects values that JSONL cannot preserve", async () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "json-values.jsonl"));
+    const recorder = new ProtocolEvidenceRecorder(writer, "fake-harness");
+    await assert.rejects(recorder.recordNotification({ source: "fake-harness", method: "event", payload: new Map([["x", 1]]) }), /JSON object or array/);
+    await assert.rejects(recorder.recordNotification({ source: "fake-harness", method: "event", payload: Number.NaN }), /finite JSON number/);
+    await recorder.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("does not process frames queued after malformed output", async () => {
   const root = temporaryRoot();
   let observed = 0;

@@ -132,12 +132,19 @@ export type VerifierExecutionContext = {
   attempt: AttemptIdentity;
   signal: AbortSignal;
   workspace?: WorkspaceExecutionResult;
+  registerShutdown: (shutdown: () => void | Promise<void>) => void;
 };
 
 export type VerifierExecutionResult = {
   status: "passed" | "failed" | "error" | "not-run";
   error?: string;
+  shutdownResult?: VerifierShutdownResult;
   evidence?: unknown;
+};
+
+export type VerifierShutdownResult = {
+  status: "completed" | "failed" | "timed-out";
+  error?: string;
 };
 
 export type VerifierExecutor = (
@@ -174,6 +181,7 @@ export type AttemptRecord = {
   harness?: HarnessExecutionResult;
   verifier?: VerifierExecutionResult;
   harnessTerminationConfirmed?: boolean;
+  verifierTerminationConfirmed?: boolean;
   cleanup?: { status: "completed" | "failed" | "timed-out"; error?: string };
   capture?: { status: "complete" | "incomplete"; error?: string };
   persistence?: { status: "complete" | "incomplete"; error?: string };
@@ -371,6 +379,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   let harnessShutdown: (() => void | Promise<void>) | undefined;
   let workspaceShutdown: (() => void | Promise<void>) | undefined;
   let workspaceTerminationConfirmed = true;
+  let verifierShutdown: (() => void | Promise<void>) | undefined;
   let setupStarted = false;
   const abortPromise = new Promise<"aborted">((resolveAbort) => {
     if (controller.signal.aborted) resolveAbort("aborted");
@@ -582,21 +591,39 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                 attempt: structuredClone(attemptSnapshot),
                 signal: controller.signal,
                 ...(workspace === undefined ? {} : { workspace: snapshotWorkspace(workspace) }),
+                registerShutdown: (shutdown) => { verifierShutdown = shutdown; },
               }));
               const verifierOutcome = await Promise.race([
                 verifierPromise.then((value) => ({ kind: "result" as const, value })),
                 abortPromise.then((value) => ({ kind: value })),
               ]);
               if (verifierOutcome.kind === "aborted" || controller.signal.aborted) {
-                if (verifierOutcome.kind === "result") record.verifier = snapshotVerifier(verifierOutcome.value);
+                let verifierTerminationConfirmed = false;
+                if (verifierOutcome.kind === "result") {
+                  record.verifier = snapshotVerifier(verifierOutcome.value);
+                  verifierTerminationConfirmed = true;
+                }
                 const settledVerifier = await settleWithTimeout(verifierPromise, options.shutdownGraceMs ?? 250);
-                if (settledVerifier.status === "completed" && record.verifier === undefined) record.verifier = snapshotVerifier(settledVerifier.value);
+                if (settledVerifier.status === "completed" && record.verifier === undefined) {
+                  record.verifier = snapshotVerifier(settledVerifier.value);
+                  verifierTerminationConfirmed = true;
+                }
                 if (settledVerifier.status === "failed" && record.verifier === undefined) {
                   record.verifier = { status: "error", error: errorMessage(settledVerifier.error) };
+                  verifierTerminationConfirmed = true;
                 }
                 if (settledVerifier.status === "timed-out" && record.verifier === undefined) {
                   record.verifier = { status: "error", error: settledVerifier.error };
                 }
+                const shutdownResult = await shutdownVerifier(verifierShutdown, options.shutdownGraceMs ?? 250);
+                if (shutdownResult !== undefined) {
+                  record.verifier = {
+                    ...(record.verifier ?? { status: "error" }),
+                    shutdownResult,
+                  };
+                  verifierTerminationConfirmed = shutdownResult.status === "completed";
+                }
+                record.verifierTerminationConfirmed = verifierTerminationConfirmed;
                 classification = abortClassification(abortCause, budgetExpired);
               } else {
                 const verifier = snapshotVerifier(verifierOutcome.value);
@@ -607,10 +634,19 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                   : classifyVerifier(verifier, workspace);
               }
             } catch (error) {
-              record.verifier = { status: "error", error: errorMessage(error) };
+              const verifierError = errorMessage(error);
+              record.verifier = { status: "error", error: verifierError };
+              record.verifierTerminationConfirmed = true;
+              if (verifierShutdown !== undefined) {
+                const shutdownResult = await shutdownVerifier(verifierShutdown, options.shutdownGraceMs ?? 250);
+                if (shutdownResult !== undefined) {
+                  record.verifier.shutdownResult = shutdownResult;
+                  record.verifierTerminationConfirmed = shutdownResult.status === "completed";
+                }
+              }
               classification = controller.signal.aborted
-                ? abortClassification(abortCause, budgetExpired, errorMessage(error))
-                : verifierErrorClassification(errorMessage(error), workspace);
+                ? abortClassification(abortCause, budgetExpired, verifierError)
+                : verifierErrorClassification(verifierError, workspace);
             }
           }
         }
@@ -628,6 +664,8 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       cleanupStatus = { status: "completed" };
     } else if (record.harnessTerminationConfirmed === false) {
       cleanupStatus = { status: "timed-out", error: "Harness execution did not terminate before cleanup." };
+    } else if (record.verifierTerminationConfirmed === false) {
+      cleanupStatus = { status: "timed-out", error: "Verifier execution did not terminate before cleanup." };
     } else if (!workspaceTerminationConfirmed) {
       cleanupStatus = { status: "timed-out", error: "Workspace setup did not terminate before cleanup." };
     } else try {
@@ -906,7 +944,7 @@ function classifyHarness(
       if (result.stopReason === "budget") return budgetClassification("harness", result.reason);
       return infrastructureClassification("Harness stopped without an explicit stop reason.", "harness", workspace);
     case "interrupted":
-      return interruptedClassification(result.reason);
+      return interruptedClassification(result.reason, "harness");
   }
 }
 
@@ -1000,12 +1038,15 @@ function policyClassification(reason?: string): AttemptClassification {
   };
 }
 
-function interruptedClassification(reason?: string): AttemptClassification {
+function interruptedClassification(
+  reason?: string,
+  source: AttemptClassification["source"] = "runner",
+): AttemptClassification {
   return {
     kind: "interrupted",
     terminal: { state: "interrupted", failureClass: "infrastructure", stopReason: "none" },
     ...(reason === undefined ? {} : { reason }),
-    source: "runner",
+    source,
   };
 }
 
@@ -1069,6 +1110,25 @@ async function shutdownWorkspace(
       shutdown.then(() => ({ status: "completed" as const }), (error) => ({ status: "failed" as const, error: errorMessage(error) })),
       new Promise<WorkspaceShutdownResult>((resolvePromise) => {
         timer = setTimeout(() => resolvePromise({ status: "timed-out", error: "Workspace shutdown exceeded its grace period." }), graceMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function shutdownVerifier(
+  shutdownCallback: (() => void | Promise<void>) | undefined,
+  graceMs: number,
+): Promise<VerifierShutdownResult | undefined> {
+  if (shutdownCallback === undefined) return undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const shutdown = Promise.resolve(shutdownCallback());
+    return await Promise.race([
+      shutdown.then(() => ({ status: "completed" as const }), (error) => ({ status: "failed" as const, error: errorMessage(error) })),
+      new Promise<VerifierShutdownResult>((resolvePromise) => {
+        timer = setTimeout(() => resolvePromise({ status: "timed-out", error: "Verifier shutdown exceeded its grace period." }), graceMs);
       }),
     ]);
   } finally {
@@ -1151,6 +1211,12 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
   if (value.harnessTerminationConfirmed !== undefined && typeof value.harnessTerminationConfirmed !== "boolean") {
     throw new Error("Harness termination confirmation is invalid.");
   }
+  if (value.verifierTerminationConfirmed !== undefined && typeof value.verifierTerminationConfirmed !== "boolean") {
+    throw new Error("Verifier termination confirmation is invalid.");
+  }
+  if (value.workspace !== undefined) assertWorkspaceResult(value.workspace);
+  if (value.harness !== undefined) assertHarnessResult(value.harness);
+  if (value.verifier !== undefined) assertVerifierResult(value.verifier);
   if (value.terminal !== undefined) assertTerminalRecord(value.terminal);
   if ((value.terminal === undefined) !== (value.classification === undefined)) {
     throw new Error("Attempt terminal and classification records must be paired.");
@@ -1261,6 +1327,48 @@ function assertTerminalWorkspaceEvidence(workspace: unknown, artifactId: string 
       || typeof workspace.artifactId !== "string" || artifactId === undefined || workspace.artifactId !== artifactId) {
     throw new Error("Terminal outcome requires matching retained workspace evidence.");
   }
+}
+
+function assertWorkspaceResult(value: unknown): asserts value is WorkspaceExecutionResult {
+  if (!isRecord(value) || value.status !== "ready" && value.status !== "failed") {
+    throw new Error("Attempt workspace evidence is invalid.");
+  }
+  for (const field of ["path", "artifactId", "digest", "error"] as const) {
+    if (value[field] !== undefined) assertTimestampValue(value[field], `Workspace ${field}`);
+  }
+  if (value.retained !== undefined && typeof value.retained !== "boolean") throw new Error("Workspace retention is invalid.");
+  if (value.shutdownResult !== undefined) assertShutdownResult(value.shutdownResult, "Workspace shutdown");
+}
+
+function assertHarnessResult(value: unknown): asserts value is HarnessExecutionResult {
+  if (!isRecord(value) || !["completed", "failed", "stopped", "interrupted"].includes(String(value.status))) {
+    throw new Error("Attempt harness evidence is invalid.");
+  }
+  if (value.failureClass !== undefined && !["infrastructure", "task"].includes(String(value.failureClass))) {
+    throw new Error("Harness failure class is invalid.");
+  }
+  if (value.stopReason !== undefined && !["budget", "policy"].includes(String(value.stopReason))) {
+    throw new Error("Harness stop reason is invalid.");
+  }
+  for (const field of ["reason", "error"] as const) {
+    if (value[field] !== undefined) assertTimestampValue(value[field], `Harness ${field}`);
+  }
+  if (value.shutdownResult !== undefined) assertShutdownResult(value.shutdownResult, "Harness shutdown");
+}
+
+function assertVerifierResult(value: unknown): asserts value is VerifierExecutionResult {
+  if (!isRecord(value) || !["passed", "failed", "error", "not-run"].includes(String(value.status))) {
+    throw new Error("Attempt verifier evidence is invalid.");
+  }
+  if (value.error !== undefined) assertTimestampValue(value.error, "Verifier error");
+  if (value.shutdownResult !== undefined) assertShutdownResult(value.shutdownResult, "Verifier shutdown");
+}
+
+function assertShutdownResult(value: unknown, label: string): asserts value is { status: "completed" | "failed" | "timed-out"; error?: string } {
+  if (!isRecord(value) || !["completed", "failed", "timed-out"].includes(String(value.status))) {
+    throw new Error(`${label} result is invalid.`);
+  }
+  if (value.error !== undefined) assertTimestampValue(value.error, `${label} error`);
 }
 
 function assertVerifierStatus(verifier: unknown, status: "passed" | "failed"): void {

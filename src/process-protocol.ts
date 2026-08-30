@@ -380,6 +380,14 @@ export class ProtocolEvidenceRecorder {
   }): Promise<ProtocolObservation> {
     assertNonEmpty(input.source, "Protocol source");
     if (input.method !== undefined) assertNonEmpty(input.method, "Protocol method");
+    let payload: unknown;
+    let evidence: unknown;
+    try {
+      if (input.payload !== undefined) payload = cloneJsonValue(input.payload, "payload");
+      if (input.evidence !== undefined) evidence = cloneJsonValue(input.evidence, "evidence");
+    } catch (error) {
+      return Promise.reject(error);
+    }
     const observation: ProtocolObservation = {
       schemaVersion: "ebo.protocol-observation/v1",
       sequence: ++this.sequence,
@@ -391,8 +399,8 @@ export class ProtocolEvidenceRecorder {
       ...(input.id === undefined ? {} : { id: input.id }),
       ...(input.sourceIdentity === undefined ? {} : { sourceIdentity: input.sourceIdentity }),
       ...(input.raw === undefined ? {} : { raw: input.raw }),
-      ...(input.payload === undefined ? {} : { payload: structuredClone(input.payload) }),
-      ...(input.evidence === undefined ? {} : { evidence: structuredClone(input.evidence) }),
+      ...(payload === undefined ? {} : { payload }),
+      ...(evidence === undefined ? {} : { evidence }),
       ...(input.status === undefined ? {} : { status: input.status }),
       ...(input.capability === undefined ? {} : { capability: input.capability }),
     };
@@ -810,6 +818,31 @@ function nonnegativeInteger(value: number, label: string): number {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function cloneJsonValue(value: unknown, label: string): unknown {
+  assertJsonValue(value, label, new Set<object>());
+  return structuredClone(value);
+}
+
+function assertJsonValue(value: unknown, path: string, seen: Set<object>): void {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error(`${path} must be a finite JSON number.`);
+    return;
+  }
+  if (typeof value !== "object") throw new Error(`${path} contains a non-JSON value.`);
+  if (seen.has(value)) throw new Error(`${path} contains a cycle.`);
+  seen.add(value);
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertJsonValue(item, `${path}[${index}]`, seen));
+  } else {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) throw new Error(`${path} must be a JSON object or array.`);
+    const object = value as Record<string, unknown>;
+    for (const key of Object.keys(object)) assertJsonValue(object[key], `${path}.${key}`, seen);
+  }
+  seen.delete(value);
 }
 
 async function settleObserver<T>(

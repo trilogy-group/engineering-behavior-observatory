@@ -155,6 +155,7 @@ export type {
   VerifierExecutionContext,
   VerifierExecutionResult,
   VerifierExecutor,
+  VerifierShutdownResult,
   WorkspaceCleanupContext,
   WorkspaceCoordinator,
   WorkspaceExecutionResult,

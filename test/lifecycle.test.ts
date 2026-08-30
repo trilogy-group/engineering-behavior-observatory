@@ -111,6 +111,14 @@ test("harness infrastructure, policy, and cleanup outcomes stay classified", asy
   });
   assert.equal(policyStop.terminal.stopReason, "policy");
 
+  const harnessInterrupt = await executeRunAttempt({
+    run,
+    workspace: workspace(),
+    harness: async () => ({ status: "interrupted", reason: "harness closed" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(harnessInterrupt.classification.source, "harness");
+
   const cleanupFailure = await executeRunAttempt({
     run,
     workspace: {
@@ -578,6 +586,36 @@ test("a verifier result that settles during interruption remains in the partial 
   assert.equal(result.record.verifier?.status, "passed");
 });
 
+test("an unsettled verifier is not allowed to race workspace cleanup", async () => {
+  const controller = new AbortController();
+  let verifierStartedResolve: (() => void) | undefined;
+  const verifierStarted = new Promise<void>((resolvePromise) => { verifierStartedResolve = resolvePromise; });
+  let cleanupCalled = false;
+  const resultPromise = executeRunAttempt({
+    run,
+    signal: controller.signal,
+    shutdownGraceMs: 10,
+    workspace: {
+      setup: async () => ({ status: "ready", artifactId: "workspace-1" }),
+      cleanup: async () => { cleanupCalled = true; },
+    },
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => {
+      verifierStartedResolve?.();
+      await new Promise<void>(() => undefined);
+      return { status: "passed" };
+    },
+    evidence: { flush: () => undefined },
+  });
+  await verifierStarted;
+  controller.abort();
+  const result = await resultPromise;
+  assert.equal(cleanupCalled, false);
+  assert.equal(result.record.verifierTerminationConfirmed, false);
+  assert.equal(result.record.cleanup?.status, "timed-out");
+  assert.equal(result.terminal.state, "interrupted");
+});
+
 test("an already-aborted signal is retained as an interruption", async () => {
   const controller = new AbortController();
   controller.abort();
@@ -935,6 +973,24 @@ test("durable validation rejects classification kinds that contradict terminals"
       partial: true,
     }));
     await assert.rejects(readAttemptRecord(path), /classification kind/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("durable validation rejects malformed optional outcome evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-evidence-record-"));
+  try {
+    const path = join(root, "malformed.json");
+    writeFileSync(path, JSON.stringify({
+      schemaVersion: "ebo.attempt/v1",
+      run,
+      attempt: createAttemptIdentity(run.id, 1, "attempt-1"),
+      lifecycle: new LifecycleController().snapshot(),
+      harness: 17,
+      partial: true,
+    }));
+    await assert.rejects(readAttemptRecord(path), /harness evidence/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
