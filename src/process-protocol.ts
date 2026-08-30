@@ -86,6 +86,7 @@ export class JsonlEvidenceWriter {
   private handle: FileHandle | undefined;
   private queue: Promise<void> = Promise.resolve();
   private closed = false;
+  private poisoned = false;
   private claimed = false;
   private hasWrites = false;
   private claimLockFd: number | undefined;
@@ -106,6 +107,7 @@ export class JsonlEvidenceWriter {
   }
 
   public append(record: unknown, token?: typeof INTERNAL_RECORDER_TOKEN): Promise<void> {
+    if (this.poisoned) return Promise.reject(new Error("JSONL evidence writer is unusable after an ambiguous append."));
     if (this.claimed && token !== INTERNAL_RECORDER_TOKEN) {
       return Promise.reject(new Error("JSONL evidence writer is claimed by a protocol recorder."));
     }
@@ -140,9 +142,16 @@ export class JsonlEvidenceWriter {
         }
         if (this.closed) throw new Error("JSONL evidence writer is closed.");
         const handle = await this.openHandle();
-        await handle.write(line, undefined, "utf8");
-        if (this.shouldFsync) await handle.sync();
-        this._count += 1;
+        let wrote = false;
+        try {
+          await handle.write(line, undefined, "utf8");
+          wrote = true;
+          if (this.shouldFsync) await handle.sync();
+          this._count += 1;
+        } catch (error) {
+          if (wrote) this.poisoned = true;
+          throw error;
+        }
       } finally {
         if (directLockFd !== undefined && directLockPath !== undefined) {
           closeSync(directLockFd);
@@ -493,6 +502,7 @@ export class ProtocolEvidenceRecorder {
   }, allowFenced = false): Promise<ProtocolObservation> {
     if (this.fenced && !allowFenced) return Promise.reject(new Error("Protocol evidence recorder is fenced."));
     assertNonEmpty(input.source, "Protocol source");
+    assertNonEmpty(input.observedAt, "Observation timestamp");
     if (input.method !== undefined) assertNonEmpty(input.method, "Protocol method");
     if (input.id !== undefined && (typeof input.id === "number" && !Number.isFinite(input.id)
         || typeof input.id !== "string" && typeof input.id !== "number" && input.id !== null)) {

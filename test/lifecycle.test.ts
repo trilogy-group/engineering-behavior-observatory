@@ -1362,7 +1362,38 @@ test("harness infrastructure failures require native failed harness evidence", a
     delete record.harness;
     const path = join(root, "missing-harness-failure.json");
     writeFileSync(path, `${JSON.stringify(record)}\n`);
-    await assert.rejects(readAttemptRecord(path), /failed harness result/);
+    await assert.rejects(readAttemptRecord(path), /failed or unreasoned stopped harness result/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("unreasoned harness stops remain validator-compatible", async () => {
+  const result = await executeRunAttempt({
+    run,
+    workspace: workspace(),
+    harness: async () => ({ status: "stopped" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.failureClass, "infrastructure");
+  assert.equal(result.record.harness?.status, "stopped");
+});
+
+test("verifier-error terminals require native verifier evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-verifier-error-evidence-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "error", error: "verifier failed" }),
+      evidence: { flush: () => undefined },
+    });
+    const record = structuredClone(result.record);
+    delete record.verifier;
+    const path = join(root, "missing-verifier-error.json");
+    writeFileSync(path, `${JSON.stringify(record)}\n`);
+    await assert.rejects(readAttemptRecord(path), /error verifier result/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

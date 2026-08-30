@@ -1519,8 +1519,21 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       if (!visitedStates.has("running")) {
         throw new Error("Harness infrastructure-failure records require the running lifecycle phase.");
       }
-      if (!isRecord(value.harness) || value.harness.status !== "failed") {
-        throw new Error("Harness infrastructure-failure records require a failed harness result.");
+      if (!isRecord(value.harness)
+          || !(value.harness.status === "failed"
+            || value.harness.status === "stopped" && value.harness.stopReason === undefined)) {
+        throw new Error("Harness infrastructure-failure records require a failed or unreasoned stopped harness result.");
+      }
+    }
+    if (classificationKind === "verifier-error" && classificationSource === "verifier") {
+      if (!visitedStates.has("running") || !visitedStates.has("verifying")) {
+        throw new Error("Verifier-error terminal records require running and verifying lifecycle phases.");
+      }
+      if (!isRecord(value.harness) || value.harness.status !== "completed") {
+        throw new Error("Verifier-error terminal records require a completed harness result.");
+      }
+      if (!isRecord(value.verifier) || value.verifier.status !== "error") {
+        throw new Error("Verifier-error terminal records require an error verifier result.");
       }
     }
     const expectedPartial = classificationUnderlyingKind(value.classification as unknown as AttemptClassification) !== "completed"
