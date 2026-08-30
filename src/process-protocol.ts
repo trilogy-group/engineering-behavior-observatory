@@ -183,7 +183,7 @@ export class JsonlEvidenceWriter {
         await this.handle.close();
         this.handle = undefined;
       }
-      this.releaseClaim();
+      this.releaseClaimNow();
     });
     this.queue = operation.catch(() => undefined);
     return operation;
@@ -234,7 +234,13 @@ export class JsonlEvidenceWriter {
     }
   }
 
-  private releaseClaim(): void {
+  public releaseClaim(token?: typeof INTERNAL_RECORDER_TOKEN): void {
+    if (token !== INTERNAL_RECORDER_TOKEN) throw new Error("JSONL evidence writer release is internal.");
+    this.releaseClaimNow();
+  }
+
+  private releaseClaimNow(): void {
+    this.claimed = false;
     if (this.claimLockFd === undefined || this.claimLockPath === undefined) return;
     const lockFd = this.claimLockFd;
     const lockPath = this.claimLockPath;
@@ -627,7 +633,12 @@ export class ProtocolProcess {
       stdio: ["pipe", "pipe", "pipe"],
       detached: options.spawnOptions?.detached ?? process.platform !== "win32",
     };
-    this.child = spawn(options.command, this.args, spawnOptions);
+    try {
+      this.child = spawn(options.command, this.args, spawnOptions);
+    } catch (error) {
+      this.writer.releaseClaim(INTERNAL_RECORDER_TOKEN);
+      throw error;
+    }
     this.child.on("error", (error) => {
       this.childError ??= errorMessage(error);
       void this.recorder.recordError(this.childError, undefined, INTERNAL_RECORDER_TOKEN).catch(() => undefined);

@@ -213,6 +213,19 @@ test("process timer grace periods reject values above Node's maximum", () => {
   }), /Node timer maximum/);
 });
 
+test("synchronous spawn errors release the protocol writer claim", async () => {
+  const root = temporaryRoot();
+  try {
+    const path = join(root, "spawn-error.jsonl");
+    const writer = new JsonlEvidenceWriter(path);
+    assert.throws(() => spawnProtocolProcess({ command: "bad\u0000command", source: "fake-harness", writer }), /null byte|NUL|argument/);
+    await writer.append({ direct: true });
+    await writer.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("retains the original JSONL frame text when parsed values lose precision", async () => {
   const root = temporaryRoot();
   try {

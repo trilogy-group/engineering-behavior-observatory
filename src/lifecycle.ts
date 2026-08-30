@@ -279,7 +279,9 @@ export class LifecycleController {
   private endedAt: string | undefined;
 
   public constructor(private readonly now: () => string = () => new Date().toISOString()) {
-    this.createdAt = this.now();
+    const createdAt = this.now();
+    assertTimestampValue(createdAt, "Lifecycle created timestamp");
+    this.createdAt = createdAt;
     this.timestamps = { created: this.createdAt };
   }
 
@@ -288,6 +290,7 @@ export class LifecycleController {
   }
 
   public transition(to: LifecycleState, at = this.now()): LifecycleSnapshot {
+    assertTimestampValue(at, "Lifecycle transition timestamp");
     if (!ALLOWED_TRANSITIONS[this.current].includes(to)) {
       throw new InvalidLifecycleTransitionError(this.current, to);
     }

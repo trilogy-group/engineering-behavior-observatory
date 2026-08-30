@@ -37,6 +37,12 @@ test("lifecycle transitions are guarded and retain timestamps", () => {
   assert.throws(() => lifecycle.transition("running"), InvalidLifecycleTransitionError);
 });
 
+test("lifecycle rejects empty timestamps before recording state", () => {
+  assert.throws(() => new LifecycleController(() => ""), /Lifecycle created timestamp/);
+  const lifecycle = new LifecycleController(() => "created");
+  assert.throws(() => lifecycle.transition("setup", ""), /Lifecycle transition timestamp/);
+});
+
 test("successful runs coordinate setup, harness, verifier, cleanup, and persistence", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-success-"));
   const calls: string[] = [];
