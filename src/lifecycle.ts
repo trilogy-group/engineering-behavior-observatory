@@ -604,6 +604,19 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         harnessResult = outcome.value;
         record.harness = durableHarnessResult(harnessResult);
         classification = classifyHarness(harnessResult, workspace);
+        if (classification !== undefined && harnessResult.status !== "completed") {
+          let harnessTerminationConfirmed = true;
+          if (harnessShutdown !== undefined || harnessResult.shutdown !== undefined) {
+            harnessTerminationConfirmed = false;
+            const shutdownResult = await shutdownHarness(harnessResult, harnessShutdown, options.shutdownGraceMs ?? 250);
+            if (shutdownResult !== undefined) {
+              harnessResult = { ...harnessResult, shutdownResult };
+              record.harness = durableHarnessResult(harnessResult);
+              harnessTerminationConfirmed = shutdownResult.status === "completed";
+            }
+          }
+          record.harnessTerminationConfirmed = harnessTerminationConfirmed;
+        }
         if (classification === undefined && harnessResult.status === "completed") {
           lifecycle.transition("verifying");
           await persist();
@@ -654,6 +667,18 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
               } else {
                 const verifier = snapshotVerifier(verifierOutcome.value);
                 record.verifier = verifier;
+                if (verifier.status !== "passed") {
+                  let verifierTerminationConfirmed = true;
+                  if (verifierShutdown !== undefined) {
+                    verifierTerminationConfirmed = false;
+                    const shutdownResult = await shutdownVerifier(verifierShutdown, options.shutdownGraceMs ?? 250);
+                    if (shutdownResult !== undefined) {
+                      record.verifier = { ...verifier, shutdownResult };
+                      verifierTerminationConfirmed = shutdownResult.status === "completed";
+                    }
+                  }
+                  record.verifierTerminationConfirmed = verifierTerminationConfirmed;
+                }
                 markCoordinatorBudgetIfExpired();
                 classification = controller.signal.aborted
                   ? abortClassification(abortCause, budgetExpired)

@@ -96,6 +96,23 @@ test("verifier task failures and verifier errors remain distinct", async () => {
   assert.equal(infrastructureFailure.classification.kind, "verifier-error");
 });
 
+test("verifier errors shut down their registered helper", async () => {
+  let shutdownCalls = 0;
+  const result = await executeRunAttempt({
+    run,
+    workspace: workspace(),
+    harness: async () => ({ status: "completed" }),
+    verifier: async ({ registerShutdown }) => {
+      registerShutdown(async () => { shutdownCalls += 1; });
+      return { status: "error", error: "verifier failed" };
+    },
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.failureClass, "infrastructure");
+  assert.equal(shutdownCalls, 1);
+  assert.equal(result.record.verifierTerminationConfirmed, true);
+});
+
 test("harness infrastructure, policy, and cleanup outcomes stay classified", async () => {
   const harnessFailure = await executeRunAttempt({
     run,
@@ -130,6 +147,27 @@ test("harness infrastructure, policy, and cleanup outcomes stay classified", asy
   });
   assert.equal(cleanupFailure.terminal.failureClass, "infrastructure");
   assert.equal(cleanupFailure.record.cleanup?.status, "failed");
+});
+
+test("non-success harness results shut down their registered helper", async () => {
+  let shutdownCalls = 0;
+  let cleanupCalls = 0;
+  const result = await executeRunAttempt({
+    run,
+    workspace: {
+      setup: async () => ({ status: "ready", artifactId: "workspace-1" }),
+      cleanup: async () => { cleanupCalls += 1; },
+    },
+    harness: async ({ registerShutdown }) => {
+      registerShutdown(async () => { shutdownCalls += 1; });
+      return { status: "failed", failureClass: "infrastructure", reason: "harness failed" };
+    },
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.failureClass, "infrastructure");
+  assert.equal(shutdownCalls, 1);
+  assert.equal(cleanupCalls, 1);
+  assert.equal(result.record.harnessTerminationConfirmed, true);
 });
 
 test("a harness cannot declare a task failure without verifier evidence", async () => {

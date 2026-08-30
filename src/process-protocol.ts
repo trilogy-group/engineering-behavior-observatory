@@ -153,8 +153,15 @@ export class JsonlEvidenceWriter {
   private async openHandle(): Promise<FileHandle> {
     if (this.handle !== undefined) return this.handle;
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-    this.handle = await open(this.path, this.exclusive ? "wx" : "a", 0o600);
-    return this.handle;
+    const handle = await open(this.path, this.exclusive ? "wx" : "a", 0o600);
+    try {
+      syncDirectory(dirname(this.path));
+      this.handle = handle;
+      return handle;
+    } catch (error) {
+      await handle.close().catch(() => undefined);
+      throw error;
+    }
   }
 }
 
