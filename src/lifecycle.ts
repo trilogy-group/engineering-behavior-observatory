@@ -346,8 +346,8 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     record.lifecycle = lifecycle.snapshot();
     if (options.recordPath === undefined) return;
     try {
-      await writeAttemptRecordInternal(options.recordPath, record);
       record.persistence = { status: "complete" };
+      await writeAttemptRecordInternal(options.recordPath, record);
     } catch (error) {
       persistenceError ??= errorMessage(error);
       record.persistence = { status: "incomplete", error: persistenceError };
@@ -629,7 +629,10 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         if (classification === undefined && harnessResult.status === "completed") {
           lifecycle.transition("verifying");
           await persist();
-          if (options.verifier === undefined) {
+          markCoordinatorBudgetIfExpired();
+          if (controller.signal.aborted) {
+            classification = abortClassification(abortCause, budgetExpired);
+          } else if (options.verifier === undefined) {
             record.verifier = { status: "not-run" };
             classification = infrastructureClassification("Verifier did not run.", "verifier", workspace);
           } else {
