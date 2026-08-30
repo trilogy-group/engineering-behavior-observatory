@@ -90,6 +90,7 @@ export type HarnessExecutionContext = {
   signal: AbortSignal;
   budgetMs?: number;
   workspace?: WorkspaceExecutionResult;
+  registerShutdown: (shutdown: () => void | Promise<void>) => void;
 };
 
 export type HarnessExecutionResult = {
@@ -287,13 +288,15 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   validateOptions(options);
   const now = options.now ?? (() => new Date().toISOString());
   const attempt = options.attempt ?? createAttemptIdentity(options.run.id);
+  const runSnapshot = structuredClone(options.run);
+  const attemptSnapshot = structuredClone(attempt);
   const lifecycle = new LifecycleController(now);
   const controller = new AbortController();
   const executionStartedAt = Date.now();
   const record: AttemptRecord = {
     schemaVersion: "ebo.attempt/v1",
-    run: structuredClone(options.run),
-    attempt: structuredClone(attempt),
+    run: structuredClone(runSnapshot),
+    attempt: structuredClone(attemptSnapshot),
     lifecycle: lifecycle.snapshot(),
     partial: true,
   };
@@ -344,6 +347,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   let workspace: WorkspaceExecutionResult | undefined;
   let classification: AttemptClassification | undefined;
   let cleanupStatus: AttemptRecord["cleanup"];
+  let harnessShutdown: (() => void | Promise<void>) | undefined;
   const abortPromise = new Promise<"aborted">((resolveAbort) => {
     if (controller.signal.aborted) resolveAbort("aborted");
     else controller.signal.addEventListener("abort", () => resolveAbort("aborted"), { once: true });
@@ -368,7 +372,11 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     lifecycle.transition("setup");
     await persist();
     try {
-      const setupPromise = Promise.resolve(options.workspace.setup({ run: options.run, attempt, signal: controller.signal }));
+      const setupPromise = Promise.resolve(options.workspace.setup({
+        run: structuredClone(runSnapshot),
+        attempt: structuredClone(attemptSnapshot),
+        signal: controller.signal,
+      }));
       const setupOutcome = await Promise.race([
         setupPromise.then((value) => ({ kind: "result" as const, value })),
         abortPromise.then((value) => ({ kind: value })),
@@ -416,11 +424,12 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       let harnessPromise: Promise<HarnessExecutionResult>;
       try {
         harnessPromise = Promise.resolve(options.harness({
-          run: options.run,
-          attempt,
+          run: structuredClone(runSnapshot),
+          attempt: structuredClone(attemptSnapshot),
           signal: controller.signal,
           ...(options.harnessBudgetMs === undefined ? {} : { budgetMs: options.harnessBudgetMs }),
           ...(workspace === undefined ? {} : { workspace: snapshotWorkspace(workspace) }),
+          registerShutdown: (shutdown) => { harnessShutdown = shutdown; },
         }));
       } catch (error) {
         harnessPromise = Promise.reject(error);
@@ -454,10 +463,14 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           record.harness = durableHarnessResult(settledHarness);
         }
         classification = abortClassification(abortCause, budgetExpired);
-        const shutdownResult = await shutdownHarness(harnessResult, options.shutdownGraceMs ?? 250);
-        if (harnessResult !== undefined && shutdownResult !== undefined) {
-          harnessResult = { ...harnessResult, shutdownResult };
-          record.harness = durableHarnessResult(harnessResult);
+        const shutdownResult = await shutdownHarness(harnessResult, harnessShutdown, options.shutdownGraceMs ?? 250);
+        if (shutdownResult !== undefined) {
+          if (harnessResult !== undefined) {
+            harnessResult = { ...harnessResult, shutdownResult };
+            record.harness = durableHarnessResult(harnessResult);
+          } else {
+            record.harness = { status: "interrupted", shutdownResult };
+          }
         }
       } else if (outcome?.kind === "result") {
         harnessResult = outcome.value;
@@ -472,8 +485,8 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           } else {
             try {
               const verifierPromise = Promise.resolve(options.verifier({
-                run: options.run,
-                attempt,
+                run: structuredClone(runSnapshot),
+                attempt: structuredClone(attemptSnapshot),
                 signal: controller.signal,
                 ...(workspace === undefined ? {} : { workspace: snapshotWorkspace(workspace) }),
               }));
@@ -511,10 +524,10 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     }
     try {
       const cleanupPromise = Promise.resolve(options.workspace.cleanup?.({
-        run: options.run,
-        attempt,
+        run: structuredClone(runSnapshot),
+        attempt: structuredClone(attemptSnapshot),
         signal: controller.signal,
-        outcome: classification?.terminal ?? infrastructureClassification("Run did not produce a terminal outcome.", "runner").terminal,
+        outcome: structuredClone(classification?.terminal ?? infrastructureClassification("Run did not produce a terminal outcome.", "runner").terminal),
         ...(workspace === undefined ? {} : { workspace: snapshotWorkspace(workspace) }),
       }));
       const cleanupOutcome = await Promise.race([
@@ -570,7 +583,8 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     classification ??= infrastructureClassification("Run did not produce a terminal outcome.", "runner", workspace?.artifactId);
     record.classification = classification;
     record.terminal = classification.terminal;
-    record.partial = classificationUnderlyingKind(classification) !== "completed";
+    record.partial = classificationUnderlyingKind(classification) !== "completed"
+      || record.capture?.status === "incomplete";
     const persistenceBeforeTerminal = persistenceError;
     await persist();
     if (persistenceError !== undefined && persistenceBeforeTerminal === undefined
@@ -590,8 +604,8 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   }
 
   return {
-    run: structuredClone(options.run),
-    attempt: structuredClone(attempt),
+    run: structuredClone(record.run),
+    attempt: structuredClone(record.attempt),
     record: structuredClone(record),
     terminal: structuredClone(record.terminal!),
     classification: structuredClone(record.classification!),
@@ -624,6 +638,9 @@ export async function writeAttemptRecord(path: string, record: AttemptRecord): P
       const existing = await readAttemptRecord(destination);
       if (existing.run.id !== record.run.id || existing.attempt.id !== record.attempt.id) {
         throw new Error(`Attempt record "${path}" already belongs to another attempt.`);
+      }
+      if (existing.terminal !== undefined || existing.classification !== undefined) {
+        throw new Error(`Attempt record "${path}" is already terminal.`);
       }
       await rename(temporary, destination);
     }
@@ -805,12 +822,14 @@ function snapshotWorkspace(workspace: WorkspaceExecutionResult): WorkspaceExecut
 
 async function shutdownHarness(
   result: HarnessExecutionResult | undefined,
+  independentShutdown: (() => void | Promise<void>) | undefined,
   graceMs: number,
 ): Promise<HarnessShutdownResult | undefined> {
-  if (result?.shutdown === undefined) return undefined;
+  const shutdownCallback = independentShutdown ?? result?.shutdown;
+  if (shutdownCallback === undefined) return undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const shutdown = Promise.resolve(result.shutdown());
+    const shutdown = Promise.resolve(shutdownCallback());
     const settled = await Promise.race([
       shutdown.then(() => ({ status: "completed" as const })),
       new Promise<HarnessShutdownResult>((resolvePromise) => {

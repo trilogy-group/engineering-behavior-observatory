@@ -302,6 +302,26 @@ test("clean shutdown is explicit and does not imply prompt completion", async ()
   }
 });
 
+test("shutdown with diagnostic persistence failure remains failed and partial", async () => {
+  const root = temporaryRoot();
+  try {
+    const stderrPath = join(root, "existing.log");
+    writeFileSync(stderrPath, "previous");
+    const protocol = spawnProtocolProcess({
+      ...nodeScript("setTimeout(()=>{}, 10000)"),
+      source: "fake-harness",
+      evidencePath: join(root, "shutdown-error.jsonl"),
+      stderrPath,
+    });
+    const processResult = await protocol.shutdown();
+    assert.equal(processResult.status, "failed");
+    assert.equal(processResult.partial, true);
+    assert.equal(processResult.stderrPath, undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("an already-aborted process signal still produces a partial result", async () => {
   const root = temporaryRoot();
   try {

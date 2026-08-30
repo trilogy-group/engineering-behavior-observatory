@@ -688,15 +688,15 @@ export class ProtocolProcess {
     const termination = this.termination;
     const status = this.protocolError !== undefined
       ? "malformed"
-      : this.interruptionStarted
+      : this.recorderError !== undefined || this.childError !== undefined
+        ? "failed"
+        : this.interruptionStarted
           ? "interrupted"
           : this.shutdownStarted
             ? "shutdown"
-          : this.recorderError !== undefined || this.childError !== undefined
-            ? "failed"
-          : exitCode === 0 && signal === null
-            ? "completed"
-            : "failed";
+            : exitCode === 0 && signal === null
+              ? "completed"
+              : "failed";
     const result: ProtocolProcessResult = {
       status,
       partial: status === "interrupted" || status === "malformed" || status === "failed",

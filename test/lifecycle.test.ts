@@ -295,6 +295,32 @@ test("harness shutdown failures remain explicit in interrupted records", async (
   assert.deepEqual(result.record.harness?.shutdownResult, { status: "failed", error: "shutdown failed" });
 });
 
+test("in-flight harness shutdown is available before an eventual result", async () => {
+  const controller = new AbortController();
+  let harnessStartedResolve: (() => void) | undefined;
+  const harnessStarted = new Promise<void>((resolvePromise) => { harnessStartedResolve = resolvePromise; });
+  let shutdownCalls = 0;
+  const resultPromise = executeRunAttempt({
+    run,
+    signal: controller.signal,
+    shutdownGraceMs: 25,
+    workspace: workspace(),
+    harness: async ({ signal, registerShutdown }) => {
+      registerShutdown(() => { shutdownCalls += 1; });
+      harnessStartedResolve?.();
+      await new Promise<void>(() => undefined);
+      return { status: "completed" };
+    },
+    evidence: { flush: () => undefined },
+  });
+  await harnessStarted;
+  controller.abort();
+  const result = await resultPromise;
+  assert.equal(shutdownCalls, 1);
+  assert.deepEqual(result.record.harness?.shutdownResult, { status: "completed" });
+  assert.equal(result.terminal.state, "interrupted");
+});
+
 test("cleanup receives a workspace snapshot and cannot rewrite retained evidence", async () => {
   const result = await executeRunAttempt({
     run,
@@ -461,6 +487,33 @@ test("run identity fields are validated before callbacks execute", async () => {
   assert.equal(setupCalled, false);
 });
 
+test("callbacks cannot mutate the identities retained by an attempt", async () => {
+  const suppliedRun = createRunIdentity({ taskId: "task-original", modelId: "model-original", harnessId: "harness-original" });
+  const result = await executeRunAttempt({
+    run: suppliedRun,
+    workspace: {
+      setup: async ({ run: callbackRun, attempt: callbackAttempt }) => {
+        callbackRun.id = "mutated-run";
+        callbackRun.taskId = "mutated-task";
+        callbackAttempt.id = "mutated-attempt";
+        return { status: "ready", artifactId: "workspace-1" };
+      },
+    },
+    harness: async ({ run: callbackRun, attempt: callbackAttempt }) => {
+      callbackRun.modelId = "mutated-model";
+      callbackAttempt.number = 99;
+      return { status: "completed" };
+    },
+    verifier: async () => ({ status: "passed" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.run.id, suppliedRun.id);
+  assert.equal(result.run.taskId, "task-original");
+  assert.equal(result.run.modelId, "model-original");
+  assert.equal(result.attempt.number, 1);
+  assert.equal(result.record.run.harnessId, "harness-original");
+});
+
 test("retry creates a new linked identity and never replaces the prior attempt", () => {
   const first = createAttemptIdentity(run.id, 1, "attempt-1");
   const second = retryAttempt(first, "attempt-2");
@@ -493,6 +546,30 @@ test("attempt persistence rejects replacing another attempt's record", async () 
     await writeAttemptRecord(path, first);
     await assert.rejects(writeAttemptRecord(path, second), /another attempt/);
     assert.equal((await readAttemptRecord(path)).attempt.id, "first");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("attempt persistence rejects reopening a terminal attempt", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-terminal-overwrite-"));
+  try {
+    const path = join(root, "attempt.json");
+    const terminal = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    await writeAttemptRecord(path, terminal.record);
+    await assert.rejects(writeAttemptRecord(path, {
+      schemaVersion: "ebo.attempt/v1",
+      run,
+      attempt: terminal.attempt,
+      lifecycle: new LifecycleController().snapshot(),
+      partial: true,
+    }), /already terminal/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -604,6 +681,7 @@ test("capture flush failures are explicit and do not masquerade as task failures
   assert.equal(result.classification.kind, "capture-incomplete");
   assert.equal(result.classification.underlying, "completed");
   assert.equal(result.record.capture?.status, "incomplete");
+  assert.equal(result.record.partial, true);
 });
 
 test("capture failure keeps unsuccessful attempts partial", async () => {
