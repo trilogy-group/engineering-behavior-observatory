@@ -795,6 +795,21 @@ test("run identity fields are validated before callbacks execute", async () => {
   assert.equal(setupCalled, false);
 });
 
+test("invalid shutdown grace periods are rejected before callbacks execute", async () => {
+  let setupCalled = false;
+  for (const shutdownGraceMs of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    await assert.rejects(executeRunAttempt({
+      run,
+      shutdownGraceMs,
+      workspace: {
+        setup: async () => { setupCalled = true; return { status: "ready", artifactId: "workspace-1" }; },
+      },
+      harness: async () => ({ status: "completed" }),
+    }), /Shutdown grace period/);
+  }
+  assert.equal(setupCalled, false);
+});
+
 test("callbacks cannot mutate the identities retained by an attempt", async () => {
   const suppliedRun = createRunIdentity({ taskId: "task-original", modelId: "model-original", harnessId: "harness-original" });
   const result = await executeRunAttempt({

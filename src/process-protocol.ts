@@ -102,6 +102,7 @@ export class JsonlEvidenceWriter {
     if (!isRecord(record)) return Promise.reject(new Error("JSONL evidence records must be objects."));
     let line: string;
     try {
+      assertJsonValue(record, "JSONL evidence record", new Set<object>());
       line = `${JSON.stringify(record)}\n`;
     } catch (error) {
       return Promise.reject(error);

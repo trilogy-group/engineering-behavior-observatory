@@ -974,6 +974,12 @@ function validateOptions(options: RunAttemptOptions): void {
   if (options.harnessBudgetMs !== undefined && options.harnessBudgetMs < 1) {
     throw new Error("Harness budget must be a positive safe integer.");
   }
+  if (!Number.isSafeInteger(options.shutdownGraceMs) && options.shutdownGraceMs !== undefined) {
+    throw new Error("Shutdown grace period must be a nonnegative safe integer.");
+  }
+  if (options.shutdownGraceMs !== undefined && options.shutdownGraceMs < 0) {
+    throw new Error("Shutdown grace period must be a nonnegative safe integer.");
+  }
 }
 
 function classifyHarness(
