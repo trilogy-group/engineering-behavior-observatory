@@ -499,6 +499,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       }
     } catch (error) {
       const setupError = errorMessage(error);
+      markCoordinatorBudgetIfExpired();
       if (workspaceShutdown !== undefined) {
         workspaceTerminationConfirmed = false;
         const shutdownResult = await shutdownWorkspace(workspaceShutdown, options.shutdownGraceMs ?? 250);
@@ -540,6 +541,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       harnessDeadlineAt = options.harnessBudgetMs === undefined ? undefined : harnessStartedAt + options.harnessBudgetMs;
       installBudget(options.harnessBudgetMs);
       let harnessPromise: Promise<HarnessExecutionResult>;
+      let harnessError: string | undefined;
       try {
         harnessPromise = Promise.resolve(options.harness({
           run: structuredClone(runSnapshot),
@@ -563,21 +565,33 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           abortPromise.then((value) => ({ kind: value })),
         ]);
       } catch (error) {
+        harnessError = errorMessage(error);
         classification = controller.signal.aborted
-          ? abortClassification(abortCause, budgetExpired, errorMessage(error), workspace)
-          : infrastructureClassification(errorMessage(error), "harness", workspace);
+          ? abortClassification(abortCause, budgetExpired, harnessError, workspace)
+          : infrastructureClassification(harnessError, "harness", workspace);
       } finally {
         for (const timer of timers) clearTimeout(timer);
       }
+      const postBudgetHarness = budgetExpired === "harness"
+        ? {
+          status: "stopped" as const,
+          stopReason: "budget" as const,
+          reason: "Harness result arrived after its budget deadline.",
+          ...(harnessError === undefined ? {} : { error: harnessError }),
+        }
+        : undefined;
       if (outcome === undefined && harnessShutdown !== undefined) {
         const shutdownResult = await shutdownHarness(undefined, harnessShutdown, options.shutdownGraceMs ?? 250);
         record.harness = {
-          status: "failed",
-          ...(classification?.reason === undefined ? {} : { error: classification.reason }),
+          ...(postBudgetHarness ?? {
+            status: "failed" as const,
+            ...(classification?.reason === undefined ? {} : { error: classification.reason }),
+          }),
           ...(shutdownResult === undefined ? {} : { shutdownResult }),
         };
         record.harnessTerminationConfirmed = shutdownResult?.status === "completed";
       } else if (outcome === undefined) {
+        if (postBudgetHarness !== undefined) record.harness = postBudgetHarness;
         record.harnessTerminationConfirmed = true;
       }
       if (outcome !== undefined && (outcome.kind === "aborted" || controller.signal.aborted)) {

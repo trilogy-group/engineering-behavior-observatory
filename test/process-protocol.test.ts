@@ -115,6 +115,20 @@ test("a JSONL writer cannot be reused by multiple protocol recorders", async () 
   }
 });
 
+test("direct writers respect an active path reservation", async () => {
+  const root = temporaryRoot();
+  try {
+    const path = join(root, "reserved.jsonl");
+    const firstWriter = new JsonlEvidenceWriter(path);
+    new ProtocolEvidenceRecorder(firstWriter, "first-harness");
+    const secondWriter = new JsonlEvidenceWriter(path);
+    await assert.rejects(secondWriter.append({ direct: true }), /path is reserved/);
+    await firstWriter.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a closed recorder resumes the sequence with a new writer for the same path", async () => {
   const root = temporaryRoot();
   try {

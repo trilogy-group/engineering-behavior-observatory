@@ -212,6 +212,24 @@ test("setup failures are infrastructure failures and still clean up", async () =
   assert.equal(cleaned, true);
 });
 
+test("synchronous setup errors honor an elapsed coordinator budget", async () => {
+  const result = await executeRunAttempt({
+    run,
+    maxWallClockMs: 1,
+    workspace: {
+      setup: () => {
+        const end = Date.now() + 5;
+        while (Date.now() < end) {}
+        throw new Error("setup failed after deadline");
+      },
+    },
+    harness: async () => ({ status: "completed" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.state, "stopped");
+  assert.equal(result.terminal.stopReason, "budget");
+});
+
 test("budget and interruption stop an attempt without retrying it", async () => {
   let harnessCalls = 0;
   const budget = await executeRunAttempt({
@@ -1525,6 +1543,33 @@ test("post-budget harness completion is durably retained as a budget stop", asyn
     assert.equal(result.terminal.stopReason, "budget");
     assert.equal(result.record.harness?.status, "stopped");
     assert.equal(result.record.harness?.stopReason, "budget");
+    assert.equal((await readAttemptRecord(recordPath)).terminal?.stopReason, "budget");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("post-budget harness rejection is durably retained as a budget stop", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-budget-rejection-"));
+  try {
+    const recordPath = join(root, "attempt.json");
+    const result = await executeRunAttempt({
+      run,
+      recordPath,
+      harnessBudgetMs: 1,
+      workspace: workspace(),
+      harness: () => {
+        const end = Date.now() + 5;
+        while (Date.now() < end) {}
+        throw new Error("late harness failure");
+      },
+      evidence: { flush: () => undefined },
+    });
+    assert.equal(result.terminal.state, "stopped");
+    assert.equal(result.terminal.stopReason, "budget");
+    assert.equal(result.record.harness?.status, "stopped");
+    assert.equal(result.record.harness?.stopReason, "budget");
+    assert.equal(result.record.harness?.error, "late harness failure");
     assert.equal((await readAttemptRecord(recordPath)).terminal?.stopReason, "budget");
   } finally {
     rmSync(root, { recursive: true, force: true });
