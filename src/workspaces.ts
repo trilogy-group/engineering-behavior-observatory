@@ -121,6 +121,7 @@ export async function materializeWorkspace(
   const createdWorkspace = createWorkspace(parent, attemptId);
   let workspacePath = createdWorkspace.path;
   if (!isDisjoint(bundleRoot, workspacePath)) {
+    closeSync(createdWorkspace.descriptor);
     removeWorkspaceIfOwned(workspacePath, createdWorkspace.identity);
     throw new Error("Workspace and task-bundle roots must be separate.");
   }
@@ -129,11 +130,10 @@ export async function materializeWorkspace(
   let workspaceIdentity: WorkspaceIdentity | undefined = createdWorkspace.identity;
   let result: WorkspaceMaterialization | undefined;
   try {
-    workspaceIdentity = await readWorkspaceRootIdentity(workspacePath);
-    materializeEntries(workspacePath, workspaceIdentity, entries);
+    materializeEntries(workspacePath, workspaceIdentity, entries, createdWorkspace.descriptor);
     workspacePath = sealWorkspace(workspacePath, join(parent.path, `.ebo-${attemptId}-sealed-${randomUUID()}`), workspaceIdentity);
     await runSetup(options.setup, options.setupSteps, workspacePath);
-    normalizeWorkspace(workspacePath, workspaceIdentity);
+    normalizeWorkspace(workspacePath, workspaceIdentity, createdWorkspace.descriptor);
     assertWorkspaceRoot(workspacePath, workspaceIdentity);
     const workspaceFingerprint = digestMaterializedWorkspace(workspacePath, workspaceIdentity);
     assertWorkspaceRoot(workspacePath, workspaceIdentity);
@@ -160,7 +160,7 @@ export async function materializeWorkspace(
     if (workspaceIdentity !== undefined) {
       try {
         if (await isOwnedWorkspaceRoot(workspacePath, workspaceIdentity)) {
-          normalizeWorkspace(workspacePath, workspaceIdentity);
+          normalizeWorkspace(workspacePath, workspaceIdentity, createdWorkspace.descriptor);
           rootIsSafe = await isSafeWorkspaceRoot(workspacePath, workspaceIdentity)
             && await isSafeWorkspaceTree(workspacePath);
         }
@@ -187,6 +187,9 @@ export async function materializeWorkspace(
       error: message,
     });
     return result;
+  }
+  finally {
+    closeSync(createdWorkspace.descriptor);
   }
 }
 
@@ -302,7 +305,11 @@ async function resolveFuturePath(path: string): Promise<string> {
   }
 }
 
-function createWorkspace(parent: WorkspaceParent, attemptId: string): { path: string; identity: WorkspaceIdentity } {
+function createWorkspace(parent: WorkspaceParent, attemptId: string): {
+  path: string;
+  identity: WorkspaceIdentity;
+  descriptor: number;
+} {
   const parentFd = openSync(parent.path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   const originalCwd = process.cwd();
   let createdPath: string | undefined;
@@ -317,18 +324,15 @@ function createWorkspace(parent: WorkspaceParent, attemptId: string): { path: st
     if (!sameIdentity(fstatSync(parentFd), lstatSync("."))) {
       throw new Error("Workspace parent changed during attempt creation.");
     }
-    const createdFd = openSync(createdPath, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-    try {
-      const metadata = fstatSync(createdFd);
-      const pathMetadata = lstatSync(createdPath);
-      if (!metadata.isDirectory() || metadata.isSymbolicLink()
-          || !sameIdentity(metadata, pathMetadata) || pathMetadata.isSymbolicLink()) {
-        throw new Error("Workspace root changed during attempt creation.");
-      }
-      return { path: realpathSync(createdPath), identity: { dev: metadata.dev, ino: metadata.ino } };
-    } finally {
-      closeSync(createdFd);
+    const descriptor = openSync(createdPath, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    const metadata = fstatSync(descriptor);
+    const pathMetadata = lstatSync(createdPath);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()
+        || !sameIdentity(metadata, pathMetadata) || pathMetadata.isSymbolicLink()) {
+      closeSync(descriptor);
+      throw new Error("Workspace root changed during attempt creation.");
     }
+    return { path: realpathSync(createdPath), identity: { dev: metadata.dev, ino: metadata.ino }, descriptor };
   } catch (error) {
     if (createdPath !== undefined) rmSync(createdPath, { force: true, recursive: true });
     throw error;
@@ -342,9 +346,11 @@ function materializeEntries(
   root: string,
   expectedIdentity: WorkspaceIdentity,
   entries: readonly TaskArchiveEntry[],
+  verifiedFd?: number,
 ): void {
   const originalCwd = process.cwd();
-  const rootFd = openSync(root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  const rootFd = verifiedFd
+    ?? openSync(root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   try {
     if (!sameIdentity(fstatSync(rootFd), expectedIdentity)) throw new Error("Workspace root changed before extraction.");
     // Keep extraction synchronous. Relative opens stay anchored to the
@@ -362,7 +368,7 @@ function materializeEntries(
     }
   } finally {
     process.chdir(originalCwd);
-    closeSync(rootFd);
+    if (verifiedFd === undefined) closeSync(rootFd);
   }
 }
 
@@ -488,14 +494,15 @@ function sealWorkspace(path: string, destination: string, expected: WorkspaceIde
   }
 }
 
-function normalizeWorkspace(root: string, expectedIdentity: WorkspaceIdentity): void {
+function normalizeWorkspace(root: string, expectedIdentity: WorkspaceIdentity, verifiedFd?: number): void {
   assertWorkspaceRoot(root, expectedIdentity);
   try {
-    normalizeDirectory(root, root, "");
+    normalizeDirectory(root, root, "", verifiedFd);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EACCES") throw error;
-    normalizeUnreadableDirectory(root, expectedIdentity);
-    normalizeDirectory(root, root, "");
+    if (verifiedFd === undefined) normalizeUnreadableDirectory(root, expectedIdentity);
+    else fchmodSync(verifiedFd, DIRECTORY_MODE);
+    normalizeDirectory(root, root, "", verifiedFd);
   }
   assertWorkspaceRoot(root, expectedIdentity);
 }
@@ -1240,14 +1247,6 @@ function normalizedFileMode(mode: number): number {
 }
 
 type WorkspaceIdentity = { dev: number; ino: number };
-
-async function readWorkspaceRootIdentity(path: string): Promise<WorkspaceIdentity> {
-  const metadata = await lstat(path);
-  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-    throw new Error("Workspace root is not a directory.");
-  }
-  return { dev: metadata.dev, ino: metadata.ino };
-}
 
 function assertWorkspaceRoot(path: string, expected: WorkspaceIdentity): void {
   const metadata = lstatSync(path);
