@@ -52,7 +52,7 @@ function tarGzipArchive(entries: Array<{ path: string; bytes: Buffer; type?: str
 function fixtureArchive(extra: Array<{ path: string; bytes: Buffer; type?: string; mode?: number }> = []): Buffer {
   return tarGzipArchive([
     { path: "README.md", bytes: Buffer.from("# fixture\n") },
-    { path: "src", bytes: Buffer.alloc(0), type: "5" },
+    { path: "src/", bytes: Buffer.alloc(0), type: "5" },
     { path: "src/index.ts", bytes: Buffer.from("export {};\n") },
     ...extra,
   ]);

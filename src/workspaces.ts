@@ -350,8 +350,9 @@ function materializeEntries(
 }
 
 function materializeEntryFromCwd(root: string, entry: TaskArchiveEntry): void {
-  assertSafeWorkspacePath(root, entry.path);
-  const parts = entry.path.split("/");
+  const entryPath = entry.kind === "directory" ? entry.path.replace(/\/+$/, "") : entry.path;
+  assertSafeWorkspacePath(root, entryPath);
+  const parts = entryPath.split("/");
   const directoryParts = entry.kind === "directory" ? parts : parts.slice(0, -1);
   for (const segment of directoryParts) enterMaterializationDirectory(root, segment);
   try {
