@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, lstatSync } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, open, readdir, realpath, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
@@ -92,13 +92,17 @@ export async function materializeWorkspace(
   }
 
   const retainOnFailure = options.retainOnFailure === true;
+  let workspaceIdentity: WorkspaceIdentity | undefined;
   let result: WorkspaceMaterialization | undefined;
   try {
+    workspaceIdentity = await readWorkspaceRootIdentity(workspacePath);
     await chmod(workspacePath, DIRECTORY_MODE);
     for (const entry of entries) await materializeEntry(workspacePath, entry);
     await runSetup(options.setup, options.setupSteps, workspacePath);
-    await normalizeWorkspace(workspacePath);
+    await normalizeWorkspace(workspacePath, workspaceIdentity);
+    assertWorkspaceRoot(workspacePath, workspaceIdentity);
     const workspaceFingerprint = await digestWorkspace(workspacePath);
+    assertWorkspaceRoot(workspacePath, workspaceIdentity);
     result = createResult({
       attemptId,
       packet,
@@ -248,10 +252,13 @@ async function ensureDirectory(root: string, relativePath: string): Promise<void
   }
 }
 
-async function normalizeWorkspace(root: string): Promise<void> {
+async function normalizeWorkspace(root: string, expectedIdentity: WorkspaceIdentity): Promise<void> {
+  assertWorkspaceRoot(root, expectedIdentity);
   await normalizeDirectory(root, "");
+  assertWorkspaceRoot(root, expectedIdentity);
   await chmod(root, DIRECTORY_MODE);
   await utimes(root, EPOCH_SECONDS, EPOCH_SECONDS);
+  assertWorkspaceRoot(root, expectedIdentity);
 }
 
 async function normalizeDirectory(directory: string, relativeDirectory: string): Promise<void> {
@@ -310,7 +317,8 @@ function assertSafeWorkspacePath(root: string, relativePath: string): void {
 async function isSafeWorkspaceRoot(path: string): Promise<boolean> {
   try {
     const metadata = await lstat(path);
-    return metadata.isDirectory() && !metadata.isSymbolicLink() && (await realpath(path)) === path;
+    return metadata.isDirectory() && !metadata.isSymbolicLink()
+      && (metadata.mode & 0o7777) === DIRECTORY_MODE && (await realpath(path)) === path;
   } catch {
     return false;
   }
@@ -325,8 +333,10 @@ async function isSafeWorkspaceTree(directory: string, relativeDirectory = ""): P
       const metadata = await lstat(path);
       if (metadata.isSymbolicLink()) return false;
       if (metadata.isDirectory()) {
+        if ((metadata.mode & 0o7777) !== DIRECTORY_MODE) return false;
         if (!await isSafeWorkspaceTree(path, relativePath)) return false;
-      } else if (!metadata.isFile() || metadata.nlink > 1) {
+      } else if (!metadata.isFile() || metadata.nlink > 1
+          || (metadata.mode & 0o7777) !== normalizedFileMode(metadata.mode)) {
         return false;
       }
     }
@@ -342,6 +352,24 @@ function assertAttemptId(attemptId: string): void {
 
 function normalizedFileMode(mode: number): number {
   return FILE_MODE | (mode & 0o111 ? 0o100 : 0);
+}
+
+type WorkspaceIdentity = { dev: number; ino: number };
+
+async function readWorkspaceRootIdentity(path: string): Promise<WorkspaceIdentity> {
+  const metadata = await lstat(path);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new Error("Workspace root is not a directory.");
+  }
+  return { dev: metadata.dev, ino: metadata.ino };
+}
+
+function assertWorkspaceRoot(path: string, expected: WorkspaceIdentity): void {
+  const metadata = lstatSync(path);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()
+      || metadata.dev !== expected.dev || metadata.ino !== expected.ino) {
+    throw new Error("Workspace root changed during materialization.");
+  }
 }
 
 function sameDigest(left: Digest, right: Digest): boolean {

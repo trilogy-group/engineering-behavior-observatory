@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { gzipSync } from "node:zlib";
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -243,6 +245,48 @@ test("retains failed setup attempts only when configured", async () => {
     assert.equal(removed.state, "failed");
     assert.equal(removed.retained, false);
     assert.equal(existsSync(removed.workspacePath), false);
+
+    const insecure = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "failed-insecure",
+      workspaceParent: parent,
+      retainOnFailure: true,
+      setup: (workspacePath) => {
+        chmodSync(workspacePath, 0o755);
+        throw new Error("insecure setup failed");
+      },
+    });
+    assert.equal(insecure.state, "failed");
+    assert.equal(insecure.retained, false);
+    assert.equal(existsSync(insecure.workspacePath), false);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(parent, { force: true, recursive: true });
+  }
+});
+
+test("rejects a replaced workspace root without touching the replacement target", async () => {
+  const { root } = createBundle();
+  const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+
+  try {
+    freezeTaskPacket(root, "packet.json");
+    const result = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "replaced-root",
+      workspaceParent: parent,
+      retainOnFailure: true,
+      setup: (workspacePath) => {
+        rmSync(workspacePath, { force: true, recursive: true });
+        symlinkSync(root, workspacePath);
+      },
+    });
+    assert.equal(result.state, "failed");
+    assert.equal(result.retained, false);
+    assert.equal(existsSync(result.workspacePath), false);
+    assert.equal(existsSync(join(root, "packet.json")), true);
   } finally {
     rmSync(root, { force: true, recursive: true });
     rmSync(parent, { force: true, recursive: true });
