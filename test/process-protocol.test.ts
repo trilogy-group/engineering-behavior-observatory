@@ -301,6 +301,8 @@ test("rejects values that JSONL cannot preserve", async () => {
     const recorder = new ProtocolEvidenceRecorder(writer, "fake-harness");
     await assert.rejects(recorder.recordNotification({ source: "fake-harness", method: "event", payload: new Map([["x", 1]]) }), /JSON object or array/);
     await assert.rejects(recorder.recordNotification({ source: "fake-harness", method: "event", payload: Number.NaN }), /finite JSON number/);
+    await assert.rejects(recorder.recordRequest({ source: "fake-harness", method: "event", id: Number.NaN }), /Protocol identity/);
+    await assert.rejects(recorder.recordResponse({ source: "fake-harness", method: "event", id: Number.POSITIVE_INFINITY }), /Protocol identity/);
     await recorder.close();
   } finally {
     rmSync(root, { recursive: true, force: true });

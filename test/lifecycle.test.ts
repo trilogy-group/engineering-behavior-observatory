@@ -680,6 +680,17 @@ test("failure terminals omit explicitly unretained workspace IDs", async () => {
   assert.equal(result.terminal.workspaceArtifactId, undefined);
 });
 
+test("infrastructure failures retain links to explicitly retained failed workspaces", async () => {
+  const result = await executeRunAttempt({
+    run,
+    workspace: workspace({ status: "failed", artifactId: "partial-workspace", retained: true }),
+    harness: async () => ({ status: "failed", failureClass: "infrastructure", reason: "setup incomplete" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.failureClass, "infrastructure");
+  assert.equal(result.terminal.workspaceArtifactId, "partial-workspace");
+});
+
 test("run identity fields are validated before callbacks execute", async () => {
   let setupCalled = false;
   const invalidRun = { ...run, taskId: "" };
@@ -913,6 +924,26 @@ test("attempt records are validated when read", async () => {
     const path = join(root, "invalid.json");
     writeFileSync(path, "{}\n");
     await assert.rejects(readAttemptRecord(path), /schemaVersion|run|attempt|lifecycle/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("attempt records reject lifecycle timestamps that disagree with transitions", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-timestamps-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    const path = join(root, "invalid-timestamps.json");
+    const record = structuredClone(result.record);
+    record.lifecycle.timestamps.running = "wrong";
+    writeFileSync(path, `${JSON.stringify(record)}\n`);
+    await assert.rejects(readAttemptRecord(path), /timestamp disagrees/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

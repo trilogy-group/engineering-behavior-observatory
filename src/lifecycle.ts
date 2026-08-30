@@ -1225,10 +1225,16 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
   if (state !== lifecycle.state) throw new Error("Lifecycle state does not match its transitions.");
   for (const [timestampState, timestamp] of Object.entries(lifecycle.timestamps)) {
     if (!isLifecycleState(timestampState)) throw new Error("Lifecycle timestamp state is invalid.");
+    if (!visitedStates.has(timestampState)) throw new Error("Lifecycle timestamp state is not present in its transitions.");
     assertTimestampValue(timestamp, `Lifecycle timestamp ${timestampState}`);
   }
   for (const visitedState of visitedStates) {
     if (lifecycle.timestamps[visitedState] === undefined) throw new Error(`Lifecycle timestamp ${visitedState} is missing.`);
+  }
+  for (const transition of lifecycle.transitions) {
+    if (lifecycle.timestamps[transition.to] !== transition.at) {
+      throw new Error("Lifecycle transition timestamp disagrees with its state timestamp.");
+    }
   }
   if (lifecycle.timestamps.created !== lifecycle.createdAt) throw new Error("Lifecycle created timestamp is inconsistent.");
   if (typeof value.partial !== "boolean") throw new Error("Attempt record partial state is invalid.");
