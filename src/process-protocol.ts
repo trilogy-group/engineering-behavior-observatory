@@ -432,6 +432,7 @@ export class ProtocolProcess {
     this.child = spawn(options.command, this.args, spawnOptions);
     this.child.on("error", (error) => {
       this.childError ??= errorMessage(error);
+      void this.recorder.recordError(this.childError).catch(() => undefined);
     });
     this.attachStreams();
     this.waitPromise = new Promise<ProtocolProcessResult>((resolveResult) => {
@@ -576,7 +577,7 @@ export class ProtocolProcess {
     if (this.stderrPath !== undefined) {
       try {
         await mkdir(dirname(this.stderrPath), { recursive: true, mode: 0o700 });
-        await writeFile(this.stderrPath, stderr.bytes, { mode: 0o600 });
+        await writeFile(this.stderrPath, stderr.bytes, { mode: 0o600, flag: "wx" });
       } catch (error) {
         this.childError ??= `stderr evidence could not be persisted: ${errorMessage(error)}`;
       }

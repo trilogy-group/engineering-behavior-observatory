@@ -344,7 +344,9 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         }
       }
     } catch (error) {
-      classification = infrastructureClassification(errorMessage(error), "workspace");
+      classification = controller.signal.aborted
+        ? budgetExpired === undefined ? interruptedClassification(errorMessage(error)) : budgetClassification(budgetExpired, errorMessage(error))
+        : infrastructureClassification(errorMessage(error), "workspace");
     }
     await flush();
 
