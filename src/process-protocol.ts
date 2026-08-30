@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { closeSync, constants, fsyncSync, mkdirSync, openSync } from "node:fs";
-import { mkdir, open, writeFile, type FileHandle } from "node:fs/promises";
+import { mkdir, open, type FileHandle } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 export type ProtocolIdentity = string | number | null;
@@ -720,11 +720,18 @@ export class ProtocolProcess {
     }
     const stderr = this.stderrCapture.result();
     if (this.stderrPath !== undefined) {
+      let diagnosticFile: FileHandle | undefined;
       try {
         await mkdir(dirname(this.stderrPath), { recursive: true, mode: 0o700 });
-        await writeFile(this.stderrPath, stderr.bytes, { mode: 0o600, flag: "wx" });
+        diagnosticFile = await open(this.stderrPath, "wx", 0o600);
+        await diagnosticFile.write(stderr.bytes);
+        await diagnosticFile.sync();
+        await diagnosticFile.close();
+        diagnosticFile = undefined;
+        syncDirectory(dirname(this.stderrPath));
         this.stderrPersisted = true;
       } catch (error) {
+        await diagnosticFile?.close().catch(() => undefined);
         this.childError ??= `stderr evidence could not be persisted: ${errorMessage(error)}`;
       }
     }

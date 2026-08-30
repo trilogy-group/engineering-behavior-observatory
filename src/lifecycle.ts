@@ -482,10 +482,18 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       classification = abortClassification(abortCause, budgetExpired);
     }
     await flush();
+    markCoordinatorBudgetIfExpired();
+    if (classification === undefined && controller.signal.aborted) {
+      classification = abortClassification(abortCause, budgetExpired);
+    }
 
     if (classification === undefined) {
       lifecycle.transition("running");
       await persist();
+      markCoordinatorBudgetIfExpired();
+      if (controller.signal.aborted) classification = abortClassification(abortCause, budgetExpired);
+    }
+    if (classification === undefined) {
       const timers: Array<ReturnType<typeof setTimeout>> = [];
       const installBudget = (milliseconds: number | undefined) => {
         if (milliseconds === undefined) return;
@@ -769,6 +777,7 @@ export const executeRun = executeRunAttempt;
 export async function writeAttemptRecord(path: string, record: AttemptRecord): Promise<void> {
   if (path.trim() === "") throw new Error("Attempt record path is required.");
   assertRecord(record);
+  assertJsonValue(record, "attempt record", new Set<object>());
   const destination = resolve(path);
   await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
   await withRecordReservationLock(destination, () => writeAttemptRecordInternal(path, record));
@@ -1067,10 +1076,12 @@ function classificationUnderlyingKind(classification: AttemptClassification): At
 }
 
 function snapshotWorkspace(workspace: WorkspaceExecutionResult): WorkspaceExecutionResult {
+  assertJsonValue(workspace, "workspace", new Set<object>());
   return structuredClone(workspace);
 }
 
 function snapshotVerifier(verifier: VerifierExecutionResult): VerifierExecutionResult {
+  assertJsonValue(verifier, "verifier", new Set<object>());
   return structuredClone(verifier);
 }
 
@@ -1138,6 +1149,7 @@ async function shutdownVerifier(
 
 function durableHarnessResult(result: HarnessExecutionResult): HarnessExecutionResult {
   const { shutdown: _shutdown, ...durable } = result;
+  assertJsonValue(durable, "harness", new Set<object>());
   return structuredClone(durable);
 }
 
@@ -1172,6 +1184,7 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
   if (!isRecord(value)) {
     throw new Error("Attempt record must be a JSON object.");
   }
+  assertJsonValue(value, "attempt record", new Set<object>());
   if (value.schemaVersion !== "ebo.attempt/v1") throw new Error("Attempt record schemaVersion is invalid.");
   const run = value.run;
   if (!isRecord(run)) throw new Error("Attempt record run is invalid.");
@@ -1240,12 +1253,13 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       || isRecord(value.capture) && value.capture.status === "incomplete";
     if (value.partial !== expectedPartial) throw new Error("Attempt partial state contradicts its terminal outcome.");
   }
-  if (value.terminal?.state === "completed") {
+  if (value.terminal?.workspaceArtifactId !== undefined) {
     assertTerminalWorkspaceEvidence(value.workspace, value.terminal.workspaceArtifactId);
+  }
+  if (value.terminal?.state === "completed") {
     assertVerifierStatus(value.verifier, "passed");
   }
   if (value.terminal?.state === "failed" && value.terminal.failureClass === "task") {
-    assertTerminalWorkspaceEvidence(value.workspace, value.terminal.workspaceArtifactId);
     assertVerifierStatus(value.verifier, "failed");
   }
   if (isRecord(value.capture) && value.capture.status === "incomplete" && value.partial !== true) {
@@ -1270,6 +1284,26 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertJsonValue(value: unknown, path: string, seen: Set<object>): void {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error(`${path} must be a finite JSON number.`);
+    return;
+  }
+  if (typeof value !== "object") throw new Error(`${path} contains a non-JSON value.`);
+  if (seen.has(value)) throw new Error(`${path} contains a cycle.`);
+  seen.add(value);
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertJsonValue(item, `${path}[${index}]`, seen));
+  } else {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) throw new Error(`${path} must be a JSON object or array.`);
+    const object = value as Record<string, unknown>;
+    for (const key of Object.keys(object)) assertJsonValue(object[key], `${path}.${key}`, seen);
+  }
+  seen.delete(value);
 }
 
 function assertIdentityValue(value: unknown, label: string): asserts value is string {
