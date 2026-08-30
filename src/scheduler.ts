@@ -112,12 +112,13 @@ export type CompileRunQueueOptions = {
   frozenTasks?: Record<string, FrozenTaskInput>;
   taskFreezeRecords?: Record<string, FrozenTaskInput>;
   taskPackets?: Record<string, FrozenTaskInput>;
+  admittedFreezeRecords?: Record<string, TaskPacketFreezeRecord>;
   resolvedPackets?: Record<string, ResolvedTaskPacket>;
 };
 
 export type ValidateRunQueueOptions = Pick<CompileRunQueueOptions,
   "bundleRoot" | "resolvedDigests" | "frozenTasks" | "taskFreezeRecords" | "taskPackets"
-  | "permutationAlgorithm" | "permutationAlgorithms" | "freezeLocators" | "resolvedPackets">;
+  | "permutationAlgorithm" | "permutationAlgorithms" | "freezeLocators" | "admittedFreezeRecords" | "resolvedPackets">;
 
 export type RunQueueInspection = {
   experimentId: string;
@@ -155,7 +156,11 @@ export function compileRunQueue(
     if (options.resolvedPackets === undefined) {
       throw new Error("Resolved admitted task packets are required when no bundle root is supplied.");
     }
+    if (options.admittedFreezeRecords === undefined) {
+      throw new Error("Admitted freeze records are required when no bundle root is supplied.");
+    }
     assertAdmittedTaskPackets(experiment.taskSet, options.resolvedPackets);
+    assertAdmittedFreezeRecords(experiment, options, tasks);
   } else if (options.resolvedPackets !== undefined) {
     assertAdmittedTaskPackets(experiment.taskSet, options.resolvedPackets);
   }
@@ -294,7 +299,11 @@ export function validateRunQueue(
         if (options.bundleRoot === undefined && options.resolvedPackets === undefined) {
           throw new Error("Resolved admitted task packets are required for API-supplied freeze identities.");
         }
+        if (options.bundleRoot === undefined && options.admittedFreezeRecords === undefined) {
+          throw new Error("Admitted freeze records are required for API-supplied freeze identities.");
+        }
         expectedTasks = resolveFrozenTasks(experiment, provenanceOptions(runQueue, options));
+        if (options.bundleRoot === undefined) assertAdmittedFreezeRecords(experiment, options, expectedTasks);
       } catch (error) {
         semanticErrors.push(queueError(artifact, "/entries/task", error instanceof Error ? error.message : "Frozen task records could not be resolved."));
       }
@@ -762,6 +771,35 @@ function resolveFrozenTasks(
     throw new Error("Every task packet must have a frozen task-packet record before scheduling.");
   }
   return tasks;
+}
+
+function assertAdmittedFreezeRecords(
+  experiment: ExperimentConfiguration,
+  options: CompileRunQueueOptions,
+  tasks: Map<string, FrozenTaskIdentity>,
+): void {
+  const records = options.admittedFreezeRecords;
+  if (records === undefined) throw new Error("Admitted freeze records are required before scheduling.");
+  const supplied = options.frozenTasks ?? options.taskFreezeRecords ?? options.taskPackets;
+  for (const [taskId, condition] of Object.entries(experiment.taskSet)) {
+    const record = records[taskId] ?? records[condition.packetRef.locator];
+    if (record === undefined) throw new Error(`Task packet "${taskId}" has no admitted freeze record.`);
+    assertTaskPacketFreezeRecord(record);
+    const expected = tasks.get(taskId);
+    if (expected === undefined) throw new Error(`Task packet "${taskId}" did not resolve.`);
+    const identity: FrozenTaskIdentity = {
+      id: taskId,
+      packetId: record.packetId,
+      packetRef: { locator: record.packetLocator, digest: record.packetDigest },
+      freezeLocator: options.freezeLocators?.[taskId]
+        ?? freezeLocatorOf(supplied?.[taskId] ?? supplied?.[condition.packetRef.locator])
+        ?? defaultFreezeLocator(record.packetLocator),
+      aggregateDigest: record.aggregateDigest,
+    };
+    if (!sameFrozenTask(expected, identity)) {
+      throw new Error(`Task packet "${taskId}" freeze record does not match its admitted identity.`);
+    }
+  }
 }
 
 function provenanceOptions(

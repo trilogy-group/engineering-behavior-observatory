@@ -23,6 +23,7 @@ import {
   type FrozenTaskInput,
   type ResolvedTaskPacket,
   type TaskPacket,
+  type TaskPacketFreezeRecord,
 } from "../src/index.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -118,6 +119,7 @@ function compileOptions(
 ): {
   resolvedDigests: Record<string, ExperimentConfiguration["captureProfile"]["digest"]>;
   frozenTasks: Record<string, FrozenTaskInput>;
+  admittedFreezeRecords: Record<string, TaskPacketFreezeRecord>;
   resolvedPackets: Record<string, ResolvedTaskPacket>;
   permutationAlgorithms?: Record<string, unknown>;
 } {
@@ -185,6 +187,7 @@ function compileOptions(
   const options = {
     resolvedDigests: Object.fromEntries(references.map((reference) => [reference.locator, reference.digest])),
     frozenTasks,
+    admittedFreezeRecords: frozenTasks as Record<string, TaskPacketFreezeRecord>,
     resolvedPackets,
   };
   if (experiment.ordering.strategy === "permuted" && experiment.ordering.permutationAlgorithmRef !== undefined) {
@@ -454,6 +457,27 @@ test("bundle-root queue validation rechecks real frozen sources", () => {
     assert.match(
       validateRunQueue(queue, undefined, "queue.json", { bundleRoot: root }).map((error) => error.message).join("\n"),
       /digest does not match/,
+    );
+
+    writeFileSync(join(root, "configs/model.json"), "{}");
+    const packetPath = join(root, "packets/task-a.json");
+    const originalPacket = readFileSync(packetPath);
+    const changedPacket = JSON.parse(originalPacket.toString("utf8")) as TaskPacket;
+    changedPacket.agentInput.prompt = "stale after freeze";
+    writeFileSync(packetPath, JSON.stringify(changedPacket));
+    assert.match(
+      validateRunQueue(queue, undefined, "queue.json", { bundleRoot: root }).map((error) => error.message).join("\n"),
+      /Task packet is not frozen/,
+    );
+    writeFileSync(packetPath, originalPacket);
+
+    const unknownAlgorithm = Buffer.from("{\"algorithm\":\"unknown\"}");
+    writeFileSync(join(root, "algorithms/fisher-yates-v1.json"), unknownAlgorithm);
+    const invalidAlgorithmQueue = structuredClone(queue);
+    invalidAlgorithmQueue.ordering.permutationAlgorithmRef!.digest = digestBytes(unknownAlgorithm);
+    assert.match(
+      validateRunQueue(invalidAlgorithmQueue, undefined, "queue.json", { bundleRoot: root }).map((error) => error.message).join("\n"),
+      /Unsupported permutation algorithm/,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
