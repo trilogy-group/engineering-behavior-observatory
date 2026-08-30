@@ -380,6 +380,10 @@ export class ProtocolEvidenceRecorder {
   }): Promise<ProtocolObservation> {
     assertNonEmpty(input.source, "Protocol source");
     if (input.method !== undefined) assertNonEmpty(input.method, "Protocol method");
+    if (input.id !== undefined && (typeof input.id === "number" && !Number.isFinite(input.id)
+        || typeof input.id !== "string" && typeof input.id !== "number" && input.id !== null)) {
+      return Promise.reject(new Error("Protocol identity must be a finite JSON string, number, or null."));
+    }
     let payload: unknown;
     let evidence: unknown;
     try {

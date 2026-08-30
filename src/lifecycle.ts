@@ -62,7 +62,7 @@ export type AttemptClassification = {
 };
 
 export type WorkspaceExecutionResult = {
-  status?: "ready" | "failed";
+  status: "ready" | "failed";
   path?: string;
   artifactId?: string;
   digest?: string;
@@ -1024,7 +1024,8 @@ function verifierErrorClassification(reason: string, workspace?: WorkspaceExecut
 }
 
 function retainedWorkspaceArtifactId(workspace: WorkspaceExecutionResult | undefined): string | undefined {
-  return workspace?.status === "ready" && workspace.retained !== false && workspace.artifactId !== undefined
+  return workspace !== undefined && workspace.retained !== false && workspace.artifactId !== undefined
+    && (workspace.status === "ready" || workspace.retained === true)
     ? workspace.artifactId
     : undefined;
 }
@@ -1209,6 +1210,7 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
   if (!isRecord(lifecycle.timestamps)) throw new Error("Lifecycle timestamps are invalid.");
   if (!Array.isArray(lifecycle.transitions)) throw new Error("Lifecycle transitions are invalid.");
   let state: LifecycleState = "created";
+  const visitedStates = new Set<LifecycleState>(["created"]);
   for (const transition of lifecycle.transitions) {
     if (!isRecord(transition) || !isLifecycleState(transition.from) || !isLifecycleState(transition.to)) {
       throw new Error("Lifecycle transition is invalid.");
@@ -1218,8 +1220,17 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       throw new Error("Lifecycle transition sequence is invalid.");
     }
     state = transition.to;
+    visitedStates.add(state);
   }
   if (state !== lifecycle.state) throw new Error("Lifecycle state does not match its transitions.");
+  for (const [timestampState, timestamp] of Object.entries(lifecycle.timestamps)) {
+    if (!isLifecycleState(timestampState)) throw new Error("Lifecycle timestamp state is invalid.");
+    assertTimestampValue(timestamp, `Lifecycle timestamp ${timestampState}`);
+  }
+  for (const visitedState of visitedStates) {
+    if (lifecycle.timestamps[visitedState] === undefined) throw new Error(`Lifecycle timestamp ${visitedState} is missing.`);
+  }
+  if (lifecycle.timestamps.created !== lifecycle.createdAt) throw new Error("Lifecycle created timestamp is inconsistent.");
   if (typeof value.partial !== "boolean") throw new Error("Attempt record partial state is invalid.");
   if (value.harnessTerminationConfirmed !== undefined && typeof value.harnessTerminationConfirmed !== "boolean") {
     throw new Error("Harness termination confirmation is invalid.");
@@ -1254,12 +1265,14 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     if (value.partial !== expectedPartial) throw new Error("Attempt partial state contradicts its terminal outcome.");
   }
   if (value.terminal?.workspaceArtifactId !== undefined) {
-    assertTerminalWorkspaceEvidence(value.workspace, value.terminal.workspaceArtifactId);
+    assertTerminalWorkspaceEvidence(value.workspace, value.terminal.workspaceArtifactId, value.terminal.state === "failed" && value.terminal.failureClass === "infrastructure");
   }
   if (value.terminal?.state === "completed") {
+    assertTerminalWorkspaceEvidence(value.workspace, value.terminal.workspaceArtifactId);
     assertVerifierStatus(value.verifier, "passed");
   }
   if (value.terminal?.state === "failed" && value.terminal.failureClass === "task") {
+    assertTerminalWorkspaceEvidence(value.workspace, value.terminal.workspaceArtifactId);
     assertVerifierStatus(value.verifier, "failed");
   }
   if (isRecord(value.capture) && value.capture.status === "incomplete" && value.partial !== true) {
@@ -1356,8 +1369,8 @@ function sameTerminalRecord(left: unknown, right: unknown): boolean {
     && left.workspaceArtifactId === right.workspaceArtifactId;
 }
 
-function assertTerminalWorkspaceEvidence(workspace: unknown, artifactId: string | undefined): void {
-  if (!isRecord(workspace) || workspace.status !== "ready" || workspace.retained === false
+function assertTerminalWorkspaceEvidence(workspace: unknown, artifactId: string | undefined, allowFailed = false): void {
+  if (!isRecord(workspace) || (workspace.status !== "ready" && !(allowFailed && workspace.status === "failed" && workspace.retained === true)) || workspace.retained === false
       || typeof workspace.artifactId !== "string" || artifactId === undefined || workspace.artifactId !== artifactId) {
     throw new Error("Terminal outcome requires matching retained workspace evidence.");
   }
