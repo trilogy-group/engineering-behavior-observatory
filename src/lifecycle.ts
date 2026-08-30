@@ -1617,6 +1617,14 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
         throw new Error("Harness interruption terminal records require an interrupted harness result.");
       }
     }
+    if (classificationKind === "interrupted" && classificationSource !== "runner" && classificationSource !== "harness") {
+      throw new Error("Interrupted terminal records require runner or harness attribution.");
+    }
+    if (classificationKind === "infrastructure-failure"
+        && classificationSource !== "runner" && classificationSource !== "workspace"
+        && classificationSource !== "harness" && classificationSource !== "cleanup") {
+      throw new Error("Infrastructure-failure terminal records have an invalid attribution.");
+    }
     if (classificationKind === "infrastructure-failure" && classificationSource === "harness") {
       if (!visitedStates.has("running")) {
         throw new Error("Harness infrastructure-failure records require the running lifecycle phase.");
@@ -1706,6 +1714,9 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     assertHarnessStatus(value.harness, "completed");
     assertShutdownCompleted(value.harness, "Harness");
     assertShutdownCompleted(value.verifier, "Verifier");
+    if (value.harnessTerminationConfirmed === false || value.verifierTerminationConfirmed === false) {
+      throw new Error("Task-failure terminal records require confirmed execution termination.");
+    }
     assertTerminalWorkspaceEvidence(value.workspace, value.terminal.workspaceArtifactId);
     assertVerifierStatus(value.verifier, "failed");
   }
@@ -1726,6 +1737,9 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       throw new Error("Attempt cleanup status is invalid.");
     }
     if (value.cleanup.error !== undefined) assertTimestampValue(value.cleanup.error, "Attempt cleanup error");
+  }
+  if (lifecycle.state === "terminal" && (!isRecord(value.cleanup) || !["completed", "failed", "timed-out"].includes(String(value.cleanup.status)))) {
+    throw new Error("Terminal attempt records require explicit cleanup status.");
   }
   if (lifecycle.state === "terminal"
       && (!isRecord(value.capture) || !["complete", "incomplete"].includes(String(value.capture.status)))) {

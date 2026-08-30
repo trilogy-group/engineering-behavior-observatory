@@ -566,6 +566,7 @@ export class ProtocolProcess {
   private readonly maxInMemoryObservations: number;
   private readonly writer: JsonlEvidenceWriter;
   private readonly now: () => string;
+  private readonly command: string;
   private readonly ownsWriter: boolean;
   private readonly evidencePath?: string;
   private readonly stderrPath?: string;
@@ -601,6 +602,7 @@ export class ProtocolProcess {
     if (this.killGraceMs > MAX_TIMER_MS) throw new Error("Kill grace period must not exceed the Node timer maximum.");
     this.maxInMemoryObservations = positiveInteger(options.maxInMemoryObservations ?? DEFAULT_MAX_IN_MEMORY_OBSERVATIONS, "In-memory observation limit");
     this.now = options.now ?? (() => new Date().toISOString());
+    this.command = options.command;
     this.startedAt = this.now();
     assertTimestamp(this.startedAt, "Process start timestamp");
     this.cwd = resolve(options.cwd ?? process.cwd());
@@ -936,7 +938,7 @@ export class ProtocolProcess {
       partial: status === "interrupted" || status === "malformed" || status === "failed",
       protocolOnly: true,
       launch: {
-        command: this.options.command,
+        command: this.command,
         args: this.args,
         cwd: this.cwd,
         pid: this.child.pid ?? null,

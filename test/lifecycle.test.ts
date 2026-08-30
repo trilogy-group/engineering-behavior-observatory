@@ -1309,7 +1309,7 @@ test("retained workspace evidence must be linked from partial terminals", async 
     });
     const record = structuredClone(result.record);
     record.terminal = { state: "interrupted", failureClass: "infrastructure", stopReason: "none" };
-    record.classification = { kind: "interrupted", terminal: structuredClone(record.terminal) };
+    record.classification = { kind: "interrupted", source: "runner", terminal: structuredClone(record.terminal) };
     record.partial = true;
     const path = join(root, "missing-partial-link.json");
     writeFileSync(path, `${JSON.stringify(record)}\n`);
