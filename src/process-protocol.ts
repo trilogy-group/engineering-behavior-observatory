@@ -428,6 +428,7 @@ export class ProtocolProcess {
   private lineQueue: Promise<void> = Promise.resolve();
   private pendingLineParts: Buffer[] = [];
   private pendingLineBytes = 0;
+  private protocolFailureQueued = false;
   private readonly waitPromise: Promise<ProtocolProcessResult>;
   private termination: ProcessTermination = "natural";
   private protocolError: { line: number; message: string; raw?: string } | undefined;
@@ -569,7 +570,13 @@ export class ProtocolProcess {
     if (this.pendingLineBytes > this.stdoutLineLimit) {
       this.pendingLineParts = [];
       this.pendingLineBytes = 0;
-      void this.failProtocol(`Protocol line ${this.nextLineNumber} exceeds the configured byte limit.`, undefined, this.nextLineNumber);
+      if (!this.protocolFailureQueued) {
+        this.protocolFailureQueued = true;
+        const line = this.nextLineNumber;
+        this.lineQueue = this.lineQueue
+          .then(() => this.failProtocol(`Protocol line ${line} exceeds the configured byte limit.`, undefined, line))
+          .catch((error) => this.failRecorder(`Protocol evidence recording failed: ${errorMessage(error)}`));
+      }
       return false;
     }
     this.pendingLineParts.push(part);
@@ -726,9 +733,9 @@ export class ProtocolProcess {
       ? "malformed"
       : this.recorderError !== undefined || this.childError !== undefined
         ? "failed"
-        : this.interruptionStarted
+        : this.termination === "interrupted"
           ? "interrupted"
-          : this.shutdownStarted
+          : this.termination === "shutdown"
             ? "shutdown"
             : exitCode === 0 && signal === null
               ? "completed"

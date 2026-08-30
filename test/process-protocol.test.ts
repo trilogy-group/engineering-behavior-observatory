@@ -307,6 +307,7 @@ test("retains valid frames queued before an oversized frame", async () => {
     assert.equal(processResult.stdoutFrames, 1);
     assert.equal((processResult.observations.find((record) => record.kind === "frame")?.payload as { before?: boolean }).before, true);
     assert.equal(processResult.protocolError?.line, 2);
+    assert.deepEqual(processResult.observations.slice(0, 2).map((record) => record.kind), ["frame", "error"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

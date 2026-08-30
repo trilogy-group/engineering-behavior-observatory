@@ -568,7 +568,7 @@ test("an already-aborted signal is retained as an interruption", async () => {
     },
     harness: async () => ({ status: "completed" }),
   });
-  assert.equal(setupSawAbort, true);
+  assert.equal(setupSawAbort, false);
   assert.equal(result.terminal.state, "interrupted");
 });
 

@@ -403,39 +403,44 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       throw new Error(`Initial attempt checkpoint could not be persisted: ${persistenceError}`);
     }
     try {
-      setupStarted = true;
-      const setupPromise = Promise.resolve(options.workspace.setup({
-        run: structuredClone(runSnapshot),
-        attempt: structuredClone(attemptSnapshot),
-        signal: controller.signal,
-        registerShutdown: (shutdown) => { workspaceShutdown = shutdown; },
-      }));
-      const setupOutcome = await Promise.race([
-        setupPromise.then((value) => ({ kind: "result" as const, value })),
-        abortPromise.then((value) => ({ kind: value })),
-      ]);
-      if (setupOutcome.kind === "aborted" || controller.signal.aborted) {
-        const settledSetup = await settleWithTimeout(setupPromise, options.shutdownGraceMs ?? 250);
-        if (settledSetup.status === "completed") {
-          workspace = snapshotWorkspace(settledSetup.value);
-          record.workspace = snapshotWorkspace(workspace);
-        } else if (settledSetup.status === "failed") {
-          record.workspace = { status: "failed", error: errorMessage(settledSetup.error) };
-        } else {
-          record.workspace = { status: "failed", error: settledSetup.error };
-          workspaceTerminationConfirmed = false;
-          const shutdownResult = await shutdownWorkspace(workspaceShutdown, options.shutdownGraceMs ?? 250);
-          if (shutdownResult !== undefined) {
-            record.workspace.shutdownResult = shutdownResult;
-            workspaceTerminationConfirmed = shutdownResult.status === "completed";
-          }
-        }
+      markCoordinatorBudgetIfExpired();
+      if (controller.signal.aborted) {
         classification = abortClassification(abortCause, budgetExpired);
       } else {
-        workspace = snapshotWorkspace(setupOutcome.value);
-        record.workspace = snapshotWorkspace(workspace);
-        if (workspace.status === "failed") {
-          classification = infrastructureClassification("Workspace setup failed.", "workspace", workspace);
+        setupStarted = true;
+        const setupPromise = Promise.resolve(options.workspace.setup({
+          run: structuredClone(runSnapshot),
+          attempt: structuredClone(attemptSnapshot),
+          signal: controller.signal,
+          registerShutdown: (shutdown) => { workspaceShutdown = shutdown; },
+        }));
+        const setupOutcome = await Promise.race([
+          setupPromise.then((value) => ({ kind: "result" as const, value })),
+          abortPromise.then((value) => ({ kind: value })),
+        ]);
+        if (setupOutcome.kind === "aborted" || controller.signal.aborted) {
+          const settledSetup = await settleWithTimeout(setupPromise, options.shutdownGraceMs ?? 250);
+          if (settledSetup.status === "completed") {
+            workspace = snapshotWorkspace(settledSetup.value);
+            record.workspace = snapshotWorkspace(workspace);
+          } else if (settledSetup.status === "failed") {
+            record.workspace = { status: "failed", error: errorMessage(settledSetup.error) };
+          } else {
+            record.workspace = { status: "failed", error: settledSetup.error };
+            workspaceTerminationConfirmed = false;
+            const shutdownResult = await shutdownWorkspace(workspaceShutdown, options.shutdownGraceMs ?? 250);
+            if (shutdownResult !== undefined) {
+              record.workspace.shutdownResult = shutdownResult;
+              workspaceTerminationConfirmed = shutdownResult.status === "completed";
+            }
+          }
+          classification = abortClassification(abortCause, budgetExpired);
+        } else {
+          workspace = snapshotWorkspace(setupOutcome.value);
+          record.workspace = snapshotWorkspace(workspace);
+          if (workspace.status === "failed") {
+            classification = infrastructureClassification("Workspace setup failed.", "workspace", workspace);
+          }
         }
       }
     } catch (error) {
@@ -1108,6 +1113,12 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       throw new Error("Attempt terminal and classification records disagree.");
     }
     assertClassificationTerminal(value.classification.kind, value.classification.terminal, value.classification.underlying);
+    const expectedPartial = classificationUnderlyingKind(value.classification as unknown as AttemptClassification) !== "completed"
+      || isRecord(value.capture) && value.capture.status === "incomplete";
+    if (value.partial !== expectedPartial) throw new Error("Attempt partial state contradicts its terminal outcome.");
+  }
+  if (isRecord(value.capture) && value.capture.status === "incomplete" && value.partial !== true) {
+    throw new Error("Incomplete capture requires partial attempt state.");
   }
   for (const field of ["capture", "persistence"] as const) {
     const status = value[field];
