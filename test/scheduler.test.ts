@@ -667,6 +667,12 @@ test("a persisted local queue is validated and consumed in order", () => {
     writeFileSync(oversizedFile, "");
     truncateSync(oversizedFile, MAX_RUN_QUEUE_BYTES + 1);
     assert.throws(() => readRunQueue(oversizedFile), /local byte limit/);
+    let oversizedOutput = "";
+    assert.equal(main(["queue", "validate", oversizedFile], (message) => (oversizedOutput += message)), 1);
+    assert.match(oversizedOutput, /local byte limit/);
+    oversizedOutput = "";
+    assert.equal(main(["validate", oversizedFile], (message) => (oversizedOutput += message)), 1);
+    assert.match(oversizedOutput, /local byte limit/);
     const alteredExperiment = structuredClone(experiment);
     alteredExperiment.coordinatorBudget.maxWallClockMs += 1;
     const alteredQueue = compileRunQueue(alteredExperiment, compileOptions(alteredExperiment));

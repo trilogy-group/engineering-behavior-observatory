@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync, realpathSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -16,6 +16,7 @@ import {
   compileRunQueue,
   inspectRunQueue,
   readRunQueue,
+  MAX_RUN_QUEUE_BYTES,
   validateRunQueue,
   writeRunQueue,
   type RunQueue,
@@ -77,9 +78,9 @@ export function main(
 
     const artifacts = args.slice(1).map((artifact) => {
       try {
-        const text = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(artifact));
-        assertNoDuplicateJsonKeys(text);
-        return { artifact, document: JSON.parse(text) };
+        const parsed = readJson(artifact);
+        const document = isRunQueueDocument(parsed) ? readRunQueue(artifact) : parsed;
+        return { artifact, document };
       } catch (error) {
         return {
           artifact,
@@ -209,19 +210,13 @@ function validateQueue(
     return 1;
   }
   try {
-    const queue = readJson(queuePath);
     const experiment = positional[1] === undefined ? undefined : readJson(positional[1]);
-    const errors = validateRunQueue(
-      queue,
-      experiment as Parameters<typeof compileRunQueue>[0] | undefined,
+    const queue = readRunQueue(
       queuePath,
+      experiment as Parameters<typeof compileRunQueue>[0] | undefined,
       bundleRoot === undefined ? {} : { bundleRoot },
     );
-    if (errors.length > 0) {
-      for (const error of errors) write(`${error.artifact} [${error.schemaVersion}] ${error.field}: ${error.message}\n`);
-      return 1;
-    }
-    const entryCount = (queue as RunQueue).entries.length;
+    const entryCount = queue.entries.length;
     write(`Validated run queue ${queuePath} (${entryCount} entr${entryCount === 1 ? "y" : "ies"}).\n`);
     return 0;
   } catch (error) {
@@ -231,9 +226,44 @@ function validateQueue(
 }
 
 function readJson(path: string): unknown {
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(path));
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(readBoundedFile(path));
   assertNoDuplicateJsonKeys(text);
   return JSON.parse(text);
+}
+
+function readBoundedFile(path: string): Buffer {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile()) throw new Error(`Artifact path "${path}" is not a regular file.`);
+    if (!Number.isSafeInteger(opened.size) || opened.size > MAX_RUN_QUEUE_BYTES) {
+      throw new Error(`Artifact file exceeds the local byte limit of ${MAX_RUN_QUEUE_BYTES}.`);
+    }
+    const bytes = Buffer.alloc(opened.size);
+    for (let offset = 0; offset < opened.size;) {
+      const read = readSync(descriptor, bytes, offset, opened.size - offset, offset);
+      if (read === 0) throw new Error(`Artifact file "${path}" was truncated while being read.`);
+      offset += read;
+    }
+    const trailing = Buffer.allocUnsafe(1);
+    if (readSync(descriptor, trailing, 0, 1, opened.size) !== 0) {
+      throw new Error(`Artifact file "${path}" grew while being read.`);
+    }
+    const completed = fstatSync(descriptor);
+    if (!completed.isFile() || completed.dev !== opened.dev || completed.ino !== opened.ino
+        || completed.size !== opened.size) {
+      throw new Error(`Artifact file "${path}" changed while being read.`);
+    }
+    return bytes;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function isRunQueueDocument(document: unknown): document is RunQueue {
+  return typeof document === "object" && document !== null && !Array.isArray(document)
+    && (document as { schemaVersion?: unknown }).schemaVersion === "ebo.run-queue/v1";
 }
 
 function errorMessage(error: unknown): string {
