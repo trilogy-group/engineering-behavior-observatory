@@ -416,6 +416,7 @@ test("retains failed setup attempts only when configured", async () => {
       retainOnFailure: true,
       setup: (workspacePath) => {
         writeFileSync(join(workspacePath, "diagnostic.log"), "failure output\n", { mode: 0o644 });
+        writeFileSync(join(workspacePath, "unreadable.log"), "restricted output\n", { mode: 0o000 });
         mkdirSync(join(workspacePath, "diagnostics"), { mode: 0o755 });
         throw new Error("setup failed");
       },
@@ -424,6 +425,7 @@ test("retains failed setup attempts only when configured", async () => {
     assert.equal(retained.retained, true);
     assert.equal(existsSync(retained.workspacePath), true);
     assert.equal(statSync(join(retained.workspacePath, "diagnostic.log")).mode & 0o7777, 0o600);
+    assert.equal(statSync(join(retained.workspacePath, "unreadable.log")).mode & 0o7777, 0o600);
     assert.equal(statSync(join(retained.workspacePath, "diagnostics")).mode & 0o7777, 0o700);
     assert.match(retained.error ?? "", /setup failed/);
     await retained.cleanup("failure");

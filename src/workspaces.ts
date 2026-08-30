@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn as spawnProcess, type ChildProcess, type SpawnOptions } from "node:child_process";
 import {
   closeSync,
+  chmodSync,
   constants,
   fchmodSync,
   fsyncSync,
@@ -510,7 +511,11 @@ function normalizeDirectory(
         throw new Error(`Restricted packet content cannot enter the workspace: "${relativePath}".`);
       }
       const current = lstatSync(path);
-      const childFd = openChildSync(path, entry.isDirectory());
+      const childFd = openChildSync(
+        path,
+        entry.isDirectory(),
+        current.isDirectory() ? DIRECTORY_MODE : normalizedFileMode(current.mode),
+      );
       try {
         const metadata = fstatSync(childFd);
         assertContainedRealpathSync(root, path);
@@ -545,7 +550,7 @@ function normalizeDirectory(
   }
 }
 
-function openChildSync(path: string, directory: boolean): number {
+function openChildSync(path: string, directory: boolean, normalizeMode?: number): number {
   const current = lstatSync(path);
   if (current.isSymbolicLink()) throw new Error(`Workspace contains a symbolic link at "${path}".`);
   if (!current.isDirectory() && !current.isFile()) {
@@ -560,7 +565,87 @@ function openChildSync(path: string, directory: boolean): number {
     if ((error as NodeJS.ErrnoException).code === "ELOOP") {
       throw new Error(`Workspace contains a symbolic link at "${path}".`);
     }
+    if ((error as NodeJS.ErrnoException).code === "EACCES" && normalizeMode !== undefined) {
+      return normalizeUnreadableChild(path, directory, current, normalizeMode);
+    }
     throw error;
+  }
+}
+
+function normalizeUnreadableChild(
+  path: string,
+  directory: boolean,
+  expected: import("node:fs").Stats,
+  mode: number,
+): number {
+  const parent = dirname(path);
+  const name = basename(path);
+  const alias = `.ebo-normalize-${randomUUID()}`;
+  const originalCwd = process.cwd();
+  const parentFd = openSync(parent, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  let moved = false;
+  let childFd: number | undefined;
+  try {
+    if (!sameIdentity(fstatSync(parentFd), lstatSync(parent))) {
+      throw new Error(`Workspace parent "${parent}" changed during normalization.`);
+    }
+    // This synchronous section keeps relative rename/chmod/open operations
+    // on the verified parent descriptor without allowing concurrent JS calls
+    // to interleave the process-global cwd.
+    process.chdir(parent);
+    if (!sameIdentity(fstatSync(parentFd), lstatSync("."))) {
+      throw new Error(`Workspace parent "${parent}" changed during normalization.`);
+    }
+    try {
+      lstatSync(alias);
+      throw new Error(`Workspace normalization alias already exists: "${alias}".`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    renameSync(name, alias);
+    moved = true;
+    const movedMetadata = lstatSync(alias);
+    if (movedMetadata.isSymbolicLink() || !sameIdentity(movedMetadata, expected)) {
+      throw new Error(`Workspace entry "${path}" changed during normalization.`);
+    }
+    chmodSync(alias, mode);
+    childFd = openSync(
+      alias,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | (directory ? constants.O_DIRECTORY : 0),
+    );
+    const opened = fstatSync(childFd);
+    if (!sameIdentity(opened, expected)) throw new Error(`Workspace entry "${path}" changed during normalization.`);
+    renameSync(alias, name);
+    moved = false;
+    const restored = lstatSync(name);
+    if (restored.isSymbolicLink() || !sameIdentity(restored, expected)) {
+      throw new Error(`Workspace entry "${path}" changed during normalization.`);
+    }
+    const result = childFd;
+    childFd = undefined;
+    return result;
+  } finally {
+    if (childFd !== undefined) closeSync(childFd);
+    if (moved) {
+      try {
+        const current = lstatSync(alias);
+        if (sameIdentity(current, expected)) {
+          let destinationAbsent = false;
+          try {
+            lstatSync(name);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") destinationAbsent = true;
+            else throw error;
+          }
+          if (destinationAbsent) renameSync(alias, name);
+        }
+      } catch {
+        // Preserve the original failure and let the root-level cleanup gate
+        // decide whether the partial tree is still safe to retain.
+      }
+    }
+    process.chdir(originalCwd);
+    closeSync(parentFd);
   }
 }
 
