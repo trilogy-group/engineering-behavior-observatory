@@ -64,6 +64,9 @@ node dist/src/cli.js task-packet validate <bundle-root> <packet.json>
 node dist/src/cli.js task-packet admit <bundle-root> <packet.json>
 node dist/src/cli.js task-packet freeze <bundle-root> <packet.json>
 node dist/src/cli.js task-packet status <bundle-root> <packet.json>
+node dist/src/cli.js matrix compile <experiment.json> <bundle-root> <queue.json> [--freeze-locator <task-id>=<path>]
+node dist/src/cli.js queue inspect <queue.json>
+node dist/src/cli.js queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
 ```
 
 `ebo validate` checks the supported task-packet, experiment, and run-bundle
@@ -74,6 +77,11 @@ are introduced by their separately scoped tasks.
 Task-packet commands validate externally authored packets, enforce their
 recorded admission decision, persist a digest-based freeze record, and report
 component changes. They do not generate tasks or perform human review.
+
+The matrix compiler expands any valid experiment into a local, persisted run
+queue. Sequential, seeded-shuffle, and balanced/interleaved policies retain
+the seed and every frozen task, model, harness, configuration, and trial
+identity; they do not start execution or add distributed scheduling.
 
 Start with [AGENTS.md](AGENTS.md) and the assigned Linear issue. `WORKFLOW.md`
 contains OpenSymphony orchestration configuration and should not be treated as

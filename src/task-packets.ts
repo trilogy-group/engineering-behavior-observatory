@@ -618,6 +618,22 @@ export function formatErrors(errors: readonly ArtifactValidationError[]): string
   return errors.map((error) => `${error.artifact} [${error.schemaVersion}] ${error.field}: ${error.message}`).join("\n");
 }
 
+export function assertTaskPacketFreezeRecord(record: TaskPacketFreezeRecord): void {
+  const errors = validateFreezeRecord(record.packetLocator, record);
+  if (errors.length > 0) throw new Error(formatErrors(errors));
+  const expectedAggregate = aggregateDigest(
+    record.packetId,
+    record.packetLocator,
+    record.preAdmissionDigest,
+    record.packetDigest,
+    record.components,
+    record.frozenAt,
+  );
+  if (!sameDigest(record.aggregateDigest, expectedAggregate)) {
+    throw new Error("Freeze record aggregate digest does not match its components.");
+  }
+}
+
 function resolveComponent(
   bundleRoot: string,
   reference: ArtifactReference,
@@ -696,7 +712,7 @@ function freezeCandidate(packetLocator: string, inspection: TaskPacketInspection
   };
 }
 
-function assertFreezeLocatorPathWithinLimits(freezeLocator: string, packetLocator: string): void {
+export function assertFreezeLocatorPathWithinLimits(freezeLocator: string, packetLocator: string): void {
   const leafLength = freezeLocator.slice(freezeLocator.lastIndexOf("/") + 1).length;
   if (freezeLocator.length + FREEZE_QUARANTINE_SUFFIX.length > 960
       || leafLength + FREEZE_QUARANTINE_SUFFIX.length > 255) {

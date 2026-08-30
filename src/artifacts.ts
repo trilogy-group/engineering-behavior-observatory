@@ -1314,12 +1314,14 @@ function loadValidators(): Map<string, ValidateFunction> {
   ajv.addSchema(readSchema("task-packet.v1.schema.json"));
   ajv.addSchema(readSchema("task-packet-freeze.v1.schema.json"));
   ajv.addSchema(readSchema("experiment.v1.schema.json"));
+  ajv.addSchema(readSchema("run-queue.v1.schema.json"));
   ajv.addSchema(readSchema("run-bundles/v1.json"));
 
   return new Map([
     ["ebo.task-packet/v1", requiredValidator(ajv, "https://ebo.dev/schemas/task-packet.v1.schema.json")],
     ["ebo.task-packet-freeze/v1", requiredValidator(ajv, "https://ebo.dev/schemas/task-packet-freeze.v1.schema.json")],
     ["ebo.experiment/v1", requiredValidator(ajv, "https://ebo.dev/schemas/experiment.v1.schema.json")],
+    ["ebo.run-queue/v1", requiredValidator(ajv, "https://ebo.dev/schemas/run-queue.v1.schema.json")],
     ["run-manifest/v1", requiredValidator(ajv, runBundleSchemaId)],
     ["verifier-result/v1", requiredValidator(ajv, `${runBundleSchemaId}#/$defs/verifierResult`)],
     ["capture-report/v1", requiredValidator(ajv, `${runBundleSchemaId}#/$defs/captureReport`)],

@@ -32,6 +32,7 @@ export {
 } from "./contracts.js";
 export {
   admitTaskPacket,
+  assertTaskPacketFreezeRecord,
   assertTaskPacketAdmitted,
   defaultFreezeLocator,
   formatErrors,
@@ -53,11 +54,36 @@ export type {
   DeclaredMatrixCell,
   Digest,
   ExperimentConfiguration,
+  ExperimentOrdering,
   ReferenceSolutionDeclaration,
   ResolvedTaskPacket,
   TaskCondition,
   TaskConditionSet,
 } from "./contracts.js";
+export {
+  assertValidRunQueue,
+  compileRunQueue,
+  expandMatrixCells,
+  inspectRunQueue,
+  LocalRunQueue,
+  MAX_RUN_QUEUE_BYTES,
+  MAX_RUN_QUEUE_ENTRIES,
+  readRunQueue,
+  validateRunQueue,
+  writeRunQueue,
+} from "./scheduler.js";
+export type {
+  CompileRunQueueOptions,
+  FrozenTaskIdentity,
+  FrozenTaskInput,
+  PermutationAlgorithm,
+  QueueOrderingStrategy,
+  RunQueue,
+  RunQueueEntry,
+  RunQueueInspection,
+  RunQueueMatrix,
+  ValidateRunQueueOptions,
+} from "./scheduler.js";
 export {
   digestWorkspace,
   executeVerifier,

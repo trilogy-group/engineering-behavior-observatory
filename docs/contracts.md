@@ -122,5 +122,44 @@ The fixtures include a generic 18-cell matrix and a differently shaped matrix
 to show that no study dimensions are built into the contract. Parsed numeric
 controls are limited to JavaScript safe integers.
 
+## Run queues
+
+`compileRunQueue` expands an experiment into a persisted
+`ebo.run-queue/v1` document. Every entry contains the task-packet freeze
+identity, digest-pinned model and harness configuration references, and a
+one-based trial identity; the queue also retains the selected capture-profile
+reference and coordinator budget. A scheduling digest covers those controls,
+the matrix, seed, and ordering policy; run IDs include that digest so
+standalone consumers reject mutations to any persisted scheduling input. When
+the API is used without a bundle root, each admitted task resolution must carry
+the complete schema-valid freeze record that supplied task identities are
+checked against. Freeze locators are distinct from every packet/configuration
+artifact path and from each other; persisted custom locators are reused when
+queues are revalidated without a bundle root.
+
+The compiler supports sequential (`declared` is retained as its legacy name),
+seeded-shuffle (`permuted` is retained as its legacy name), and balanced
+interleaving. Interleaving round-robins the selected dimension (model by
+default) and preserves every cell exactly once, including matrices whose
+groups have different sizes. Configuration references are resolved before
+compilation, and every task packet must have a matching, admitted freeze
+record. A seeded-shuffle with a permutation reference reads that verified
+artifact and currently accepts the declared `fisher-yates-v1` algorithm;
+unknown algorithm definitions fail closed. The normalized queue records the
+resolved algorithm name, so experiment-only validation remains reproducible;
+passing a bundle root additionally rechecks the pinned artifact. Queue writes
+use the existing atomic artifact writer and do not execute work or coordinate
+across machines.
+
+The CLI exposes `ebo matrix compile <experiment.json> <bundle-root>
+<queue.json> [--freeze-locator <task-id>=<path>]`, `ebo queue inspect
+<queue.json>`, and `ebo queue validate
+<queue.json> [experiment.json] [--bundle-root <bundle-root>]`. Supplying the
+bundle root lets queue validation recheck each freeze and pinned algorithm
+artifact. The 18-cell fixture is only a generality test;
+the compiler has no fixed task, model, harness, or trial count, subject to the
+bounded 100,000-entry local queue limit; larger matrices require a future
+streaming queue implementation.
+
 Unknown schema versions and sharing classifications are invalid. Consumers must
 validate a document before materializing a workspace or scheduling a run.

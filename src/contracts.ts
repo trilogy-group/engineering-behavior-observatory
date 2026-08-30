@@ -3,6 +3,8 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, rea
 import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
 
+import type { TaskPacketFreezeRecord } from "./task-packets.js";
+
 export type Digest = {
   algorithm: "sha256";
   value: string;
@@ -73,6 +75,11 @@ export type ReferenceSolutionDeclaration =
   | { status: "not-provided" | "unsupported" };
 
 export type ResolvedTaskPacket = {
+  /** Packet identity retained by the admission resolver for freeze binding. */
+  packetId?: string;
+  /** Resolved task-packet component digests retained for freeze binding. */
+  promptDigest?: Digest;
+  fixtureDigest?: Digest | null;
   digest: Digest;
   preAdmissionDigest: Digest | null;
   reviewRecordDigest: Digest | null;
@@ -92,6 +99,8 @@ export type ResolvedTaskPacket = {
     status: "proposed" | "admitted" | "rejected";
     reviewedAt: string | null;
   };
+  /** Complete freeze evidence admitted alongside this packet resolution. */
+  freezeRecord?: TaskPacketFreezeRecord;
 };
 
 export type DeclaredOrder = {
@@ -107,6 +116,22 @@ export type DeclaredMatrixCell = {
   trialIndex: number;
 };
 
+export type ExperimentOrdering =
+  | { seed: string; strategy: "declared"; declaredOrder: DeclaredOrder }
+  | { seed: string; strategy: "sequential"; declaredOrder?: DeclaredOrder }
+  | {
+      seed: string;
+      strategy: "permuted" | "seeded-shuffle";
+      declaredOrder?: DeclaredOrder;
+      permutationAlgorithmRef?: ArtifactReference;
+    }
+  | {
+      seed: string;
+      strategy: "balanced" | "balanced-interleaved" | "interleaved";
+      declaredOrder?: DeclaredOrder;
+      balanceBy?: "task" | "model" | "harness";
+    };
+
 export type ExperimentConfiguration = {
   schemaVersion: "ebo.experiment/v1";
   id: string;
@@ -120,9 +145,7 @@ export type ExperimentConfiguration = {
   trialCount: number;
   coordinatorBudget: { maxWallClockMs: number };
   captureProfile: ArtifactReference;
-  ordering:
-    | { seed: string; strategy: "declared"; declaredOrder: DeclaredOrder }
-    | { seed: string; strategy: "permuted"; permutationAlgorithmRef: ArtifactReference };
+  ordering: ExperimentOrdering;
 };
 
 export function assertDeclaredOrder(
@@ -815,10 +838,11 @@ export function assertResolvedExperimentConfigurationDigests(
   references.push(experiment.captureProfile);
   assertResolvedDigest("capture profile", experiment.captureProfile, resolvedDigests);
 
-  if (experiment.ordering.strategy === "permuted") {
-    if (experiment.ordering.permutationAlgorithmRef === undefined) {
-      throw new Error("Permuted experiment is missing its permutation algorithm reference.");
-    }
+  if (experiment.ordering.strategy === "permuted" && experiment.ordering.permutationAlgorithmRef === undefined) {
+    throw new Error("Permuted experiment is missing its permutation algorithm reference.");
+  }
+  if ("permutationAlgorithmRef" in experiment.ordering
+      && experiment.ordering.permutationAlgorithmRef !== undefined) {
     references.push(experiment.ordering.permutationAlgorithmRef);
     assertResolvedDigest("permutation algorithm", experiment.ordering.permutationAlgorithmRef, resolvedDigests);
   }
