@@ -588,6 +588,23 @@ test("malformed protocol output stops the process and retains a readable partial
   }
 });
 
+test("unterminated child stdout is retained as malformed partial evidence", async () => {
+  const root = temporaryRoot();
+  try {
+    const result = await runProtocolProcess({
+      ...nodeScript("process.stdout.write(JSON.stringify({ready:true}))"),
+      source: "fake-harness",
+      evidencePath: join(root, "unterminated-child.jsonl"),
+    });
+    assert.equal(result.status, "malformed");
+    assert.equal(result.partial, true);
+    assert.match(result.protocolError?.message ?? "", /Unterminated/);
+    assert.equal(result.stdoutFrames, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("interrupts after delivered frames and flushes partial evidence", async () => {
   const root = temporaryRoot();
   try {

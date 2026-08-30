@@ -756,7 +756,14 @@ export class ProtocolProcess {
 
   private flushPendingLine(): void {
     if (this.pendingLineBytes > 0 && this.protocolError === undefined && this.recorderError === undefined) {
-      this.queuePendingLine(this.nextLineNumber);
+      const bytes = Buffer.concat(this.pendingLineParts, this.pendingLineBytes);
+      this.pendingLineParts = [];
+      this.pendingLineBytes = 0;
+      const line = this.nextLineNumber;
+      this.protocolFailureQueued = true;
+      this.lineQueue = this.lineQueue
+        .then(() => this.failProtocol("Unterminated JSONL protocol output.", bytes.toString("base64"), line))
+        .catch((error) => this.failRecorder(`Protocol evidence recording failed: ${errorMessage(error)}`));
       this.nextLineNumber += 1;
     }
   }

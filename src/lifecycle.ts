@@ -1578,6 +1578,9 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       ? value.classification.underlyingSource
       : value.classification.source;
     if (classificationKind === "policy-stop") {
+      if (classificationSource !== "harness") {
+        throw new Error("Policy-stop terminal records require harness attribution.");
+      }
       if (!visitedStates.has("running")) {
         throw new Error("Policy-stop terminal records require the running lifecycle phase.");
       }
