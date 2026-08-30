@@ -426,10 +426,15 @@ function normalizeDirectory(
 }
 
 function openChildSync(path: string, directory: boolean): number {
+  const current = lstatSync(path);
+  if (current.isSymbolicLink()) throw new Error(`Workspace contains a symbolic link at "${path}".`);
+  if (!current.isDirectory() && !current.isFile()) {
+    throw new Error(`Workspace contains an unsupported entry at "${path}".`);
+  }
   try {
     return openSync(
       path,
-      constants.O_RDONLY | constants.O_NOFOLLOW | (directory ? constants.O_DIRECTORY : 0),
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | (directory ? constants.O_DIRECTORY : 0),
     );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ELOOP") {
@@ -549,6 +554,9 @@ async function runSetup(
   workspacePath: string,
 ): Promise<void> {
   const steps = setup === undefined ? [] : typeof setup === "function" ? [setup] : [...setup];
+  const allSteps = [...steps, ...(setupSteps ?? [])];
+  if (allSteps.length === 0) return;
+  if (process.platform === "win32") throw new Error("Workspace setup process tracking is unavailable on this platform.");
   let releaseSetup: (() => void) | undefined;
   const previousSetup = setupQueue;
   // ponytail: serialize setup process accounting; per-invocation process
@@ -557,12 +565,13 @@ async function runSetup(
   await previousSetup;
   let processTreeBefore: Map<number, number> | undefined;
   try {
-    processTreeBefore = process.platform === "win32" ? undefined : processTree();
+    processTreeBefore = processTree();
   } catch {
-    processTreeBefore = undefined;
+    releaseSetup?.();
+    throw new Error("Workspace setup process tracking is unavailable.");
   }
   try {
-    for (const step of [...steps, ...(setupSteps ?? [])]) {
+    for (const step of allSteps) {
       if (typeof step !== "function") throw new Error("Workspace setup steps must be functions.");
       await step(workspacePath);
     }
@@ -590,7 +599,7 @@ function reapSetupDescendants(before: ReadonlyMap<number, number>): void {
   try {
     after = processTree();
   } catch {
-    return;
+    throw new Error("Workspace setup process tracking is unavailable.");
   }
   const descendants = [...after.keys()].filter((pid) => !before.has(pid) && isDescendant(pid, process.pid, after));
   descendants.sort((left, right) => processDepth(right, after) - processDepth(left, after));

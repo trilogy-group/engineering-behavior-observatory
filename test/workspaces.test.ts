@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { gzipSync } from "node:zlib";
 import {
   chmodSync,
@@ -237,6 +237,28 @@ test("reaps setup descendants before returning a workspace", async () => {
     if (childPid !== undefined) {
       try { process.kill(childPid, "SIGKILL"); } catch { /* already reaped */ }
     }
+    rmSync(root, { force: true, recursive: true });
+    rmSync(parent, { force: true, recursive: true });
+  }
+});
+
+test("rejects a setup FIFO without blocking", { skip: process.platform === "win32" }, async () => {
+  const { root } = createBundle();
+  const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+
+  try {
+    freezeTaskPacket(root, "packet.json");
+    const result = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "fifo-setup",
+      workspaceParent: parent,
+      setup: (workspacePath) => { execFileSync("mkfifo", [join(workspacePath, "pipe")]); },
+    });
+    assert.equal(result.state, "failed");
+    assert.equal(result.retained, false);
+    assert.equal(existsSync(result.workspacePath), false);
+  } finally {
     rmSync(root, { force: true, recursive: true });
     rmSync(parent, { force: true, recursive: true });
   }
