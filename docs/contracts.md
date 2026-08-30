@@ -133,7 +133,9 @@ the matrix, seed, and ordering policy; run IDs include that digest so
 standalone consumers reject mutations to any persisted scheduling input. When
 the API is used without a bundle root, each admitted task resolution must carry
 the complete schema-valid freeze record that supplied task identities are
-checked against.
+checked against. Freeze locators are distinct from every packet/configuration
+artifact path and from each other; persisted custom locators are reused when
+queues are revalidated without a bundle root.
 
 The compiler supports sequential (`declared` is retained as its legacy name),
 seeded-shuffle (`permuted` is retained as its legacy name), and balanced

@@ -829,10 +829,38 @@ function resolveFrozenTasks(
     packetDigests.add(digestIdentity(identity.packetRef.digest));
     tasks.set(taskId, identity);
   }
-  if (options.bundleRoot === undefined && supplied === undefined) {
-    throw new Error("Every task packet must have a frozen task-packet record before scheduling.");
-  }
+  assertDistinctFreezeLocatorBindings(experiment, tasks);
   return tasks;
+}
+
+function assertDistinctFreezeLocatorBindings(
+  experiment: ExperimentConfiguration,
+  tasks: Map<string, FrozenTaskIdentity>,
+): void {
+  const artifactLocators = [
+    ...experimentReferences(experiment),
+    ...Object.values(experiment.taskSet).map((condition) => condition.packetRef),
+  ].map((reference) => reference.locator.toLowerCase());
+  const freezeLocators = [...tasks.values()].map((task) => ({
+    taskId: task.id,
+    locator: task.freezeLocator.toLowerCase(),
+  }));
+  for (const freeze of freezeLocators) {
+    for (const artifact of artifactLocators) {
+      if (pathsAlias(freeze.locator, artifact)) {
+        throw new Error(`Task packet "${freeze.taskId}" freeze locator aliases persisted artifact path "${artifact}".`);
+      }
+    }
+    for (const other of freezeLocators) {
+      if (freeze.taskId !== other.taskId && pathsAlias(freeze.locator, other.locator)) {
+        throw new Error(`Task packet "${freeze.taskId}" freeze locator aliases task "${other.taskId}" freeze locator.`);
+      }
+    }
+  }
+}
+
+function pathsAlias(left: string, right: string): boolean {
+  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
 }
 
 function assertAdmittedFreezeRecords(
@@ -899,7 +927,7 @@ function provenanceOptions(
     }]));
     resolved = { ...resolved, frozenTasks };
   }
-  if (options.bundleRoot === undefined && !hasExplicitFreezeInputs) {
+  if (options.bundleRoot === undefined) {
     const persistedLocators = Object.fromEntries(queue.entries.map((entry) => [entry.taskId, entry.task.freezeLocator]));
     resolved = {
       ...resolved,
