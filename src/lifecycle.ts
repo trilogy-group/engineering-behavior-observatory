@@ -1537,7 +1537,11 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
   if (lifecycle.state !== "terminal" && value.partial !== true) {
     throw new Error("Nonterminal attempt records must remain partial.");
   }
-  if (isRecord(value.workspace) && value.workspace.status === "failed"
+  const workspaceShutdownFailed = isRecord(value.workspace)
+    && isRecord(value.workspace.shutdownResult)
+    && value.workspace.shutdownResult.status !== "completed";
+  if (isRecord(value.workspace)
+      && (value.workspace.status === "failed" || workspaceShutdownFailed)
       && (visitedStates.has("running") || visitedStates.has("verifying"))) {
     throw new Error("Workspace failure records cannot include execution lifecycle phases.");
   }

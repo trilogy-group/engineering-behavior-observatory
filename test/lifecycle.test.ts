@@ -1378,7 +1378,7 @@ test("policy-stop records require a viable workspace", async () => {
     });
     for (const [name, replacement, errorPattern] of [
       ["failed", { status: "failed", artifactId: "workspace-1", retained: true }, /ready workspace|Workspace failure records/],
-      ["shutdown-failed", { status: "ready", artifactId: "workspace-1", shutdownResult: { status: "failed", error: "workspace shutdown failed" } }, /confirmed workspace/],
+      ["shutdown-failed", { status: "ready", artifactId: "workspace-1", shutdownResult: { status: "failed", error: "workspace shutdown failed" } }, /confirmed workspace|Workspace failure records/],
     ] as const) {
       const record = structuredClone(result.record);
       record.workspace = replacement;
@@ -1559,7 +1559,7 @@ test("verifier-error terminals require a viable workspace", async () => {
     });
     for (const [name, replacement, errorPattern] of [
       ["failed", { status: "failed", artifactId: "workspace-1", retained: true }, /ready workspace|Workspace failure records/],
-      ["shutdown-failed", { status: "ready", artifactId: "workspace-1", shutdownResult: { status: "failed", error: "workspace shutdown failed" } }, /confirmed workspace/],
+      ["shutdown-failed", { status: "ready", artifactId: "workspace-1", shutdownResult: { status: "failed", error: "workspace shutdown failed" } }, /confirmed workspace|Workspace failure records/],
     ] as const) {
       const record = structuredClone(result.record);
       record.workspace = replacement;

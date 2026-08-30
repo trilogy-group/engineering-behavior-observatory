@@ -597,6 +597,7 @@ export class ProtocolProcess {
   private readonly startedAt: string;
   private readonly cwd: string;
   private readonly args: string[];
+  private readonly onFrame: ProtocolProcessOptions["onFrame"];
   private lineCount = 0;
   private nextLineNumber = 1;
   private frameCount = 0;
@@ -632,6 +633,7 @@ export class ProtocolProcess {
     assertTimestamp(this.startedAt, "Process start timestamp");
     this.cwd = resolve(options.cwd ?? process.cwd());
     this.args = [...(options.args ?? [])];
+    this.onFrame = options.onFrame;
     let writer: JsonlEvidenceWriter;
     if (options.writer !== undefined) {
       writer = options.writer;
@@ -824,8 +826,8 @@ export class ProtocolProcess {
     }
     this.frameCount += 1;
     await this.recorder.recordFrame(payload, this.now(), line);
-    if (this.options.onFrame !== undefined) {
-      const observer = Promise.resolve(this.options.onFrame(payload, this.recorder));
+    if (this.onFrame !== undefined) {
+      const observer = Promise.resolve(this.onFrame(payload, this.recorder));
       const outcome = await settleObserver(observer, this.shutdownGraceMs);
       if (outcome.status === "failed") throw outcome.error;
       if (outcome.status === "timed-out") {

@@ -232,6 +232,26 @@ test("spawn options cannot bypass protocol termination provenance", async () => 
   }
 });
 
+test("snapshots the frame observer at process creation", async () => {
+  const root = temporaryRoot();
+  try {
+    const calls: string[] = [];
+    const options = {
+      ...nodeScript("setTimeout(()=>console.log(JSON.stringify({ready:true})), 20)"),
+      source: "fake-harness",
+      evidencePath: join(root, "observer-snapshot.jsonl"),
+      onFrame: () => { calls.push("initial"); },
+    };
+    const protocol = spawnProtocolProcess(options);
+    options.onFrame = () => { calls.push("mutated"); };
+    const processResult = await protocol.wait();
+    assert.equal(processResult.status, "completed");
+    assert.deepEqual(calls, ["initial"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("synchronous spawn errors release the protocol writer claim", async () => {
   const root = temporaryRoot();
   try {
