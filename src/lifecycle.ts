@@ -603,7 +603,12 @@ export async function readAttemptRecord(path: string): Promise<AttemptRecord> {
 }
 
 function validateOptions(options: RunAttemptOptions): void {
-  assertIdentity(options.run.id, "Run ID");
+  createRunIdentity({
+    id: options.run.id,
+    taskId: options.run.taskId,
+    modelId: options.run.modelId,
+    harnessId: options.run.harnessId,
+  });
   if (options.attempt !== undefined) {
     createAttemptIdentity(options.run.id, options.attempt.number, options.attempt.id, options.attempt.retryOf);
   }
@@ -629,9 +634,13 @@ function classifyHarness(
     case "completed":
       return undefined;
     case "failed":
-      return result.failureClass === "task"
-        ? taskClassification(result.reason ?? "Harness reported task failure.", workspaceArtifactId, "harness")
-        : infrastructureClassification(result.reason ?? "Harness failed.", "harness", workspaceArtifactId);
+      return infrastructureClassification(
+        result.failureClass === "task"
+          ? result.reason ?? "Harness reported task failure without verifier evidence."
+          : result.reason ?? "Harness failed.",
+        "harness",
+        workspaceArtifactId,
+      );
     case "stopped":
       if (result.stopReason === "policy") return policyClassification(result.reason);
       if (result.stopReason === "budget") return budgetClassification("harness", result.reason);
@@ -646,7 +655,7 @@ function classifyVerifier(result: VerifierExecutionResult, workspace: WorkspaceE
     case "passed":
       return completedClassification(workspace);
     case "failed":
-      return taskClassification(result.error ?? "Verifier reported task failure.", workspace?.artifactId, "verifier");
+      return taskClassification(result.error ?? "Verifier reported task failure.", workspace, "verifier");
     case "error":
       return verifierErrorClassification(result.error ?? "Verifier failed to execute.", workspace?.artifactId);
     case "not-run":
@@ -666,10 +675,18 @@ function completedClassification(workspace: WorkspaceExecutionResult | undefined
   };
 }
 
-function taskClassification(reason: string, workspaceArtifactId: string | undefined, source: AttemptClassification["source"]): AttemptClassification {
+function taskClassification(
+  reason: string,
+  workspace: WorkspaceExecutionResult | undefined,
+  source: AttemptClassification["source"],
+): AttemptClassification {
+  if (workspace === undefined || workspace.status !== "ready" || workspace.retained === false
+      || workspace.artifactId === undefined) {
+    return infrastructureClassification("Task failure requires a retained workspace artifact.", "workspace", workspace?.artifactId);
+  }
   return {
     kind: "task-failure",
-    terminal: { state: "failed", failureClass: "task", stopReason: "none", ...(workspaceArtifactId === undefined ? {} : { workspaceArtifactId }) },
+    terminal: { state: "failed", failureClass: "task", stopReason: "none", workspaceArtifactId: workspace.artifactId },
     reason,
     source,
   };

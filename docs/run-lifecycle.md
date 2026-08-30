@@ -14,12 +14,13 @@ created -> setup -> running -> verifying -> cleaning -> terminal
 Setup, harness execution, verifier execution, cleanup, and evidence flushing
 are injected callbacks. `executeRunAttempt` passes an `AbortSignal`, enforces
 the coordinator and harness budgets, and records phase timestamps in an
-`ebo.attempt/v1` record. A verifier failure is a task failure; a verifier
-execution error, setup error, harness error, or cleanup error after an
-otherwise successful run is infrastructure evidence. A completed attempt needs
-both a passed verifier and a retained workspace artifact. Missing capture
-flush support is explicit as `capture-incomplete` and does not become a task
-failure.
+`ebo.attempt/v1` record. Only a failed verifier with retained workspace
+evidence is a task failure; a harness-declared task result without verifier
+evidence remains an infrastructure failure. A verifier execution error, setup
+error, harness error, or cleanup error after an otherwise successful run is
+also infrastructure evidence. A completed attempt needs both a passed
+verifier and a retained workspace artifact. Missing capture flush support is
+explicit as `capture-incomplete` and does not become a task failure.
 
 `src/process-protocol.ts` is a narrow process boundary, not a JSON-RPC
 implementation. `ProtocolProcess` parses newline-delimited JSON only to reject

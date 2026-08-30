@@ -124,6 +124,17 @@ test("harness infrastructure, policy, and cleanup outcomes stay classified", asy
   assert.equal(cleanupFailure.record.cleanup?.status, "failed");
 });
 
+test("a harness cannot declare a task failure without verifier evidence", async () => {
+  const result = await executeRunAttempt({
+    run,
+    workspace: workspace(),
+    harness: async () => ({ status: "failed", failureClass: "task", reason: "unverified task result" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.failureClass, "infrastructure");
+  assert.equal(result.classification.source, "harness");
+});
+
 test("setup failures are infrastructure failures and still clean up", async () => {
   let cleaned = false;
   const result = await executeRunAttempt({
@@ -321,6 +332,31 @@ test("completion requires a retained workspace artifact", async () => {
   });
   assert.equal(result.terminal.failureClass, "infrastructure");
   assert.equal(result.classification.source, "workspace");
+});
+
+test("task-failed terminals require a retained workspace artifact", async () => {
+  const result = await executeRunAttempt({
+    run,
+    workspace: workspace({ status: "ready" }),
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => ({ status: "failed", error: "assertion failed" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.failureClass, "infrastructure");
+  assert.equal(result.classification.source, "workspace");
+});
+
+test("run identity fields are validated before callbacks execute", async () => {
+  let setupCalled = false;
+  const invalidRun = { ...run, taskId: "" };
+  await assert.rejects(executeRunAttempt({
+    run: invalidRun,
+    workspace: {
+      setup: async () => { setupCalled = true; return { status: "ready", artifactId: "workspace-1" }; },
+    },
+    harness: async () => ({ status: "completed" }),
+  }), /Task ID/);
+  assert.equal(setupCalled, false);
 });
 
 test("retry creates a new linked identity and never replaces the prior attempt", () => {
