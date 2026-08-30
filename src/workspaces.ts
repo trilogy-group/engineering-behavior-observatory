@@ -4,10 +4,12 @@ import {
   closeSync,
   constants,
   fchmodSync,
+  fsyncSync,
   fstatSync,
   futimesSync,
   lstatSync,
   mkdtempSync,
+  mkdirSync,
   openSync,
   opendirSync,
   renameSync,
@@ -15,10 +17,11 @@ import {
   readSync,
   rmSync,
   realpathSync,
+  writeSync,
 } from "node:fs";
-import { chmod, lstat, mkdir, open, realpath } from "node:fs/promises";
+import { chmod, lstat, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, parse, posix, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 
 import {
   isSafeArtifactRelativePath,
@@ -126,7 +129,7 @@ export async function materializeWorkspace(
   try {
     workspaceIdentity = await readWorkspaceRootIdentity(workspacePath);
     await chmod(workspacePath, DIRECTORY_MODE);
-    for (const entry of entries) await materializeEntry(workspacePath, entry);
+    materializeEntries(workspacePath, workspaceIdentity, entries);
     workspacePath = sealWorkspace(workspacePath, join(parent.path, `.ebo-${attemptId}-sealed-${randomUUID()}`), workspaceIdentity);
     await runSetup(options.setup, options.setupSteps, workspacePath);
     normalizeWorkspace(workspacePath, workspaceIdentity);
@@ -318,28 +321,131 @@ function createWorkspace(parent: WorkspaceParent, attemptId: string): { path: st
   }
 }
 
-async function materializeEntry(root: string, entry: TaskArchiveEntry): Promise<void> {
-  assertSafeWorkspacePath(root, entry.path);
-  if (entry.kind === "directory") {
-    await ensureDirectory(root, entry.path);
-    return;
-  }
-  if (entry.kind !== "file") throw new Error(`Archive entry "${entry.path}" is unsafe.`);
-
-  await ensureDirectory(root, posix.dirname(entry.path));
-  const destination = resolve(root, entry.path);
-  const mode = normalizedFileMode(entry.mode);
-  const handle = await open(
-    destination,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-    mode,
-  );
+function materializeEntries(
+  root: string,
+  expectedIdentity: WorkspaceIdentity,
+  entries: readonly TaskArchiveEntry[],
+): void {
+  const originalCwd = process.cwd();
+  const rootFd = openSync(root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   try {
-    await handle.writeFile(entry.bytes);
-    await handle.sync();
-    await handle.chmod(mode);
+    if (!sameIdentity(fstatSync(rootFd), expectedIdentity)) throw new Error("Workspace root changed before extraction.");
+    // Keep extraction synchronous. Relative opens stay anchored to the
+    // verified root directory descriptor, and concurrent materializers cannot
+    // interleave this short process-global cwd section.
+    process.chdir(root);
+    const cwdFd = openSync(".", constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    try {
+      if (!sameIdentity(fstatSync(cwdFd), expectedIdentity)) {
+        throw new Error("Workspace root changed before extraction.");
+      }
+      for (const entry of entries) materializeEntryFromCwd(root, entry);
+    } finally {
+      closeSync(cwdFd);
+    }
   } finally {
-    await handle.close();
+    process.chdir(originalCwd);
+    closeSync(rootFd);
+  }
+}
+
+function materializeEntryFromCwd(root: string, entry: TaskArchiveEntry): void {
+  assertSafeWorkspacePath(root, entry.path);
+  const parts = entry.path.split("/");
+  const directoryParts = entry.kind === "directory" ? parts : parts.slice(0, -1);
+  for (const segment of directoryParts) enterMaterializationDirectory(root, segment);
+  try {
+    if (entry.kind === "directory") return;
+    if (entry.kind !== "file") throw new Error(`Archive entry "${entry.path}" is unsafe.`);
+    const name = parts.at(-1);
+    if (name === undefined || name.length === 0) throw new Error(`Archive entry "${entry.path}" is unsafe.`);
+    const mode = normalizedFileMode(entry.mode);
+    const fileFd = openSync(name, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, mode);
+    try {
+      for (let offset = 0; offset < entry.bytes.length;) {
+        const written = writeSync(fileFd, entry.bytes, offset, entry.bytes.length - offset);
+        if (written <= 0) throw new Error(`Archive entry "${entry.path}" could not be written.`);
+        offset += written;
+      }
+      fsyncSync(fileFd);
+      fchmodSync(fileFd, mode);
+    } finally {
+      closeSync(fileFd);
+    }
+  } finally {
+    for (let index = directoryParts.length - 1; index >= 0; index -= 1) process.chdir("..");
+  }
+}
+
+function enterMaterializationDirectory(root: string, segment: string): void {
+  if (!isSafeArtifactRelativePath(segment)) throw new Error(`Workspace path "${segment}" is unsafe.`);
+  let metadata;
+  try {
+    metadata = lstatSync(segment);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    mkdirSync(segment, { mode: DIRECTORY_MODE });
+    metadata = lstatSync(segment);
+  }
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new Error(`Workspace destination "${segment}" crosses a symbolic link.`);
+  }
+  const childFd = openSync(segment, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try {
+    const childIdentity = fstatSync(childFd);
+    if (!sameIdentity(metadata, childIdentity)) throw new Error(`Workspace directory "${segment}" changed during extraction.`);
+    const alias = `.ebo-materialize-${randomUUID()}`;
+    try {
+      lstatSync(alias);
+      throw new Error(`Workspace extraction alias already exists: "${alias}".`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    renameSync(segment, alias);
+    let moved = true;
+    try {
+      if (!sameIdentity(childIdentity, lstatSync(alias))) {
+        throw new Error(`Workspace directory "${segment}" changed during extraction.`);
+      }
+      process.chdir(alias);
+      const enteredFd = openSync(".", constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      try {
+        if (!sameIdentity(childIdentity, fstatSync(enteredFd)) || !isContained(root, realpathSync("."))) {
+          throw new Error(`Workspace directory "${segment}" changed during extraction.`);
+        }
+      } finally {
+        closeSync(enteredFd);
+      }
+      let destinationAbsent = false;
+      try {
+        lstatSync(join("..", segment));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") destinationAbsent = true;
+        else throw error;
+      }
+      if (!destinationAbsent) throw new Error(`Workspace destination "${segment}" changed during extraction.`);
+      renameSync(join("..", alias), join("..", segment));
+      moved = false;
+    } finally {
+      if (moved) {
+        try {
+          if (sameIdentity(childIdentity, lstatSync(join("..", alias)))) {
+            let destinationAbsent = false;
+            try {
+              lstatSync(join("..", segment));
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code === "ENOENT") destinationAbsent = true;
+              else throw error;
+            }
+            if (destinationAbsent) renameSync(join("..", alias), join("..", segment));
+          }
+        } catch {
+          // The caller will fail closed and remove only the original root.
+        }
+      }
+    }
+  } finally {
+    closeSync(childFd);
   }
 }
 
@@ -361,25 +467,6 @@ function sealWorkspace(path: string, destination: string, expected: WorkspaceIde
       throw new Error("Workspace root disappeared during sealing.");
     }
     throw error;
-  }
-}
-
-async function ensureDirectory(root: string, relativePath: string): Promise<void> {
-  if (relativePath === ".") return;
-  assertSafeWorkspacePath(root, relativePath);
-  let current = root;
-  for (const segment of relativePath.split("/")) {
-    current = resolve(current, segment);
-    try {
-      await mkdir(current, { mode: DIRECTORY_MODE });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    }
-    const metadata = await lstat(current);
-    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-      throw new Error(`Workspace destination "${relativePath}" crosses a symbolic link.`);
-    }
-    await chmod(current, DIRECTORY_MODE);
   }
 }
 
