@@ -612,7 +612,14 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         };
         record.harnessTerminationConfirmed = harnessTerminationConfirmed;
       } else if (outcome?.kind === "result") {
-        harnessResult = outcome.value;
+        harnessResult = budgetExpired === "harness" && outcome.value.status === "completed"
+          ? {
+            ...outcome.value,
+            status: "stopped",
+            stopReason: "budget",
+            reason: outcome.value.reason ?? "Harness completed after its budget deadline.",
+          }
+          : outcome.value;
         record.harness = durableHarnessResult(harnessResult);
         classification = classifyHarness(harnessResult, workspace);
         if (classification !== undefined && harnessResult.status !== "completed") {

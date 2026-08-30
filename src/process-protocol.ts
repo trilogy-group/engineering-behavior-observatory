@@ -72,6 +72,7 @@ const DEFAULT_KILL_GRACE_MS = 250;
 const DEFAULT_MAX_IN_MEMORY_OBSERVATIONS = 1024;
 const MAX_TIMER_MS = 2_147_483_647;
 const INTERNAL_RECORDER_TOKEN = Symbol("internal recorder event");
+const CLAIMED_WRITER_PATHS = new Set<string>();
 
 /**
  * Appends JSON records one line at a time and optionally fsyncs each append.
@@ -160,9 +161,11 @@ export class JsonlEvidenceWriter {
 
   public claim(token?: typeof INTERNAL_RECORDER_TOKEN): void {
     if (this.claimed) throw new Error("JSONL evidence writer is already claimed by a protocol recorder.");
+    if (CLAIMED_WRITER_PATHS.has(this.path)) throw new Error("JSONL evidence path is already claimed by a protocol recorder.");
     if (this.hasWrites) throw new Error("JSONL evidence writer cannot be claimed after direct writes.");
     if (token !== INTERNAL_RECORDER_TOKEN) throw new Error("JSONL evidence writer claim is internal.");
     this.claimed = true;
+    CLAIMED_WRITER_PATHS.add(this.path);
   }
 
   private async openHandle(): Promise<FileHandle> {

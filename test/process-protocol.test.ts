@@ -115,6 +115,21 @@ test("a JSONL writer cannot be reused by multiple protocol recorders", async () 
   }
 });
 
+test("a closed recorder cannot be replaced by a new writer for the same path", async () => {
+  const root = temporaryRoot();
+  try {
+    const path = join(root, "reopened.jsonl");
+    const firstWriter = new JsonlEvidenceWriter(path);
+    const firstRecorder = new ProtocolEvidenceRecorder(firstWriter, "first-harness");
+    await firstRecorder.recordProcess("exited");
+    await firstWriter.close();
+    const secondWriter = new JsonlEvidenceWriter(path);
+    assert.throws(() => new ProtocolEvidenceRecorder(secondWriter, "second-harness"), /path is already claimed/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("process timer grace periods reject values above Node's maximum", () => {
   assert.throws(() => spawnProtocolProcess({
     ...nodeScript(""),
