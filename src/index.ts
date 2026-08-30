@@ -32,6 +32,7 @@ export {
 } from "./contracts.js";
 export {
   admitTaskPacket,
+  assertTaskPacketFreezeRecord,
   assertTaskPacketAdmitted,
   defaultFreezeLocator,
   formatErrors,

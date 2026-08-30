@@ -112,7 +112,10 @@ function bundleFixture(): { root: string; experiment: ExperimentConfiguration } 
   return { root, experiment };
 }
 
-function compileOptions(experiment: ExperimentConfiguration): {
+function compileOptions(
+  experiment: ExperimentConfiguration,
+  permutationDefinition = Buffer.from("{\"algorithm\":\"fisher-yates-v1\"}"),
+): {
   resolvedDigests: Record<string, ExperimentConfiguration["captureProfile"]["digest"]>;
   frozenTasks: Record<string, FrozenTaskInput>;
   resolvedPackets: Record<string, ResolvedTaskPacket>;
@@ -131,13 +134,30 @@ function compileOptions(experiment: ExperimentConfiguration): {
       : []),
   ];
   const frozenTasks = Object.fromEntries(
-    Object.entries(experiment.taskSet).map(([id, condition], index) => [id, {
-      packetId: id,
-      packetLocator: condition.packetRef.locator,
-      packetDigest: condition.packetRef.digest,
-      freezeLocator: `${condition.packetRef.locator}.freeze.json`,
-      aggregateDigest: { algorithm: "sha256", value: String(index + 1).padStart(64, "0") },
-    }]),
+    Object.entries(experiment.taskSet).map(([id, condition]) => {
+      const preAdmissionDigest = { algorithm: "sha256" as const, value: "1".repeat(64) };
+      const packetLocator = condition.packetRef.locator;
+      const packetDigest = condition.packetRef.digest;
+      const frozenAt = "2026-08-26T00:00:00Z";
+      const components = {
+        prompt: packetDigest,
+        fixture: packetDigest,
+        reference: { status: "not-provided" as const },
+        verifier: packetDigest,
+        reviewRecord: packetDigest,
+        controlledPerturbation: { status: "not-applied" as const },
+      };
+      return [id, {
+        schemaVersion: "ebo.task-packet-freeze/v1" as const,
+        packetId: id,
+        packetLocator,
+        preAdmissionDigest,
+        packetDigest,
+        components,
+        aggregateDigest: digestMetadata({ packetId: id, packetLocator, preAdmissionDigest, packetDigest, components, frozenAt }),
+        frozenAt,
+      }];
+    }),
   ) as Record<string, FrozenTaskInput>;
   const resolvedPackets = Object.fromEntries(
     Object.entries(experiment.taskSet).map(([id, condition]) => [id, {
@@ -159,6 +179,9 @@ function compileOptions(experiment: ExperimentConfiguration): {
       admission: { status: "admitted" as const, reviewedAt: "2026-08-26T00:00:00Z" },
     }]),
   ) as Record<string, ResolvedTaskPacket>;
+  if (experiment.ordering.strategy === "permuted" && experiment.ordering.permutationAlgorithmRef !== undefined) {
+    experiment.ordering.permutationAlgorithmRef.digest = digestBytes(permutationDefinition);
+  }
   const options = {
     resolvedDigests: Object.fromEntries(references.map((reference) => [reference.locator, reference.digest])),
     frozenTasks,
@@ -167,7 +190,7 @@ function compileOptions(experiment: ExperimentConfiguration): {
   if (experiment.ordering.strategy === "permuted" && experiment.ordering.permutationAlgorithmRef !== undefined) {
     return {
       ...options,
-      permutationAlgorithms: { [experiment.ordering.permutationAlgorithmRef.locator]: "fisher-yates-v1" },
+      permutationAlgorithms: { [experiment.ordering.permutationAlgorithmRef.locator]: permutationDefinition },
     };
   }
   return options;
@@ -281,16 +304,12 @@ test("matrix compilation rejects unfrozen, duplicate, and unresolved inputs", ()
   unresolved.resolvedDigests["models/model-a.json"] = { algorithm: "sha256", value: "0".repeat(64) };
   assert.throws(() => compileRunQueue(experiment, unresolved), /model "model-a" digest/);
 
-  const unsupported = compileOptions(experiment);
-  unsupported.permutationAlgorithms = {
-    [experiment.ordering.strategy === "permuted" ? experiment.ordering.permutationAlgorithmRef!.locator : "algorithm.json"]: "unknown",
-  };
-  assert.throws(() => compileRunQueue(experiment, unsupported), /Unsupported permutation algorithm/);
-  const unversioned = compileOptions(experiment);
-  unversioned.permutationAlgorithms = {
-    [experiment.ordering.strategy === "permuted" ? experiment.ordering.permutationAlgorithmRef!.locator : "algorithm.json"]: "fisher-yates",
-  };
-  assert.throws(() => compileRunQueue(experiment, unversioned), /Unsupported permutation algorithm/);
+  const unknownExperiment = fixture("experiment.18-cell.v1.json");
+  const unsupported = compileOptions(unknownExperiment, Buffer.from("{\"algorithm\":\"unknown\"}"));
+  assert.throws(() => compileRunQueue(unknownExperiment, unsupported), /Unsupported permutation algorithm/);
+  const unversionedExperiment = fixture("experiment.18-cell.v1.json");
+  const unversioned = compileOptions(unversionedExperiment, Buffer.from("{\"algorithm\":\"fisher-yates\"}"));
+  assert.throws(() => compileRunQueue(unversionedExperiment, unversioned), /Unsupported permutation algorithm/);
 });
 
 test("queue validation binds entry references to the supplied experiment", () => {
@@ -319,10 +338,8 @@ test("queue validation checks the supplied experiment and frozen task record", (
   invalidExperiment.extra = true;
   assert.match(validateRunQueue(queue, invalidExperiment).map((error) => error.message).join("\n"), /must NOT have additional properties/);
 
-  const unsupported = compileOptions(experiment);
-  unsupported.permutationAlgorithms = {
-    [experiment.ordering.strategy === "permuted" ? experiment.ordering.permutationAlgorithmRef!.locator : "algorithm.json"]: "unknown",
-  };
+  const unknownBytes = Buffer.from("{\"algorithm\":\"unknown\"}");
+  const unsupported = compileOptions(experiment, unknownBytes);
   assert.match(
     validateRunQueue(queue, experiment, "run-queue.json", unsupported).map((error) => error.message).join("\n"),
     /Unsupported permutation algorithm/,
@@ -342,9 +359,10 @@ test("oversized matrices fail before eager expansion", () => {
   experiment.trialCount = MAX_RUN_QUEUE_ENTRIES + 1;
   assert.throws(() => compileRunQueue(experiment), /local queue limit/);
 
-  const queue = compileRunQueue(fixture("experiment.18-cell.v1.json"), compileOptions(fixture("experiment.18-cell.v1.json")));
+  const normalExperiment = fixture("experiment.18-cell.v1.json");
+  const queue = compileRunQueue(normalExperiment, compileOptions(normalExperiment));
   assert.match(validateRunQueue(queue, experiment).map((error) => error.message).join("\n"), /local queue limit/);
-  const oversizedQueue = compileRunQueue(fixture("experiment.18-cell.v1.json"), compileOptions(fixture("experiment.18-cell.v1.json")));
+  const oversizedQueue = compileRunQueue(normalExperiment, compileOptions(normalExperiment));
   oversizedQueue.matrix.trialCount = MAX_RUN_QUEUE_ENTRIES + 1;
   assert.match(validateRunQueue(oversizedQueue).map((error) => error.message).join("\n"), /local queue limit/);
 });

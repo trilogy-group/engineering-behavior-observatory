@@ -6,6 +6,7 @@ import {
   assertNoDuplicateJsonKeys,
   digestMetadata,
   validateArtifact,
+  verifyDigest,
   writeMetadataAtomicallyIfAbsentSync,
   type ArtifactValidationError,
 } from "./artifacts.js";
@@ -27,6 +28,7 @@ import {
   type ResolvedTaskPacket,
 } from "./contracts.js";
 import {
+  assertTaskPacketFreezeRecord,
   defaultFreezeLocator,
   formatErrors,
   statusTaskPacket,
@@ -613,6 +615,16 @@ function resolvePermutationDefinition(
   } else {
     definition = options.permutationAlgorithm;
     if (definition === undefined) definition = options.permutationAlgorithms?.[reference.locator];
+    if (!(definition instanceof Uint8Array)) {
+      throw new Error(`Permutation algorithm "${reference.locator}" must be supplied as verified bytes.`);
+    }
+    const bytes = Buffer.from(definition);
+    if (!verifyDigest(bytes, reference.digest)) {
+      throw new Error(`Permutation algorithm "${reference.locator}" digest does not match its reference.`);
+    }
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    assertNoDuplicateJsonKeys(text);
+    definition = JSON.parse(text) as unknown;
   }
   if (definition === undefined) {
     throw new Error(`Permutation algorithm "${reference.locator}" content must be supplied before scheduling.`);
@@ -731,7 +743,7 @@ function resolveFrozenTasks(
 
   for (const [taskId, condition] of Object.entries(experiment.taskSet)) {
     const suppliedInput = supplied?.[taskId] ?? supplied?.[condition.packetRef.locator];
-    const identity = options.bundleRoot !== undefined
+  const identity = options.bundleRoot !== undefined
       ? frozenTaskFromBundle(
         options.bundleRoot,
         taskId,
@@ -807,6 +819,10 @@ function frozenTaskFromInput(
   if (input === undefined) {
     throw new Error(`Task packet "${taskId}" has no frozen record.`);
   }
+  if (!("schemaVersion" in input) || input.schemaVersion !== "ebo.task-packet-freeze/v1") {
+    throw new Error(`Task packet "${taskId}" requires a complete freeze record when no bundle root is supplied.`);
+  }
+  assertTaskPacketFreezeRecord(input);
   if ("status" in input && input.status !== undefined && input.status !== "frozen") {
     throw new Error(`Task packet "${taskId}" is ${input.status}, not frozen.`);
   }
