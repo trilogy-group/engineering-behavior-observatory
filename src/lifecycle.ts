@@ -737,7 +737,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                 record.verifierTerminationConfirmed = verifierTerminationConfirmed;
                 classification = abortClassification(abortCause, budgetExpired, undefined, workspace);
               } else {
-                const verifier = normalizeVerifierShutdownFailure(snapshotVerifier(verifierOutcome.value));
+                let verifier = normalizeVerifierShutdownFailure(snapshotVerifier(verifierOutcome.value));
                 record.verifier = verifier;
                 if (verifier.status !== "passed") {
                   let verifierTerminationConfirmed = verifier.shutdownResult === undefined || verifier.shutdownResult.status === "completed";
@@ -745,7 +745,8 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                     verifierTerminationConfirmed = false;
                     const shutdownResult = await shutdownVerifier(verifierShutdown, shutdownGraceMs);
                     if (shutdownResult !== undefined) {
-                      record.verifier = { ...verifier, shutdownResult };
+                      verifier = normalizeVerifierShutdownFailure({ ...verifier, shutdownResult });
+                      record.verifier = verifier;
                       verifierTerminationConfirmed = shutdownResult.status === "completed";
                     }
                   }
@@ -1418,6 +1419,8 @@ async function shutdownVerifier(
         timer = setTimeout(() => resolvePromise({ status: "timed-out", error: "Verifier shutdown exceeded its grace period." }), graceMs);
       }),
     ]);
+  } catch (error) {
+    return { status: "failed", error: errorMessage(error) };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }

@@ -149,6 +149,31 @@ test("verifier task failures with failed shutdown retain verifier-error provenan
   }
 });
 
+test("registered verifier shutdown failures retain verifier-error provenance", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-registered-verifier-shutdown-"));
+  try {
+    const recordPath = join(root, "attempt.json");
+    const result = await executeRunAttempt({
+      run,
+      recordPath,
+      shutdownGraceMs: 10,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async ({ registerShutdown }) => {
+        registerShutdown(() => { throw new Error("registered verifier shutdown failed"); });
+        return { status: "failed", error: "assertion failed" };
+      },
+      evidence: { flush: () => undefined },
+    });
+    assert.equal(result.classification.kind, "verifier-error");
+    assert.equal(result.record.verifier?.status, "error");
+    assert.equal(result.record.verifier?.shutdownResult?.status, "failed");
+    assert.equal((await readAttemptRecord(recordPath)).classification?.kind, "verifier-error");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("passed verifier results reject an error field", async () => {
   const result = await executeRunAttempt({
     run,
