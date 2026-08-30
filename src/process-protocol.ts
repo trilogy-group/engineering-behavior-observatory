@@ -923,7 +923,7 @@ export class ProtocolProcess {
       try {
         await mkdir(dirname(this.stderrPath), { recursive: true, mode: 0o700 });
         diagnosticFile = await open(this.stderrPath, "wx", 0o600);
-        await diagnosticFile.write(stderr.bytes);
+        await writeFileHandleFully(diagnosticFile, stderr.bytes, "stderr evidence");
         await diagnosticFile.sync();
         await diagnosticFile.close();
         diagnosticFile = undefined;
@@ -1008,6 +1008,15 @@ function syncDirectory(path: string): void {
     fsyncSync(descriptor);
   } finally {
     closeSync(descriptor);
+  }
+}
+
+async function writeFileHandleFully(handle: FileHandle, bytes: Uint8Array, label: string): Promise<void> {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const { bytesWritten } = await handle.write(bytes.subarray(offset));
+    if (bytesWritten <= 0) throw new Error(`${label} write made no progress.`);
+    offset += bytesWritten;
   }
 }
 

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { link, lstat, mkdir, open, readFile, rename, rm, unlink } from "node:fs/promises";
+import { link, lstat, mkdir, open, readFile, rename, rm, unlink, type FileHandle } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 export type RunIdentity = {
@@ -935,7 +935,7 @@ async function writeAttemptRecordInternal(path: string, record: AttemptRecord, a
     const bytes = Buffer.from(`${JSON.stringify(record)}\n`, "utf8");
     const handle = await open(temporary, "wx", 0o600);
     try {
-      await handle.write(bytes);
+      await writeFileHandleFully(handle, bytes, "Attempt record");
       await handle.sync();
     } finally {
       await handle.close();
@@ -1006,6 +1006,15 @@ async function syncDirectory(path: string): Promise<void> {
   }
 }
 
+async function writeFileHandleFully(handle: FileHandle, bytes: Uint8Array, label: string): Promise<void> {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const { bytesWritten } = await handle.write(bytes.subarray(offset));
+    if (bytesWritten <= 0) throw new Error(`${label} write made no progress.`);
+    offset += bytesWritten;
+  }
+}
+
 export async function readAttemptRecord(path: string): Promise<AttemptRecord> {
   const bytes = await readFile(resolve(path));
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -1043,7 +1052,7 @@ async function reserveAttemptRecordPath(path: string): Promise<string> {
   try {
     handle = await open(reservation, "wx", 0o600);
     created = true;
-    await handle.write(`${process.pid}\n`, undefined, "utf8");
+    await writeFileHandleFully(handle, Buffer.from(`${process.pid}\n`, "utf8"), "Attempt record reservation");
     await handle.sync();
     return reservation;
   } catch (error) {
