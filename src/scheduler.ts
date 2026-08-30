@@ -250,6 +250,9 @@ export function validateRunQueue(
   const errors = validateArtifact(artifact, queue);
   if (errors.length > 0) return errors;
   if (!isRecord(queue)) return [queueError(artifact, "/", "Run queue must be an object.")];
+  if (queue.schemaVersion !== "ebo.run-queue/v1") {
+    return [queueError(artifact, "/schemaVersion", "Expected an ebo.run-queue/v1 artifact.")];
+  }
 
   const runQueue = queue as unknown as RunQueue;
   const semanticErrors: ArtifactValidationError[] = [];
@@ -260,13 +263,17 @@ export function validateRunQueue(
   const cells = new Set<string>();
   let expectedTasks: Map<string, FrozenTaskIdentity> | undefined;
   if (experiment !== undefined) {
+    if (options.resolvedPackets !== undefined) {
+      try {
+        assertAdmittedTaskPackets(experiment.taskSet, options.resolvedPackets);
+      } catch (error) {
+        semanticErrors.push(queueError(artifact, "/entries/task", error instanceof Error ? error.message : "Resolved task packets are not admitted."));
+      }
+    }
     if (hasFrozenTaskInputs(options)) {
       try {
         if (options.bundleRoot === undefined && options.resolvedPackets === undefined) {
           throw new Error("Resolved admitted task packets are required for API-supplied freeze identities.");
-        }
-        if (options.bundleRoot === undefined && options.resolvedPackets !== undefined) {
-          assertAdmittedTaskPackets(experiment.taskSet, options.resolvedPackets);
         }
         expectedTasks = resolveFrozenTasks(experiment, provenanceOptions(runQueue, options));
       } catch (error) {

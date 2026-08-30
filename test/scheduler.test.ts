@@ -321,6 +321,14 @@ test("queue validation checks the supplied experiment and frozen task record", (
     validateRunQueue(queue, experiment, "run-queue.json", unsupported).map((error) => error.message).join("\n"),
     /Unsupported permutation algorithm/,
   );
+
+  const rejectedPackets = compileOptions(experiment).resolvedPackets;
+  rejectedPackets["task-a"]!.admission = { status: "rejected", reviewedAt: null };
+  assert.match(
+    validateRunQueue(queue, experiment, "run-queue.json", { resolvedPackets: rejectedPackets })
+      .map((error) => error.message).join("\n"),
+    /not admitted/,
+  );
 });
 
 test("oversized matrices fail before eager expansion", () => {
@@ -353,6 +361,13 @@ test("standalone queue ordering rejects inapplicable fields", () => {
   const invalid = structuredClone(queue);
   invalid.ordering.balanceBy = "model";
   assert.match(validateRunQueue(invalid).map((error) => error.message).join("\n"), /must NOT be valid/);
+});
+
+test("queue validation rejects another valid artifact schema", () => {
+  assert.match(
+    validateRunQueue(fixture("experiment.18-cell.v1.json")).map((error) => error.message).join("\n"),
+    /Expected an ebo.run-queue\/v1 artifact/,
+  );
 });
 
 test("bundle-root queue validation rechecks real frozen sources", () => {
