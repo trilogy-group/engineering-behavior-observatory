@@ -152,7 +152,8 @@ test("materializes frozen fixtures reproducibly and cleans successful attempts",
 
 test("materializes concurrent attempts without process-wide directory interference", async () => {
   const { root } = createBundle();
-  const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+  const parentContainer = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+  const parent = join(parentContainer, "created-concurrently");
   const closed: Array<Promise<void>> = [];
 
   try {
@@ -172,6 +173,29 @@ test("materializes concurrent attempts without process-wide directory interferen
     assert.equal(existsSync(first.workspacePath), false);
     assert.equal(existsSync(second.workspacePath), false);
   } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(parentContainer, { force: true, recursive: true });
+  }
+});
+
+test("creates private workspace roots despite a restrictive caller umask", async () => {
+  const { root } = createBundle();
+  const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+  let originalUmask: number | undefined;
+
+  try {
+    freezeTaskPacket(root, "packet.json");
+    originalUmask = process.umask(0o777);
+    const result = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "restrictive-umask",
+      workspaceParent: parent,
+    });
+    assert.equal(statSync(result.workspacePath).mode & 0o7777, 0o700);
+    await result.cleanup("success");
+  } finally {
+    if (originalUmask !== undefined) process.umask(originalUmask);
     rmSync(root, { force: true, recursive: true });
     rmSync(parent, { force: true, recursive: true });
   }

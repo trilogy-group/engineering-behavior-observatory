@@ -21,7 +21,7 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs";
-import { lstat, mkdir, realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 
@@ -264,7 +264,9 @@ async function prepareWorkspaceParent(parent: string, bundleRoot: string): Promi
         metadata = await lstat(current);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        await mkdir(current, { mode: 0o700 });
+        try { mkdirPrivate(current); } catch (mkdirError) {
+          if ((mkdirError as NodeJS.ErrnoException).code !== "EEXIST") throw mkdirError;
+        }
         metadata = await lstat(current);
         created.push({ path: current, dev: metadata.dev, ino: metadata.ino });
       }
@@ -313,6 +315,8 @@ function createWorkspace(parent: WorkspaceParent, attemptId: string): {
   const parentFd = openSync(parent.path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   const originalCwd = process.cwd();
   let createdPath: string | undefined;
+  let createdIdentity: WorkspaceIdentity | undefined;
+  let descriptor: number | undefined;
   try {
     // This synchronous section has no await points, so concurrent callers cannot
     // interleave cwd changes while mkdtemp is anchored to parentFd's directory.
@@ -320,25 +324,46 @@ function createWorkspace(parent: WorkspaceParent, attemptId: string): {
     if (!sameIdentity(fstatSync(parentFd), lstatSync("."))) {
       throw new Error("Workspace parent changed before attempt creation.");
     }
-    createdPath = mkdtempSync(`ebo-${attemptId}-`);
+    const originalUmask = process.umask(0);
+    try {
+      createdPath = mkdtempSync(`ebo-${attemptId}-`);
+    } finally {
+      process.umask(originalUmask);
+    }
     if (!sameIdentity(fstatSync(parentFd), lstatSync("."))) {
       throw new Error("Workspace parent changed during attempt creation.");
     }
-    const descriptor = openSync(createdPath, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    descriptor = openSync(createdPath, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
     const metadata = fstatSync(descriptor);
     const pathMetadata = lstatSync(createdPath);
     if (!metadata.isDirectory() || metadata.isSymbolicLink()
         || !sameIdentity(metadata, pathMetadata) || pathMetadata.isSymbolicLink()) {
       closeSync(descriptor);
+      descriptor = undefined;
       throw new Error("Workspace root changed during attempt creation.");
     }
-    return { path: realpathSync(createdPath), identity: { dev: metadata.dev, ino: metadata.ino }, descriptor };
+    createdIdentity = { dev: metadata.dev, ino: metadata.ino };
+    const result = { path: realpathSync(createdPath), identity: createdIdentity, descriptor };
+    descriptor = undefined;
+    return result;
   } catch (error) {
-    if (createdPath !== undefined) rmSync(createdPath, { force: true, recursive: true });
+    if (descriptor !== undefined) closeSync(descriptor);
+    // There is no descriptor-relative remove API in Node. If adoption failed,
+    // leave the returned pathname untouched rather than risk deleting a raced
+    // replacement; successful lifecycles clean through their retained handle.
     throw error;
   } finally {
     process.chdir(originalCwd);
     closeSync(parentFd);
+  }
+}
+
+function mkdirPrivate(path: string): void {
+  const originalUmask = process.umask(0);
+  try {
+    mkdirSync(path, { mode: DIRECTORY_MODE });
+  } finally {
+    process.umask(originalUmask);
   }
 }
 
@@ -408,7 +433,7 @@ function enterMaterializationDirectory(root: string, segment: string): void {
     metadata = lstatSync(segment);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    mkdirSync(segment, { mode: DIRECTORY_MODE });
+    mkdirPrivate(segment);
     metadata = lstatSync(segment);
   }
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
