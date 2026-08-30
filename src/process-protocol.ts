@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
-import { closeSync, mkdirSync, openSync } from "node:fs";
+import { closeSync, constants, fsyncSync, mkdirSync, openSync } from "node:fs";
 import { mkdir, open, writeFile, type FileHandle } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
@@ -458,6 +458,7 @@ export class ProtocolProcess {
       mkdirSync(dirname(evidencePath), { recursive: true, mode: 0o700 });
       const descriptor = openSync(evidencePath, "wx", 0o600);
       closeSync(descriptor);
+      syncDirectory(dirname(resolve(evidencePath)));
       writer = new JsonlEvidenceWriter(evidencePath, {
         maxLineBytes: Math.min(Number.MAX_SAFE_INTEGER, this.stdoutLineLimit * 4 + 1024),
       });
@@ -779,6 +780,15 @@ export async function runProtocolProcess(options: ProtocolProcessOptions): Promi
 
 export const spawnJsonlProcess = spawnProtocolProcess;
 export const runJsonlProcess = runProtocolProcess;
+
+function syncDirectory(path: string): void {
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY);
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
