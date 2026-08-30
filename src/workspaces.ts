@@ -264,11 +264,15 @@ async function prepareWorkspaceParent(parent: string, bundleRoot: string): Promi
         metadata = await lstat(current);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        try { mkdirPrivate(current); } catch (mkdirError) {
+        let createdByThisCall = false;
+        try {
+          mkdirPrivate(current);
+          createdByThisCall = true;
+        } catch (mkdirError) {
           if ((mkdirError as NodeJS.ErrnoException).code !== "EEXIST") throw mkdirError;
         }
         metadata = await lstat(current);
-        created.push({ path: current, dev: metadata.dev, ino: metadata.ino });
+        if (createdByThisCall) created.push({ path: current, dev: metadata.dev, ino: metadata.ino });
       }
       if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
         throw new Error("Workspace parent cannot cross a symbolic link or non-directory.");
@@ -977,16 +981,32 @@ async function runSetup(
       return child;
     },
   };
+  let setupFailed = false;
+  let setupFailure: unknown;
   try {
     for (const step of allSteps) {
       if (typeof step !== "function") throw new Error("Workspace setup steps must be functions.");
       await step(workspacePath, context);
     }
+  } catch (error) {
+    setupFailed = true;
+    setupFailure = error;
+    throw error;
   } finally {
     contextOpen = false;
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    await reapSetupChildren(children);
-    if (spawnError !== undefined) throw new Error(`Workspace setup child failed: ${spawnError.message}`);
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await reapSetupChildren(children);
+      if (spawnError !== undefined) throw new Error(`Workspace setup child failed: ${spawnError.message}`);
+    } catch (cleanupError) {
+      if (setupFailed) {
+        throw new AggregateError(
+          [setupFailure, cleanupError],
+          `Workspace setup failed: ${errorMessage(setupFailure)}; cleanup failed: ${errorMessage(cleanupError)}`,
+        );
+      }
+      throw cleanupError;
+    }
   }
 }
 
@@ -1174,6 +1194,7 @@ function removeQuarantinedWorkspace(path: string, expected: WorkspaceIdentity): 
   const originalCwd = process.cwd();
   try {
     if (!sameIdentity(fstatSync(rootFd), expected)) return false;
+    fchmodSync(rootFd, DIRECTORY_MODE);
     process.chdir(path);
     const cwdFd = openSync(".", constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
     try {
@@ -1216,11 +1237,14 @@ function removeDirectoryEntryFromCwd(name: string, directory: boolean): void {
     moveAndUnlinkFromCwd(name, current);
     return;
   }
-  const childFd = openChildSync(name, directory);
+  const childFd = openChildSync(name, directory, current.isDirectory() ? DIRECTORY_MODE : undefined);
   try {
     const opened = fstatSync(childFd);
     if (!sameIdentity(current, opened)) throw new Error(`Workspace entry "${name}" changed during cleanup.`);
-    if (opened.isDirectory()) moveAndRemoveDirectoryFromCwd(name, opened);
+    if (opened.isDirectory()) {
+      fchmodSync(childFd, DIRECTORY_MODE);
+      moveAndRemoveDirectoryFromCwd(name, opened);
+    }
     else moveAndUnlinkFromCwd(name, opened);
   } finally {
     closeSync(childFd);

@@ -340,9 +340,11 @@ test("turns setup spawn errors into failed attempts", { skip: process.platform =
       workspaceParent: parent,
       setup: (_workspacePath, { spawn: spawnSetupChild }) => {
         spawnSetupChild("/definitely/missing/ebo-setup-command", [], { stdio: "ignore" });
+        throw new Error("primary setup failed");
       },
     });
     assert.equal(result.state, "failed");
+    assert.match(result.error ?? "", /primary setup failed/);
     assert.match(result.error ?? "", /Workspace setup child failed/);
     assert.equal(result.retained, false);
     assert.equal(existsSync(result.workspacePath), false);
@@ -507,6 +509,28 @@ test("retains failed setup attempts only when configured", async () => {
     assert.equal(statSync(unreadableRoot.workspacePath).mode & 0o7777, 0o700);
     await unreadableRoot.cleanup("success");
     assert.equal(unreadableRoot.state, "cleaned");
+
+    const readOnlyTree = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "failed-read-only-tree",
+      workspaceParent: parent,
+      retainOnFailure: true,
+      setup: (workspacePath) => {
+        const directory = join(workspacePath, "read-only-diagnostics");
+        mkdirSync(directory, { mode: 0o755 });
+        writeFileSync(join(directory, "output.log"), "output\n");
+        chmodSync(directory, 0o400);
+        chmodSync(workspacePath, 0o500);
+        throw new Error("read-only tree setup failed");
+      },
+    });
+    assert.equal(readOnlyTree.state, "failed");
+    assert.equal(readOnlyTree.retained, true);
+    assert.equal(statSync(readOnlyTree.workspacePath).mode & 0o7777, 0o700);
+    assert.equal(statSync(join(readOnlyTree.workspacePath, "read-only-diagnostics")).mode & 0o7777, 0o700);
+    await readOnlyTree.cleanup("success");
+    assert.equal(readOnlyTree.state, "cleaned");
   } finally {
     rmSync(root, { force: true, recursive: true });
     rmSync(parent, { force: true, recursive: true });
@@ -638,6 +662,29 @@ test("refuses cleanup after a ready workspace path disappears", async () => {
     await assert.rejects(result.cleanup("success"), /Workspace root changed before cleanup/);
     assert.equal(existsSync(join(moved, "README.md")), true);
     assert.equal(result.state, "ready");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(parent, { force: true, recursive: true });
+  }
+});
+
+test("cleans an owned workspace after permissions become read-only", async () => {
+  const { root } = createBundle();
+  const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+
+  try {
+    freezeTaskPacket(root, "packet.json");
+    const result = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "cleanup-read-only",
+      workspaceParent: parent,
+    });
+    chmodSync(join(result.workspacePath, "src"), 0o000);
+    chmodSync(result.workspacePath, 0o500);
+    await result.cleanup("success");
+    assert.equal(result.state, "cleaned");
+    assert.equal(existsSync(result.workspacePath), false);
   } finally {
     rmSync(root, { force: true, recursive: true });
     rmSync(parent, { force: true, recursive: true });
