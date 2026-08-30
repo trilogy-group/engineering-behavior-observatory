@@ -86,6 +86,23 @@ test("records JSONL frames, source-owned observations, and bounded stderr", asyn
   }
 });
 
+test("retains the original JSONL frame text when parsed values lose precision", async () => {
+  const root = temporaryRoot();
+  try {
+    const raw = '{"id":9007199254740993,"id":1,"method":"session/status"}';
+    const processResult = await runProtocolProcess({
+      ...nodeScript(`console.log(${JSON.stringify(raw)})`),
+      source: "fake-harness",
+      evidencePath: join(root, "raw.jsonl"),
+    });
+    const frame = processResult.observations.find((record) => record.kind === "frame");
+    assert.equal(frame?.raw, raw);
+    assert.equal((frame?.payload as { id?: number }).id, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("malformed protocol output stops the process and retains a readable partial record", async () => {
   const root = temporaryRoot();
   try {

@@ -28,7 +28,10 @@ completion, and capability observations. Drivers provide method names,
 correlation IDs, native identities, and completion evidence; the runner does
 not infer prompt completion or map records into EBO event families.
 
-JSONL records are flushed and fsynced as they arrive. Interruption and malformed
-output therefore leave a readable partial evidence file and a process result
-with launch identity, exit/signal state, and termination reason. `shutdown()`
-and `interrupt()` are explicit operations; no process retry is performed.
+JSONL records are flushed and fsynced as they arrive. Valid frames retain their
+original line text alongside parsed data, so duplicate keys or large numeric
+IDs cannot be silently rewritten by a JavaScript round trip. Interruption and
+malformed output therefore leave a readable partial evidence file and a
+process result with launch identity, exit/signal state, and termination reason.
+`shutdown()` and `interrupt()` are explicit operations; no process retry is
+performed.

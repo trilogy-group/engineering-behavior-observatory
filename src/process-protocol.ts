@@ -26,6 +26,7 @@ export type ProtocolObservation = {
   method?: string;
   id?: ProtocolIdentity;
   sourceIdentity?: string;
+  raw?: string;
   payload?: unknown;
   evidence?: unknown;
   status?: string;
@@ -248,7 +249,7 @@ export type ProtocolProcessResult = {
   stdoutFrames: number;
   stderr: BoundedDiagnostic;
   error?: string;
-  protocolError?: { line: number; message: string };
+  protocolError?: { line: number; message: string; raw?: string };
   evidencePath?: string;
   stderrPath?: string;
   observations: ProtocolObservation[];
@@ -270,8 +271,8 @@ export class ProtocolEvidenceRecorder {
     return this.records;
   }
 
-  public recordFrame(payload: unknown, observedAt = this.now()): Promise<ProtocolObservation> {
-    return this.record({ kind: "frame", source: this.source, stream: "stdout", payload, observedAt });
+  public recordFrame(payload: unknown, observedAt = this.now(), raw?: string): Promise<ProtocolObservation> {
+    return this.record({ kind: "frame", source: this.source, stream: "stdout", ...(raw === undefined ? {} : { raw }), payload, observedAt });
   }
 
   public recordRequest(input: ProtocolObservationInput): Promise<ProtocolObservation> {
@@ -349,6 +350,7 @@ export class ProtocolEvidenceRecorder {
     method?: string;
     id?: ProtocolIdentity;
     sourceIdentity?: string;
+    raw?: string;
     payload?: unknown;
     evidence?: unknown;
     status?: string;
@@ -368,6 +370,7 @@ export class ProtocolEvidenceRecorder {
       ...(input.method === undefined ? {} : { method: input.method }),
       ...(input.id === undefined ? {} : { id: input.id }),
       ...(input.sourceIdentity === undefined ? {} : { sourceIdentity: input.sourceIdentity }),
+      ...(input.raw === undefined ? {} : { raw: input.raw }),
       ...(input.payload === undefined ? {} : { payload: input.payload }),
       ...(input.evidence === undefined ? {} : { evidence: input.evidence }),
       ...(input.status === undefined ? {} : { status: input.status }),
@@ -397,7 +400,7 @@ export class ProtocolProcess {
   private lineQueue: Promise<void> = Promise.resolve();
   private readonly waitPromise: Promise<ProtocolProcessResult>;
   private termination: ProcessTermination = "natural";
-  private protocolError: { line: number; message: string } | undefined;
+  private protocolError: { line: number; message: string; raw?: string } | undefined;
   private shutdownStarted = false;
   private interruptionStarted = false;
   private childError: string | undefined;
@@ -415,7 +418,7 @@ export class ProtocolProcess {
     this.args = [...(options.args ?? [])];
     const writer = options.writer ?? new JsonlEvidenceWriter(
       options.evidencePath ?? resolve(process.cwd(), `.ebo-protocol-${randomUUID()}.jsonl`),
-      { maxLineBytes: this.stdoutLineLimit },
+      { maxLineBytes: Math.min(Number.MAX_SAFE_INTEGER, this.stdoutLineLimit * 4 + 1024) },
     );
     this.ownsWriter = options.writer === undefined;
     this.evidencePath = options.evidencePath ?? (options.writer === undefined ? writer.path : undefined);
@@ -504,20 +507,20 @@ export class ProtocolProcess {
     try {
       payload = JSON.parse(line) as unknown;
     } catch (error) {
-      await this.failProtocol(`Malformed JSONL protocol output: ${errorMessage(error)}`);
+      await this.failProtocol(`Malformed JSONL protocol output: ${errorMessage(error)}`, line);
       return;
     }
     this.frameCount += 1;
-    await this.recorder.recordFrame(payload);
+    await this.recorder.recordFrame(payload, this.now(), line);
     if (this.options.onFrame !== undefined) await this.options.onFrame(payload, this.recorder);
   }
 
-  private async failProtocol(message: string): Promise<void> {
+  private async failProtocol(message: string, raw?: string): Promise<void> {
     if (this.protocolError !== undefined) return;
-    this.protocolError = { line: this.lineCount, message };
+    this.protocolError = { line: this.lineCount, message, ...(raw === undefined ? {} : { raw }) };
     this.termination = "malformed";
     try {
-      await this.recorder.recordError(message);
+      await this.recorder.recordError(message, raw === undefined ? undefined : { raw });
     } catch (error) {
       this.childError ??= `Protocol error evidence could not be persisted: ${errorMessage(error)}`;
     }

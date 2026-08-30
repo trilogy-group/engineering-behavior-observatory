@@ -61,6 +61,18 @@ test("successful runs coordinate setup, harness, verifier, cleanup, and persiste
   }
 });
 
+test("runtime shutdown callbacks stay executable but never enter durable records", async () => {
+  let shutdownCalls = 0;
+  const result = await executeRunAttempt({
+    run,
+    workspace: workspace(),
+    harness: async () => ({ status: "completed", shutdown: () => { shutdownCalls += 1; } }),
+  });
+  assert.equal(result.terminal.state, "completed");
+  assert.equal(shutdownCalls, 0);
+  assert.equal("shutdown" in (result.record.harness ?? {}), false);
+});
+
 test("verifier task failures and verifier errors remain distinct", async () => {
   const taskFailure = await executeRunAttempt({
     run,
@@ -156,6 +168,29 @@ test("budget and interruption stop an attempt without retrying it", async () => 
   assert.equal(harnessCalls, 1);
 });
 
+test("a workspace that settles during interruption is retained for cleanup and evidence", async () => {
+  const controller = new AbortController();
+  let cleanedWorkspace: string | undefined;
+  const runPromise = executeRunAttempt({
+    run,
+    signal: controller.signal,
+    shutdownGraceMs: 100,
+    workspace: {
+      setup: async () => {
+        await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 20));
+        return { status: "ready", artifactId: "late-workspace" };
+      },
+      cleanup: async ({ workspace: settled }) => { cleanedWorkspace = settled?.artifactId; },
+    },
+    harness: async () => ({ status: "completed" }),
+  });
+  setTimeout(() => controller.abort(), 1);
+  const result = await runPromise;
+  assert.equal(result.terminal.state, "interrupted");
+  assert.equal(result.record.workspace?.artifactId, "late-workspace");
+  assert.equal(cleanedWorkspace, "late-workspace");
+});
+
 test("an already-aborted signal is retained as an interruption", async () => {
   const controller = new AbortController();
   controller.abort();
@@ -212,5 +247,37 @@ test("capture flush failures are explicit and do not masquerade as task failures
   assert.equal(result.terminal.state, "completed");
   assert.equal(result.classification.kind, "capture-incomplete");
   assert.equal(result.classification.underlying, "completed");
+  assert.equal(result.record.capture?.status, "incomplete");
+});
+
+test("capture failure keeps unsuccessful attempts partial", async () => {
+  const result = await executeRunAttempt({
+    run,
+    workspace: workspace(),
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => ({ status: "failed", error: "assertion failed" }),
+    evidence: { flush: () => { throw new Error("capture unavailable"); } },
+  });
+  assert.equal(result.classification.kind, "capture-incomplete");
+  assert.equal(result.classification.underlying, "task-failure");
+  assert.equal(result.record.partial, true);
+});
+
+test("a final capture failure is classified before the durable terminal record", async () => {
+  let flushes = 0;
+  const result = await executeRunAttempt({
+    run,
+    workspace: workspace(),
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => ({ status: "passed" }),
+    evidence: {
+      flush: () => {
+        flushes += 1;
+        if (flushes === 4) throw new Error("final capture unavailable");
+      },
+    },
+  });
+  assert.equal(result.classification.kind, "capture-incomplete");
+  assert.equal(result.record.classification?.kind, "capture-incomplete");
   assert.equal(result.record.capture?.status, "incomplete");
 });
