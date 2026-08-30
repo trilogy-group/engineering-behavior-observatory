@@ -338,6 +338,9 @@ test("oversized matrices fail before eager expansion", () => {
 
   const queue = compileRunQueue(fixture("experiment.18-cell.v1.json"), compileOptions(fixture("experiment.18-cell.v1.json")));
   assert.match(validateRunQueue(queue, experiment).map((error) => error.message).join("\n"), /local queue limit/);
+  const oversizedQueue = compileRunQueue(fixture("experiment.18-cell.v1.json"), compileOptions(fixture("experiment.18-cell.v1.json")));
+  oversizedQueue.matrix.trialCount = MAX_RUN_QUEUE_ENTRIES + 1;
+  assert.match(validateRunQueue(oversizedQueue).map((error) => error.message).join("\n"), /local queue limit/);
 });
 
 test("strategy-inapplicable ordering fields are rejected", () => {
@@ -457,6 +460,7 @@ test("a persisted local queue is validated and consumed in order", () => {
     assert.deepEqual(inspectRunQueue(loaded), inspectRunQueue(queue));
     const local = new LocalRunQueue(loaded);
     assert.equal(local.remaining, 18);
+    local.queue.entries[0]!.task.packetId = "caller-mutation";
     assert.equal(local.next()!.runId, queue.entries[0]!.runId);
     for (let index = 1; index < queue.entries.length; index += 1) local.next();
     assert.equal(local.remaining, 0);

@@ -379,20 +379,25 @@ export function validateRunQueue(
   }
 
   if (experiment === undefined) {
-    const expectedCells = [...declaredMatrixCells(runQueue.matrix, runQueue.matrix.trialCount)];
-    const expectedKeys = new Set(expectedCells.map(cellKeyOf));
-    const expectedOrder = orderCells(
-      expectedCells,
-      queueMatrixOrdering(runQueue),
-      runQueue.ordering.permutationAlgorithm ?? "fisher-yates-v1",
-    ).map(cellKeyOf);
-    const actualOrder = runQueue.entries.map(cellKeyOf);
-    if (expectedKeys.size !== cells.size || [...expectedKeys].some((key) => !cells.has(key))) {
-      semanticErrors.push(queueError(artifact, "/entries", "Run queue cells do not match its persisted matrix."));
-    }
-    if (expectedOrder.length !== actualOrder.length
-        || expectedOrder.some((key, index) => key !== actualOrder[index])) {
-      semanticErrors.push(queueError(artifact, "/entries", "Run queue order does not match its persisted ordering policy."));
+    try {
+      assertMatrixSize(runQueue.matrix);
+      const expectedCells = [...declaredMatrixCells(runQueue.matrix, runQueue.matrix.trialCount)];
+      const expectedKeys = new Set(expectedCells.map(cellKeyOf));
+      const expectedOrder = orderCells(
+        expectedCells,
+        queueMatrixOrdering(runQueue),
+        runQueue.ordering.permutationAlgorithm ?? "fisher-yates-v1",
+      ).map(cellKeyOf);
+      const actualOrder = runQueue.entries.map(cellKeyOf);
+      if (expectedKeys.size !== cells.size || [...expectedKeys].some((key) => !cells.has(key))) {
+        semanticErrors.push(queueError(artifact, "/entries", "Run queue cells do not match its persisted matrix."));
+      }
+      if (expectedOrder.length !== actualOrder.length
+          || expectedOrder.some((key, index) => key !== actualOrder[index])) {
+        semanticErrors.push(queueError(artifact, "/entries", "Run queue order does not match its persisted ordering policy."));
+      }
+    } catch (error) {
+      semanticErrors.push(queueError(artifact, "/matrix", error instanceof Error ? error.message : "Persisted matrix is too large."));
     }
   }
 
@@ -463,29 +468,40 @@ export function inspectRunQueue(queue: RunQueue): RunQueueInspection {
 
 export class LocalRunQueue {
   private position = 0;
+  private readonly snapshot: RunQueue;
 
-  public constructor(public readonly queue: RunQueue) {
+  public constructor(queue: RunQueue) {
     assertValidRunQueue(queue);
+    this.snapshot = structuredClone(queue);
+  }
+
+  public get queue(): RunQueue {
+    return structuredClone(this.snapshot);
   }
 
   public get remaining(): number {
-    return this.queue.entries.length - this.position;
+    return this.snapshot.entries.length - this.position;
   }
 
   public next(): RunQueueEntry | undefined {
-    if (this.position >= this.queue.entries.length) return undefined;
-    return this.queue.entries[this.position++];
+    if (this.position >= this.snapshot.entries.length) return undefined;
+    return this.snapshot.entries[this.position++];
   }
 }
 
-function assertMatrixSize(experiment: ExperimentConfiguration): void {
+function assertMatrixSize(
+  experiment: Pick<ExperimentConfiguration, "taskSet" | "modelSet" | "harnessSet" | "trialCount"> | RunQueueMatrix,
+): void {
   let cellCount = 1;
-  for (const dimension of [
-    Object.keys(experiment.taskSet).length,
-    Object.keys(experiment.modelSet).length,
-    Object.keys(experiment.harnessSet).length,
-    experiment.trialCount,
-  ]) {
+  const dimensions = "taskSet" in experiment
+    ? [
+      Object.keys(experiment.taskSet).length,
+      Object.keys(experiment.modelSet).length,
+      Object.keys(experiment.harnessSet).length,
+      experiment.trialCount,
+    ]
+    : [experiment.taskIds.length, experiment.modelIds.length, experiment.harnessIds.length, experiment.trialCount];
+  for (const dimension of dimensions) {
     if (cellCount > Math.floor(MAX_RUN_QUEUE_ENTRIES / dimension)) {
       // ponytail: fixed local queue cap; stream to disk if larger matrices become required.
       throw new Error(`Run matrix exceeds the local queue limit of ${MAX_RUN_QUEUE_ENTRIES} entries.`);
