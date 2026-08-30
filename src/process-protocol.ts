@@ -570,6 +570,7 @@ export class ProtocolProcess {
   }
 
   private async processLine(bytes: Buffer): Promise<void> {
+    if (this.protocolError !== undefined || this.recorderError !== undefined) return;
     this.lineCount += 1;
     let line: string;
     try {

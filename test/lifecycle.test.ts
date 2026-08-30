@@ -269,6 +269,67 @@ test("cancellation during cleanup reaches cleanup and interrupts a successful ou
   assert.equal(result.terminal.state, "interrupted");
 });
 
+test("harness shutdown failures remain explicit in interrupted records", async () => {
+  const controller = new AbortController();
+  let harnessStartedResolve: (() => void) | undefined;
+  const harnessStarted = new Promise<void>((resolvePromise) => { harnessStartedResolve = resolvePromise; });
+  const resultPromise = executeRunAttempt({
+    run,
+    signal: controller.signal,
+    shutdownGraceMs: 25,
+    workspace: workspace(),
+    harness: async ({ signal }) => {
+      harnessStartedResolve?.();
+      await new Promise<void>((resolvePromise) => signal.addEventListener("abort", () => resolvePromise(), { once: true }));
+      return {
+        status: "interrupted",
+        shutdown: () => { throw new Error("shutdown failed"); },
+      };
+    },
+    evidence: { flush: () => undefined },
+  });
+  await harnessStarted;
+  controller.abort();
+  const result = await resultPromise;
+  assert.equal(result.terminal.state, "interrupted");
+  assert.deepEqual(result.record.harness?.shutdownResult, { status: "failed", error: "shutdown failed" });
+});
+
+test("cleanup receives a workspace snapshot and cannot rewrite retained evidence", async () => {
+  const result = await executeRunAttempt({
+    run,
+    workspace: {
+      setup: async () => ({ status: "ready", artifactId: "workspace-1", evidence: { owner: "setup" } }),
+      cleanup: async ({ workspace: cleanupWorkspace }) => {
+        if (cleanupWorkspace !== undefined) {
+          cleanupWorkspace.artifactId = "rewritten";
+          (cleanupWorkspace.evidence as { owner: string }).owner = "cleanup";
+        }
+      },
+    },
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => ({ status: "passed" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.record.workspace?.artifactId, "workspace-1");
+  assert.deepEqual(result.record.workspace?.evidence, { owner: "setup" });
+});
+
+test("a hanging evidence flush is bounded by cancellation grace", async () => {
+  const startedAt = Date.now();
+  const result = await executeRunAttempt({
+    run,
+    maxWallClockMs: 10,
+    shutdownGraceMs: 10,
+    workspace: workspace(),
+    harness: async () => ({ status: "completed" }),
+    evidence: { flush: () => new Promise<void>(() => undefined) },
+  });
+  assert.equal(result.terminal.state, "stopped");
+  assert.ok(Date.now() - startedAt < 100);
+  assert.equal(result.record.capture?.status, "incomplete");
+});
+
 test("a verifier result that settles during interruption remains in the partial record", async () => {
   const controller = new AbortController();
   let verifierStartedResolve: (() => void) | undefined;
@@ -425,6 +486,35 @@ test("attempt records are validated when read", async () => {
     const path = join(root, "invalid.json");
     writeFileSync(path, "{}\n");
     await assert.rejects(readAttemptRecord(path), /schemaVersion|run|attempt|lifecycle/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("terminal attempt records require matching terminal classification", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-terminal-record-"));
+  try {
+    const path = join(root, "terminal.json");
+    writeFileSync(path, JSON.stringify({
+      schemaVersion: "ebo.attempt/v1",
+      run,
+      attempt: createAttemptIdentity(run.id, 1, "attempt-1"),
+      lifecycle: {
+        state: "terminal",
+        createdAt: "a",
+        startedAt: "b",
+        timestamps: { created: "a", setup: "b", running: "c", verifying: "d", cleaning: "e", terminal: "f" },
+        transitions: [
+          { from: "created", to: "setup", at: "b" },
+          { from: "setup", to: "running", at: "c" },
+          { from: "running", to: "verifying", at: "d" },
+          { from: "verifying", to: "cleaning", at: "e" },
+          { from: "cleaning", to: "terminal", at: "f" },
+        ],
+      },
+      partial: true,
+    }));
+    await assert.rejects(readAttemptRecord(path), /terminal and classification/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -188,6 +188,23 @@ test("keeps recorder failures separate from malformed protocol output", async ()
   }
 });
 
+test("does not process frames queued after malformed output", async () => {
+  const root = temporaryRoot();
+  let observed = 0;
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("process.stdout.write('not-json\\n' + JSON.stringify({after:true}) + '\\n')"),
+      source: "fake-harness",
+      evidencePath: join(root, "queued-malformed.jsonl"),
+      onFrame: () => { observed += 1; },
+    });
+    assert.equal(processResult.status, "malformed");
+    assert.equal(observed, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("bounds in-memory observations while retaining the complete JSONL stream", async () => {
   const root = temporaryRoot();
   try {

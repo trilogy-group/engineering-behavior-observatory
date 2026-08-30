@@ -100,6 +100,12 @@ export type HarnessExecutionResult = {
   completionEvidence?: unknown;
   evidence?: unknown;
   shutdown?: () => void | Promise<void>;
+  shutdownResult?: HarnessShutdownResult;
+};
+
+export type HarnessShutdownResult = {
+  status: "completed" | "failed" | "timed-out";
+  error?: string;
 };
 
 export type HarnessExecutor = (
@@ -308,7 +314,17 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   };
   const flush = async (): Promise<void> => {
     try {
-      await options.evidence?.flush?.();
+      if (options.evidence?.flush !== undefined) {
+        const evidenceFlush = Promise.resolve(options.evidence.flush());
+        const outcome = await Promise.race([
+          evidenceFlush.then(() => "complete" as const),
+          abortPromise.then(() => "aborted" as const),
+        ]);
+        if (outcome === "aborted") {
+          await settle(evidenceFlush, options.shutdownGraceMs ?? 250);
+          throw new Error("Evidence flush interrupted.");
+        }
+      }
     } catch (error) {
       record.capture = { status: "incomplete", error: errorMessage(error) };
     }
@@ -359,13 +375,13 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       if (setupOutcome.kind === "aborted" || controller.signal.aborted) {
         const settledWorkspace = await settle(setupPromise, options.shutdownGraceMs ?? 250);
         if (settledWorkspace !== undefined) {
-          workspace = settledWorkspace;
-          record.workspace = settledWorkspace;
+          workspace = snapshotWorkspace(settledWorkspace);
+          record.workspace = snapshotWorkspace(workspace);
         }
         classification = abortClassification(abortCause, budgetExpired);
       } else {
-        workspace = setupOutcome.value;
-        record.workspace = workspace;
+        workspace = snapshotWorkspace(setupOutcome.value);
+        record.workspace = snapshotWorkspace(workspace);
         if (workspace.status === "failed") {
           classification = infrastructureClassification("Workspace setup failed.", "workspace", workspace.artifactId);
         }
@@ -403,7 +419,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           attempt,
           signal: controller.signal,
           ...(options.harnessBudgetMs === undefined ? {} : { budgetMs: options.harnessBudgetMs }),
-          ...(workspace === undefined ? {} : { workspace }),
+          ...(workspace === undefined ? {} : { workspace: snapshotWorkspace(workspace) }),
         }));
       } catch (error) {
         harnessPromise = Promise.reject(error);
@@ -437,7 +453,11 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           record.harness = durableHarnessResult(settledHarness);
         }
         classification = abortClassification(abortCause, budgetExpired);
-        await shutdownHarness(harnessResult, options.shutdownGraceMs ?? 250);
+        const shutdownResult = await shutdownHarness(harnessResult, options.shutdownGraceMs ?? 250);
+        if (harnessResult !== undefined && shutdownResult !== undefined) {
+          harnessResult = { ...harnessResult, shutdownResult };
+          record.harness = durableHarnessResult(harnessResult);
+        }
       } else if (outcome?.kind === "result") {
         harnessResult = outcome.value;
         record.harness = durableHarnessResult(harnessResult);
@@ -454,7 +474,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                 run: options.run,
                 attempt,
                 signal: controller.signal,
-                ...(workspace === undefined ? {} : { workspace }),
+                ...(workspace === undefined ? {} : { workspace: snapshotWorkspace(workspace) }),
               }));
               const verifierOutcome = await Promise.race([
                 verifierPromise.then((value) => ({ kind: "result" as const, value })),
@@ -494,7 +514,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         attempt,
         signal: controller.signal,
         outcome: classification?.terminal ?? infrastructureClassification("Run did not produce a terminal outcome.", "runner").terminal,
-        ...(workspace === undefined ? {} : { workspace }),
+        ...(workspace === undefined ? {} : { workspace: snapshotWorkspace(workspace) }),
       });
       cleanupStatus = { status: "completed" };
     } catch (error) {
@@ -757,10 +777,33 @@ function classificationUnderlyingKind(classification: AttemptClassification): At
     : classification.kind;
 }
 
-async function shutdownHarness(result: HarnessExecutionResult | undefined, graceMs: number): Promise<void> {
-  if (result?.shutdown === undefined) return;
-  const shutdown = Promise.resolve(result.shutdown());
-  await settle(shutdown, graceMs);
+function snapshotWorkspace(workspace: WorkspaceExecutionResult): WorkspaceExecutionResult {
+  return {
+    ...workspace,
+    ...(workspace.evidence === undefined ? {} : { evidence: structuredClone(workspace.evidence) }),
+  };
+}
+
+async function shutdownHarness(
+  result: HarnessExecutionResult | undefined,
+  graceMs: number,
+): Promise<HarnessShutdownResult | undefined> {
+  if (result?.shutdown === undefined) return undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const shutdown = Promise.resolve(result.shutdown());
+    const settled = await Promise.race([
+      shutdown.then(() => ({ status: "completed" as const })),
+      new Promise<HarnessShutdownResult>((resolvePromise) => {
+        timer = setTimeout(() => resolvePromise({ status: "timed-out", error: "Harness shutdown exceeded its grace period." }), graceMs);
+      }),
+    ]);
+    return settled;
+  } catch (error) {
+    return { status: "failed", error: errorMessage(error) };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 function durableHarnessResult(result: HarnessExecutionResult): HarnessExecutionResult {
@@ -822,6 +865,12 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
   if (state !== lifecycle.state) throw new Error("Lifecycle state does not match its transitions.");
   if (typeof value.partial !== "boolean") throw new Error("Attempt record partial state is invalid.");
   if (value.terminal !== undefined) assertTerminalRecord(value.terminal);
+  if ((value.terminal === undefined) !== (value.classification === undefined)) {
+    throw new Error("Attempt terminal and classification records must be paired.");
+  }
+  if (lifecycle.state === "terminal" && value.terminal === undefined) {
+    throw new Error("Terminal attempt records require terminal and classification outcomes.");
+  }
   if (value.terminal !== undefined && lifecycle.state !== "terminal") {
     throw new Error("Terminal attempt records must have terminal lifecycle state.");
   }
@@ -830,6 +879,9 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       throw new Error("Attempt classification is invalid.");
     }
     assertTerminalRecord(value.classification.terminal);
+    if (!sameTerminalRecord(value.terminal, value.classification.terminal)) {
+      throw new Error("Attempt terminal and classification records disagree.");
+    }
   }
   for (const field of ["capture", "persistence"] as const) {
     const status = value[field];
@@ -892,6 +944,14 @@ function assertTerminalRecord(value: unknown): asserts value is TerminalRecord {
   if (value.state === "interrupted" && (value.failureClass !== "infrastructure" || value.stopReason !== "none")) {
     throw new Error("Interrupted terminal record is invalid.");
   }
+}
+
+function sameTerminalRecord(left: unknown, right: unknown): boolean {
+  if (!isRecord(left) || !isRecord(right)) return false;
+  return left.state === right.state
+    && left.failureClass === right.failureClass
+    && left.stopReason === right.stopReason
+    && left.workspaceArtifactId === right.workspaceArtifactId;
 }
 
 function errorMessage(error: unknown): string {
