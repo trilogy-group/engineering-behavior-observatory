@@ -228,6 +228,23 @@ test("bounds a frame observer that never settles", async () => {
   }
 });
 
+test("records recorder-triggered termination distinctly", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({ok:true})); setTimeout(()=>{}, 10000)"),
+      source: "fake-harness",
+      shutdownGraceMs: 10,
+      evidencePath: join(root, "recorder-termination.jsonl"),
+      onFrame: () => { throw new Error("observer failed"); },
+    });
+    assert.equal(processResult.status, "failed");
+    assert.equal(processResult.termination, "recorder-error");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("snapshots caller payloads before observer mutation", async () => {
   const root = temporaryRoot();
   try {

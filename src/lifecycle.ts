@@ -474,6 +474,14 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       } finally {
         for (const timer of timers) clearTimeout(timer);
       }
+      if (outcome === undefined && harnessShutdown !== undefined) {
+        const shutdownResult = await shutdownHarness(undefined, harnessShutdown, options.shutdownGraceMs ?? 250);
+        record.harness = {
+          status: "failed",
+          ...(classification?.reason === undefined ? {} : { error: classification.reason }),
+          ...(shutdownResult === undefined ? {} : { shutdownResult }),
+        };
+      }
       if (outcome !== undefined && (outcome.kind === "aborted" || controller.signal.aborted)) {
         if (outcome.kind === "result") {
           harnessResult = outcome.value;
@@ -548,7 +556,6 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           }
         }
       }
-      if (harnessResult !== undefined) record.harness = durableHarnessResult(harnessResult);
       await flush();
     }
   } catch (error) {
@@ -675,6 +682,7 @@ export async function writeAttemptRecord(path: string, record: AttemptRecord): P
     try {
       await link(temporary, destination);
       await unlink(temporary);
+      await syncDirectory(dirname(destination));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       const existing = await readAttemptRecord(destination);
@@ -685,10 +693,20 @@ export async function writeAttemptRecord(path: string, record: AttemptRecord): P
         throw new Error(`Attempt record "${path}" is already terminal.`);
       }
       await rename(temporary, destination);
+      await syncDirectory(dirname(destination));
     }
   } catch (error) {
     await rm(temporary, { force: true });
     throw error;
+  }
+}
+
+async function syncDirectory(path: string): Promise<void> {
+  const directory = await open(path, "r");
+  try {
+    await directory.sync();
+  } finally {
+    await directory.close();
   }
 }
 
@@ -940,7 +958,7 @@ async function shutdownHarness(
 
 function durableHarnessResult(result: HarnessExecutionResult): HarnessExecutionResult {
   const { shutdown: _shutdown, ...durable } = result;
-  return durable;
+  return structuredClone(durable);
 }
 
 async function settleWithTimeout<T>(

@@ -340,6 +340,23 @@ test("harness shutdown failures remain explicit in interrupted records", async (
   assert.deepEqual(result.record.harness?.shutdownResult, { status: "failed", error: "shutdown failed" });
 });
 
+test("a rejected harness still receives its registered shutdown", async () => {
+  let shutdownCalls = 0;
+  const result = await executeRunAttempt({
+    run,
+    workspace: workspace(),
+    harness: async ({ registerShutdown }) => {
+      registerShutdown(() => { shutdownCalls += 1; });
+      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
+      throw new Error("harness rejected");
+    },
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(shutdownCalls, 1);
+  assert.equal(result.terminal.failureClass, "infrastructure");
+  assert.equal(result.record.harness?.shutdownResult?.status, "completed");
+});
+
 test("in-flight harness shutdown is available before an eventual result", async () => {
   const controller = new AbortController();
   let harnessStartedResolve: (() => void) | undefined;
@@ -400,6 +417,21 @@ test("verifier results are snapshotted before cleanup can mutate them", async ()
   });
   assert.equal(result.terminal.state, "completed");
   assert.equal(result.record.verifier?.status, "passed");
+});
+
+test("harness evidence is snapshotted before verifier execution", async () => {
+  const harnessResult = { status: "completed" as const, evidence: { state: "before" } };
+  const result = await executeRunAttempt({
+    run,
+    workspace: workspace(),
+    harness: async () => harnessResult,
+    verifier: async () => {
+      harnessResult.evidence.state = "after";
+      return { status: "passed" };
+    },
+    evidence: { flush: () => undefined },
+  });
+  assert.deepEqual(result.record.harness?.evidence, { state: "before" });
 });
 
 test("a hanging evidence flush is bounded by cancellation grace", async () => {

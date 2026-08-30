@@ -234,7 +234,7 @@ export type ProtocolProcessOptions = {
   onFrame?: (payload: unknown, recorder: ProtocolEvidenceRecorder) => void | Promise<void>;
 };
 
-export type ProcessTermination = "natural" | "shutdown" | "interrupted" | "malformed";
+export type ProcessTermination = "natural" | "shutdown" | "interrupted" | "malformed" | "recorder-error";
 
 export type ProtocolProcessResult = {
   status: "completed" | "failed" | "malformed" | "interrupted" | "shutdown";
@@ -628,6 +628,7 @@ export class ProtocolProcess {
   private async failRecorder(message: string): Promise<void> {
     if (this.recorderError !== undefined || this.protocolError !== undefined) return;
     this.recorderError = message;
+    this.termination = "recorder-error";
     try {
       await this.recorder.recordError(message);
     } catch (error) {
