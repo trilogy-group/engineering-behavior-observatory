@@ -165,6 +165,8 @@ function compileOptions(
   const resolvedPackets = Object.fromEntries(
     Object.entries(experiment.taskSet).map(([id, condition]) => [id, {
       packetId: id,
+      promptDigest: condition.packetRef.digest,
+      fixtureDigest: condition.packetRef.digest,
       digest: condition.packetRef.digest,
       preAdmissionDigest: { algorithm: "sha256", value: "1".repeat(64) },
       reviewRecordDigest: condition.packetRef.digest,
@@ -414,6 +416,24 @@ test("matrix compilation rejects unfrozen, duplicate, and unresolved inputs", ()
   assert.throws(
     () => compileRunQueue(experiment, forgedComponentEvidence),
     /task-a.*supplied freeze record does not match/,
+  );
+
+  const unboundComponentEvidence = compileOptions(experiment);
+  const unboundComponents = structuredClone(unboundComponentEvidence.resolvedPackets["task-a"]!.freezeRecord!);
+  unboundComponents.components.verifier = { algorithm: "sha256", value: "0".repeat(64) };
+  unboundComponents.aggregateDigest = digestMetadata({
+    packetId: unboundComponents.packetId,
+    packetLocator: unboundComponents.packetLocator,
+    preAdmissionDigest: unboundComponents.preAdmissionDigest,
+    packetDigest: unboundComponents.packetDigest,
+    components: unboundComponents.components,
+    frozenAt: unboundComponents.frozenAt,
+  });
+  unboundComponentEvidence.resolvedPackets["task-a"]!.freezeRecord = unboundComponents;
+  unboundComponentEvidence.frozenTasks["task-a"] = unboundComponents;
+  assert.throws(
+    () => compileRunQueue(experiment, unboundComponentEvidence),
+    /task-a.*freeze verifier component is not bound/,
   );
 
   const duplicate = structuredClone(experiment);

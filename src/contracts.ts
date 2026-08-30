@@ -77,6 +77,9 @@ export type ReferenceSolutionDeclaration =
 export type ResolvedTaskPacket = {
   /** Packet identity retained by the admission resolver for freeze binding. */
   packetId?: string;
+  /** Resolved task-packet component digests retained for freeze binding. */
+  promptDigest?: Digest;
+  fixtureDigest?: Digest | null;
   digest: Digest;
   preAdmissionDigest: Digest | null;
   reviewRecordDigest: Digest | null;

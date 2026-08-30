@@ -1039,6 +1039,7 @@ function assertAdmittedFreezeRecords(
     ) {
       throw new Error(`Task packet "${taskId}" freeze record is not bound to its admitted packet evidence.`);
     }
+    assertFreezeComponents(taskId, packet, record);
     const suppliedRecord = freezeRecordOf(supplied?.[taskId] ?? supplied?.[condition.packetRef.locator]);
     if (suppliedRecord !== undefined && !sameFreezeRecord(record, suppliedRecord)) {
       throw new Error(`Task packet "${taskId}" supplied freeze record does not match its admitted packet evidence.`);
@@ -1056,6 +1057,52 @@ function assertAdmittedFreezeRecords(
       throw new Error(`Task packet "${taskId}" freeze record does not match its admitted identity.`);
     }
   }
+}
+
+function assertFreezeComponents(
+  taskId: string,
+  packet: ResolvedTaskPacket,
+  record: TaskPacketFreezeRecord,
+): void {
+  if (packet.promptDigest === undefined || !sameDigest(record.components.prompt, packet.promptDigest)) {
+    throw new Error(`Task packet "${taskId}" freeze prompt component is not bound to its admitted packet evidence.`);
+  }
+  if (!sameOptionalDigest(record.components.fixture, packet.fixtureDigest)) {
+    throw new Error(`Task packet "${taskId}" freeze fixture component is not bound to its admitted packet evidence.`);
+  }
+  if (record.components.verifier === null || !sameDigest(record.components.verifier, packet.resolvedVerifierDigest)) {
+    throw new Error(`Task packet "${taskId}" freeze verifier component is not bound to its admitted packet evidence.`);
+  }
+  if (!sameOptionalDigest(record.components.reviewRecord, packet.resolvedReviewRecordDigest)) {
+    throw new Error(`Task packet "${taskId}" freeze review component is not bound to its admitted packet evidence.`);
+  }
+  if (!sameFreezeComponent(record.components.reference, packet.referenceSolution.declaration, packet.referenceSolution.resolvedDigest)) {
+    throw new Error(`Task packet "${taskId}" freeze reference component is not bound to its admitted packet evidence.`);
+  }
+  if (!sameFreezeComponent(
+    record.components.controlledPerturbation,
+    packet.controlledPerturbation.declaration,
+    packet.controlledPerturbation.resolvedDigest,
+  )) {
+    throw new Error(`Task packet "${taskId}" freeze perturbation component is not bound to its admitted packet evidence.`);
+  }
+}
+
+function sameFreezeComponent(
+  actual: TaskPacketFreezeRecord["components"]["reference"],
+  declaration: { status: string; digest?: Digest },
+  resolvedDigest: Digest | null,
+): boolean {
+  if (declaration.status === "referenced") {
+    return actual.status === "referenced"
+      && actual.digest !== undefined
+      && actual.digest !== null
+      && resolvedDigest !== null
+      && sameDigest(actual.digest, resolvedDigest)
+      && declaration.digest !== undefined
+      && sameDigest(actual.digest, declaration.digest);
+  }
+  return actual.status === declaration.status && resolvedDigest === null;
 }
 
 function provenanceOptions(
@@ -1332,6 +1379,12 @@ function sameOptionalReference(left: ArtifactReference | undefined, right: Artif
 
 function sameDigest(left: Digest, right: Digest): boolean {
   return left.algorithm === right.algorithm && left.value === right.value;
+}
+
+function sameOptionalDigest(left: Digest | null, right: Digest | null | undefined): boolean {
+  return left === null
+    ? right === null
+    : right !== null && right !== undefined && sameDigest(left, right);
 }
 
 function digestIdentity(digest: Digest): string {
