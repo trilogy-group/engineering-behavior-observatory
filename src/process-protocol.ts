@@ -98,13 +98,18 @@ export class JsonlEvidenceWriter {
   }
 
   public append(record: unknown): Promise<void> {
+    if (!isRecord(record)) return Promise.reject(new Error("JSONL evidence records must be objects."));
+    let line: string;
+    try {
+      line = `${JSON.stringify(record)}\n`;
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    if (Buffer.byteLength(line) > this.maxLineBytes) {
+      return Promise.reject(new Error(`JSONL evidence record exceeds ${this.maxLineBytes} bytes.`));
+    }
     const operation = this.queue.then(async () => {
       if (this.closed) throw new Error("JSONL evidence writer is closed.");
-      if (!isRecord(record)) throw new Error("JSONL evidence records must be objects.");
-      const line = `${JSON.stringify(record)}\n`;
-      if (Buffer.byteLength(line) > this.maxLineBytes) {
-        throw new Error(`JSONL evidence record exceeds ${this.maxLineBytes} bytes.`);
-      }
       const handle = await this.openHandle();
       await handle.write(line, undefined, "utf8");
       if (this.shouldFsync) await handle.sync();

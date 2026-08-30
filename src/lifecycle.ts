@@ -68,21 +68,33 @@ export type WorkspaceExecutionResult = {
   digest?: string;
   retained?: boolean;
   error?: string;
+  shutdownResult?: WorkspaceShutdownResult;
   evidence?: unknown;
+};
+
+export type WorkspaceShutdownResult = {
+  status: "completed" | "failed" | "timed-out";
+  error?: string;
 };
 
 export type WorkspaceSetupContext = {
   run: RunIdentity;
   attempt: AttemptIdentity;
   signal: AbortSignal;
+  registerShutdown: (shutdown: () => void | Promise<void>) => void;
+};
+
+export type WorkspaceCleanupContext = {
+  run: RunIdentity;
+  attempt: AttemptIdentity;
+  signal: AbortSignal;
+  outcome: TerminalRecord;
+  workspace?: WorkspaceExecutionResult;
 };
 
 export type WorkspaceCoordinator = {
   setup: (context: WorkspaceSetupContext) => WorkspaceExecutionResult | Promise<WorkspaceExecutionResult>;
-  cleanup?: (context: WorkspaceSetupContext & {
-    outcome: TerminalRecord;
-    workspace?: WorkspaceExecutionResult;
-  }) => void | Promise<void>;
+  cleanup?: (context: WorkspaceCleanupContext) => void | Promise<void>;
 };
 
 export type HarnessExecutionContext = {
@@ -356,6 +368,8 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   let classification: AttemptClassification | undefined;
   let cleanupStatus: AttemptRecord["cleanup"];
   let harnessShutdown: (() => void | Promise<void>) | undefined;
+  let workspaceShutdown: (() => void | Promise<void>) | undefined;
+  let workspaceTerminationConfirmed = true;
   let setupStarted = false;
   const abortPromise = new Promise<"aborted">((resolveAbort) => {
     if (controller.signal.aborted) resolveAbort("aborted");
@@ -394,6 +408,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         run: structuredClone(runSnapshot),
         attempt: structuredClone(attemptSnapshot),
         signal: controller.signal,
+        registerShutdown: (shutdown) => { workspaceShutdown = shutdown; },
       }));
       const setupOutcome = await Promise.race([
         setupPromise.then((value) => ({ kind: "result" as const, value })),
@@ -408,6 +423,12 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           record.workspace = { status: "failed", error: errorMessage(settledSetup.error) };
         } else {
           record.workspace = { status: "failed", error: settledSetup.error };
+          workspaceTerminationConfirmed = false;
+          const shutdownResult = await shutdownWorkspace(workspaceShutdown, options.shutdownGraceMs ?? 250);
+          if (shutdownResult !== undefined) {
+            record.workspace.shutdownResult = shutdownResult;
+            workspaceTerminationConfirmed = shutdownResult.status === "completed";
+          }
         }
         classification = abortClassification(abortCause, budgetExpired);
       } else {
@@ -567,6 +588,8 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     }
     if (!setupStarted && workspace === undefined) {
       cleanupStatus = { status: "completed" };
+    } else if (!workspaceTerminationConfirmed) {
+      cleanupStatus = { status: "timed-out", error: "Workspace setup did not terminate before cleanup." };
     } else try {
       const cleanupPromise = Promise.resolve(options.workspace.cleanup?.({
         run: structuredClone(runSnapshot),
@@ -670,35 +693,53 @@ export async function writeAttemptRecord(path: string, record: AttemptRecord): P
   assertRecord(record);
   const destination = resolve(path);
   await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
-  const temporary = `${destination}.${randomUUID()}.tmp`;
-  const bytes = Buffer.from(`${JSON.stringify(record)}\n`, "utf8");
-  const handle = await open(temporary, "wx", 0o600);
+  await withRecordPublicationLock(destination, async () => {
+    const temporary = `${destination}.${randomUUID()}.tmp`;
+    const bytes = Buffer.from(`${JSON.stringify(record)}\n`, "utf8");
+    const handle = await open(temporary, "wx", 0o600);
+    try {
+      await handle.write(bytes);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    try {
+      try {
+        await link(temporary, destination);
+        await unlink(temporary);
+        await syncDirectory(dirname(destination));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const existing = await readAttemptRecord(destination);
+        if (existing.run.id !== record.run.id || existing.attempt.id !== record.attempt.id) {
+          throw new Error(`Attempt record "${path}" already belongs to another attempt.`);
+        }
+        if (existing.terminal !== undefined || existing.classification !== undefined) {
+          throw new Error(`Attempt record "${path}" is already terminal.`);
+        }
+        await rename(temporary, destination);
+        await syncDirectory(dirname(destination));
+      }
+    } catch (error) {
+      await rm(temporary, { force: true });
+      throw error;
+    }
+  });
+}
+
+async function withRecordPublicationLock<T>(destination: string, operation: () => Promise<T>): Promise<T> {
+  const lockPath = `${destination}.write-lock`;
+  let lock: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    await handle.write(bytes);
-    await handle.sync();
-  } finally {
-    await handle.close();
+    lock = await open(lockPath, "wx", 0o600);
+  } catch (error) {
+    throw new Error(`Attempt record "${destination}" is already being published: ${errorMessage(error)}`);
   }
   try {
-    try {
-      await link(temporary, destination);
-      await unlink(temporary);
-      await syncDirectory(dirname(destination));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const existing = await readAttemptRecord(destination);
-      if (existing.run.id !== record.run.id || existing.attempt.id !== record.attempt.id) {
-        throw new Error(`Attempt record "${path}" already belongs to another attempt.`);
-      }
-      if (existing.terminal !== undefined || existing.classification !== undefined) {
-        throw new Error(`Attempt record "${path}" is already terminal.`);
-      }
-      await rename(temporary, destination);
-      await syncDirectory(dirname(destination));
-    }
-  } catch (error) {
-    await rm(temporary, { force: true });
-    throw error;
+    return await operation();
+  } finally {
+    await lock.close();
+    await rm(lockPath, { force: true });
   }
 }
 
@@ -952,6 +993,25 @@ async function shutdownHarness(
     return settled;
   } catch (error) {
     return { status: "failed", error: errorMessage(error) };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function shutdownWorkspace(
+  shutdownCallback: (() => void | Promise<void>) | undefined,
+  graceMs: number,
+): Promise<WorkspaceShutdownResult | undefined> {
+  if (shutdownCallback === undefined) return undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const shutdown = Promise.resolve(shutdownCallback());
+    return await Promise.race([
+      shutdown.then(() => ({ status: "completed" as const }), (error) => ({ status: "failed" as const, error: errorMessage(error) })),
+      new Promise<WorkspaceShutdownResult>((resolvePromise) => {
+        timer = setTimeout(() => resolvePromise({ status: "timed-out", error: "Workspace shutdown exceeded its grace period." }), graceMs);
+      }),
+    ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }

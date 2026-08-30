@@ -155,8 +155,10 @@ export type {
   VerifierExecutionContext,
   VerifierExecutionResult,
   VerifierExecutor,
+  WorkspaceCleanupContext,
   WorkspaceCoordinator,
   WorkspaceExecutionResult,
+  WorkspaceShutdownResult,
   WorkspaceSetupContext as LifecycleWorkspaceSetupContext,
 } from "./lifecycle.js";
 export {

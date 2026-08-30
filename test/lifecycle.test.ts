@@ -228,6 +228,28 @@ test("external interruption remains the first cause when budget expires during s
   assert.equal(result.terminal.stopReason, "none");
 });
 
+test("unsettled workspace setup is not cleaned while its callback remains live", async () => {
+  const controller = new AbortController();
+  let cleanupCalled = false;
+  const resultPromise = executeRunAttempt({
+    run,
+    signal: controller.signal,
+    shutdownGraceMs: 10,
+    workspace: {
+      setup: async () => new Promise<{ status: "ready" }>(() => undefined),
+      cleanup: async () => { cleanupCalled = true; },
+    },
+    harness: async () => ({ status: "completed" }),
+    evidence: { flush: () => undefined },
+  });
+  await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 1));
+  controller.abort();
+  const result = await resultPromise;
+  assert.equal(cleanupCalled, false);
+  assert.equal(result.record.cleanup?.status, "timed-out");
+  assert.equal(result.terminal.state, "interrupted");
+});
+
 test("callback rejections during cancellation remain in partial evidence", async () => {
   const setupController = new AbortController();
   let setupStartedResolve: (() => void) | undefined;
@@ -693,6 +715,31 @@ test("attempt persistence rejects reopening a terminal attempt", async () => {
       lifecycle: new LifecycleController().snapshot(),
       partial: true,
     }), /already terminal/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("concurrent terminal publication has one winner", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-terminal-race-"));
+  try {
+    const path = join(root, "attempt.json");
+    const terminal = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    const first = structuredClone(terminal.record);
+    const second = structuredClone(terminal.record);
+    (second.classification as { reason?: string }).reason = "different writer";
+    const results = await Promise.allSettled([
+      writeAttemptRecord(path, first),
+      writeAttemptRecord(path, second),
+    ]);
+    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal(results.filter((result) => result.status === "rejected").length, 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

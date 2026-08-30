@@ -261,6 +261,22 @@ test("snapshots caller payloads before observer mutation", async () => {
   }
 });
 
+test("snapshots direct writer records when append is called", async () => {
+  const root = temporaryRoot();
+  try {
+    const path = join(root, "writer.jsonl");
+    const writer = new JsonlEvidenceWriter(path);
+    const record = { state: "before" };
+    const append = writer.append(record);
+    record.state = "after";
+    await append;
+    await writer.close();
+    assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), { state: "before" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("does not process frames queued after malformed output", async () => {
   const root = temporaryRoot();
   let observed = 0;
