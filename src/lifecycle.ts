@@ -1588,6 +1588,10 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       if (!visitedStates.has("running")) {
         throw new Error("Policy-stop terminal records require the running lifecycle phase.");
       }
+      if (!isRecord(value.workspace) || value.workspace.status !== "ready") {
+        throw new Error("Policy-stop terminal records require a ready workspace result.");
+      }
+      assertShutdownCompleted(value.workspace, "Workspace");
       if (!isRecord(value.harness) || value.harness.status !== "stopped" || value.harness.stopReason !== "policy") {
         throw new Error("Policy-stop terminal records require a matching stopped harness result.");
       }

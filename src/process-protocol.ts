@@ -154,8 +154,14 @@ export class JsonlEvidenceWriter {
         const handle = await this.openHandle();
         let wrote = false;
         try {
-          await handle.write(line, undefined, "utf8");
-          wrote = true;
+          const bytes = Buffer.from(line, "utf8");
+          let offset = 0;
+          while (offset < bytes.length) {
+            const { bytesWritten } = await handle.write(bytes.subarray(offset));
+            if (bytesWritten <= 0) throw new Error("JSONL evidence write made no progress.");
+            wrote = true;
+            offset += bytesWritten;
+          }
           if (this.shouldFsync) await handle.sync();
           this._count += 1;
         } catch (error) {
@@ -1011,6 +1017,9 @@ function protocolLineLimitForWriter(
   callerSuppliedWriter: boolean,
 ): number {
   if (!callerSuppliedWriter) return requestedLineLimit;
+  if (writerMaxRecordBytes <= PROTOCOL_RECORD_ENVELOPE_OVERHEAD) {
+    throw new Error("JSONL evidence writer is too small for a protocol observation envelope.");
+  }
   const available = writerMaxRecordBytes - PROTOCOL_RECORD_ENVELOPE_OVERHEAD;
   const envelopeSafeLimit = Math.max(
     1,

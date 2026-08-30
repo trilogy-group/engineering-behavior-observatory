@@ -311,6 +311,20 @@ test("caller-owned writer bounds an oversized frame before recorder append", asy
   }
 });
 
+test("rejects a caller-owned writer too small for protocol observations", () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "undersized-caller-writer.jsonl"), { maxLineBytes: 1024 });
+    assert.throws(() => spawnProtocolProcess({
+      ...nodeScript("console.log('0')"),
+      source: "fake-harness",
+      writer,
+    }), /too small for a protocol observation envelope/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("does not expose a pre-existing diagnostic path as this process evidence", async () => {
   const root = temporaryRoot();
   try {
