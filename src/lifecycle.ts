@@ -1563,6 +1563,9 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     } else if (value.classification.underlyingSource !== undefined) {
       throw new Error("Classification underlying source requires a wrapped outcome.");
     }
+    if (value.classification.kind === "capture-incomplete" && value.classification.source !== "capture") {
+      throw new Error("Capture-incomplete classifications require capture attribution.");
+    }
     assertTerminalRecord(value.classification.terminal);
     if (!sameTerminalRecord(value.terminal, value.classification.terminal)) {
       throw new Error("Attempt terminal and classification records disagree.");
@@ -1667,6 +1670,9 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     if (value.harnessTerminationConfirmed === false || value.verifierTerminationConfirmed === false) {
       throw new Error("Completed terminal records require confirmed execution termination.");
     }
+    assertShutdownCompleted(value.workspace, "Workspace");
+    assertShutdownCompleted(value.harness, "Harness");
+    assertShutdownCompleted(value.verifier, "Verifier");
     if (isRecord(value.persistence) && value.persistence.status !== "complete") {
       throw new Error("Completed terminal records cannot have incomplete persistence.");
     }
@@ -1871,6 +1877,12 @@ function assertHarnessStatus(harness: unknown, status: HarnessExecutionResult["s
 function assertCleanupStatus(cleanup: unknown, status: "completed" | "failed" | "timed-out"): void {
   if (!isRecord(cleanup) || cleanup.status !== status) {
     throw new Error(`Terminal outcome requires ${status} cleanup.`);
+  }
+}
+
+function assertShutdownCompleted(value: unknown, label: string): void {
+  if (isRecord(value) && isRecord(value.shutdownResult) && value.shutdownResult.status !== "completed") {
+    throw new Error(`Completed terminal records require confirmed ${label.toLowerCase()} shutdown.`);
   }
 }
 
