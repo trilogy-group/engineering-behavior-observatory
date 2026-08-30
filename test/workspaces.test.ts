@@ -5,6 +5,7 @@ import {
   chmodSync,
   existsSync,
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   readlinkSync,
   readdirSync,
@@ -413,11 +414,17 @@ test("retains failed setup attempts only when configured", async () => {
       attemptId: "failed-retained",
       workspaceParent: parent,
       retainOnFailure: true,
-      setup: () => { throw new Error("setup failed"); },
+      setup: (workspacePath) => {
+        writeFileSync(join(workspacePath, "diagnostic.log"), "failure output\n", { mode: 0o644 });
+        mkdirSync(join(workspacePath, "diagnostics"), { mode: 0o755 });
+        throw new Error("setup failed");
+      },
     });
     assert.equal(retained.state, "failed");
     assert.equal(retained.retained, true);
     assert.equal(existsSync(retained.workspacePath), true);
+    assert.equal(statSync(join(retained.workspacePath, "diagnostic.log")).mode & 0o7777, 0o600);
+    assert.equal(statSync(join(retained.workspacePath, "diagnostics")).mode & 0o7777, 0o700);
     assert.match(retained.error ?? "", /setup failed/);
     await retained.cleanup("failure");
     assert.equal(existsSync(retained.workspacePath), true);

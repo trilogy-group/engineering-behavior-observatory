@@ -156,9 +156,18 @@ export async function materializeWorkspace(
     return result;
   } catch (error) {
     const message = errorMessage(error);
-    const rootIsSafe = workspaceIdentity !== undefined
-      && await isSafeWorkspaceRoot(workspacePath, workspaceIdentity)
-      && await isSafeWorkspaceTree(workspacePath);
+    let rootIsSafe = false;
+    if (workspaceIdentity !== undefined) {
+      try {
+        if (await isSafeWorkspaceRoot(workspacePath, workspaceIdentity)) {
+          normalizeWorkspace(workspacePath, workspaceIdentity);
+          rootIsSafe = await isSafeWorkspaceRoot(workspacePath, workspaceIdentity)
+            && await isSafeWorkspaceTree(workspacePath);
+        }
+      } catch {
+        rootIsSafe = false;
+      }
+    }
     let workspaceRemoved = false;
     if (!retainOnFailure || !rootIsSafe) {
       workspaceRemoved = removeWorkspaceIfOwned(workspacePath, workspaceIdentity);
