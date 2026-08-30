@@ -86,6 +86,35 @@ and reports the named mismatching component before a later materializer or
 scheduler can consume it. The model-visible projection is only `agentInput`;
 reference solutions, verifier bytes, and review records remain restricted.
 
+## Workspace materialization
+
+`materializeWorkspace` accepts an admitted packet with a `frozen` status and
+creates an attempt-identified directory outside the task bundle. It verifies
+the digest-pinned TAR+gzip source, copies only the declared literal allowlist,
+rejects links, special entries, traversal, and a selected `restricted/`
+subtree, then normalizes private modes and timestamps before calculating the
+`workspaceFingerprint` used by the verifier. The result's `startingDigest` is
+the declared fixture digest; `workspaceDigest` is the normalized tree
+fingerprint. Attempt roots and non-executable files use `0700` and `0600`;
+executable archive or setup files retain the owner execute bit.
+
+Setup callbacks receive the disposable workspace path and an invocation-owned
+`{ spawn }` context. Child processes that setup needs to create must use that
+context: each child is placed in a private process group and its group is
+terminated before the fingerprint is calculated. This prevents cleanup from
+mistaking unrelated coordinator processes for setup descendants. A setup step
+must settle all in-process writes (including timers and promises) and must not
+leave ambient child processes behind before returning; arbitrary filesystem
+closures cannot be revoked without a sandbox. Stronger process isolation can
+still be supplied by the evaluation environment. Call
+`cleanupWorkspace(result, "success")` (or `result.cleanup("success")`) after a
+successful attempt. A failed setup returns a failed lifecycle result;
+`retainOnFailure: true` keeps its attempt path for inspection after normalizing
+an owned tree to private modes, while the default removes it. Identity changes,
+links, special entries, and paths that cannot be safely normalized are never
+retained. Failure retention never changes the model-visible input surface or
+the frozen packet.
+
 ## Experiments
 
 `schemas/experiment.v1.schema.json` treats task, model, and harness sets;

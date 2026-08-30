@@ -28,6 +28,7 @@ export {
   resolveBundleArtifact,
   resolveBundleArtifactDigest,
   resolveTaskArchive,
+  readTaskArchive,
   validateTaskArchive,
 } from "./contracts.js";
 export {
@@ -59,6 +60,7 @@ export type {
   ResolvedTaskPacket,
   TaskCondition,
   TaskConditionSet,
+  TaskArchiveEntry,
 } from "./contracts.js";
 export {
   assertValidRunQueue,
@@ -108,3 +110,10 @@ export type {
   VerifierRunResult,
   VerifierWorkspace,
 } from "./verifiers.js";
+export { cleanupWorkspace, materializeWorkspace } from "./workspaces.js";
+export type {
+  WorkspaceMaterialization,
+  WorkspaceMaterializationOptions,
+  WorkspaceSetupContext,
+  WorkspaceSetupStep,
+} from "./workspaces.js";
