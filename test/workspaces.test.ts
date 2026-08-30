@@ -20,6 +20,7 @@ import {
   cleanupWorkspace,
   digestBytes,
   digestMetadata,
+  digestWorkspace,
   freezeTaskPacket,
   materializeWorkspace,
   type TaskPacket,
@@ -121,6 +122,7 @@ test("materializes frozen fixtures reproducibly and cleans successful attempts",
 
     assert.equal(first.startingDigest.value, second.startingDigest.value);
     assert.equal(first.workspaceFingerprint, second.workspaceFingerprint);
+    assert.equal(first.workspaceFingerprint, await digestWorkspace(first.workspacePath));
     assert.equal(first.state, "ready");
     assert.equal(statSync(first.workspacePath).mode & 0o7777, 0o700);
     assert.equal(statSync(join(first.workspacePath, "README.md")).mode & 0o7777, 0o600);
@@ -281,6 +283,33 @@ test("rejects a replaced workspace root without touching the replacement target"
       setup: (workspacePath) => {
         rmSync(workspacePath, { force: true, recursive: true });
         symlinkSync(root, workspacePath);
+      },
+    });
+    assert.equal(result.state, "failed");
+    assert.equal(result.retained, false);
+    assert.equal(existsSync(result.workspacePath), false);
+    assert.equal(existsSync(join(root, "packet.json")), true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(parent, { force: true, recursive: true });
+  }
+});
+
+test("rejects a replaced workspace descendant before following it", async () => {
+  const { root } = createBundle();
+  const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+
+  try {
+    freezeTaskPacket(root, "packet.json");
+    const result = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "replaced-descendant",
+      workspaceParent: parent,
+      retainOnFailure: true,
+      setup: (workspacePath) => {
+        rmSync(join(workspacePath, "src"), { force: true, recursive: true });
+        symlinkSync(root, join(workspacePath, "src"));
       },
     });
     assert.equal(result.state, "failed");
