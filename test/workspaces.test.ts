@@ -459,8 +459,10 @@ test("retains failed setup attempts only when configured", async () => {
       },
     });
     assert.equal(insecure.state, "failed");
-    assert.equal(insecure.retained, false);
-    assert.equal(existsSync(insecure.workspacePath), false);
+    assert.equal(insecure.retained, true);
+    assert.equal(statSync(insecure.workspacePath).mode & 0o7777, 0o700);
+    await insecure.cleanup("success");
+    assert.equal(insecure.state, "cleaned");
 
     const unreadableRoot = await materializeWorkspace({
       bundleRoot: root,

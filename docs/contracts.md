@@ -107,9 +107,11 @@ must not leave ambient child processes behind; stronger process isolation can
 still be supplied by the evaluation environment. Call
 `cleanupWorkspace(result, "success")` (or `result.cleanup("success")`) after a
 successful attempt. A failed setup returns a failed lifecycle result;
-`retainOnFailure: true` keeps its attempt path for inspection, while the
-default removes it. Failure retention never changes the model-visible input
-surface or the frozen packet.
+`retainOnFailure: true` keeps its attempt path for inspection after normalizing
+an owned tree to private modes, while the default removes it. Identity changes,
+links, special entries, and paths that cannot be safely normalized are never
+retained. Failure retention never changes the model-visible input surface or
+the frozen packet.
 
 ## Experiments
 

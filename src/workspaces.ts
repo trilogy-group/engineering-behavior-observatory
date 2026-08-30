@@ -159,8 +159,7 @@ export async function materializeWorkspace(
     let rootIsSafe = false;
     if (workspaceIdentity !== undefined) {
       try {
-        if (await isOwnedWorkspaceRoot(workspacePath, workspaceIdentity)
-            && isNormalizableWorkspaceRootMode((await lstat(workspacePath)).mode)) {
+        if (await isOwnedWorkspaceRoot(workspacePath, workspaceIdentity)) {
           normalizeWorkspace(workspacePath, workspaceIdentity);
           rootIsSafe = await isSafeWorkspaceRoot(workspacePath, workspaceIdentity)
             && await isSafeWorkspaceTree(workspacePath);
@@ -508,6 +507,7 @@ function normalizeDirectory(
     if (!sameIdentity(fstatSync(directoryFd), lstatSync(directory))) {
       throw new Error(`Workspace directory "${relativeDirectory}" changed during materialization.`);
     }
+    fchmodSync(directoryFd, DIRECTORY_MODE);
     const entries = readDirectoryEntries(directory, directoryFd);
     entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
     for (const entry of entries) {
@@ -1018,10 +1018,6 @@ async function isSafeWorkspaceRoot(path: string, expected: WorkspaceIdentity): P
   } catch {
     return false;
   }
-}
-
-function isNormalizableWorkspaceRootMode(mode: number): boolean {
-  return (mode & 0o7777) === DIRECTORY_MODE || (mode & 0o444) === 0;
 }
 
 function isSafeWorkspaceTree(
