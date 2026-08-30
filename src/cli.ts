@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -234,9 +234,14 @@ function readBoundedFile(path: string): Buffer {
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const opened = fstatSync(descriptor);
     if (!opened.isFile()) throw new Error(`Artifact path "${path}" is not a regular file.`);
+    const namedBefore = lstatSync(path);
+    if (!namedBefore.isFile() || namedBefore.dev !== opened.dev || namedBefore.ino !== opened.ino) {
+      throw new Error(`Artifact file "${path}" changed while being opened.`);
+    }
     if (!Number.isSafeInteger(opened.size) || opened.size > MAX_RUN_QUEUE_BYTES) {
       throw new Error(`Artifact file exceeds the local byte limit of ${MAX_RUN_QUEUE_BYTES}.`);
     }
+    const openedTimes = fstatSync(descriptor, { bigint: true });
     const bytes = Buffer.alloc(opened.size);
     for (let offset = 0; offset < opened.size;) {
       const read = readSync(descriptor, bytes, offset, opened.size - offset, offset);
@@ -248,8 +253,12 @@ function readBoundedFile(path: string): Buffer {
       throw new Error(`Artifact file "${path}" grew while being read.`);
     }
     const completed = fstatSync(descriptor);
+    const completedTimes = fstatSync(descriptor, { bigint: true });
+    const namedAfter = lstatSync(path);
     if (!completed.isFile() || completed.dev !== opened.dev || completed.ino !== opened.ino
-        || completed.size !== opened.size) {
+        || completed.size !== opened.size || !namedAfter.isFile()
+        || namedAfter.dev !== completed.dev || namedAfter.ino !== completed.ino
+        || completedTimes.mtimeNs !== openedTimes.mtimeNs || completedTimes.ctimeNs !== openedTimes.ctimeNs) {
       throw new Error(`Artifact file "${path}" changed while being read.`);
     }
     return bytes;
