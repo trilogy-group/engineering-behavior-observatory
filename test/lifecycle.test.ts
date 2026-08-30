@@ -677,6 +677,50 @@ test("execution rejects an owned record path before invoking callbacks", async (
   }
 });
 
+test("attempt paths are reserved before concurrent callbacks can start", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-reservation-"));
+  try {
+    const path = join(root, "attempt.json");
+    let setupCalls = 0;
+    const options = {
+      run,
+      recordPath: path,
+      workspace: {
+        setup: async () => { setupCalls += 1; return { status: "ready" as const, artifactId: "workspace-1" }; },
+      },
+      harness: async () => ({ status: "completed" as const }),
+      verifier: async () => ({ status: "passed" as const }),
+      evidence: { flush: () => undefined },
+    };
+    const results = await Promise.allSettled([executeRunAttempt(options), executeRunAttempt(options)]);
+    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+    assert.equal(setupCalls, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an initial checkpoint failure prevents workspace and harness callbacks", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-initial-checkpoint-"));
+  try {
+    const parentFile = join(root, "parent");
+    writeFileSync(parentFile, "not a directory");
+    let setupCalled = false;
+    let harnessCalled = false;
+    await assert.rejects(executeRunAttempt({
+      run,
+      recordPath: join(parentFile, "attempt.json"),
+      workspace: { setup: async () => { setupCalled = true; return { status: "ready", artifactId: "workspace-1" }; } },
+      harness: async () => { harnessCalled = true; return { status: "completed" }; },
+    }), /ENOTDIR|checkpoint|directory/);
+    assert.equal(setupCalled, false);
+    assert.equal(harnessCalled, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("record persistence failure does not bypass cleanup", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-persist-"));
   let cleaned = false;

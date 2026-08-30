@@ -306,8 +306,10 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     record.capture = { status: "incomplete", error: "Evidence flush boundary is unavailable." };
   }
   let persistenceError: string | undefined;
+  let reservationPath: string | undefined;
   if (options.recordPath !== undefined) {
     await assertAttemptRecordPathAvailable(options.recordPath, runSnapshot, attemptSnapshot);
+    reservationPath = await reserveAttemptRecordPath(options.recordPath);
   }
   const persist = async (): Promise<void> => {
     record.lifecycle = lifecycle.snapshot();
@@ -353,6 +355,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   let classification: AttemptClassification | undefined;
   let cleanupStatus: AttemptRecord["cleanup"];
   let harnessShutdown: (() => void | Promise<void>) | undefined;
+  let setupStarted = false;
   const abortPromise = new Promise<"aborted">((resolveAbort) => {
     if (controller.signal.aborted) resolveAbort("aborted");
     else controller.signal.addEventListener("abort", () => resolveAbort("aborted"), { once: true });
@@ -374,9 +377,16 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
 
   try {
     await flush();
+    if (persistenceError !== undefined) {
+      throw new Error(`Initial attempt checkpoint could not be persisted: ${persistenceError}`);
+    }
     lifecycle.transition("setup");
     await persist();
+    if (persistenceError !== undefined) {
+      throw new Error(`Initial attempt checkpoint could not be persisted: ${persistenceError}`);
+    }
     try {
+      setupStarted = true;
       const setupPromise = Promise.resolve(options.workspace.setup({
         run: structuredClone(runSnapshot),
         attempt: structuredClone(attemptSnapshot),
@@ -542,7 +552,9 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       lifecycle.transition("cleaning");
       await persist();
     }
-    try {
+    if (!setupStarted && workspace === undefined) {
+      cleanupStatus = { status: "completed" };
+    } else try {
       const cleanupPromise = Promise.resolve(options.workspace.cleanup?.({
         run: structuredClone(runSnapshot),
         attempt: structuredClone(attemptSnapshot),
@@ -621,6 +633,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       await persist();
     }
     options.signal?.removeEventListener("abort", externalAbort);
+    if (reservationPath !== undefined) await rm(reservationPath, { force: true });
   }
 
   return {
@@ -697,6 +710,25 @@ async function assertAttemptRecordPathAvailable(
     throw new Error(`Attempt record "${path}" already belongs to another attempt.`);
   }
   throw new Error(`Attempt record "${path}" is already owned; use a new linked attempt.`);
+}
+
+async function reserveAttemptRecordPath(path: string): Promise<string> {
+  const reservation = `${resolve(path)}.lock`;
+  await mkdir(dirname(reservation), { recursive: true, mode: 0o700 });
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  let created = false;
+  try {
+    handle = await open(reservation, "wx", 0o600);
+    created = true;
+    await handle.write(`${process.pid}\n`, undefined, "utf8");
+    await handle.sync();
+    return reservation;
+  } catch (error) {
+    if (created) await rm(reservation, { force: true });
+    throw new Error(`Attempt record "${path}" is already reserved: ${errorMessage(error)}`);
+  } finally {
+    await handle?.close();
+  }
 }
 
 function validateOptions(options: RunAttemptOptions): void {
