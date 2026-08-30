@@ -317,11 +317,18 @@ function createWorkspace(parent: WorkspaceParent, attemptId: string): { path: st
     if (!sameIdentity(fstatSync(parentFd), lstatSync("."))) {
       throw new Error("Workspace parent changed during attempt creation.");
     }
-    const metadata = lstatSync(createdPath);
-    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-      throw new Error("Workspace root is not a directory.");
+    const createdFd = openSync(createdPath, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    try {
+      const metadata = fstatSync(createdFd);
+      const pathMetadata = lstatSync(createdPath);
+      if (!metadata.isDirectory() || metadata.isSymbolicLink()
+          || !sameIdentity(metadata, pathMetadata) || pathMetadata.isSymbolicLink()) {
+        throw new Error("Workspace root changed during attempt creation.");
+      }
+      return { path: realpathSync(createdPath), identity: { dev: metadata.dev, ino: metadata.ino } };
+    } finally {
+      closeSync(createdFd);
     }
-    return { path: realpathSync(createdPath), identity: { dev: metadata.dev, ino: metadata.ino } };
   } catch (error) {
     if (createdPath !== undefined) rmSync(createdPath, { force: true, recursive: true });
     throw error;
