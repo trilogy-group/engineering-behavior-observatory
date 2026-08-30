@@ -300,6 +300,13 @@ test("compiles arbitrary matrices with stable serialized identities", () => {
   assert.throws(
     () => compileRunQueue(experiment, {
       ...compileOptions(experiment),
+      freezeLocators: { "task-a": "freezes/a", "task-b": "freezes/a.quarantine" },
+    }),
+    /Freeze locator.*aliases task.*freeze locator/,
+  );
+  assert.throws(
+    () => compileRunQueue(experiment, {
+      ...compileOptions(experiment),
       freezeLocators: { "task-a": overlongFreezeLocator },
     }),
     /task-a.*exceeds safe path limits/,
@@ -547,6 +554,15 @@ test("standalone queues reject conflicting identities for one condition ID", () 
   assert.match(
     validateRunQueue(overlongFreezePath).map((error) => error.message).join("\n"),
     /exceeds safe path limits/,
+  );
+  const sidecarCollision = structuredClone(queue);
+  for (const entry of sidecarCollision.entries) {
+    if (entry.taskId === "task-a") entry.task.freezeLocator = "freezes/a";
+    if (entry.taskId === "task-b") entry.task.freezeLocator = "freezes/a.quarantine";
+  }
+  assert.match(
+    validateRunQueue(sidecarCollision).map((error) => error.message).join("\n"),
+    /Freeze locator.*aliases task/,
   );
 });
 

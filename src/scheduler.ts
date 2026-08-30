@@ -39,6 +39,15 @@ import {
 export type QueueOrderingStrategy = "sequential" | "seeded-shuffle" | "balanced";
 export type PermutationAlgorithm = "fisher-yates-v1";
 export const MAX_RUN_QUEUE_ENTRIES = 100_000;
+const FREEZE_PUBLICATION_SUFFIXES = [
+  "",
+  ".quarantine",
+  ".quarantine.marker",
+  ".quarantine.marker.tmp",
+  ".quarantine.marker.binding",
+  ".quarantine.marker.binding.tmp",
+  ".recovered",
+] as const;
 
 export type FrozenTaskIdentity = {
   id: string;
@@ -829,13 +838,13 @@ function assertDistinctFreezeLocatorBindings(
     ...experimentReferences(experiment),
     ...Object.values(experiment.taskSet).map((condition) => condition.packetRef),
   ].map((reference) => ({ kind: "artifact" as const, path: reference.locator, field: reference.locator }));
-  const freezeBindings: LocatorBinding[] = [...tasks.values()].map((task) => ({
+  const freezeBindings: LocatorBinding[] = [...tasks.values()].flatMap((task) => FREEZE_PUBLICATION_SUFFIXES.map((suffix) => ({
     kind: "freeze" as const,
     taskId: task.id,
-    path: task.freezeLocator,
+    path: `${task.freezeLocator}${suffix}`,
     field: task.freezeLocator,
     packetLocator: task.packetRef.locator,
-  }));
+  })));
   const collision = findLocatorCollisions([...artifactBindings, ...freezeBindings])[0];
   if (collision !== undefined) throw new Error(locatorCollisionMessage(collision.left, collision.right));
 }
@@ -882,7 +891,11 @@ function validateQueueLocatorBindings(queue: RunQueue, artifact: string): Artifa
       errors.push(queueError(artifact, freeze.field, error instanceof Error ? error.message : "Freeze locator exceeds safe path limits."));
     }
   }
-  errors.push(...findLocatorCollisions([...artifacts.values(), ...freezePaths.values()]).map(({ left, right }) => {
+  const freezeBindings = [...freezePaths.values()].flatMap((freeze) => FREEZE_PUBLICATION_SUFFIXES.map((suffix) => ({
+    ...freeze,
+    path: `${freeze.path}${suffix}`,
+  })));
+  errors.push(...findLocatorCollisions([...artifacts.values(), ...freezeBindings]).map(({ left, right }) => {
     const field = left.kind === "freeze" ? left.field : right.kind === "freeze" ? right.field : right.field;
     return queueError(artifact, field, locatorCollisionMessage(left, right));
   }));
