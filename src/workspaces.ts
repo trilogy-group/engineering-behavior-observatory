@@ -647,7 +647,7 @@ async function runSetup(
   const allSteps = [...steps, ...(setupSteps ?? [])];
   if (allSteps.length === 0) return;
   if (process.platform === "win32") throw new Error("Workspace setup process tracking is unavailable on this platform.");
-  const children = new Set<number>();
+  const children = new Map<number, ChildProcess>();
   let spawnError: Error | undefined;
   const context: WorkspaceSetupContext = {
     spawn(command, args, options) {
@@ -655,7 +655,7 @@ async function runSetup(
       child.once("error", (error: unknown) => {
         spawnError = error instanceof Error ? error : new Error("Workspace setup child failed.");
       });
-      if (child.pid !== undefined) children.add(child.pid);
+      if (child.pid !== undefined) children.set(child.pid, child);
       return child;
     },
   };
@@ -666,7 +666,7 @@ async function runSetup(
     }
   } finally {
     await new Promise<void>((resolve) => setImmediate(resolve));
-    reapSetupChildren(children);
+    await reapSetupChildren(children);
     if (spawnError !== undefined) throw new Error(`Workspace setup child failed: ${spawnError.message}`);
   }
 }
@@ -682,8 +682,9 @@ function spawnOwnedProcess(
     : spawnProcess(command, args, ownedOptions) as ChildProcess;
 }
 
-function reapSetupChildren(children: ReadonlySet<number>): void {
-  for (const pid of children) {
+async function reapSetupChildren(children: ReadonlyMap<number, ChildProcess>): Promise<void> {
+  const waits: Array<Promise<void>> = [];
+  for (const [pid, child] of children) {
     try {
       // A detached child is the leader of its own process group. Killing the
       // group also covers descendants that outlive their direct parent.
@@ -691,7 +692,27 @@ function reapSetupChildren(children: ReadonlySet<number>): void {
     } catch {
       // The setup child may have exited between the process snapshot and kill.
     }
+    waits.push(waitForChildExit(child).then(() => waitForProcessGroupExit(pid)));
   }
+  await Promise.all(waits);
+}
+
+function waitForChildExit(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => child.once("close", () => resolve()));
+}
+
+async function waitForProcessGroupExit(pid: number): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      process.kill(-pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+      throw error;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Workspace setup process group did not terminate.");
 }
 
 function assertModelVisibleEntries(entries: readonly TaskArchiveEntry[]): void {
@@ -772,10 +793,7 @@ function isSafeWorkspaceTree(
 function removeWorkspaceIfOwned(path: string, expected: WorkspaceIdentity | undefined): boolean {
   try {
     const metadata = lstatSync(path);
-    if (metadata.isSymbolicLink()) {
-      rmSync(path, { force: true });
-      return true;
-    }
+    if (metadata.isSymbolicLink()) return false;
     if (expected === undefined || !metadata.isDirectory()
         || metadata.dev !== expected.dev || metadata.ino !== expected.ino) return false;
 

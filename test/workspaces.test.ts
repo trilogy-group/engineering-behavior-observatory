@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -438,7 +439,7 @@ test("rejects a replaced workspace root without touching the replacement target"
     });
     assert.equal(result.state, "failed");
     assert.equal(result.retained, false);
-    assert.equal(existsSync(result.workspacePath), false);
+    assert.equal(readlinkSync(result.workspacePath), root);
     assert.equal(existsSync(join(root, "packet.json")), true);
   } finally {
     rmSync(root, { force: true, recursive: true });
@@ -495,6 +496,31 @@ test("refuses cleanup after a ready workspace is replaced", async () => {
     renameSync(replacement, result.workspacePath);
     await assert.rejects(result.cleanup("success"), /Workspace root changed before cleanup/);
     assert.equal(readFileSync(join(result.workspacePath, "marker.txt"), "utf8"), "leave me");
+    assert.equal(result.state, "ready");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(parent, { force: true, recursive: true });
+  }
+});
+
+test("refuses cleanup after a ready workspace is replaced with a symlink", async () => {
+  const { root } = createBundle();
+  const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+
+  try {
+    freezeTaskPacket(root, "packet.json");
+    const result = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "cleanup-symlink-replacement",
+      workspaceParent: parent,
+    });
+    const moved = join(parent, "moved-workspace");
+    renameSync(result.workspacePath, moved);
+    symlinkSync(root, result.workspacePath);
+    await assert.rejects(result.cleanup("success"), /Workspace root changed before cleanup/);
+    assert.equal(readlinkSync(result.workspacePath), root);
+    assert.equal(existsSync(join(moved, "README.md")), true);
     assert.equal(result.state, "ready");
   } finally {
     rmSync(root, { force: true, recursive: true });
