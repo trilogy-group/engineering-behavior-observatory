@@ -730,9 +730,9 @@ export class ProtocolProcess {
     } catch (error) {
       this.childError ??= `Protocol output processing failed: ${errorMessage(error)}`;
     }
+    this.recorder.fence();
     try {
       await this.recorder.flush();
-      this.recorder.fence();
       await this.recorder.recordProcess(
         signal === null && exitCode === 0 ? "exited" : "terminated",
         { exitCode, signal, pid: this.child.pid ?? null },
