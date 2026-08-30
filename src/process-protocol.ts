@@ -907,6 +907,7 @@ export class ProtocolProcess {
     let endedAt: string;
     try {
       endedAt = this.now();
+      assertTimestamp(endedAt, "Process completion timestamp");
     } catch (error) {
       this.childError ??= `Process completion timestamp could not be recorded: ${errorMessage(error)}`;
       endedAt = this.startedAt;
@@ -1027,9 +1028,11 @@ function recoverWriterSequence(path: string): number {
     throw new Error("Existing JSONL evidence stream has an unterminated final record.");
   }
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  const lines = text.split("\n");
+  lines.pop();
   let sequence = 0;
-  for (const [index, line] of text.split("\n").entries()) {
-    if (line.trim() === "") continue;
+  for (const [index, line] of lines.entries()) {
+    if (line.trim() === "") throw new Error(`Existing JSONL evidence line ${index + 1} is blank.`);
     let value: unknown;
     try {
       value = JSON.parse(line);

@@ -1593,7 +1593,10 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     if (classificationKind === "task-failure" && classificationSource !== "verifier") {
       throw new Error("Task-failure terminal records require verifier attribution.");
     }
-    if (classificationKind === "verifier-error" && classificationSource === "verifier") {
+    if (classificationKind === "verifier-error") {
+      if (classificationSource !== "verifier") {
+        throw new Error("Verifier-error terminal records require verifier attribution.");
+      }
       if (!visitedStates.has("running") || !visitedStates.has("verifying")) {
         throw new Error("Verifier-error terminal records require running and verifying lifecycle phases.");
       }
