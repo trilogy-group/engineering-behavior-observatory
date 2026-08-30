@@ -194,6 +194,49 @@ test("a workspace that settles during interruption is retained for cleanup and e
   assert.equal(cleanedWorkspace, "late-workspace");
 });
 
+test("external interruption remains the first cause when budget expires during settling", async () => {
+  const controller = new AbortController();
+  const resultPromise = executeRunAttempt({
+    run,
+    signal: controller.signal,
+    maxWallClockMs: 10,
+    shutdownGraceMs: 100,
+    workspace: {
+      setup: async () => {
+        await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 40));
+        return { status: "ready", artifactId: "late-workspace" };
+      },
+      cleanup: async () => undefined,
+    },
+    harness: async () => ({ status: "completed" }),
+    evidence: { flush: () => undefined },
+  });
+  controller.abort();
+  const result = await resultPromise;
+  assert.equal(result.terminal.state, "interrupted");
+  assert.equal(result.terminal.stopReason, "none");
+});
+
+test("the harness is not launched after the coordinator deadline", async () => {
+  let harnessCalled = false;
+  const result = await executeRunAttempt({
+    run,
+    maxWallClockMs: 1,
+    workspace: {
+      setup: async () => {
+        const end = Date.now() + 5;
+        while (Date.now() < end) {}
+        return { status: "ready", artifactId: "workspace-1" };
+      },
+      cleanup: async () => undefined,
+    },
+    harness: async () => { harnessCalled = true; return { status: "completed" }; },
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(harnessCalled, false);
+  assert.equal(result.terminal.stopReason, "budget");
+});
+
 test("cancellation during cleanup reaches cleanup and interrupts a successful outcome", async () => {
   const controller = new AbortController();
   let cleanupSawAbort = false;

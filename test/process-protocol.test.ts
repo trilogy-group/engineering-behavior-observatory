@@ -103,6 +103,89 @@ test("retains the original JSONL frame text when parsed values lose precision", 
   }
 });
 
+test("rejects conflicting writer and evidence paths", () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "actual.jsonl"));
+    assert.throws(() => spawnProtocolProcess({
+      ...nodeScript(""),
+      source: "fake-harness",
+      writer,
+      evidencePath: join(root, "other.jsonl"),
+    }), /conflicts/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("keeps frame limits independent from the evidence envelope", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({ok:true}))"),
+      source: "fake-harness",
+      maxLineBytes: 16,
+      evidencePath: join(root, "small-limit.jsonl"),
+    });
+    assert.equal(processResult.status, "completed");
+    assert.equal(processResult.stdoutFrames, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bounds an unterminated stdout frame before accumulating it", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("process.stdout.write('x'.repeat(1000000))"),
+      source: "fake-harness",
+      maxLineBytes: 32,
+      evidencePath: join(root, "oversized.jsonl"),
+    });
+    assert.equal(processResult.status, "malformed");
+    assert.match(processResult.protocolError?.message ?? "", /exceeds/);
+    assert.equal(processResult.stdoutFrames, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("keeps recorder failures separate from malformed protocol output", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({ok:true}))"),
+      source: "fake-harness",
+      evidencePath: join(root, "recorder-error.jsonl"),
+      onFrame: () => { throw new Error("adapter observer failed"); },
+    });
+    assert.equal(processResult.status, "failed");
+    assert.equal(processResult.protocolError, undefined);
+    assert.match(processResult.recorderError ?? "", /adapter observer failed/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bounds in-memory observations while retaining the complete JSONL stream", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("for (let i=0;i<1100;i++) console.log(JSON.stringify({i}))"),
+      source: "fake-harness",
+      maxInMemoryObservations: 10,
+      evidencePath: join(root, "bounded-memory.jsonl"),
+    });
+    assert.equal(processResult.status, "completed");
+    assert.equal(processResult.observations.length, 10);
+    assert.ok(processResult.droppedObservations > 0);
+    assert.ok(readFileSync(join(root, "bounded-memory.jsonl"), "utf8").trim().split("\n").length > 1000);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("malformed protocol output stops the process and retains a readable partial record", async () => {
   const root = temporaryRoot();
   try {

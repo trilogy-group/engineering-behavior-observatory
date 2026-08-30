@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { mkdir, open, writeFile, type FileHandle } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { createInterface } from "node:readline";
 
 export type ProtocolIdentity = string | number | null;
 
@@ -68,6 +67,7 @@ const DEFAULT_MAX_LINE_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_STDERR_BYTES = 64 * 1024;
 const DEFAULT_SHUTDOWN_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 250;
+const DEFAULT_MAX_IN_MEMORY_OBSERVATIONS = 1024;
 
 /**
  * Appends JSON records one line at a time and optionally fsyncs each append.
@@ -223,6 +223,7 @@ export type ProtocolProcessOptions = {
   maxLineBytes?: number;
   shutdownGraceMs?: number;
   killGraceMs?: number;
+  maxInMemoryObservations?: number;
   signal?: AbortSignal;
   now?: () => string;
   spawnOptions?: Omit<SpawnOptions, "stdio" | "env" | "cwd">;
@@ -249,26 +250,36 @@ export type ProtocolProcessResult = {
   stdoutFrames: number;
   stderr: BoundedDiagnostic;
   error?: string;
+  recorderError?: string;
   protocolError?: { line: number; message: string; raw?: string };
   evidencePath?: string;
   stderrPath?: string;
+  droppedObservations: number;
   observations: ProtocolObservation[];
 };
 
 export class ProtocolEvidenceRecorder {
   private sequence = 0;
   private readonly records: ProtocolObservation[] = [];
+  private readonly maxInMemoryObservations: number;
+  private _dropped = 0;
 
   public constructor(
     private readonly writer: JsonlEvidenceWriter,
     private readonly source: string,
     private readonly now: () => string = () => new Date().toISOString(),
+    maxInMemoryObservations = DEFAULT_MAX_IN_MEMORY_OBSERVATIONS,
   ) {
     assertNonEmpty(source, "Protocol source");
+    this.maxInMemoryObservations = positiveInteger(maxInMemoryObservations, "In-memory observation limit");
   }
 
   public get observations(): readonly ProtocolObservation[] {
     return this.records;
+  }
+
+  public get droppedObservations(): number {
+    return this._dropped;
   }
 
   public recordFrame(payload: unknown, observedAt = this.now(), raw?: string): Promise<ProtocolObservation> {
@@ -376,6 +387,10 @@ export class ProtocolEvidenceRecorder {
       ...(input.status === undefined ? {} : { status: input.status }),
       ...(input.capability === undefined ? {} : { capability: input.capability }),
     };
+    if (this.records.length >= this.maxInMemoryObservations) {
+      this.records.shift();
+      this._dropped += 1;
+    }
     this.records.push(observation);
     return this.writer.append(observation).then(() => observation);
   }
@@ -388,6 +403,7 @@ export class ProtocolProcess {
   private readonly stdoutLineLimit: number;
   private readonly shutdownGraceMs: number;
   private readonly killGraceMs: number;
+  private readonly maxInMemoryObservations: number;
   private readonly now: () => string;
   private readonly ownsWriter: boolean;
   private readonly evidencePath?: string;
@@ -398,9 +414,12 @@ export class ProtocolProcess {
   private lineCount = 0;
   private frameCount = 0;
   private lineQueue: Promise<void> = Promise.resolve();
+  private pendingLineParts: Buffer[] = [];
+  private pendingLineBytes = 0;
   private readonly waitPromise: Promise<ProtocolProcessResult>;
   private termination: ProcessTermination = "natural";
   private protocolError: { line: number; message: string; raw?: string } | undefined;
+  private recorderError: string | undefined;
   private shutdownStarted = false;
   private interruptionStarted = false;
   private childError: string | undefined;
@@ -412,6 +431,7 @@ export class ProtocolProcess {
     this.stderrCapture = new BoundedDiagnosticCapture(options.maxStderrBytes ?? DEFAULT_MAX_STDERR_BYTES);
     this.shutdownGraceMs = nonnegativeInteger(options.shutdownGraceMs ?? DEFAULT_SHUTDOWN_GRACE_MS, "Shutdown grace period");
     this.killGraceMs = nonnegativeInteger(options.killGraceMs ?? DEFAULT_KILL_GRACE_MS, "Kill grace period");
+    this.maxInMemoryObservations = positiveInteger(options.maxInMemoryObservations ?? DEFAULT_MAX_IN_MEMORY_OBSERVATIONS, "In-memory observation limit");
     this.now = options.now ?? (() => new Date().toISOString());
     this.startedAt = this.now();
     this.cwd = resolve(options.cwd ?? process.cwd());
@@ -420,10 +440,14 @@ export class ProtocolProcess {
       options.evidencePath ?? resolve(process.cwd(), `.ebo-protocol-${randomUUID()}.jsonl`),
       { maxLineBytes: Math.min(Number.MAX_SAFE_INTEGER, this.stdoutLineLimit * 4 + 1024) },
     );
+    const configuredEvidencePath = options.evidencePath === undefined ? undefined : resolve(options.evidencePath);
+    if (options.writer !== undefined && configuredEvidencePath !== undefined && configuredEvidencePath !== writer.path) {
+      throw new Error("Protocol writer path conflicts with evidencePath.");
+    }
     this.ownsWriter = options.writer === undefined;
-    this.evidencePath = options.evidencePath ?? (options.writer === undefined ? writer.path : undefined);
+    this.evidencePath = writer.path;
     this.stderrPath = options.stderrPath === undefined ? undefined : resolve(options.stderrPath);
-    this.recorder = new ProtocolEvidenceRecorder(writer, options.source, this.now);
+    this.recorder = new ProtocolEvidenceRecorder(writer, options.source, this.now, this.maxInMemoryObservations);
 
     const spawnOptions: SpawnOptions = {
       ...options.spawnOptions,
@@ -489,18 +513,60 @@ export class ProtocolProcess {
       this.child.stderr.on("data", (chunk: Buffer) => this.stderrCapture.write(chunk));
     }
     if (this.child.stdout === null) return;
-    const lines = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
-    lines.on("line", (line) => {
-      this.lineQueue = this.lineQueue
-        .then(() => this.processLine(line))
-        .catch((error) => this.failProtocol(`Protocol evidence recording failed: ${errorMessage(error)}`));
-    });
+    this.child.stdout.on("data", (chunk: Buffer) => this.consumeStdout(chunk));
+    this.child.stdout.on("end", () => this.flushPendingLine());
   }
 
-  private async processLine(line: string): Promise<void> {
+  private consumeStdout(chunk: Buffer): void {
+    if (this.protocolError !== undefined || this.recorderError !== undefined) return;
+    let offset = 0;
+    while (offset < chunk.length) {
+      const newline = chunk.indexOf(0x0a, offset);
+      if (newline === -1) {
+        this.appendPendingLine(chunk.subarray(offset));
+        return;
+      }
+      if (!this.appendPendingLine(chunk.subarray(offset, newline))) return;
+      this.queuePendingLine();
+      offset = newline + 1;
+    }
+  }
+
+  private appendPendingLine(part: Buffer): boolean {
+    if (part.length === 0) return true;
+    this.pendingLineBytes += part.length;
+    if (this.pendingLineBytes > this.stdoutLineLimit) {
+      this.pendingLineParts = [];
+      this.pendingLineBytes = 0;
+      void this.failProtocol("Protocol line exceeds the configured byte limit.");
+      return false;
+    }
+    this.pendingLineParts.push(part);
+    return true;
+  }
+
+  private queuePendingLine(): void {
+    const bytes = Buffer.concat(this.pendingLineParts, this.pendingLineBytes);
+    this.pendingLineParts = [];
+    this.pendingLineBytes = 0;
+    this.lineQueue = this.lineQueue
+      .then(() => this.processLine(bytes))
+      .catch((error) => this.failRecorder(`Protocol evidence recording failed: ${errorMessage(error)}`));
+  }
+
+  private flushPendingLine(): void {
+    if (this.pendingLineBytes > 0 && this.protocolError === undefined && this.recorderError === undefined) {
+      this.queuePendingLine();
+    }
+  }
+
+  private async processLine(bytes: Buffer): Promise<void> {
     this.lineCount += 1;
-    if (Buffer.byteLength(line) > this.stdoutLineLimit) {
-      await this.failProtocol("Protocol line exceeds the configured byte limit.");
+    let line: string;
+    try {
+      line = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch (error) {
+      await this.failProtocol(`Malformed UTF-8 protocol output: ${errorMessage(error)}`, bytes.toString("base64"));
       return;
     }
     let payload: unknown;
@@ -521,6 +587,17 @@ export class ProtocolProcess {
     this.termination = "malformed";
     try {
       await this.recorder.recordError(message, raw === undefined ? undefined : { raw });
+    } catch (error) {
+      this.childError ??= `Protocol error evidence could not be persisted: ${errorMessage(error)}`;
+    }
+    void this.sendSignal("SIGTERM", this.shutdownGraceMs);
+  }
+
+  private async failRecorder(message: string): Promise<void> {
+    if (this.recorderError !== undefined || this.protocolError !== undefined) return;
+    this.recorderError = message;
+    try {
+      await this.recorder.recordError(message);
     } catch (error) {
       this.childError ??= `Protocol error evidence could not be persisted: ${errorMessage(error)}`;
     }
@@ -590,10 +667,10 @@ export class ProtocolProcess {
     const status = this.protocolError !== undefined
       ? "malformed"
       : this.interruptionStarted
-        ? "interrupted"
-        : this.shutdownStarted
-          ? "shutdown"
-          : this.childError !== undefined
+          ? "interrupted"
+          : this.shutdownStarted
+            ? "shutdown"
+          : this.recorderError !== undefined || this.childError !== undefined
             ? "failed"
           : exitCode === 0 && signal === null
             ? "completed"
@@ -616,9 +693,11 @@ export class ProtocolProcess {
       stdoutFrames: this.frameCount,
       stderr,
       ...(this.protocolError === undefined ? {} : { protocolError: this.protocolError }),
-      ...(this.childError === undefined ? {} : { error: this.childError }),
+      ...(this.childError === undefined && this.recorderError === undefined ? {} : { error: this.childError ?? this.recorderError }),
+      ...(this.recorderError === undefined ? {} : { recorderError: this.recorderError }),
       ...(this.evidencePath === undefined ? {} : { evidencePath: this.evidencePath }),
       ...(this.stderrPath === undefined ? {} : { stderrPath: this.stderrPath }),
+      droppedObservations: this.recorder.droppedObservations,
       observations: [...this.recorder.observations],
     };
     if (this.ownsWriter) {

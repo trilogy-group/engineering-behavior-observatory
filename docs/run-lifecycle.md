@@ -16,8 +16,10 @@ are injected callbacks. `executeRunAttempt` passes an `AbortSignal`, enforces
 the coordinator and harness budgets, and records phase timestamps in an
 `ebo.attempt/v1` record. A verifier failure is a task failure; a verifier
 execution error, setup error, harness error, or cleanup error after an
-otherwise successful run is infrastructure evidence. Capture flush failures
-remain explicit as `capture-incomplete` and do not become task failures.
+otherwise successful run is infrastructure evidence. A completed attempt needs
+both a passed verifier and a retained workspace artifact. Missing capture
+flush support is explicit as `capture-incomplete` and does not become a task
+failure.
 
 `src/process-protocol.ts` is a narrow process boundary, not a JSON-RPC
 implementation. `ProtocolProcess` parses newline-delimited JSON only to reject
@@ -30,8 +32,10 @@ not infer prompt completion or map records into EBO event families.
 
 JSONL records are flushed and fsynced as they arrive. Valid frames retain their
 original line text alongside parsed data, so duplicate keys or large numeric
-IDs cannot be silently rewritten by a JavaScript round trip. Interruption and
-malformed output therefore leave a readable partial evidence file and a
+IDs cannot be silently rewritten by a JavaScript round trip. The stdout line
+limit is enforced while bytes are consumed, and in-memory observations use a
+bounded tail; the JSONL file remains the complete source record. Interruption
+and malformed output therefore leave a readable partial evidence file and a
 process result with launch identity, exit/signal state, and termination reason.
 `shutdown()` and `interrupt()` are explicit operations; no process retry is
 performed.

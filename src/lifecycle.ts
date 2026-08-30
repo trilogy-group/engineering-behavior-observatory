@@ -314,7 +314,11 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     }
     await persist();
   };
-  const externalAbort = () => controller.abort("interrupted");
+  let abortCause: "interrupted" | "budget" | undefined;
+  const externalAbort = () => {
+    abortCause ??= "interrupted";
+    controller.abort("interrupted");
+  };
   if (options.signal?.aborted) externalAbort();
   else options.signal?.addEventListener("abort", externalAbort, { once: true });
   let budgetTimer: ReturnType<typeof setTimeout> | undefined;
@@ -329,12 +333,14 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   });
   if (options.maxWallClockMs !== undefined) {
     budgetTimer = setTimeout(() => {
+      abortCause ??= "budget";
       budgetExpired = "coordinator";
       controller.abort("budget");
     }, options.maxWallClockMs);
   }
   const markCoordinatorBudgetIfExpired = () => {
     if (options.maxWallClockMs !== undefined && Date.now() - executionStartedAt >= options.maxWallClockMs) {
+      abortCause ??= "budget";
       budgetExpired = "coordinator";
       controller.abort("budget");
     }
@@ -356,9 +362,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           workspace = settledWorkspace;
           record.workspace = settledWorkspace;
         }
-        classification = budgetExpired === undefined
-          ? interruptedClassification()
-          : budgetClassification(budgetExpired);
+        classification = abortClassification(abortCause, budgetExpired);
       } else {
         workspace = setupOutcome.value;
         record.workspace = workspace;
@@ -368,10 +372,13 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       }
     } catch (error) {
       classification = controller.signal.aborted
-        ? budgetExpired === undefined ? interruptedClassification(errorMessage(error)) : budgetClassification(budgetExpired, errorMessage(error))
+        ? abortClassification(abortCause, budgetExpired, errorMessage(error))
         : infrastructureClassification(errorMessage(error), "workspace");
     }
     markCoordinatorBudgetIfExpired();
+    if (classification === undefined && controller.signal.aborted) {
+      classification = abortClassification(abortCause, budgetExpired);
+    }
     await flush();
 
     if (classification === undefined) {
@@ -381,6 +388,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       const installBudget = (milliseconds: number | undefined) => {
         if (milliseconds === undefined) return;
         const timer = setTimeout(() => {
+          abortCause ??= "budget";
           budgetExpired ??= "harness";
           controller.abort("budget");
         }, milliseconds);
@@ -413,7 +421,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         ]);
       } catch (error) {
         classification = controller.signal.aborted
-          ? budgetExpired === undefined ? interruptedClassification(errorMessage(error)) : budgetClassification(budgetExpired, errorMessage(error))
+          ? abortClassification(abortCause, budgetExpired, errorMessage(error))
           : infrastructureClassification(errorMessage(error), "harness", workspace?.artifactId);
       } finally {
         for (const timer of timers) clearTimeout(timer);
@@ -428,11 +436,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           harnessResult = settledHarness;
           record.harness = durableHarnessResult(settledHarness);
         }
-        if (budgetExpired !== undefined) {
-          classification = budgetClassification(budgetExpired);
-        } else {
-          classification = interruptedClassification();
-        }
+        classification = abortClassification(abortCause, budgetExpired);
         await shutdownHarness(harnessResult, options.shutdownGraceMs ?? 250);
       } else if (outcome?.kind === "result") {
         harnessResult = outcome.value;
@@ -460,9 +464,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                 if (verifierOutcome.kind === "result") record.verifier = verifierOutcome.value;
                 const settledVerifier = await settle(verifierPromise, options.shutdownGraceMs ?? 250);
                 if (settledVerifier !== undefined && record.verifier === undefined) record.verifier = settledVerifier;
-                classification = budgetExpired === undefined
-                  ? interruptedClassification()
-                  : budgetClassification(budgetExpired);
+                classification = abortClassification(abortCause, budgetExpired);
               } else {
                 record.verifier = verifierOutcome.value;
                 classification = classifyVerifier(verifierOutcome.value, workspace);
@@ -470,7 +472,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
             } catch (error) {
               record.verifier = { status: "error", error: errorMessage(error) };
               classification = controller.signal.aborted
-                ? budgetExpired === undefined ? interruptedClassification(errorMessage(error)) : budgetClassification(budgetExpired, errorMessage(error))
+                ? abortClassification(abortCause, budgetExpired, errorMessage(error))
                 : verifierErrorClassification(errorMessage(error), workspace?.artifactId);
             }
           }
@@ -507,10 +509,10 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       record.capture = { status: "complete" };
     }
     if (budgetExpired !== undefined && classification?.kind === "completed") {
-      classification = budgetClassification(budgetExpired);
+      classification = abortClassification(abortCause, budgetExpired);
     }
     if (controller.signal.aborted && classification?.kind === "completed") {
-      classification = budgetExpired === undefined ? interruptedClassification() : budgetClassification(budgetExpired);
+      classification = abortClassification(abortCause, budgetExpired);
     }
     if (persistenceError !== undefined && classification?.kind === "completed") {
       classification = infrastructureClassification(persistenceError, "runner", workspace?.artifactId);
@@ -709,6 +711,16 @@ function interruptedClassification(reason?: string): AttemptClassification {
     ...(reason === undefined ? {} : { reason }),
     source: "runner",
   };
+}
+
+function abortClassification(
+  cause: "interrupted" | "budget" | undefined,
+  budget: "coordinator" | "harness" | undefined,
+  reason?: string,
+): AttemptClassification {
+  return cause === "interrupted"
+    ? interruptedClassification(reason)
+    : budgetClassification(budget ?? "coordinator", reason);
 }
 
 async function shutdownHarness(result: HarnessExecutionResult | undefined, graceMs: number): Promise<void> {
