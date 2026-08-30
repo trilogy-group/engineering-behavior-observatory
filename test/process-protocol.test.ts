@@ -697,6 +697,28 @@ test("clean shutdown is explicit and does not imply prompt completion", async ()
   }
 });
 
+test("shutdown signals a detached group after the root exits", { skip: process.platform === "win32" }, async () => {
+  const root = temporaryRoot();
+  try {
+    const protocol = spawnProtocolProcess({
+      ...nodeScript("const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e','setInterval(()=>{},10000)'],{stdio:['ignore','inherit','inherit']}); child.unref(); process.exit(0)"),
+      source: "fake-harness",
+      shutdownGraceMs: 25,
+      killGraceMs: 25,
+      evidencePath: join(root, "detached-root-exit.jsonl"),
+    });
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 25));
+    const processResult = await Promise.race([
+      protocol.shutdown(),
+      new Promise<never>((_resolvePromise, reject) => setTimeout(() => reject(new Error("shutdown did not settle")), 500)),
+    ]);
+    assert.equal(processResult.status, "shutdown");
+    assert.equal(processResult.termination, "shutdown");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("fences caller-owned recorders before publishing process completion", async () => {
   const root = temporaryRoot();
   try {

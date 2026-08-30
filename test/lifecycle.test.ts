@@ -1448,6 +1448,46 @@ test("harness infrastructure failures require native failed harness evidence", a
   }
 });
 
+test("termination confirmations cannot contradict native shutdown results", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-termination-confirmation-"));
+  try {
+    const harnessFailure = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({
+        status: "failed",
+        failureClass: "infrastructure" as const,
+        shutdownResult: { status: "failed" as const, error: "harness shutdown failed" },
+      }),
+      evidence: { flush: () => undefined },
+    });
+    const harnessRecord = structuredClone(harnessFailure.record);
+    harnessRecord.harnessTerminationConfirmed = true;
+    const harnessPath = join(root, "harness.json");
+    writeFileSync(harnessPath, `${JSON.stringify(harnessRecord)}\n`);
+    await assert.rejects(readAttemptRecord(harnessPath), /Harness termination confirmation contradicts/);
+
+    const verifierError = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({
+        status: "error",
+        error: "verifier failed",
+        shutdownResult: { status: "failed" as const, error: "verifier shutdown failed" },
+      }),
+      evidence: { flush: () => undefined },
+    });
+    const verifierRecord = structuredClone(verifierError.record);
+    verifierRecord.verifierTerminationConfirmed = true;
+    const verifierPath = join(root, "verifier.json");
+    writeFileSync(verifierPath, `${JSON.stringify(verifierRecord)}\n`);
+    await assert.rejects(readAttemptRecord(verifierPath), /Verifier termination confirmation contradicts/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("unreasoned harness stops remain validator-compatible", async () => {
   const result = await executeRunAttempt({
     run,

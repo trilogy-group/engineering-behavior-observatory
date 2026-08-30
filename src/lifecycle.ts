@@ -1546,6 +1546,8 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
   if (value.workspace !== undefined) assertWorkspaceResult(value.workspace);
   if (value.harness !== undefined) assertHarnessResult(value.harness);
   if (value.verifier !== undefined) assertVerifierResult(value.verifier);
+  assertTerminationConfirmation(value.harness, value.harnessTerminationConfirmed, "Harness");
+  assertTerminationConfirmation(value.verifier, value.verifierTerminationConfirmed, "Verifier");
   if (value.terminal !== undefined) assertTerminalRecord(value.terminal);
   if ((value.terminal === undefined) !== (value.classification === undefined)) {
     throw new Error("Attempt terminal and classification records must be paired.");
@@ -1934,6 +1936,17 @@ function assertShutdownResult(value: unknown, label: string): asserts value is {
     throw new Error(`${label} result is invalid.`);
   }
   if (value.error !== undefined) assertTimestampValue(value.error, `${label} error`);
+}
+
+function assertTerminationConfirmation(value: unknown, confirmation: unknown, label: string): void {
+  if (!isRecord(value) || typeof confirmation !== "boolean" || !isRecord(value.shutdownResult)) return;
+  const shutdownStatus = value.shutdownResult.status;
+  if (confirmation && shutdownStatus !== "completed") {
+    throw new Error(`${label} termination confirmation contradicts its shutdown result.`);
+  }
+  if (!confirmation && shutdownStatus === "completed") {
+    throw new Error(`${label} termination confirmation contradicts its shutdown result.`);
+  }
 }
 
 function assertVerifierStatus(verifier: unknown, status: "passed" | "failed"): void {
