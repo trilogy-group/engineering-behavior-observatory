@@ -999,10 +999,11 @@ function recoverWriterSequence(path: string): number {
       throw new Error(`Existing JSONL evidence line ${index + 1} is malformed: ${errorMessage(error)}`);
     }
     const candidate = isRecord(value) ? value.sequence : undefined;
-    if (typeof candidate !== "number" || !Number.isSafeInteger(candidate) || candidate < 1) {
-      throw new Error(`Existing JSONL evidence line ${index + 1} has no valid sequence.`);
+    if (!isRecord(value) || value.schemaVersion !== "ebo.protocol-observation/v1"
+        || typeof candidate !== "number" || !Number.isSafeInteger(candidate) || candidate !== sequence + 1) {
+      throw new Error(`Existing JSONL evidence line ${index + 1} is not a contiguous protocol observation.`);
     }
-    sequence = Math.max(sequence, candidate);
+    sequence = candidate;
   }
   return sequence;
 }

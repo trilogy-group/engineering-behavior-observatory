@@ -1393,7 +1393,7 @@ test("verifier-error terminals require native verifier evidence", async () => {
     delete record.verifier;
     const path = join(root, "missing-verifier-error.json");
     writeFileSync(path, `${JSON.stringify(record)}\n`);
-    await assert.rejects(readAttemptRecord(path), /error verifier result/);
+    await assert.rejects(readAttemptRecord(path), /error or not-run verifier result/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

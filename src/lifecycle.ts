@@ -1525,6 +1525,14 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
         throw new Error("Harness infrastructure-failure records require a failed or unreasoned stopped harness result.");
       }
     }
+    if (classificationKind === "infrastructure-failure" && classificationSource === "workspace") {
+      if (!visitedStates.has("setup")) {
+        throw new Error("Workspace infrastructure-failure records require the setup lifecycle phase.");
+      }
+      if (!isRecord(value.workspace) || (value.workspace.status !== "ready" && value.workspace.status !== "failed")) {
+        throw new Error("Workspace infrastructure-failure records require a native workspace result.");
+      }
+    }
     if (classificationKind === "verifier-error" && classificationSource === "verifier") {
       if (!visitedStates.has("running") || !visitedStates.has("verifying")) {
         throw new Error("Verifier-error terminal records require running and verifying lifecycle phases.");
@@ -1532,8 +1540,8 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       if (!isRecord(value.harness) || value.harness.status !== "completed") {
         throw new Error("Verifier-error terminal records require a completed harness result.");
       }
-      if (!isRecord(value.verifier) || value.verifier.status !== "error") {
-        throw new Error("Verifier-error terminal records require an error verifier result.");
+      if (!isRecord(value.verifier) || (value.verifier.status !== "error" && value.verifier.status !== "not-run")) {
+        throw new Error("Verifier-error terminal records require an error or not-run verifier result.");
       }
     }
     const expectedPartial = classificationUnderlyingKind(value.classification as unknown as AttemptClassification) !== "completed"

@@ -167,6 +167,20 @@ test("writer claims follow symlinked evidence paths", async () => {
   }
 });
 
+test("writer sequence recovery rejects non-observation records", async () => {
+  const root = temporaryRoot();
+  try {
+    const path = join(root, "invalid-stream.jsonl");
+    const directWriter = new JsonlEvidenceWriter(path);
+    await directWriter.append({ sequence: 1 });
+    await directWriter.close();
+    const recorderWriter = new JsonlEvidenceWriter(path);
+    assert.throws(() => new ProtocolEvidenceRecorder(recorderWriter, "fake-harness"), /not a contiguous protocol observation/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("process timer grace periods reject values above Node's maximum", () => {
   assert.throws(() => spawnProtocolProcess({
     ...nodeScript(""),
