@@ -285,6 +285,8 @@ test("a persisted local queue is validated and consumed in order", () => {
     let output = "";
     assert.equal(main(["queue", "validate", path, experimentPath], (message) => (output += message)), 0);
     assert.match(output, /Validated run queue/);
+    assert.equal(main(["queue", "validate", path, "--bundle-root"], () => undefined), 1);
+    assert.equal(main(["matrix", "compile", experimentPath, "--bundle-root"], () => undefined), 1);
     assert.deepEqual(inspectRunQueue(loaded), inspectRunQueue(queue));
     const local = new LocalRunQueue(loaded);
     assert.equal(local.remaining, 18);

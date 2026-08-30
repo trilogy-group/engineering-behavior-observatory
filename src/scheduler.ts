@@ -496,13 +496,15 @@ function resolvePermutationDefinition(
   options: CompileRunQueueOptions,
 ): PermutationAlgorithm {
 
-  let definition: unknown = options.permutationAlgorithm;
-  if (definition === undefined) definition = options.permutationAlgorithms?.[reference.locator];
-  if (definition === undefined && options.bundleRoot !== undefined) {
+  let definition: unknown;
+  if (options.bundleRoot !== undefined) {
     const bytes = resolveBundleArtifact(options.bundleRoot, reference);
     const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     assertNoDuplicateJsonKeys(text);
     definition = JSON.parse(text) as unknown;
+  } else {
+    definition = options.permutationAlgorithm;
+    if (definition === undefined) definition = options.permutationAlgorithms?.[reference.locator];
   }
   if (definition === undefined) {
     throw new Error(`Permutation algorithm "${reference.locator}" content must be supplied before scheduling.`);

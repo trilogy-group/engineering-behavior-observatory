@@ -139,7 +139,12 @@ function compileQueue(
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
     if (argument === "--bundle-root") {
-      bundleRoot = args[++index];
+      const value = args[++index];
+      if (value === undefined || value.startsWith("--")) {
+        write("Usage: ebo matrix compile <experiment.json> <bundle-root> <queue.json> [--freeze-locator <task-id>=<path>]\n");
+        return 1;
+      }
+      bundleRoot = value;
     } else if (argument === "--output") {
       outputPath = args[++index];
     } else if (argument === "--freeze-locator") {
@@ -189,8 +194,14 @@ function validateQueue(
   const positional: string[] = [];
   let bundleRoot: string | undefined;
   for (let index = 0; index < args.length; index += 1) {
-    if (args[index] === "--bundle-root") bundleRoot = args[++index];
-    else positional.push(args[index]!);
+    if (args[index] === "--bundle-root") {
+      const value = args[++index];
+      if (value === undefined || value.startsWith("--")) {
+        write("Usage: ebo queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]\n");
+        return 1;
+      }
+      bundleRoot = value;
+    } else positional.push(args[index]!);
   }
   const queuePath = positional[0];
   if (queuePath === undefined || positional.length > 2) {
