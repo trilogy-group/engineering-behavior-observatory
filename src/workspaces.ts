@@ -7,13 +7,14 @@ import {
   futimesSync,
   lstatSync,
   openSync,
+  opendirSync,
+  rmdirSync,
   readSync,
-  readdirSync,
   realpathSync,
 } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, open, realpath, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, parse, posix, relative, resolve, sep } from "node:path";
 
 import {
   isSafeArtifactRelativePath,
@@ -96,7 +97,7 @@ export async function materializeWorkspace(
 
   const bundleRoot = await realpath(options.bundleRoot);
   const parent = await prepareWorkspaceParent(options.workspaceParent ?? options.workspaceRoot ?? tmpdir(), bundleRoot);
-  const workspacePath = await realpath(await mkdtemp(join(parent, `ebo-${attemptId}-`)));
+  let workspacePath = await realpath(await mkdtemp(join(parent, `ebo-${attemptId}-`)));
   if (!isDisjoint(bundleRoot, workspacePath)) {
     await rm(workspacePath, { force: true, recursive: true });
     throw new Error("Workspace and task-bundle roots must be separate.");
@@ -110,6 +111,7 @@ export async function materializeWorkspace(
     await chmod(workspacePath, DIRECTORY_MODE);
     for (const entry of entries) await materializeEntry(workspacePath, entry);
     await runSetup(options.setup, options.setupSteps, workspacePath);
+    workspacePath = await sealWorkspace(workspacePath, join(parent, `.ebo-${attemptId}-sealed-${randomUUID()}`), workspaceIdentity);
     normalizeWorkspace(workspacePath, workspaceIdentity);
     assertWorkspaceRoot(workspacePath, workspaceIdentity);
     const workspaceFingerprint = digestMaterializedWorkspace(workspacePath, workspaceIdentity);
@@ -200,20 +202,45 @@ function createResult(input: {
 }
 
 async function prepareWorkspaceParent(parent: string, bundleRoot: string): Promise<string> {
-  const absolute = resolve(parent);
-  if (isContained(bundleRoot, await resolveFuturePath(absolute))) {
-    throw new Error("Workspace parent must be outside the task-bundle root.");
+  const absolute = await resolveFuturePath(resolve(parent));
+  const created: Array<{ path: string; dev: number; ino: number }> = [];
+  const filesystemRoot = parse(absolute).root;
+  let current = filesystemRoot;
+  try {
+    for (const segment of absolute.slice(filesystemRoot.length).split(sep).filter(Boolean)) {
+      current = join(current, segment);
+      let metadata;
+      try {
+        metadata = await lstat(current);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        await mkdir(current, { mode: 0o700 });
+        metadata = await lstat(current);
+        created.push({ path: current, dev: metadata.dev, ino: metadata.ino });
+      }
+      if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+        throw new Error("Workspace parent cannot cross a symbolic link or non-directory.");
+      }
+      const resolved = await realpath(current);
+      if (resolved !== current || isContained(bundleRoot, resolved)) {
+        throw new Error("Workspace parent must be outside the task-bundle root.");
+      }
+    }
+    return current;
+  } catch (error) {
+    for (const entry of created.reverse()) {
+      try {
+        const metadata = await lstat(entry.path);
+        if (metadata.isDirectory() && !metadata.isSymbolicLink()
+            && metadata.dev === entry.dev && metadata.ino === entry.ino) {
+          rmdirSync(entry.path);
+        }
+      } catch (cleanupError) {
+        if ((cleanupError as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+    throw error;
   }
-  await mkdir(absolute, { recursive: true, mode: 0o700 });
-  const resolved = await realpath(absolute);
-  if (isContained(bundleRoot, resolved)) {
-    throw new Error("Workspace parent must be outside the task-bundle root.");
-  }
-  const metadata = await lstat(resolved);
-  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-    throw new Error("Workspace parent is not a directory.");
-  }
-  return resolved;
 }
 
 async function resolveFuturePath(path: string): Promise<string> {
@@ -249,6 +276,27 @@ async function materializeEntry(root: string, entry: TaskArchiveEntry): Promise<
     await handle.chmod(mode);
   } finally {
     await handle.close();
+  }
+}
+
+async function sealWorkspace(path: string, destination: string, expected: WorkspaceIdentity): Promise<string> {
+  const current = await lstat(path);
+  if (!current.isDirectory() || current.isSymbolicLink() || !sameIdentity(current, expected)) {
+    throw new Error("Workspace root changed before sealing.");
+  }
+  await rename(path, destination);
+  try {
+    const sealed = await lstat(destination);
+    if (!sealed.isDirectory() || sealed.isSymbolicLink() || !sameIdentity(sealed, expected)) {
+      if (sealed.isSymbolicLink()) await rm(destination, { force: true });
+      throw new Error("Workspace root changed during sealing.");
+    }
+    return await realpath(destination);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("Workspace root disappeared during sealing.");
+    }
+    throw error;
   }
 }
 
@@ -291,7 +339,7 @@ function normalizeDirectory(
     if (!sameIdentity(fstatSync(directoryFd), lstatSync(directory))) {
       throw new Error(`Workspace directory "${relativeDirectory}" changed during materialization.`);
     }
-    const entries = readdirSync(directory, { withFileTypes: true });
+    const entries = readDirectoryEntries(directory, directoryFd);
     entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
     for (const entry of entries) {
       const path = join(directory, entry.name);
@@ -349,6 +397,20 @@ function openChildSync(path: string, directory: boolean): number {
   }
 }
 
+function readDirectoryEntries(directory: string, directoryFd: number): import("node:fs").Dirent[] {
+  const handle = opendirSync(directory);
+  try {
+    if (!sameIdentity(fstatSync(directoryFd), lstatSync(directory))) {
+      throw new Error(`Workspace directory "${directory}" changed during traversal.`);
+    }
+    const entries: import("node:fs").Dirent[] = [];
+    for (let entry = handle.readSync(); entry !== null; entry = handle.readSync()) entries.push(entry);
+    return entries;
+  } finally {
+    handle.closeSync();
+  }
+}
+
 function assertContainedRealpathSync(root: string, path: string): void {
   const resolved = realpathSync(path);
   if (resolved !== path || !isContained(root, resolved)) {
@@ -390,7 +452,7 @@ function hashWorkspaceDirectory(
     if (!openedDirectory.isDirectory() || openedDirectory.isSymbolicLink()) {
       throw new Error(`Workspace directory "${relativeDirectory}" is unsafe.`);
     }
-    const entries = readdirSync(directory, { withFileTypes: true });
+    const entries = readDirectoryEntries(directory, directoryFd);
     entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
     for (const entry of entries) {
       const path = join(directory, entry.name);
@@ -497,7 +559,7 @@ function isSafeWorkspaceTree(
     assertContainedRealpathSync(root, directory);
     const directoryMetadata = fstatSync(directoryFd);
     if (!directoryMetadata.isDirectory() || directoryMetadata.isSymbolicLink()) return false;
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    for (const entry of readDirectoryEntries(directory, directoryFd)) {
       const path = join(directory, entry.name);
       const relativePath = relativeDirectory === "" ? entry.name : `${relativeDirectory}/${entry.name}`;
       if (relativePath.split("/", 1)[0]?.toLowerCase() === "restricted") return false;
@@ -533,12 +595,38 @@ async function removeWorkspaceIfOwned(path: string, expected: WorkspaceIdentity 
       await rm(path, { force: true });
       return true;
     }
-    if (expected !== undefined && metadata.isDirectory()
-        && metadata.dev === expected.dev && metadata.ino === expected.ino) {
-      await rm(path, { force: true, recursive: true });
-      return true;
+    if (expected === undefined || !metadata.isDirectory()
+        || metadata.dev !== expected.dev || metadata.ino !== expected.ino) return false;
+
+    const parent = dirname(path);
+    const quarantine = join(parent, `.${basename(path)}-cleanup-${randomUUID()}`);
+    const parentHandle = await open(parent, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    try {
+      if (!sameIdentity(await parentHandle.stat(), await lstat(parent))) return false;
+      const current = await lstat(path);
+      if (current.isSymbolicLink() || !current.isDirectory()
+          || current.dev !== expected.dev || current.ino !== expected.ino) return false;
+      await rename(path, quarantine);
+      const moved = await lstat(quarantine);
+      if (moved.isDirectory() && !moved.isSymbolicLink()
+          && moved.dev === expected.dev && moved.ino === expected.ino) {
+        await rm(quarantine, { force: true, recursive: true });
+        return true;
+      }
+      if (moved.isSymbolicLink()) {
+        await rm(quarantine, { force: true });
+      } else {
+        try {
+          await lstat(path);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") await rename(quarantine, path);
+          else throw error;
+        }
+      }
+      return false;
+    } finally {
+      await parentHandle.close();
     }
-    return false;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
     throw error;
