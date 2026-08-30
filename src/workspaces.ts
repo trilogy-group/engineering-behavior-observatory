@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   closeSync,
   constants,
@@ -547,10 +548,65 @@ async function runSetup(
   workspacePath: string,
 ): Promise<void> {
   const steps = setup === undefined ? [] : typeof setup === "function" ? [setup] : [...setup];
-  for (const step of [...steps, ...(setupSteps ?? [])]) {
-    if (typeof step !== "function") throw new Error("Workspace setup steps must be functions.");
-    await step(workspacePath);
+  const processTreeBefore = process.platform === "win32" ? undefined : processTree();
+  try {
+    for (const step of [...steps, ...(setupSteps ?? [])]) {
+      if (typeof step !== "function") throw new Error("Workspace setup steps must be functions.");
+      await step(workspacePath);
+    }
+  } finally {
+    if (processTreeBefore !== undefined) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      reapSetupDescendants(processTreeBefore);
+    }
   }
+}
+
+function processTree(): Map<number, number> {
+  const output = execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" });
+  const tree = new Map<number, number>();
+  for (const line of output.split("\n")) {
+    const match = line.trim().match(/^(\d+)\s+(\d+)$/);
+    if (match !== null) tree.set(Number(match[1]), Number(match[2]));
+  }
+  return tree;
+}
+
+function reapSetupDescendants(before: ReadonlyMap<number, number>): void {
+  let after: Map<number, number>;
+  try {
+    after = processTree();
+  } catch {
+    return;
+  }
+  const descendants = [...after.keys()].filter((pid) => !before.has(pid) && isDescendant(pid, process.pid, after));
+  descendants.sort((left, right) => processDepth(right, after) - processDepth(left, after));
+  for (const pid of descendants) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // The setup child may have exited between the process snapshot and kill.
+    }
+  }
+}
+
+function isDescendant(pid: number, ancestor: number, tree: ReadonlyMap<number, number>): boolean {
+  const seen = new Set<number>();
+  for (let current: number | undefined = pid; current !== undefined && !seen.has(current); current = tree.get(current)) {
+    if (current === ancestor) return true;
+    seen.add(current);
+  }
+  return false;
+}
+
+function processDepth(pid: number, tree: ReadonlyMap<number, number>): number {
+  let depth = 0;
+  const seen = new Set<number>();
+  for (let current: number | undefined = pid; current !== undefined && !seen.has(current); current = tree.get(current)) {
+    depth += 1;
+    seen.add(current);
+  }
+  return depth;
 }
 
 function assertModelVisibleEntries(entries: readonly TaskArchiveEntry[]): void {

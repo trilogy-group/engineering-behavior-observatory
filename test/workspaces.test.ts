@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { gzipSync } from "node:zlib";
 import {
   chmodSync,
@@ -194,6 +195,41 @@ test("keeps workspaces private while preserving executable fixture and setup mod
     assert.equal(statSync(join(result.workspacePath, "setup.sh")).mode & 0o7777, 0o700);
     await result.cleanup("success");
   } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(parent, { force: true, recursive: true });
+  }
+});
+
+test("reaps setup descendants before returning a workspace", async () => {
+  const { root } = createBundle();
+  const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+  let childPid: number | undefined;
+  let setupChild: ReturnType<typeof spawn> | undefined;
+  let childClosed: Promise<void> | undefined;
+
+  try {
+    freezeTaskPacket(root, "packet.json");
+    const result = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "reap-setup",
+      workspaceParent: parent,
+      setup: () => {
+        setupChild = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+        childPid = setupChild.pid;
+        childClosed = new Promise((resolve) => setupChild!.once("close", () => resolve()));
+      },
+    });
+    assert.equal(result.state, "ready");
+    assert.ok(childPid !== undefined);
+    assert.ok(childClosed !== undefined);
+    await childClosed;
+    assert.equal(setupChild?.signalCode, "SIGKILL");
+    await result.cleanup("success");
+  } finally {
+    if (childPid !== undefined) {
+      try { process.kill(childPid, "SIGKILL"); } catch { /* already reaped */ }
+    }
     rmSync(root, { force: true, recursive: true });
     rmSync(parent, { force: true, recursive: true });
   }
