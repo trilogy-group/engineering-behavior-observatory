@@ -635,7 +635,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         };
         record.harnessTerminationConfirmed = harnessTerminationConfirmed;
       } else if (outcome?.kind === "result") {
-        harnessResult = normalizeHarnessBudgetResult(outcome.value, budgetExpired);
+        harnessResult = normalizeHarnessShutdownFailure(normalizeHarnessBudgetResult(outcome.value, budgetExpired));
         record.harness = durableHarnessResult(harnessResult);
         classification = classifyHarness(harnessResult, workspace);
         if (classification !== undefined && harnessResult.status !== "completed") {
@@ -702,7 +702,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                 record.verifierTerminationConfirmed = verifierTerminationConfirmed;
                 classification = abortClassification(abortCause, budgetExpired, undefined, workspace);
               } else {
-                const verifier = snapshotVerifier(verifierOutcome.value);
+                const verifier = normalizeVerifierShutdownFailure(snapshotVerifier(verifierOutcome.value));
                 record.verifier = verifier;
                 if (verifier.status !== "passed") {
                   let verifierTerminationConfirmed = verifier.shutdownResult === undefined || verifier.shutdownResult.status === "completed";
@@ -746,7 +746,13 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     classification ??= infrastructureClassification(errorMessage(error), "runner", workspace);
   } finally {
     if (lifecycle.state !== "cleaning" && lifecycle.state !== "terminal") {
-      lifecycle.transition("cleaning");
+      try {
+        lifecycle.transition("cleaning");
+      } catch (error) {
+        classification ??= infrastructureClassification(errorMessage(error), "runner", workspace);
+        const snapshot = lifecycle.snapshot();
+        lifecycle.transition("cleaning", snapshot.timestamps[snapshot.state] ?? snapshot.createdAt);
+      }
       await persist();
     }
     if (!setupStarted && workspace === undefined) {
@@ -1390,6 +1396,33 @@ function normalizeHarnessBudgetResult(
       ...(nativeStopReason === undefined ? {} : { nativeStopReason }),
       ...(nativeError === undefined ? {} : { nativeError }),
       ...(nativeEvidence === undefined ? {} : { nativeEvidence }),
+    },
+  };
+}
+
+function normalizeHarnessShutdownFailure(result: HarnessExecutionResult): HarnessExecutionResult {
+  if (result.status !== "completed" || result.shutdownResult === undefined || result.shutdownResult.status === "completed") return result;
+  return {
+    ...result,
+    status: "failed",
+    failureClass: "infrastructure",
+    reason: result.reason ?? "Harness shutdown did not complete.",
+    evidence: {
+      nativeStatus: "completed",
+      ...(result.evidence === undefined ? {} : { nativeEvidence: result.evidence }),
+    },
+  };
+}
+
+function normalizeVerifierShutdownFailure(result: VerifierExecutionResult): VerifierExecutionResult {
+  if (result.status !== "passed" || result.shutdownResult === undefined || result.shutdownResult.status === "completed") return result;
+  return {
+    ...result,
+    status: "error",
+    error: result.error ?? "Verifier shutdown did not complete.",
+    evidence: {
+      nativeStatus: "passed",
+      ...(result.evidence === undefined ? {} : { nativeEvidence: result.evidence }),
     },
   };
 }
