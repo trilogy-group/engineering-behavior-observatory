@@ -103,7 +103,9 @@ Setup callbacks receive the disposable workspace path and an invocation-owned
 context: each child is placed in a private process group and its group is
 terminated before the fingerprint is calculated. This prevents cleanup from
 mistaking unrelated coordinator processes for setup descendants. A setup step
-must not leave ambient child processes behind; stronger process isolation can
+must settle all in-process writes (including timers and promises) and must not
+leave ambient child processes behind before returning; arbitrary filesystem
+closures cannot be revoked without a sandbox. Stronger process isolation can
 still be supplied by the evaluation environment. Call
 `cleanupWorkspace(result, "success")` (or `result.cleanup("success")`) after a
 successful attempt. A failed setup returns a failed lifecycle result;

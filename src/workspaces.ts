@@ -160,7 +160,7 @@ export async function materializeWorkspace(
     if (workspaceIdentity !== undefined) {
       try {
         if (await isOwnedWorkspaceRoot(workspacePath, workspaceIdentity)) {
-          normalizeWorkspace(workspacePath, workspaceIdentity, createdWorkspace.descriptor);
+          normalizeWorkspace(workspacePath, workspaceIdentity, createdWorkspace.descriptor, true);
           rootIsSafe = await isSafeWorkspaceRoot(workspacePath, workspaceIdentity)
             && await isSafeWorkspaceTree(workspacePath);
         }
@@ -519,15 +519,20 @@ function sealWorkspace(path: string, destination: string, expected: WorkspaceIde
   }
 }
 
-function normalizeWorkspace(root: string, expectedIdentity: WorkspaceIdentity, verifiedFd?: number): void {
+function normalizeWorkspace(
+  root: string,
+  expectedIdentity: WorkspaceIdentity,
+  verifiedFd?: number,
+  preserveTimestamps = false,
+): void {
   assertWorkspaceRoot(root, expectedIdentity);
   try {
-    normalizeDirectory(root, root, "", verifiedFd);
+    normalizeDirectory(root, root, "", verifiedFd, preserveTimestamps);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EACCES") throw error;
     if (verifiedFd === undefined) normalizeUnreadableDirectory(root, expectedIdentity);
     else fchmodSync(verifiedFd, DIRECTORY_MODE);
-    normalizeDirectory(root, root, "", verifiedFd);
+    normalizeDirectory(root, root, "", verifiedFd, preserveTimestamps);
   }
   assertWorkspaceRoot(root, expectedIdentity);
 }
@@ -537,6 +542,7 @@ function normalizeDirectory(
   directory: string,
   relativeDirectory: string,
   verifiedFd?: number,
+  preserveTimestamps = false,
 ): void {
   const directoryFd = verifiedFd
     ?? openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
@@ -547,7 +553,7 @@ function normalizeDirectory(
       throw new Error(`Workspace directory "${relativeDirectory}" changed during materialization.`);
     }
     fchmodSync(directoryFd, DIRECTORY_MODE);
-    const entries = readDirectoryEntries(directory, directoryFd);
+    const entries = readDirectoryEntries(directory, directoryFd, preserveTimestamps);
     entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
     for (const entry of entries) {
       const path = join(directory, entry.name);
@@ -568,13 +574,13 @@ function normalizeDirectory(
           throw new Error(`Workspace entry "${relativePath}" changed during materialization.`);
         }
         if (metadata.isDirectory()) {
-          normalizeDirectory(root, path, relativePath, childFd);
+          normalizeDirectory(root, path, relativePath, childFd, preserveTimestamps);
           fchmodSync(childFd, DIRECTORY_MODE);
-          futimesSync(childFd, EPOCH_SECONDS, EPOCH_SECONDS);
+          if (!preserveTimestamps) futimesSync(childFd, EPOCH_SECONDS, EPOCH_SECONDS);
         } else if (metadata.isFile()) {
           if (metadata.nlink > 1) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
           fchmodSync(childFd, normalizedFileMode(metadata.mode));
-          futimesSync(childFd, EPOCH_SECONDS, EPOCH_SECONDS);
+          if (!preserveTimestamps) futimesSync(childFd, EPOCH_SECONDS, EPOCH_SECONDS);
         } else {
           throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
         }
@@ -589,7 +595,7 @@ function normalizeDirectory(
       }
     }
     fchmodSync(directoryFd, DIRECTORY_MODE);
-    futimesSync(directoryFd, EPOCH_SECONDS, EPOCH_SECONDS);
+    if (!preserveTimestamps) futimesSync(directoryFd, EPOCH_SECONDS, EPOCH_SECONDS);
   } finally {
     if (ownsFd) closeSync(directoryFd);
   }
@@ -756,7 +762,11 @@ function normalizeUnreadableChild(
   }
 }
 
-function readDirectoryEntries(directory: string, directoryFd: number): import("node:fs").Dirent[] {
+function readDirectoryEntries(
+  directory: string,
+  directoryFd: number,
+  preserveTimestamps = false,
+): import("node:fs").Dirent[] {
   const alias = join(dirname(directory), `.ebo-enumeration-${randomUUID()}`);
   let moved = false;
   let handle: ReturnType<typeof opendirSync> | undefined;
@@ -797,9 +807,13 @@ function readDirectoryEntries(directory: string, directoryFd: number): import("n
     moved = false;
     // Renaming a child updates the parent directory's mtime. Restore the
     // opened directory's timestamp so the operation stays digest-neutral.
-    futimesSync(directoryFd, expected.atime, expected.mtime);
+    const directoryAtime = preserveTimestamps ? expected.atimeMs / 1000 : expected.atime;
+    const directoryMtime = preserveTimestamps ? expected.mtimeMs / 1000 : expected.mtime;
+    futimesSync(directoryFd, directoryAtime, directoryMtime);
     if (parentFd !== undefined && parentExpected !== undefined) {
-      futimesSync(parentFd, parentExpected.atime, parentExpected.mtime);
+      const parentAtime = preserveTimestamps ? parentExpected.atimeMs / 1000 : parentExpected.atime;
+      const parentMtime = preserveTimestamps ? parentExpected.mtimeMs / 1000 : parentExpected.mtime;
+      futimesSync(parentFd, parentAtime, parentMtime);
     }
     if (!sameIdentity(expected, lstatSync(directory))) {
       throw new Error(`Workspace directory "${directory}" changed during traversal.`);
