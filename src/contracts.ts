@@ -25,6 +25,7 @@ export type ArchiveEntry = {
 
 export type TaskArchiveEntry = ArchiveEntry & {
   bytes: Buffer;
+  mode: number;
 };
 
 export type ArchiveLimits = {
@@ -1040,7 +1041,7 @@ function parseTarArchive(bytes: Buffer, maxMembers: number): { entries: TaskArch
     const size = pendingPax?.size ?? headerSize;
     if (!Number.isSafeInteger(size) || size < 0) throw new Error("Sanitized task archive contains an invalid member size.");
     const kind = tarEntryKind(type);
-    entries.push({ path, kind, bytes: data });
+    entries.push({ path, kind, bytes: data, mode: parseTarMode(header.subarray(100, 108)) });
     if (entries.length > maxMembers) throw new Error("Sanitized archive exceeds its declared materialization limits.");
     if (kind === "file") {
       if (!Number.isSafeInteger(expandedBytes + size)) throw new Error("Sanitized task archive exceeds safe expanded size.");
@@ -1075,6 +1076,16 @@ function parseTarOctal(field: Uint8Array, label: string): number {
   if (text === "" || !/^[0-7]+$/.test(text)) throw new Error(`Sanitized task archive contains an invalid TAR ${label}.`);
   const value = Number.parseInt(text, 8);
   if (!Number.isSafeInteger(value)) throw new Error(`Sanitized task archive contains an unsafe TAR ${label}.`);
+  return value;
+}
+
+function parseTarMode(field: Uint8Array): number {
+  const raw = new TextDecoder("ascii", { fatal: true }).decode(field).replace(/\0.*$/s, "");
+  const text = raw.replace(/^ +| +$/g, "");
+  if (text === "") return 0o644;
+  if (!/^[0-7]+$/.test(text)) throw new Error("Sanitized task archive contains an invalid TAR mode.");
+  const value = Number.parseInt(text, 8);
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error("Sanitized task archive contains an unsafe TAR mode.");
   return value;
 }
 

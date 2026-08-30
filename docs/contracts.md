@@ -92,10 +92,11 @@ reference solutions, verifier bytes, and review records remain restricted.
 creates an attempt-identified directory outside the task bundle. It verifies
 the digest-pinned TAR+gzip source, copies only the declared literal allowlist,
 rejects links, special entries, traversal, and a selected `restricted/`
-subtree, then normalizes modes and timestamps before calculating the
+subtree, then normalizes private modes and timestamps before calculating the
 `workspaceFingerprint` used by the verifier. The result's `startingDigest` is
 the declared fixture digest; `workspaceDigest` is the normalized tree
-fingerprint.
+fingerprint. Attempt roots and non-executable files use `0700` and `0600`;
+executable archive or setup files retain the owner execute bit.
 
 Setup callbacks receive only the disposable workspace path and run before the
 fingerprint is calculated. Call `cleanupWorkspace(result, "success")` (or

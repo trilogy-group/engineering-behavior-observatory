@@ -15,8 +15,8 @@ import {
 import { assertTaskPacketAdmitted, statusTaskPacket, type TaskPacket } from "./task-packets.js";
 
 const ATTEMPT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const DIRECTORY_MODE = 0o755;
-const FILE_MODE = 0o644;
+const DIRECTORY_MODE = 0o700;
+const FILE_MODE = 0o600;
 const EPOCH_SECONDS = 0;
 
 export type WorkspaceSetupStep = (workspacePath: string) => void | Promise<void>;
@@ -66,18 +66,22 @@ export async function materializeWorkspace(
   const attemptId = options.attemptId ?? randomUUID();
   assertAttemptId(attemptId);
 
-  const inspection = assertTaskPacketAdmitted(options.bundleRoot, options.packetLocator);
-  const packet = inspection.packet as TaskPacket;
   const freeze = statusTaskPacket(options.bundleRoot, options.packetLocator, options.freezeLocator);
   if (freeze.status !== "frozen") {
     throw new Error(`Task packet "${options.packetLocator}" is not frozen (${freeze.status}).`);
   }
   if (freeze.packetDigest === null) throw new Error("Frozen task packet is missing its packet digest.");
+  const inspection = assertTaskPacketAdmitted(options.bundleRoot, options.packetLocator);
+  const packet = inspection.packet as TaskPacket;
+  if (inspection.packetDigest === null || !sameDigest(inspection.packetDigest, freeze.packetDigest)) {
+    throw new Error(`Frozen task packet "${options.packetLocator}" changed before materialization.`);
+  }
 
   const source = packet.agentInput.fixture.source;
   const archive = resolveTaskArchive(options.bundleRoot, source, source.limits.maxCompressedBytes);
   const entries = readTaskArchive(archive, source.limits, packet.agentInput.fixture.materializer.includePaths);
   assertModelVisibleEntries(entries);
+  assertFrozenSnapshot(options, freeze.packetDigest, freeze.aggregateDigest);
 
   const bundleRoot = await realpath(options.bundleRoot);
   const parent = await prepareWorkspaceParent(options.workspaceParent ?? options.workspaceRoot ?? tmpdir());
@@ -193,10 +197,11 @@ async function materializeEntry(root: string, entry: TaskArchiveEntry): Promise<
 
   await ensureDirectory(root, posix.dirname(entry.path));
   const destination = resolve(root, entry.path);
+  const mode = normalizedFileMode(entry.mode);
   const handle = await open(
     destination,
     constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-    FILE_MODE,
+    mode,
   );
   try {
     await handle.writeFile(entry.bytes);
@@ -204,7 +209,7 @@ async function materializeEntry(root: string, entry: TaskArchiveEntry): Promise<
   } finally {
     await handle.close();
   }
-  await chmod(destination, FILE_MODE);
+  await chmod(destination, mode);
 }
 
 async function ensureDirectory(root: string, relativePath: string): Promise<void> {
@@ -249,7 +254,7 @@ async function normalizeDirectory(directory: string, relativeDirectory: string):
       await utimes(path, EPOCH_SECONDS, EPOCH_SECONDS);
     } else if (metadata.isFile()) {
       if (metadata.nlink > 1) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
-      await chmod(path, FILE_MODE);
+      await chmod(path, normalizedFileMode(metadata.mode));
       await utimes(path, EPOCH_SECONDS, EPOCH_SECONDS);
     } else {
       throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
@@ -316,6 +321,26 @@ async function isSafeWorkspaceTree(directory: string, relativeDirectory = ""): P
 
 function assertAttemptId(attemptId: string): void {
   if (!ATTEMPT_ID_PATTERN.test(attemptId)) throw new Error("Workspace attempt ID is unsafe.");
+}
+
+function normalizedFileMode(mode: number): number {
+  return FILE_MODE | (mode & 0o111 ? 0o100 : 0);
+}
+
+function sameDigest(left: Digest, right: Digest): boolean {
+  return left.algorithm === right.algorithm && left.value === right.value;
+}
+
+function assertFrozenSnapshot(
+  options: WorkspaceMaterializationOptions,
+  packetDigest: Digest,
+  aggregateDigest: Digest | null,
+): void {
+  const current = statusTaskPacket(options.bundleRoot, options.packetLocator, options.freezeLocator);
+  if (current.status !== "frozen" || current.packetDigest === null || !sameDigest(current.packetDigest, packetDigest)
+      || (aggregateDigest !== null && (current.aggregateDigest === null || !sameDigest(current.aggregateDigest, aggregateDigest)))) {
+    throw new Error(`Frozen task packet "${options.packetLocator}" changed before workspace creation.`);
+  }
 }
 
 function isDisjoint(left: string, right: string): boolean {

@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -24,10 +25,11 @@ import {
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
-function tarGzipArchive(entries: Array<{ path: string; bytes: Buffer; type?: string }>): Buffer {
-  const blocks = entries.map(({ path, bytes, type = "0" }) => {
+function tarGzipArchive(entries: Array<{ path: string; bytes: Buffer; type?: string; mode?: number }>): Buffer {
+  const blocks = entries.map(({ path, bytes, type = "0", mode = 0o644 }) => {
     const header = Buffer.alloc(512);
     header.write(path, 0, "utf8");
+    header.write(mode.toString(8).padStart(7, "0"), 100, "ascii");
     header.write(bytes.length.toString(8).padStart(11, "0"), 124, "ascii");
     header[156] = type.charCodeAt(0);
     header.write("ustar\0", 257, "ascii");
@@ -40,7 +42,7 @@ function tarGzipArchive(entries: Array<{ path: string; bytes: Buffer; type?: str
   return gzipSync(Buffer.concat([...blocks, Buffer.alloc(1024)]));
 }
 
-function fixtureArchive(extra: Array<{ path: string; bytes: Buffer; type?: string }> = []): Buffer {
+function fixtureArchive(extra: Array<{ path: string; bytes: Buffer; type?: string; mode?: number }> = []): Buffer {
   return tarGzipArchive([
     { path: "README.md", bytes: Buffer.from("# fixture\n") },
     { path: "src", bytes: Buffer.alloc(0), type: "5" },
@@ -118,6 +120,9 @@ test("materializes frozen fixtures reproducibly and cleans successful attempts",
     assert.equal(first.startingDigest.value, second.startingDigest.value);
     assert.equal(first.workspaceFingerprint, second.workspaceFingerprint);
     assert.equal(first.state, "ready");
+    assert.equal(statSync(first.workspacePath).mode & 0o7777, 0o700);
+    assert.equal(statSync(join(first.workspacePath, "README.md")).mode & 0o7777, 0o600);
+    assert.equal(statSync(join(first.workspacePath, "src")).mode & 0o7777, 0o700);
     assert.equal(existsSync(join(first.workspacePath, "restricted")), false);
     assert.equal(existsSync(join(first.workspacePath, "reference.txt")), false);
     assert.equal(readFileSync(join(first.workspacePath, "README.md"), "utf8"), "# fixture\n");
@@ -136,6 +141,32 @@ test("materializes frozen fixtures reproducibly and cleans successful attempts",
   }
 });
 
+test("keeps workspaces private while preserving executable fixture and setup modes", async () => {
+  const { root } = createBundle(
+    fixtureArchive([{ path: "tool.sh", bytes: Buffer.from("#!/bin/sh\n"), mode: 0o755 }]),
+    ["README.md", "src", "tool.sh"],
+  );
+  const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+
+  try {
+    freezeTaskPacket(root, "packet.json");
+    const result = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "private-modes",
+      workspaceParent: parent,
+      setup: (workspacePath) => writeFileSync(join(workspacePath, "setup.sh"), "#!/bin/sh\n", { mode: 0o755 }),
+    });
+    assert.equal(statSync(result.workspacePath).mode & 0o7777, 0o700);
+    assert.equal(statSync(join(result.workspacePath, "tool.sh")).mode & 0o7777, 0o700);
+    assert.equal(statSync(join(result.workspacePath, "setup.sh")).mode & 0o7777, 0o700);
+    await result.cleanup("success");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(parent, { force: true, recursive: true });
+  }
+});
+
 test("rejects malicious archive paths and selected links before creating a workspace", async () => {
   const cases = [
     fixtureArchive([{ path: "src/../../outside.txt", bytes: Buffer.from("escape") }]),
@@ -148,7 +179,7 @@ test("rejects malicious archive paths and selected links before creating a works
     try {
       await assert.rejects(
         materializeWorkspace({ bundleRoot: root, packetLocator: "packet.json", attemptId: "unsafe", workspaceParent: parent }),
-        /unsafe|No archive entries|authoritative archive enumeration/,
+        /unsafe|No archive entries|authoritative archive enumeration|not frozen/,
       );
       assert.deepEqual(readdirSync(parent), []);
     } finally {
@@ -234,9 +265,28 @@ test("stops on a fixture digest mismatch before setup or workspace creation", as
         workspaceParent: parent,
         setup: () => { setupStarted = true; },
       }),
-      /digest does not match|Frozen task packet changed/,
+      /digest does not match|Frozen task packet changed|not frozen/,
     );
     assert.equal(setupStarted, false);
+    assert.deepEqual(readdirSync(parent), []);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(parent, { force: true, recursive: true });
+  }
+});
+
+test("rejects a packet replacement that no longer matches the frozen snapshot", async () => {
+  const { root, packet } = createBundle();
+  const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+
+  try {
+    freezeTaskPacket(root, "packet.json");
+    packet.agentInput.prompt = "replacement packet";
+    writeFileSync(join(root, "packet.json"), JSON.stringify(packet));
+    await assert.rejects(
+      materializeWorkspace({ bundleRoot: root, packetLocator: "packet.json", attemptId: "packet-replaced", workspaceParent: parent }),
+      /changed|not frozen/,
+    );
     assert.deepEqual(readdirSync(parent), []);
   } finally {
     rmSync(root, { force: true, recursive: true });
