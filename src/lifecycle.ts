@@ -603,13 +603,13 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         if (outcome.kind === "result") {
           harnessResult = normalizeHarnessBudgetResult(outcome.value, budgetExpired);
           record.harness = durableHarnessResult(harnessResult);
-          harnessTerminationConfirmed = true;
+          harnessTerminationConfirmed = harnessResult.shutdownResult === undefined || harnessResult.shutdownResult.status === "completed";
         }
         const settledHarness = await settleWithTimeout(harnessPromise, options.shutdownGraceMs ?? 250);
         if (settledHarness.status === "completed" && harnessResult === undefined) {
           harnessResult = normalizeHarnessBudgetResult(settledHarness.value, budgetExpired);
           record.harness = durableHarnessResult(harnessResult);
-          harnessTerminationConfirmed = true;
+          harnessTerminationConfirmed = harnessResult.shutdownResult === undefined || harnessResult.shutdownResult.status === "completed";
         } else if (settledHarness.status === "failed" && harnessResult === undefined) {
           record.harness = { status: "interrupted", error: errorMessage(settledHarness.error) };
           harnessTerminationConfirmed = true;
@@ -637,7 +637,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         record.harness = durableHarnessResult(harnessResult);
         classification = classifyHarness(harnessResult, workspace);
         if (classification !== undefined && harnessResult.status !== "completed") {
-          let harnessTerminationConfirmed = true;
+          let harnessTerminationConfirmed = harnessResult.shutdownResult === undefined || harnessResult.shutdownResult.status === "completed";
           if (harnessShutdown !== undefined || harnessResult.shutdown !== undefined) {
             harnessTerminationConfirmed = false;
             const shutdownResult = await shutdownHarness(harnessResult, harnessShutdown, options.shutdownGraceMs ?? 250);
@@ -675,12 +675,12 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                 let verifierTerminationConfirmed = false;
                 if (verifierOutcome.kind === "result") {
                   record.verifier = snapshotVerifier(verifierOutcome.value);
-                  verifierTerminationConfirmed = true;
+                  verifierTerminationConfirmed = record.verifier.shutdownResult === undefined || record.verifier.shutdownResult.status === "completed";
                 }
                 const settledVerifier = await settleWithTimeout(verifierPromise, options.shutdownGraceMs ?? 250);
                 if (settledVerifier.status === "completed" && record.verifier === undefined) {
                   record.verifier = snapshotVerifier(settledVerifier.value);
-                  verifierTerminationConfirmed = true;
+                  verifierTerminationConfirmed = record.verifier.shutdownResult === undefined || record.verifier.shutdownResult.status === "completed";
                 }
                 if (settledVerifier.status === "failed" && record.verifier === undefined) {
                   record.verifier = { status: "error", error: errorMessage(settledVerifier.error) };
@@ -703,7 +703,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                 const verifier = snapshotVerifier(verifierOutcome.value);
                 record.verifier = verifier;
                 if (verifier.status !== "passed") {
-                  let verifierTerminationConfirmed = true;
+                  let verifierTerminationConfirmed = verifier.shutdownResult === undefined || verifier.shutdownResult.status === "completed";
                   if (verifierShutdown !== undefined) {
                     verifierTerminationConfirmed = false;
                     const shutdownResult = await shutdownVerifier(verifierShutdown, options.shutdownGraceMs ?? 250);
@@ -864,7 +864,9 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       record.partial = true;
       // The second write may still fail, but the returned record retains the
       // persistence failure rather than reporting an unverified completion.
+      allowTerminalReplacement = true;
       await persist();
+      allowTerminalReplacement = false;
     }
     if (budgetTimer !== undefined) clearTimeout(budgetTimer);
     options.signal?.removeEventListener("abort", externalAbort);
@@ -1566,6 +1568,9 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       if (!isRecord(value.cleanup) || (value.cleanup.status !== "failed" && value.cleanup.status !== "timed-out")) {
         throw new Error("Cleanup infrastructure-failure records require failed or timed-out cleanup evidence.");
       }
+    }
+    if (classificationKind === "task-failure" && classificationSource !== "verifier") {
+      throw new Error("Task-failure terminal records require verifier attribution.");
     }
     if (classificationKind === "verifier-error" && classificationSource === "verifier") {
       if (!visitedStates.has("running") || !visitedStates.has("verifying")) {

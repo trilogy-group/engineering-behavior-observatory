@@ -601,6 +601,7 @@ export class ProtocolProcess {
     this.maxInMemoryObservations = positiveInteger(options.maxInMemoryObservations ?? DEFAULT_MAX_IN_MEMORY_OBSERVATIONS, "In-memory observation limit");
     this.now = options.now ?? (() => new Date().toISOString());
     this.startedAt = this.now();
+    assertTimestamp(this.startedAt, "Process start timestamp");
     this.cwd = resolve(options.cwd ?? process.cwd());
     this.args = [...(options.args ?? [])];
     let writer: JsonlEvidenceWriter;
@@ -1093,6 +1094,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function assertNonEmpty(value: string, label: string): void {
   if (value.trim() === "") throw new Error(`${label} is required.`);
+}
+
+function assertTimestamp(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || value.trim() === "") throw new Error(`${label} is invalid.`);
 }
 
 function positiveInteger(value: number, label: string): number {
