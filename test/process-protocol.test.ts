@@ -278,6 +278,26 @@ test("snapshots direct writer records when append is called", async () => {
   }
 });
 
+test("does not retain observations whose append fails", async () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "append-failure.jsonl"), { maxLineBytes: 256 });
+    const recorder = new ProtocolEvidenceRecorder(writer, "fake-harness");
+    await assert.rejects(recorder.recordNotification({
+      source: "fake-harness",
+      method: "event",
+      payload: { detail: "x".repeat(512) },
+    }), /exceeds/);
+    await recorder.recordProcess("exited");
+    await recorder.close();
+    const observations = recorder.observations;
+    assert.deepEqual(observations.map((record) => [record.sequence, record.kind]), [[1, "process"]]);
+    assert.deepEqual(readFileSync(join(root, "append-failure.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line).sequence), [1]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("returns detached recorder observations", async () => {
   const root = temporaryRoot();
   try {

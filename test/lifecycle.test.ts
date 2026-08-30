@@ -213,6 +213,37 @@ test("a workspace that settles during interruption is retained for cleanup and e
   assert.equal(cleanedWorkspace, "late-workspace");
 });
 
+test("cancellation shuts down a setup helper after setup settles", async () => {
+  const controller = new AbortController();
+  let setupStartedResolve: (() => void) | undefined;
+  const setupStarted = new Promise<void>((resolvePromise) => { setupStartedResolve = resolvePromise; });
+  let shutdownCalls = 0;
+  let cleanupCalls = 0;
+  const resultPromise = executeRunAttempt({
+    run,
+    signal: controller.signal,
+    shutdownGraceMs: 100,
+    workspace: {
+      setup: async ({ registerShutdown }) => {
+        registerShutdown(async () => { shutdownCalls += 1; });
+        setupStartedResolve?.();
+        await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 20));
+        return { status: "ready", artifactId: "settled-workspace" };
+      },
+      cleanup: async () => { cleanupCalls += 1; },
+    },
+    harness: async () => ({ status: "completed" }),
+    evidence: { flush: () => undefined },
+  });
+  await setupStarted;
+  controller.abort();
+  const result = await resultPromise;
+  assert.equal(result.terminal.state, "interrupted");
+  assert.equal(shutdownCalls, 1);
+  assert.equal(cleanupCalls, 1);
+  assert.equal(result.record.workspace?.shutdownResult?.status, "completed");
+});
+
 test("external interruption remains the first cause when budget expires during settling", async () => {
   const controller = new AbortController();
   const resultPromise = executeRunAttempt({
@@ -961,6 +992,7 @@ test("terminal attempt records require matching terminal classification", async 
         state: "terminal",
         createdAt: "a",
         startedAt: "b",
+        endedAt: "f",
         timestamps: { created: "a", setup: "b", running: "c", verifying: "d", cleaning: "e", terminal: "f" },
         transitions: [
           { from: "created", to: "setup", at: "b" },
@@ -990,6 +1022,7 @@ test("durable validation rejects classification kinds that contradict terminals"
         state: "terminal",
         createdAt: "a",
         startedAt: "b",
+        endedAt: "f",
         timestamps: { created: "a", setup: "b", running: "c", verifying: "d", cleaning: "e", terminal: "f" },
         transitions: [
           { from: "created", to: "setup", at: "b" },

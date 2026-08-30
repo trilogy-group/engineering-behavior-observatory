@@ -271,6 +271,7 @@ export class ProtocolEvidenceRecorder {
   private sequence = 0;
   private readonly records: ProtocolObservation[] = [];
   private readonly maxInMemoryObservations: number;
+  private queue: Promise<void> = Promise.resolve();
   private _dropped = 0;
 
   public constructor(
@@ -357,11 +358,11 @@ export class ProtocolEvidenceRecorder {
   }
 
   public flush(): Promise<void> {
-    return this.writer.flush();
+    return this.queue.then(() => this.writer.flush());
   }
 
   public close(): Promise<void> {
-    return this.writer.close();
+    return this.queue.then(() => this.writer.close());
   }
 
   private record(input: {
@@ -392,28 +393,34 @@ export class ProtocolEvidenceRecorder {
     } catch (error) {
       return Promise.reject(error);
     }
-    const observation: ProtocolObservation = {
-      schemaVersion: "ebo.protocol-observation/v1",
-      sequence: ++this.sequence,
-      observedAt: input.observedAt,
-      kind: input.kind,
-      source: input.source,
-      ...(input.stream === undefined ? {} : { stream: input.stream }),
-      ...(input.method === undefined ? {} : { method: input.method }),
-      ...(input.id === undefined ? {} : { id: input.id }),
-      ...(input.sourceIdentity === undefined ? {} : { sourceIdentity: input.sourceIdentity }),
-      ...(input.raw === undefined ? {} : { raw: input.raw }),
-      ...(payload === undefined ? {} : { payload }),
-      ...(evidence === undefined ? {} : { evidence }),
-      ...(input.status === undefined ? {} : { status: input.status }),
-      ...(input.capability === undefined ? {} : { capability: input.capability }),
-    };
-    if (this.records.length >= this.maxInMemoryObservations) {
-      this.records.shift();
-      this._dropped += 1;
-    }
-    this.records.push(observation);
-    return this.writer.append(observation).then(() => structuredClone(observation));
+    const operation = this.queue.then(async () => {
+      const observation: ProtocolObservation = {
+        schemaVersion: "ebo.protocol-observation/v1",
+        sequence: this.sequence + 1,
+        observedAt: input.observedAt,
+        kind: input.kind,
+        source: input.source,
+        ...(input.stream === undefined ? {} : { stream: input.stream }),
+        ...(input.method === undefined ? {} : { method: input.method }),
+        ...(input.id === undefined ? {} : { id: input.id }),
+        ...(input.sourceIdentity === undefined ? {} : { sourceIdentity: input.sourceIdentity }),
+        ...(input.raw === undefined ? {} : { raw: input.raw }),
+        ...(payload === undefined ? {} : { payload }),
+        ...(evidence === undefined ? {} : { evidence }),
+        ...(input.status === undefined ? {} : { status: input.status }),
+        ...(input.capability === undefined ? {} : { capability: input.capability }),
+      };
+      await this.writer.append(observation);
+      this.sequence = observation.sequence;
+      if (this.records.length >= this.maxInMemoryObservations) {
+        this.records.shift();
+        this._dropped += 1;
+      }
+      this.records.push(observation);
+      return structuredClone(observation);
+    });
+    this.queue = operation.then(() => undefined, () => undefined);
+    return operation;
   }
 }
 

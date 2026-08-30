@@ -433,6 +433,15 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           if (settledSetup.status === "completed") {
             workspace = snapshotWorkspace(settledSetup.value);
             record.workspace = snapshotWorkspace(workspace);
+            if (workspaceShutdown !== undefined) {
+              workspaceTerminationConfirmed = false;
+              const shutdownResult = await shutdownWorkspace(workspaceShutdown, options.shutdownGraceMs ?? 250);
+              if (shutdownResult !== undefined) {
+                workspace = { ...workspace, shutdownResult };
+                record.workspace = snapshotWorkspace(workspace);
+                workspaceTerminationConfirmed = shutdownResult.status === "completed";
+              }
+            }
           } else if (settledSetup.status === "failed") {
             record.workspace = { status: "failed", error: errorMessage(settledSetup.error) };
             if (workspaceShutdown !== undefined) {
@@ -1237,6 +1246,16 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     }
   }
   if (lifecycle.timestamps.created !== lifecycle.createdAt) throw new Error("Lifecycle created timestamp is inconsistent.");
+  if (lifecycle.startedAt !== (lifecycle.timestamps.setup ?? lifecycle.createdAt)) {
+    throw new Error("Lifecycle started timestamp is inconsistent.");
+  }
+  if (visitedStates.has("terminal")) {
+    if (lifecycle.endedAt === undefined || lifecycle.endedAt !== lifecycle.timestamps.terminal) {
+      throw new Error("Lifecycle ended timestamp is inconsistent.");
+    }
+  } else if (lifecycle.endedAt !== undefined) {
+    throw new Error("Lifecycle ended timestamp is present before terminal state.");
+  }
   if (typeof value.partial !== "boolean") throw new Error("Attempt record partial state is invalid.");
   if (value.harnessTerminationConfirmed !== undefined && typeof value.harnessTerminationConfirmed !== "boolean") {
     throw new Error("Harness termination confirmation is invalid.");
