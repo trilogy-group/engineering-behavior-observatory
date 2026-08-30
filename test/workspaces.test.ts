@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -289,6 +290,62 @@ test("rejects a replaced workspace root without touching the replacement target"
     assert.equal(result.retained, false);
     assert.equal(existsSync(result.workspacePath), false);
     assert.equal(existsSync(join(root, "packet.json")), true);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(parent, { force: true, recursive: true });
+  }
+});
+
+test("does not retain or delete a replacement workspace directory", async () => {
+  const { root } = createBundle();
+  const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+
+  try {
+    freezeTaskPacket(root, "packet.json");
+    const result = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "replacement-directory",
+      workspaceParent: parent,
+      retainOnFailure: true,
+      setup: (workspacePath) => {
+        const replacement = mkdtempSync(join(parent, "replacement-"));
+        chmodSync(replacement, 0o700);
+        writeFileSync(join(replacement, "marker.txt"), "leave me");
+        rmSync(workspacePath, { force: true, recursive: true });
+        renameSync(replacement, workspacePath);
+      },
+    });
+    assert.equal(result.state, "failed");
+    assert.equal(result.retained, false);
+    assert.equal(existsSync(result.workspacePath), true);
+    assert.equal(readFileSync(join(result.workspacePath, "marker.txt"), "utf8"), "leave me");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(parent, { force: true, recursive: true });
+  }
+});
+
+test("refuses cleanup after a ready workspace is replaced", async () => {
+  const { root } = createBundle();
+  const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+
+  try {
+    freezeTaskPacket(root, "packet.json");
+    const result = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "cleanup-replacement",
+      workspaceParent: parent,
+    });
+    const replacement = mkdtempSync(join(parent, "replacement-"));
+    chmodSync(replacement, 0o700);
+    writeFileSync(join(replacement, "marker.txt"), "leave me");
+    rmSync(result.workspacePath, { force: true, recursive: true });
+    renameSync(replacement, result.workspacePath);
+    await assert.rejects(result.cleanup("success"), /Workspace root changed before cleanup/);
+    assert.equal(readFileSync(join(result.workspacePath, "marker.txt"), "utf8"), "leave me");
+    assert.equal(result.state, "ready");
   } finally {
     rmSync(root, { force: true, recursive: true });
     rmSync(parent, { force: true, recursive: true });

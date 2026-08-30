@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, lstatSync } from "node:fs";
+import { constants, fstatSync, lstatSync } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, open, readdir, realpath, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
@@ -46,6 +46,7 @@ export type WorkspaceMaterialization = {
   workspaceFingerprint: string | null;
   /** Alias for workspaceFingerprint used by workspace evidence callers. */
   workspaceDigest: string | null;
+  workspaceIdentity?: WorkspaceIdentity;
   status: "ready" | "failed" | "cleaned";
   state: "ready" | "failed" | "cleaned";
   retainOnFailure: boolean;
@@ -108,6 +109,7 @@ export async function materializeWorkspace(
       packetDigest: freeze.packetDigest,
       sourceDigest: source.digest,
       workspacePath,
+      workspaceIdentity,
       workspaceFingerprint,
       retainOnFailure,
       retained: true,
@@ -115,9 +117,11 @@ export async function materializeWorkspace(
     return result;
   } catch (error) {
     const message = errorMessage(error);
-    const rootIsSafe = await isSafeWorkspaceRoot(workspacePath) && await isSafeWorkspaceTree(workspacePath);
+    const rootIsSafe = workspaceIdentity !== undefined
+      && await isSafeWorkspaceRoot(workspacePath, workspaceIdentity)
+      && await isSafeWorkspaceTree(workspacePath);
     if (!retainOnFailure || !rootIsSafe) {
-      await rm(workspacePath, { force: true, recursive: true });
+      await removeWorkspaceIfOwned(workspacePath, workspaceIdentity);
     }
     result = createResult({
       attemptId,
@@ -125,6 +129,7 @@ export async function materializeWorkspace(
       packetDigest: freeze.packetDigest,
       sourceDigest: source.digest,
       workspacePath,
+      workspaceIdentity,
       workspaceFingerprint: null,
       retainOnFailure,
       retained: retainOnFailure && rootIsSafe,
@@ -141,7 +146,9 @@ export async function cleanupWorkspace(
 ): Promise<void> {
   if (materialization.state === "cleaned") return;
   if (outcome === "failure" && materialization.retainOnFailure && materialization.retained) return;
-  await rm(materialization.workspacePath, { force: true, recursive: true });
+  if (!await removeWorkspaceIfOwned(materialization.workspacePath, materialization.workspaceIdentity)) {
+    throw new Error("Workspace root changed before cleanup.");
+  }
   materialization.status = "cleaned";
   materialization.state = "cleaned";
   materialization.retained = false;
@@ -153,6 +160,7 @@ function createResult(input: {
   packetDigest: Digest;
   sourceDigest: Digest;
   workspacePath: string;
+  workspaceIdentity?: WorkspaceIdentity;
   workspaceFingerprint: string | null;
   retainOnFailure: boolean;
   retained: boolean;
@@ -167,6 +175,7 @@ function createResult(input: {
     startingDigest: input.sourceDigest,
     workspacePath: input.workspacePath,
     path: input.workspacePath,
+    ...(input.workspaceIdentity === undefined ? {} : { workspaceIdentity: input.workspaceIdentity }),
     workspaceFingerprint: input.workspaceFingerprint,
     workspaceDigest: input.workspaceFingerprint,
     status: input.status ?? "ready",
@@ -226,10 +235,10 @@ async function materializeEntry(root: string, entry: TaskArchiveEntry): Promise<
   try {
     await handle.writeFile(entry.bytes);
     await handle.sync();
+    await handle.chmod(mode);
   } finally {
     await handle.close();
   }
-  await chmod(destination, mode);
 }
 
 async function ensureDirectory(root: string, relativePath: string): Promise<void> {
@@ -257,56 +266,59 @@ async function normalizeWorkspace(root: string, expectedIdentity: WorkspaceIdent
   assertWorkspaceRoot(root, expectedIdentity);
 }
 
-async function normalizeDirectory(root: string, directory: string, relativeDirectory: string): Promise<void> {
-  const directoryHandle = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+async function normalizeDirectory(
+  root: string,
+  directory: string,
+  relativeDirectory: string,
+  verifiedHandle?: Awaited<ReturnType<typeof open>>,
+): Promise<void> {
+  const directoryHandle = verifiedHandle
+    ?? await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  const ownsHandle = verifiedHandle === undefined;
   try {
-    const directoryMetadata = await directoryHandle.stat();
-    await assertContainedRealpath(root, directory);
-    if (!directoryMetadata.isDirectory() || directoryMetadata.isSymbolicLink()) {
-      throw new Error(`Workspace directory "${relativeDirectory}" is unsafe.`);
-    }
-
-    const entries = await readdir(directory, { withFileTypes: true });
-    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-    for (const entry of entries) {
-      const path = join(directory, entry.name);
-      const relativePath = relativeDirectory === "" ? entry.name : `${relativeDirectory}/${entry.name}`;
-      if (relativePath.split("/", 1)[0]?.toLowerCase() === "restricted") {
-        throw new Error(`Restricted packet content cannot enter the workspace: "${relativePath}".`);
+    await withVerifiedDirectoryHandle(root, directory, directoryHandle, async () => {
+      const entries = await readdir(".", { withFileTypes: true });
+      entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+      for (const entry of entries) {
+        const path = join(directory, entry.name);
+        const relativePath = relativeDirectory === "" ? entry.name : `${relativeDirectory}/${entry.name}`;
+        if (relativePath.split("/", 1)[0]?.toLowerCase() === "restricted") {
+          throw new Error(`Restricted packet content cannot enter the workspace: "${relativePath}".`);
+        }
+        const current = await lstat(entry.name);
+        const childHandle = await openChild(entry.name, entry.isDirectory());
+        try {
+          const metadata = await childHandle.stat();
+          await assertContainedRealpath(root, path);
+          if (current.isSymbolicLink() || !sameIdentity(metadata, current)) {
+            throw new Error(`Workspace entry "${relativePath}" changed during materialization.`);
+          }
+          if (metadata.isDirectory()) {
+            await normalizeDirectory(root, path, relativePath, childHandle);
+            await childHandle.chmod(DIRECTORY_MODE);
+            await childHandle.utimes(EPOCH_SECONDS, EPOCH_SECONDS);
+          } else if (metadata.isFile()) {
+            if (metadata.nlink > 1) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
+            await childHandle.chmod(normalizedFileMode(metadata.mode));
+            await childHandle.utimes(EPOCH_SECONDS, EPOCH_SECONDS);
+          } else {
+            throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
+          }
+          const completed = await childHandle.stat();
+          const finalPath = await lstat(entry.name);
+          if (!sameIdentity(metadata, completed) || !sameIdentity(metadata, finalPath)
+              || finalPath.isSymbolicLink()) {
+            throw new Error(`Workspace entry "${relativePath}" changed during materialization.`);
+          }
+        } finally {
+          await childHandle.close();
+        }
       }
-      const childHandle = await openChild(path, entry.isDirectory());
-      try {
-        const metadata = await childHandle.stat();
-        await assertContainedRealpath(root, path);
-        const current = await lstat(path);
-        if (current.isSymbolicLink() || !sameIdentity(metadata, current)) {
-          throw new Error(`Workspace entry "${relativePath}" changed during materialization.`);
-        }
-        if (metadata.isDirectory()) {
-          await normalizeDirectory(root, path, relativePath);
-          await childHandle.chmod(DIRECTORY_MODE);
-          await childHandle.utimes(EPOCH_SECONDS, EPOCH_SECONDS);
-        } else if (metadata.isFile()) {
-          if (metadata.nlink > 1) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
-          await childHandle.chmod(normalizedFileMode(metadata.mode));
-          await childHandle.utimes(EPOCH_SECONDS, EPOCH_SECONDS);
-        } else {
-          throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
-        }
-        const completed = await childHandle.stat();
-        const finalPath = await lstat(path);
-        if (!sameIdentity(metadata, completed) || !sameIdentity(metadata, finalPath)
-            || finalPath.isSymbolicLink()) {
-          throw new Error(`Workspace entry "${relativePath}" changed during materialization.`);
-        }
-      } finally {
-        await childHandle.close();
-      }
-    }
-    await directoryHandle.chmod(DIRECTORY_MODE);
-    await directoryHandle.utimes(EPOCH_SECONDS, EPOCH_SECONDS);
+      await directoryHandle.chmod(DIRECTORY_MODE);
+      await directoryHandle.utimes(EPOCH_SECONDS, EPOCH_SECONDS);
+    });
   } finally {
-    await directoryHandle.close();
+    if (ownsHandle) await directoryHandle.close();
   }
 }
 
@@ -321,6 +333,27 @@ async function openChild(path: string, directory: boolean): Promise<Awaited<Retu
       throw new Error(`Workspace contains a symbolic link at "${path}".`);
     }
     throw error;
+  }
+}
+
+async function withVerifiedDirectoryHandle<T>(
+  root: string,
+  directory: string,
+  handle: Awaited<ReturnType<typeof open>>,
+  callback: () => Promise<T>,
+): Promise<T> {
+  const originalCwd = process.cwd();
+  let changedCwd = false;
+  try {
+    process.chdir(directory);
+    changedCwd = true;
+    await assertContainedRealpath(root, directory);
+    if (!sameIdentity(fstatSync(handle.fd), lstatSync("."))) {
+      throw new Error(`Workspace directory "${directory}" changed during materialization.`);
+    }
+    return await callback();
+  } finally {
+    if (changedCwd) process.chdir(originalCwd);
   }
 }
 
@@ -341,7 +374,7 @@ async function digestMaterializedWorkspace(root: string, expectedIdentity: Works
     if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("Workspace root is not a directory.");
     hash.update("ebo.workspace/v1\0");
     hash.update(`root\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0`);
-    await hashWorkspaceDirectory(root, root, "", hash);
+    await hashWorkspaceDirectory(root, root, "", hash, rootHandle);
   } finally {
     await rootHandle.close();
   }
@@ -354,53 +387,57 @@ async function hashWorkspaceDirectory(
   directory: string,
   relativeDirectory: string,
   hash: ReturnType<typeof createHash>,
+  verifiedHandle?: Awaited<ReturnType<typeof open>>,
 ): Promise<void> {
-  const directoryHandle = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  const directoryHandle = verifiedHandle
+    ?? await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  const ownsHandle = verifiedHandle === undefined;
   try {
-    const openedDirectory = await directoryHandle.stat({ bigint: true });
-    await assertContainedRealpath(root, directory);
-    if (!openedDirectory.isDirectory() || openedDirectory.isSymbolicLink()) {
-      throw new Error(`Workspace directory "${relativeDirectory}" is unsafe.`);
-    }
-    const entries = await readdir(directory, { withFileTypes: true });
-    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-    for (const entry of entries) {
-      const path = join(directory, entry.name);
-      const relativePath = relativeDirectory === "" ? entry.name : `${relativeDirectory}/${entry.name}`;
-      if (relativePath.split("/", 1)[0]?.toLowerCase() === "restricted") {
-        throw new Error(`Restricted packet content cannot enter the workspace: "${relativePath}".`);
+    await withVerifiedDirectoryHandle(root, directory, directoryHandle, async () => {
+      const openedDirectory = await directoryHandle.stat({ bigint: true });
+      if (!openedDirectory.isDirectory() || openedDirectory.isSymbolicLink()) {
+        throw new Error(`Workspace directory "${relativeDirectory}" is unsafe.`);
       }
-      const childHandle = await openChild(path, entry.isDirectory());
-      try {
-        const metadata = await childHandle.stat({ bigint: true });
-        await assertContainedRealpath(root, path);
-        const current = await lstat(path, { bigint: true });
-        if (current.isSymbolicLink() || !sameIdentity(metadata, current)) {
-          throw new Error(`Workspace entry "${relativePath}" changed during fingerprinting.`);
+      const entries = await readdir(".", { withFileTypes: true });
+      entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+      for (const entry of entries) {
+        const path = join(directory, entry.name);
+        const relativePath = relativeDirectory === "" ? entry.name : `${relativeDirectory}/${entry.name}`;
+        if (relativePath.split("/", 1)[0]?.toLowerCase() === "restricted") {
+          throw new Error(`Restricted packet content cannot enter the workspace: "${relativePath}".`);
         }
-        if (metadata.isDirectory()) {
-          hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0`);
-          await hashWorkspaceDirectory(root, path, relativePath, hash);
-        } else if (metadata.isFile()) {
-          if (metadata.nlink > 1n) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
-          const bytes = await childHandle.readFile();
-          hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0${bytes.length}\0`);
-          hash.update(bytes);
-        } else {
-          throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
+        const current = await lstat(entry.name, { bigint: true });
+        const childHandle = await openChild(entry.name, entry.isDirectory());
+        try {
+          const metadata = await childHandle.stat({ bigint: true });
+          await assertContainedRealpath(root, path);
+          if (current.isSymbolicLink() || !sameIdentity(metadata, current)) {
+            throw new Error(`Workspace entry "${relativePath}" changed during fingerprinting.`);
+          }
+          if (metadata.isDirectory()) {
+            hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0`);
+            await hashWorkspaceDirectory(root, path, relativePath, hash, childHandle);
+          } else if (metadata.isFile()) {
+            if (metadata.nlink > 1n) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
+            const bytes = await childHandle.readFile();
+            hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0${bytes.length}\0`);
+            hash.update(bytes);
+          } else {
+            throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
+          }
+          const completed = await childHandle.stat({ bigint: true });
+          const finalPath = await lstat(entry.name, { bigint: true });
+          if (!sameIdentity(metadata, completed) || !sameIdentity(metadata, finalPath)
+              || finalPath.isSymbolicLink() || (metadata.isFile() && !sameFileSnapshot(metadata, completed))) {
+            throw new Error(`Workspace entry "${relativePath}" changed during fingerprinting.`);
+          }
+        } finally {
+          await childHandle.close();
         }
-        const completed = await childHandle.stat({ bigint: true });
-        const finalPath = await lstat(path, { bigint: true });
-        if (!sameIdentity(metadata, completed) || !sameIdentity(metadata, finalPath)
-            || finalPath.isSymbolicLink() || (metadata.isFile() && !sameFileSnapshot(metadata, completed))) {
-          throw new Error(`Workspace entry "${relativePath}" changed during fingerprinting.`);
-        }
-      } finally {
-        await childHandle.close();
       }
-    }
+    });
   } finally {
-    await directoryHandle.close();
+    if (ownsHandle) await directoryHandle.close();
   }
 }
 
@@ -432,35 +469,77 @@ function assertSafeWorkspacePath(root: string, relativePath: string): void {
   if (!isContained(root, destination)) throw new Error(`Workspace path "${relativePath}" escapes its root.`);
 }
 
-async function isSafeWorkspaceRoot(path: string): Promise<boolean> {
+async function isSafeWorkspaceRoot(path: string, expected: WorkspaceIdentity): Promise<boolean> {
   try {
     const metadata = await lstat(path);
     return metadata.isDirectory() && !metadata.isSymbolicLink()
-      && (metadata.mode & 0o7777) === DIRECTORY_MODE && (await realpath(path)) === path;
+      && (metadata.mode & 0o7777) === DIRECTORY_MODE
+      && metadata.dev === expected.dev && metadata.ino === expected.ino
+      && (await realpath(path)) === path;
   } catch {
     return false;
   }
 }
 
-async function isSafeWorkspaceTree(directory: string, relativeDirectory = ""): Promise<boolean> {
+async function isSafeWorkspaceTree(
+  directory: string,
+  relativeDirectory = "",
+  root = directory,
+  verifiedHandle?: Awaited<ReturnType<typeof open>>,
+): Promise<boolean> {
+  const directoryHandle = verifiedHandle
+    ?? await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW).catch(() => undefined);
+  if (directoryHandle === undefined) return false;
+  const ownsHandle = verifiedHandle === undefined;
   try {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      const path = join(directory, entry.name);
-      const relativePath = relativeDirectory === "" ? entry.name : `${relativeDirectory}/${entry.name}`;
-      if (relativePath.split("/", 1)[0]?.toLowerCase() === "restricted") return false;
-      const metadata = await lstat(path);
-      if (metadata.isSymbolicLink()) return false;
-      if (metadata.isDirectory()) {
-        if ((metadata.mode & 0o7777) !== DIRECTORY_MODE) return false;
-        if (!await isSafeWorkspaceTree(path, relativePath)) return false;
-      } else if (!metadata.isFile() || metadata.nlink > 1
-          || (metadata.mode & 0o7777) !== normalizedFileMode(metadata.mode)) {
-        return false;
+    return await withVerifiedDirectoryHandle(root, directory, directoryHandle, async () => {
+      for (const entry of await readdir(".", { withFileTypes: true })) {
+        const path = join(directory, entry.name);
+        const relativePath = relativeDirectory === "" ? entry.name : `${relativeDirectory}/${entry.name}`;
+        if (relativePath.split("/", 1)[0]?.toLowerCase() === "restricted") return false;
+        const current = await lstat(entry.name);
+        const childHandle = await openChild(entry.name, entry.isDirectory()).catch(() => undefined);
+        if (childHandle === undefined) return false;
+        try {
+          const metadata = await childHandle.stat();
+          await assertContainedRealpath(root, path);
+          if (current.isSymbolicLink() || !sameIdentity(metadata, current)) return false;
+          if (metadata.isDirectory()) {
+            if ((metadata.mode & 0o7777) !== DIRECTORY_MODE
+                || !await isSafeWorkspaceTree(path, relativePath, root, childHandle)) return false;
+          } else if (!metadata.isFile() || metadata.nlink > 1
+              || (metadata.mode & 0o7777) !== normalizedFileMode(metadata.mode)) {
+            return false;
+          }
+        } finally {
+          await childHandle.close();
+        }
       }
-    }
-    return true;
+      return true;
+    });
   } catch {
     return false;
+  } finally {
+    if (ownsHandle) await directoryHandle.close();
+  }
+}
+
+async function removeWorkspaceIfOwned(path: string, expected: WorkspaceIdentity | undefined): Promise<boolean> {
+  try {
+    const metadata = await lstat(path);
+    if (metadata.isSymbolicLink()) {
+      await rm(path, { force: true });
+      return true;
+    }
+    if (expected !== undefined && metadata.isDirectory()
+        && metadata.dev === expected.dev && metadata.ino === expected.ino) {
+      await rm(path, { force: true, recursive: true });
+      return true;
+    }
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
   }
 }
 
