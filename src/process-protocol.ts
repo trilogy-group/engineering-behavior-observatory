@@ -341,6 +341,7 @@ export class ProtocolEvidenceRecorder {
   public recordCompletion(input: ProtocolCompletionEvidence): Promise<ProtocolObservation> {
     assertNonEmpty(input.source, "Completion source");
     assertNonEmpty(input.status, "Completion status");
+    if (input.evidence === undefined) return Promise.reject(new Error("Completion evidence is required."));
     return this.record({
       kind: "completion",
       source: input.source,

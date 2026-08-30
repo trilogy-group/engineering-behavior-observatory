@@ -406,6 +406,7 @@ test("rejects values that JSONL cannot preserve", async () => {
     await assert.rejects(recorder.recordRequest({ source: "fake-harness", method: "event", id: Number.NaN }), /Protocol identity/);
     await assert.rejects(recorder.recordResponse({ source: "fake-harness", method: "event", id: Number.POSITIVE_INFINITY }), /Protocol identity/);
     await assert.rejects(recorder.recordCapability({ source: "fake-harness", name: "unknown-capability", status: "unknown" as never }), /Capability status/);
+    await assert.rejects(recorder.recordCompletion({ source: "fake-harness", status: "completed", evidence: undefined }), /Completion evidence/);
     await recorder.close();
   } finally {
     rmSync(root, { recursive: true, force: true });

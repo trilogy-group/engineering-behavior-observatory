@@ -1460,6 +1460,14 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
         throw new Error("Harness budget-stop terminal records require compatible harness evidence.");
       }
     }
+    if (classificationKind === "interrupted" && classificationSource === "harness") {
+      if (!visitedStates.has("running")) {
+        throw new Error("Harness interruption terminal records require the running lifecycle phase.");
+      }
+      if (!isRecord(value.harness) || value.harness.status !== "interrupted") {
+        throw new Error("Harness interruption terminal records require an interrupted harness result.");
+      }
+    }
     const expectedPartial = classificationUnderlyingKind(value.classification as unknown as AttemptClassification) !== "completed"
       || isRecord(value.capture) && value.capture.status === "incomplete";
     if (value.partial !== expectedPartial) throw new Error("Attempt partial state contradicts its terminal outcome.");

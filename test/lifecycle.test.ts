@@ -1312,6 +1312,25 @@ test("harness budget-stop records require compatible harness evidence", async ()
   }
 });
 
+test("harness interruption records require native interrupted harness evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-interruption-evidence-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "interrupted", reason: "harness interrupted" }),
+      evidence: { flush: () => undefined },
+    });
+    const record = structuredClone(result.record);
+    delete record.harness;
+    const path = join(root, "missing-interruption-harness.json");
+    writeFileSync(path, `${JSON.stringify(record)}\n`);
+    await assert.rejects(readAttemptRecord(path), /interrupted harness result/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("completed terminal records reject incomplete persistence", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-persistence-status-"));
   try {
