@@ -213,6 +213,25 @@ test("process timer grace periods reject values above Node's maximum", () => {
   }), /Node timer maximum/);
 });
 
+test("spawn options cannot bypass protocol termination provenance", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("setTimeout(()=>console.log(JSON.stringify({ok:true})), 20)"),
+      source: "fake-harness",
+      evidencePath: join(root, "spawn-controls.jsonl"),
+      // timeout is deliberately supplied through an untyped boundary to
+      // prove the runtime strips controls that are not protocol-owned.
+      spawnOptions: { timeout: 1 } as never,
+    });
+    assert.equal(processResult.status, "completed");
+    assert.equal(processResult.termination, "natural");
+    assert.equal(processResult.stdoutFrames, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("synchronous spawn errors release the protocol writer claim", async () => {
   const root = temporaryRoot();
   try {

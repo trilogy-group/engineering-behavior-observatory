@@ -1537,6 +1537,10 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
   if (lifecycle.state !== "terminal" && value.partial !== true) {
     throw new Error("Nonterminal attempt records must remain partial.");
   }
+  if (isRecord(value.workspace) && value.workspace.status === "failed"
+      && (visitedStates.has("running") || visitedStates.has("verifying"))) {
+    throw new Error("Workspace failure records cannot include execution lifecycle phases.");
+  }
   if (value.harnessTerminationConfirmed !== undefined && typeof value.harnessTerminationConfirmed !== "boolean") {
     throw new Error("Harness termination confirmation is invalid.");
   }

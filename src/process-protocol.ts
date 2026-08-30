@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
-import { closeSync, constants, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, constants, fsyncSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { mkdir, open, type FileHandle } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 
@@ -235,7 +235,7 @@ export class JsonlEvidenceWriter {
       writeSync(lockFd, `${process.pid}\n`, undefined, "utf8");
       fsyncSync(lockFd);
       syncDirectory(dirname(lockPath));
-      const sequence = recoverWriterSequence(this.path);
+      const sequence = recoverWriterSequence(this.path, this.maxLineBytes);
       this.claimed = true;
       this.claimLockFd = lockFd;
       this.claimLockPath = lockPath;
@@ -373,7 +373,7 @@ export type ProtocolProcessOptions = {
   maxInMemoryObservations?: number;
   signal?: AbortSignal;
   now?: () => string;
-  spawnOptions?: Omit<SpawnOptions, "stdio" | "env" | "cwd">;
+  spawnOptions?: Omit<SpawnOptions, "stdio" | "env" | "cwd" | "signal" | "timeout" | "killSignal">;
   onFrame?: (payload: unknown, recorder: ProtocolEvidenceRecorder) => void | Promise<void>;
 };
 
@@ -660,8 +660,12 @@ export class ProtocolProcess {
     this.writer = writer;
     this.recorder = new ProtocolEvidenceRecorder(writer, options.source, this.now, this.maxInMemoryObservations);
 
+    const callerSpawnOptions = { ...options.spawnOptions } as SpawnOptions;
+    delete callerSpawnOptions.signal;
+    delete callerSpawnOptions.timeout;
+    delete callerSpawnOptions.killSignal;
     const spawnOptions: SpawnOptions = {
-      ...options.spawnOptions,
+      ...callerSpawnOptions,
       cwd: this.cwd,
       env: options.env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -1092,39 +1096,81 @@ function rejectHardLinkedPath(path: string): void {
   if (isHardLinkedPath(path)) throw new Error("JSONL evidence path has multiple hard links and cannot be claimed safely.");
 }
 
-function recoverWriterSequence(path: string): number {
-  let bytes: Buffer;
+function recoverWriterSequence(path: string, maxLineBytes: number): number {
+  let descriptor: number;
   try {
-    bytes = readFileSync(path);
+    descriptor = openSync(path, "r");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
     throw error;
   }
-  if (bytes.length === 0) return 0;
-  if (bytes[bytes.length - 1] !== 0x0a) {
-    throw new Error("Existing JSONL evidence stream has an unterminated final record.");
-  }
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  const lines = text.split("\n");
-  lines.pop();
   let sequence = 0;
-  for (const [index, line] of lines.entries()) {
-    if (line.trim() === "") throw new Error(`Existing JSONL evidence line ${index + 1} is blank.`);
-    let value: unknown;
-    try {
-      value = JSON.parse(line);
-    } catch (error) {
-      throw new Error(`Existing JSONL evidence line ${index + 1} is malformed: ${errorMessage(error)}`);
+  let lineNumber = 1;
+  let lineParts: Buffer[] = [];
+  let lineBytes = 0;
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  try {
+    while (true) {
+      const bytesRead = readSync(descriptor, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      const chunk = buffer.subarray(0, bytesRead);
+      let offset = 0;
+      while (offset < chunk.length) {
+        const newline = chunk.indexOf(0x0a, offset);
+        const end = newline === -1 ? chunk.length : newline;
+        const part = chunk.subarray(offset, end);
+        if (part.length > 0) {
+          lineBytes += part.length;
+          if (lineBytes > maxLineBytes) {
+            throw new Error(`Existing JSONL evidence line ${lineNumber} exceeds ${maxLineBytes} bytes.`);
+          }
+          lineParts.push(Buffer.from(part));
+        }
+        if (newline === -1) break;
+        const line = decodeRecoveredLine(lineParts, lineBytes, lineNumber);
+        const value = parseRecoveredObservation(line, lineNumber);
+        if (value.sequence !== sequence + 1) {
+          throw new Error(`Existing JSONL evidence line ${lineNumber} is not a contiguous protocol observation.`);
+        }
+        sequence = value.sequence;
+        lineNumber += 1;
+        lineParts = [];
+        lineBytes = 0;
+        offset = newline + 1;
+      }
     }
-    const candidate = isRecord(value) ? value.sequence : undefined;
-    if (!isRecord(value) || value.schemaVersion !== "ebo.protocol-observation/v1"
-        || typeof candidate !== "number" || !Number.isSafeInteger(candidate) || candidate !== sequence + 1) {
-      throw new Error(`Existing JSONL evidence line ${index + 1} is not a contiguous protocol observation.`);
+    if (lineBytes > 0) {
+      throw new Error("Existing JSONL evidence stream has an unterminated final record.");
     }
-    assertRecoveredObservation(value, index + 1);
-    sequence = candidate;
+    return sequence;
+  } finally {
+    closeSync(descriptor);
   }
-  return sequence;
+}
+
+function decodeRecoveredLine(parts: Buffer[], bytes: number, line: number): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(parts, bytes));
+  } catch (error) {
+    throw new Error(`Existing JSONL evidence line ${line} is malformed: ${errorMessage(error)}`);
+  }
+}
+
+function parseRecoveredObservation(line: string, lineNumber: number): Record<string, unknown> & { sequence: number } {
+  if (line.trim() === "") throw new Error(`Existing JSONL evidence line ${lineNumber} is blank.`);
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch (error) {
+    throw new Error(`Existing JSONL evidence line ${lineNumber} is malformed: ${errorMessage(error)}`);
+  }
+  const candidate = isRecord(value) ? value.sequence : undefined;
+  if (!isRecord(value) || value.schemaVersion !== "ebo.protocol-observation/v1"
+      || typeof candidate !== "number" || !Number.isSafeInteger(candidate)) {
+    throw new Error(`Existing JSONL evidence line ${lineNumber} is not a contiguous protocol observation.`);
+  }
+  assertRecoveredObservation(value, lineNumber);
+  return value as Record<string, unknown> & { sequence: number };
 }
 
 function assertRecoveredObservation(value: Record<string, unknown>, line: number): void {

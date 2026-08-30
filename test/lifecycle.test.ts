@@ -1377,7 +1377,7 @@ test("policy-stop records require a viable workspace", async () => {
       evidence: { flush: () => undefined },
     });
     for (const [name, replacement, errorPattern] of [
-      ["failed", { status: "failed", artifactId: "workspace-1", retained: true }, /ready workspace/],
+      ["failed", { status: "failed", artifactId: "workspace-1", retained: true }, /ready workspace|Workspace failure records/],
       ["shutdown-failed", { status: "ready", artifactId: "workspace-1", shutdownResult: { status: "failed", error: "workspace shutdown failed" } }, /confirmed workspace/],
     ] as const) {
       const record = structuredClone(result.record);
@@ -1386,6 +1386,34 @@ test("policy-stop records require a viable workspace", async () => {
       writeFileSync(path, `${JSON.stringify(record)}\n`);
       await assert.rejects(readAttemptRecord(path), errorPattern);
     }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("workspace failures cannot carry later execution phases", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-workspace-failure-phases-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: {
+        setup: async () => ({ status: "failed", artifactId: "failed-workspace", retained: true }),
+      },
+      harness: async () => ({ status: "completed" }),
+      evidence: { flush: () => undefined },
+    });
+    const record = structuredClone(result.record);
+    const lifecycle = new LifecycleController(() => "created");
+    lifecycle.transition("setup", "setup");
+    lifecycle.transition("running", "running");
+    lifecycle.transition("verifying", "verifying");
+    lifecycle.transition("cleaning", "cleaning");
+    lifecycle.transition("terminal", "terminal");
+    record.lifecycle = lifecycle.snapshot();
+    record.harness = { status: "completed" };
+    const path = join(root, "impossible-phases.json");
+    writeFileSync(path, `${JSON.stringify(record)}\n`);
+    await assert.rejects(readAttemptRecord(path), /Workspace failure records cannot include execution lifecycle phases/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1530,7 +1558,7 @@ test("verifier-error terminals require a viable workspace", async () => {
       evidence: { flush: () => undefined },
     });
     for (const [name, replacement, errorPattern] of [
-      ["failed", { status: "failed", artifactId: "workspace-1", retained: true }, /ready workspace/],
+      ["failed", { status: "failed", artifactId: "workspace-1", retained: true }, /ready workspace|Workspace failure records/],
       ["shutdown-failed", { status: "ready", artifactId: "workspace-1", shutdownResult: { status: "failed", error: "workspace shutdown failed" } }, /confirmed workspace/],
     ] as const) {
       const record = structuredClone(result.record);
