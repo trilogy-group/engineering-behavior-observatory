@@ -178,8 +178,11 @@ test("materializes concurrent attempts without process-wide directory interferen
 
 test("keeps workspaces private while preserving executable fixture and setup modes", async () => {
   const { root } = createBundle(
-    fixtureArchive([{ path: "tool.sh", bytes: Buffer.from("#!/bin/sh\n"), mode: 0o755 }]),
-    ["README.md", "src", "tool.sh"],
+    fixtureArchive([
+      { path: "tool.sh", bytes: Buffer.from("#!/bin/sh\n"), mode: 0o755 },
+      { path: "group-tool", bytes: Buffer.from("not executable\n"), mode: 0o010 },
+    ]),
+    ["README.md", "src", "tool.sh", "group-tool"],
   );
   const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
   let setupPath = "";
@@ -201,6 +204,7 @@ test("keeps workspaces private while preserving executable fixture and setup mod
     assert.equal(readFileSync(join(result.workspacePath, "setup-path.txt"), "utf8"), setupPath);
     assert.equal(statSync(result.workspacePath).mode & 0o7777, 0o700);
     assert.equal(statSync(join(result.workspacePath, "tool.sh")).mode & 0o7777, 0o700);
+    assert.equal(statSync(join(result.workspacePath, "group-tool")).mode & 0o7777, 0o600);
     assert.equal(statSync(join(result.workspacePath, "setup.sh")).mode & 0o7777, 0o700);
     await result.cleanup("success");
   } finally {

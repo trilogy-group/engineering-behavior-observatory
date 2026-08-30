@@ -936,7 +936,7 @@ function assertAttemptId(attemptId: string): void {
 }
 
 function normalizedFileMode(mode: number): number {
-  return FILE_MODE | (mode & 0o111 ? 0o100 : 0);
+  return FILE_MODE | (mode & 0o100 ? 0o100 : 0);
 }
 
 type WorkspaceIdentity = { dev: number; ino: number };
