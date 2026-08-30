@@ -797,6 +797,7 @@ function resolveFrozenTasks(
   );
   const tasks = new Map<string, FrozenTaskIdentity>();
   const packetDigests = new Set<string>();
+  const freezeLocators = new Map<string, string>();
 
   for (const [taskId, condition] of Object.entries(experiment.taskSet)) {
     const suppliedInput = supplied?.[taskId] ?? supplied?.[condition.packetRef.locator];
@@ -812,6 +813,12 @@ function resolveFrozenTasks(
     if (packetDigests.has(digestIdentity(identity.packetRef.digest))) {
       throw new Error(`Task packet "${taskId}" duplicates a packet digest.`);
     }
+    const freezeLocatorKey = identity.freezeLocator.toLowerCase();
+    const previousTask = freezeLocators.get(freezeLocatorKey);
+    if (previousTask !== undefined && previousTask !== taskId) {
+      throw new Error(`Task packet "${taskId}" shares a freeze locator with task "${previousTask}".`);
+    }
+    freezeLocators.set(freezeLocatorKey, taskId);
     packetDigests.add(digestIdentity(identity.packetRef.digest));
     tasks.set(taskId, identity);
   }
@@ -872,16 +879,24 @@ function provenanceOptions(
   queue: RunQueue,
   options: ValidateRunQueueOptions,
 ): ValidateRunQueueOptions {
-  if (options.bundleRoot === undefined || hasExplicitFrozenTaskInputs(options)) return options;
-  const frozenTasks = Object.fromEntries(queue.entries.map((entry) => [entry.taskId, {
-    status: "frozen" as const,
-    packetId: entry.task.packetId,
-    packetLocator: entry.task.packetRef.locator,
-    packetDigest: entry.task.packetRef.digest,
-    freezeLocator: entry.task.freezeLocator,
-    aggregateDigest: entry.task.aggregateDigest,
-  }]));
-  return { ...options, frozenTasks };
+  const hasExplicitFreezeInputs = hasExplicitFrozenTaskInputs(options);
+  let resolved = options;
+  if (options.bundleRoot !== undefined && !hasExplicitFreezeInputs) {
+    const frozenTasks = Object.fromEntries(queue.entries.map((entry) => [entry.taskId, {
+      status: "frozen" as const,
+      packetId: entry.task.packetId,
+      packetLocator: entry.task.packetRef.locator,
+      packetDigest: entry.task.packetRef.digest,
+      freezeLocator: entry.task.freezeLocator,
+      aggregateDigest: entry.task.aggregateDigest,
+    }]));
+    resolved = { ...resolved, frozenTasks };
+  }
+  if (options.bundleRoot === undefined && !hasExplicitFreezeInputs) {
+    const freezeLocators = Object.fromEntries(queue.entries.map((entry) => [entry.taskId, entry.task.freezeLocator]));
+    resolved = { ...resolved, freezeLocators };
+  }
+  return resolved;
 }
 
 function frozenTaskFromBundle(
@@ -891,6 +906,9 @@ function frozenTaskFromBundle(
   packetRef: ArtifactReference,
   freezeLocator?: string,
 ): FrozenTaskIdentity {
+  if (freezeLocator !== undefined && freezeLocator.toLowerCase() === packetLocator.toLowerCase()) {
+    throw new Error(`Task packet "${taskId}" freeze locator must differ from its packet locator.`);
+  }
   const status = statusTaskPacket(bundleRoot, packetLocator, freezeLocator ?? defaultFreezeLocator(packetLocator));
   if (status.status !== "frozen" || status.packetId === null || status.packetDigest === null || status.aggregateDigest === null) {
     const details = status.errors.length > 0 ? ` ${formatErrors(status.errors)}` : "";
@@ -952,6 +970,9 @@ function frozenTaskFromInput(
   }
   if (!isSafeArtifactRelativePath(freezeLocator)) {
     throw new Error(`Task packet "${taskId}" freeze locator is unsafe.`);
+  }
+  if (freezeLocator.toLowerCase() === packetLocator.toLowerCase()) {
+    throw new Error(`Task packet "${taskId}" freeze locator must differ from its packet locator.`);
   }
   return { id: taskId, packetId, packetRef, freezeLocator, aggregateDigest };
 }

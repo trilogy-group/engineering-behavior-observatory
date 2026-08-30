@@ -236,6 +236,31 @@ test("compiles arbitrary matrices with stable serialized identities", () => {
     freezeLocators: { "task-a": "freezes/task-a.json" },
   });
   assert.equal(customFreezeQueue.entries.find((entry) => entry.taskId === "task-a")!.task.freezeLocator, "freezes/task-a.json");
+  const customFreezeOptions = compileOptions(experiment);
+  const customNoRootQueue = compileRunQueue(experiment, {
+    ...customFreezeOptions,
+    freezeLocators: { "task-a": "freezes/task-a.json" },
+  });
+  assert.deepEqual(
+    validateRunQueue(customNoRootQueue, experiment, "run-queue.json", {
+      resolvedPackets: customFreezeOptions.resolvedPackets,
+    }),
+    [],
+  );
+  assert.throws(
+    () => compileRunQueue(experiment, {
+      ...compileOptions(experiment),
+      freezeLocators: { "task-a": "packets/task-a.json" },
+    }),
+    /task-a.*freeze locator must differ/,
+  );
+  assert.throws(
+    () => compileRunQueue(experiment, {
+      ...compileOptions(experiment),
+      freezeLocators: { "task-a": "freezes/shared.json", "task-b": "freezes/shared.json" },
+    }),
+    /task-b.*shares a freeze locator/,
+  );
 
   const changedExperiment = structuredClone(experiment);
   changedExperiment.captureProfile = {
