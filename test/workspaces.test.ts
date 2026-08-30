@@ -461,6 +461,23 @@ test("retains failed setup attempts only when configured", async () => {
     assert.equal(insecure.state, "failed");
     assert.equal(insecure.retained, false);
     assert.equal(existsSync(insecure.workspacePath), false);
+
+    const unreadableRoot = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "failed-unreadable-root",
+      workspaceParent: parent,
+      retainOnFailure: true,
+      setup: (workspacePath) => {
+        chmodSync(workspacePath, 0o000);
+        throw new Error("unreadable root setup failed");
+      },
+    });
+    assert.equal(unreadableRoot.state, "failed");
+    assert.equal(unreadableRoot.retained, true);
+    assert.equal(statSync(unreadableRoot.workspacePath).mode & 0o7777, 0o700);
+    await unreadableRoot.cleanup("success");
+    assert.equal(unreadableRoot.state, "cleaned");
   } finally {
     rmSync(root, { force: true, recursive: true });
     rmSync(parent, { force: true, recursive: true });

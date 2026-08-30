@@ -159,7 +159,8 @@ export async function materializeWorkspace(
     let rootIsSafe = false;
     if (workspaceIdentity !== undefined) {
       try {
-        if (await isSafeWorkspaceRoot(workspacePath, workspaceIdentity)) {
+        if (await isOwnedWorkspaceRoot(workspacePath, workspaceIdentity)
+            && isNormalizableWorkspaceRootMode((await lstat(workspacePath)).mode)) {
           normalizeWorkspace(workspacePath, workspaceIdentity);
           rootIsSafe = await isSafeWorkspaceRoot(workspacePath, workspaceIdentity)
             && await isSafeWorkspaceTree(workspacePath);
@@ -483,7 +484,13 @@ function sealWorkspace(path: string, destination: string, expected: WorkspaceIde
 
 function normalizeWorkspace(root: string, expectedIdentity: WorkspaceIdentity): void {
   assertWorkspaceRoot(root, expectedIdentity);
-  normalizeDirectory(root, root, "");
+  try {
+    normalizeDirectory(root, root, "");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EACCES") throw error;
+    normalizeUnreadableDirectory(root, expectedIdentity);
+    normalizeDirectory(root, root, "");
+  }
   assertWorkspaceRoot(root, expectedIdentity);
 }
 
@@ -568,6 +575,68 @@ function openChildSync(path: string, directory: boolean, normalizeMode?: number)
       return normalizeUnreadableChild(path, directory, current, normalizeMode);
     }
     throw error;
+  }
+}
+
+function normalizeUnreadableDirectory(path: string, expected: WorkspaceIdentity): void {
+  const parent = dirname(path);
+  const name = basename(path);
+  const alias = `.ebo-root-normalize-${randomUUID()}`;
+  const originalCwd = process.cwd();
+  const parentFd = openSync(parent, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  let moved = false;
+  try {
+    if (!sameIdentity(fstatSync(parentFd), lstatSync(parent))) {
+      throw new Error(`Workspace parent "${parent}" changed during normalization.`);
+    }
+    process.chdir(parent);
+    if (!sameIdentity(fstatSync(parentFd), lstatSync("."))) {
+      throw new Error(`Workspace parent "${parent}" changed during normalization.`);
+    }
+    try {
+      lstatSync(alias);
+      throw new Error(`Workspace normalization alias already exists: "${alias}".`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    renameSync(name, alias);
+    moved = true;
+    const movedMetadata = lstatSync(alias);
+    if (!movedMetadata.isDirectory() || movedMetadata.isSymbolicLink() || !sameIdentity(movedMetadata, expected)) {
+      throw new Error(`Workspace root changed during normalization.`);
+    }
+    chmodSync(alias, DIRECTORY_MODE);
+    const opened = openSync(alias, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    try {
+      if (!sameIdentity(fstatSync(opened), expected)) throw new Error(`Workspace root changed during normalization.`);
+    } finally {
+      closeSync(opened);
+    }
+    renameSync(alias, name);
+    moved = false;
+    const restored = lstatSync(name);
+    if (!restored.isDirectory() || restored.isSymbolicLink() || !sameIdentity(restored, expected)) {
+      throw new Error(`Workspace root changed during normalization.`);
+    }
+  } finally {
+    if (moved) {
+      try {
+        if (sameIdentity(lstatSync(alias), expected)) {
+          let destinationAbsent = false;
+          try {
+            lstatSync(name);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") destinationAbsent = true;
+            else throw error;
+          }
+          if (destinationAbsent) renameSync(alias, name);
+        }
+      } catch {
+        // Preserve the original failure and let the root cleanup gate decide.
+      }
+    }
+    process.chdir(originalCwd);
+    closeSync(parentFd);
   }
 }
 
@@ -928,6 +997,17 @@ function assertSafeWorkspacePath(root: string, relativePath: string): void {
   if (!isContained(root, destination)) throw new Error(`Workspace path "${relativePath}" escapes its root.`);
 }
 
+async function isOwnedWorkspaceRoot(path: string, expected: WorkspaceIdentity): Promise<boolean> {
+  try {
+    const metadata = await lstat(path);
+    return metadata.isDirectory() && !metadata.isSymbolicLink()
+      && metadata.dev === expected.dev && metadata.ino === expected.ino
+      && (await realpath(path)) === path;
+  } catch {
+    return false;
+  }
+}
+
 async function isSafeWorkspaceRoot(path: string, expected: WorkspaceIdentity): Promise<boolean> {
   try {
     const metadata = await lstat(path);
@@ -938,6 +1018,10 @@ async function isSafeWorkspaceRoot(path: string, expected: WorkspaceIdentity): P
   } catch {
     return false;
   }
+}
+
+function isNormalizableWorkspaceRootMode(mode: number): boolean {
+  return (mode & 0o7777) === DIRECTORY_MODE || (mode & 0o444) === 0;
 }
 
 function isSafeWorkspaceTree(
@@ -1029,8 +1113,14 @@ function removeQuarantinedWorkspace(path: string, expected: WorkspaceIdentity): 
   let rootFd: number;
   try {
     rootFd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-  } catch {
-    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EACCES") return false;
+    try {
+      normalizeUnreadableDirectory(path, expected);
+      rootFd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    } catch {
+      return false;
+    }
   }
   const originalCwd = process.cwd();
   try {
