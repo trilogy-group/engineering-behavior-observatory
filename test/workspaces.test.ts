@@ -399,6 +399,8 @@ test("retains failed setup attempts only when configured", async () => {
     assert.equal(removed.state, "failed");
     assert.equal(removed.retained, false);
     assert.equal(existsSync(removed.workspacePath), false);
+    await assert.doesNotReject(removed.cleanup("failure"));
+    assert.equal(removed.state, "cleaned");
 
     const insecure = await materializeWorkspace({
       bundleRoot: root,

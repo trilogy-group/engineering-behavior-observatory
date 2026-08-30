@@ -78,6 +78,7 @@ export type WorkspaceMaterialization = {
   state: "ready" | "failed" | "cleaned";
   retainOnFailure: boolean;
   retained: boolean;
+  workspaceRemoved: boolean;
   error?: string;
   cleanup: (outcome?: "success" | "failure") => Promise<void>;
 };
@@ -146,6 +147,7 @@ export async function materializeWorkspace(
       workspaceFingerprint,
       retainOnFailure,
       retained: true,
+      workspaceRemoved: false,
     });
     return result;
   } catch (error) {
@@ -153,8 +155,9 @@ export async function materializeWorkspace(
     const rootIsSafe = workspaceIdentity !== undefined
       && await isSafeWorkspaceRoot(workspacePath, workspaceIdentity)
       && await isSafeWorkspaceTree(workspacePath);
+    let workspaceRemoved = false;
     if (!retainOnFailure || !rootIsSafe) {
-      removeWorkspaceIfOwned(workspacePath, workspaceIdentity);
+      workspaceRemoved = removeWorkspaceIfOwned(workspacePath, workspaceIdentity);
     }
     result = createResult({
       attemptId,
@@ -166,6 +169,7 @@ export async function materializeWorkspace(
       workspaceFingerprint: null,
       retainOnFailure,
       retained: retainOnFailure && rootIsSafe,
+      workspaceRemoved,
       status: "failed",
       error: message,
     });
@@ -179,12 +183,18 @@ export async function cleanupWorkspace(
 ): Promise<void> {
   if (materialization.state === "cleaned") return;
   if (outcome === "failure" && materialization.retainOnFailure && materialization.retained) return;
+  if (materialization.state === "failed" && !materialization.retained && materialization.workspaceRemoved) {
+    materialization.status = "cleaned";
+    materialization.state = "cleaned";
+    return;
+  }
   if (!removeWorkspaceIfOwned(materialization.workspacePath, materialization.workspaceIdentity)) {
     throw new Error("Workspace root changed before cleanup.");
   }
   materialization.status = "cleaned";
   materialization.state = "cleaned";
   materialization.retained = false;
+  materialization.workspaceRemoved = true;
 }
 
 function createResult(input: {
@@ -197,6 +207,7 @@ function createResult(input: {
   workspaceFingerprint: string | null;
   retainOnFailure: boolean;
   retained: boolean;
+  workspaceRemoved: boolean;
   status?: "ready" | "failed";
   error?: string;
 }): WorkspaceMaterialization {
@@ -215,6 +226,7 @@ function createResult(input: {
     state: input.status ?? "ready",
     retainOnFailure: input.retainOnFailure,
     retained: input.retained,
+    workspaceRemoved: input.workspaceRemoved,
     ...(input.error === undefined ? {} : { error: input.error }),
     cleanup: async (outcome) => cleanupWorkspace(result, outcome),
   };
@@ -612,14 +624,14 @@ function hashWorkspaceDirectory(
           if (metadata.nlink > 1n) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
           const size = Number(metadata.size);
           if (!Number.isSafeInteger(size) || size < 0) throw new Error(`Workspace file "${relativePath}" is too large.`);
-          const bytes = Buffer.alloc(size);
+          hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0${size}\0`);
+          const bytes = Buffer.alloc(Math.min(size, 64 * 1024));
           for (let offset = 0; offset < size;) {
-            const read = readSync(childFd, bytes, offset, size - offset, offset);
+            const read = readSync(childFd, bytes, 0, Math.min(bytes.length, size - offset), offset);
             if (read === 0) throw new Error(`Workspace file "${relativePath}" changed during fingerprinting.`);
+            hash.update(bytes.subarray(0, read));
             offset += read;
           }
-          hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0${bytes.length}\0`);
-          hash.update(bytes);
         } else {
           throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
         }
