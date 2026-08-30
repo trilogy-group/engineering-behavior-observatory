@@ -3,6 +3,8 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, rea
 import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
 
+import type { TaskPacketFreezeRecord } from "./task-packets.js";
+
 export type Digest = {
   algorithm: "sha256";
   value: string;
@@ -73,6 +75,8 @@ export type ReferenceSolutionDeclaration =
   | { status: "not-provided" | "unsupported" };
 
 export type ResolvedTaskPacket = {
+  /** Packet identity retained by the admission resolver for freeze binding. */
+  packetId?: string;
   digest: Digest;
   preAdmissionDigest: Digest | null;
   reviewRecordDigest: Digest | null;
@@ -92,6 +96,8 @@ export type ResolvedTaskPacket = {
     status: "proposed" | "admitted" | "rejected";
     reviewedAt: string | null;
   };
+  /** Complete freeze evidence admitted alongside this packet resolution. */
+  freezeRecord?: TaskPacketFreezeRecord;
 };
 
 export type DeclaredOrder = {

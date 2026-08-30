@@ -23,7 +23,6 @@ import {
   type FrozenTaskInput,
   type ResolvedTaskPacket,
   type TaskPacket,
-  type TaskPacketFreezeRecord,
 } from "../src/index.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -119,7 +118,6 @@ function compileOptions(
 ): {
   resolvedDigests: Record<string, ExperimentConfiguration["captureProfile"]["digest"]>;
   frozenTasks: Record<string, FrozenTaskInput>;
-  admittedFreezeRecords: Record<string, TaskPacketFreezeRecord>;
   resolvedPackets: Record<string, ResolvedTaskPacket>;
   permutationAlgorithms?: Record<string, unknown>;
 } {
@@ -163,6 +161,7 @@ function compileOptions(
   ) as Record<string, FrozenTaskInput>;
   const resolvedPackets = Object.fromEntries(
     Object.entries(experiment.taskSet).map(([id, condition]) => [id, {
+      packetId: id,
       digest: condition.packetRef.digest,
       preAdmissionDigest: { algorithm: "sha256", value: "1".repeat(64) },
       reviewRecordDigest: condition.packetRef.digest,
@@ -179,6 +178,7 @@ function compileOptions(
       verifierDigest: condition.packetRef.digest,
       resolvedVerifierDigest: condition.packetRef.digest,
       admission: { status: "admitted" as const, reviewedAt: "2026-08-26T00:00:00Z" },
+      freezeRecord: frozenTasks[id],
     }]),
   ) as Record<string, ResolvedTaskPacket>;
   if (experiment.ordering.strategy === "permuted" && experiment.ordering.permutationAlgorithmRef !== undefined) {
@@ -187,7 +187,6 @@ function compileOptions(
   const options = {
     resolvedDigests: Object.fromEntries(references.map((reference) => [reference.locator, reference.digest])),
     frozenTasks,
-    admittedFreezeRecords: frozenTasks as Record<string, TaskPacketFreezeRecord>,
     resolvedPackets,
   };
   if (experiment.ordering.strategy === "permuted" && experiment.ordering.permutationAlgorithmRef !== undefined) {
@@ -297,6 +296,31 @@ test("matrix compilation rejects unfrozen, duplicate, and unresolved inputs", ()
   const missing = { ...options.frozenTasks };
   delete missing["task-a"];
   assert.throws(() => compileRunQueue(experiment, { ...options, frozenTasks: missing }), /task-a.*no frozen record/);
+
+  const missingAdmissionEvidence = compileOptions(experiment);
+  delete missingAdmissionEvidence.resolvedPackets["task-a"]!.freezeRecord;
+  assert.throws(
+    () => compileRunQueue(experiment, missingAdmissionEvidence),
+    /task-a.*no admitted freeze record/,
+  );
+
+  const forgedAdmissionEvidence = compileOptions(experiment);
+  const forgedFreeze = structuredClone(forgedAdmissionEvidence.resolvedPackets["task-a"]!.freezeRecord!);
+  forgedFreeze.packetId = "forged-task";
+  forgedFreeze.aggregateDigest = digestMetadata({
+    packetId: forgedFreeze.packetId,
+    packetLocator: forgedFreeze.packetLocator,
+    preAdmissionDigest: forgedFreeze.preAdmissionDigest,
+    packetDigest: forgedFreeze.packetDigest,
+    components: forgedFreeze.components,
+    frozenAt: forgedFreeze.frozenAt,
+  });
+  forgedAdmissionEvidence.resolvedPackets["task-a"]!.freezeRecord = forgedFreeze;
+  forgedAdmissionEvidence.frozenTasks["task-a"] = forgedFreeze;
+  assert.throws(
+    () => compileRunQueue(experiment, forgedAdmissionEvidence),
+    /task-a.*not bound to its admitted packet evidence/,
+  );
 
   const duplicate = structuredClone(experiment);
   duplicate.taskSet["task-b"]!.packetRef = duplicate.taskSet["task-a"]!.packetRef;
@@ -494,10 +518,14 @@ test("a persisted local queue is validated and consumed in order", () => {
     writeFileSync(experimentPath, canonicalizeMetadata(experiment));
     writeRunQueue(path, queue);
     assert.doesNotThrow(() => writeRunQueue(path, queue));
-    assert.throws(() => writeRunQueue(path, {
-      ...queue,
-      captureProfile: { ...queue.captureProfile, digest: { algorithm: "sha256", value: "0".repeat(64) } },
-    }), /different queue/);
+    const alteredExperiment = structuredClone(experiment);
+    alteredExperiment.coordinatorBudget.maxWallClockMs += 1;
+    const alteredQueue = compileRunQueue(alteredExperiment, compileOptions(alteredExperiment));
+    assert.throws(() => writeRunQueue(path, alteredQueue), /different queue/);
+    const alteredControls = structuredClone(queue);
+    alteredControls.coordinatorBudget.maxWallClockMs += 1;
+    assert.match(validateRunQueue(alteredControls).map((error) => error.message).join("\n"), /Run ID does not match/);
+    assert.throws(() => new LocalRunQueue(alteredControls), /Run ID does not match/);
     assert.equal(readFileSync(path, "utf8"), canonicalizeMetadata(queue));
     const loaded = readRunQueue(path, experiment, compileOptions(experiment));
     let output = "";

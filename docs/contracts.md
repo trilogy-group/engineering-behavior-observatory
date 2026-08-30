@@ -128,9 +128,11 @@ controls are limited to JavaScript safe integers.
 `ebo.run-queue/v1` document. Every entry contains the task-packet freeze
 identity, digest-pinned model and harness configuration references, and a
 one-based trial identity; the queue also retains the selected capture-profile
-reference and coordinator budget. Run IDs are hashes of those identities, so
-compiling the same experiment with the same seed produces byte-identical queue
-metadata.
+reference and coordinator budget. Run IDs are hashes of those identities and
+queue controls, so standalone consumers reject mutations to either. When the
+API is used without a bundle root, each admitted task resolution must carry
+the complete schema-valid freeze record that supplied task identities are
+checked against.
 
 The compiler supports sequential (`declared` is retained as its legacy name),
 seeded-shuffle (`permuted` is retained as its legacy name), and balanced
