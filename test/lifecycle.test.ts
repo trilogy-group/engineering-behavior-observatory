@@ -17,7 +17,7 @@ import {
 
 const run = createRunIdentity({ taskId: "task-1", modelId: "model-1", harnessId: "harness-1" });
 
-function workspace(result: { status: "ready" | "failed"; artifactId?: string } = { status: "ready", artifactId: "workspace-1" }) {
+function workspace(result: { status: "ready" | "failed"; artifactId?: string; retained?: boolean; evidence?: unknown } = { status: "ready", artifactId: "workspace-1" }) {
   return {
     setup: async () => result,
     cleanup: async () => undefined,
@@ -386,6 +386,22 @@ test("cleanup receives a workspace snapshot and cannot rewrite retained evidence
   assert.deepEqual(result.record.workspace?.evidence, { owner: "setup" });
 });
 
+test("verifier results are snapshotted before cleanup can mutate them", async () => {
+  let verifierResult: { status: "passed" | "failed" } = { status: "passed" };
+  const result = await executeRunAttempt({
+    run,
+    workspace: {
+      setup: async () => ({ status: "ready", artifactId: "workspace-1" }),
+      cleanup: async () => { verifierResult.status = "failed"; },
+    },
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => verifierResult,
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.state, "completed");
+  assert.equal(result.record.verifier?.status, "passed");
+});
+
 test("a hanging evidence flush is bounded by cancellation grace", async () => {
   const startedAt = Date.now();
   const result = await executeRunAttempt({
@@ -519,6 +535,17 @@ test("task-failed terminals require a retained workspace artifact", async () => 
   assert.equal(result.classification.source, "workspace");
 });
 
+test("failure terminals omit explicitly unretained workspace IDs", async () => {
+  const result = await executeRunAttempt({
+    run,
+    workspace: workspace({ status: "ready", artifactId: "workspace-1", retained: false }),
+    harness: async () => ({ status: "failed", failureClass: "infrastructure" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.failureClass, "infrastructure");
+  assert.equal(result.terminal.workspaceArtifactId, undefined);
+});
+
 test("run identity fields are validated before callbacks execute", async () => {
   let setupCalled = false;
   const invalidRun = { ...run, taskId: "" };
@@ -615,6 +642,36 @@ test("attempt persistence rejects reopening a terminal attempt", async () => {
       lifecycle: new LifecycleController().snapshot(),
       partial: true,
     }), /already terminal/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("execution rejects an owned record path before invoking callbacks", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-owned-path-"));
+  try {
+    const path = join(root, "attempt.json");
+    const first = await executeRunAttempt({
+      run,
+      recordPath: path,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    let setupCalled = false;
+    await assert.rejects(executeRunAttempt({
+      run,
+      attempt: first.attempt,
+      recordPath: path,
+      workspace: {
+        setup: async () => { setupCalled = true; return { status: "ready", artifactId: "workspace-1" }; },
+      },
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    }), /already owned/);
+    assert.equal(setupCalled, false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

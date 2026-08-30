@@ -3,7 +3,8 @@
 `src/lifecycle.ts` owns one declared run cell and one attempt. A run is
 identified by task, model, and harness IDs; an attempt gets a fresh ID and
 number. `retryAttempt` links a later attempt with `retryOf`, so callers must
-choose a distinct record/evidence path. The runner never retries implicitly.
+choose a distinct record/evidence path. An existing record path is never
+reopened by a new execution, and the runner never retries implicitly.
 
 The guarded attempt phases are:
 

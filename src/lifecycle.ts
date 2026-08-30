@@ -401,7 +401,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         workspace = snapshotWorkspace(setupOutcome.value);
         record.workspace = snapshotWorkspace(workspace);
         if (workspace.status === "failed") {
-          classification = infrastructureClassification("Workspace setup failed.", "workspace", workspace.artifactId);
+          classification = infrastructureClassification("Workspace setup failed.", "workspace", workspace);
         }
       }
     } catch (error) {
@@ -457,7 +457,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       } catch (error) {
         classification = controller.signal.aborted
           ? abortClassification(abortCause, budgetExpired, errorMessage(error))
-          : infrastructureClassification(errorMessage(error), "harness", workspace?.artifactId);
+          : infrastructureClassification(errorMessage(error), "harness", workspace);
       } finally {
         for (const timer of timers) clearTimeout(timer);
       }
@@ -488,13 +488,13 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       } else if (outcome?.kind === "result") {
         harnessResult = outcome.value;
         record.harness = durableHarnessResult(harnessResult);
-        classification = classifyHarness(harnessResult, workspace?.artifactId);
+        classification = classifyHarness(harnessResult, workspace);
         if (classification === undefined && harnessResult.status === "completed") {
           lifecycle.transition("verifying");
           await persist();
           if (options.verifier === undefined) {
             record.verifier = { status: "not-run" };
-            classification = infrastructureClassification("Verifier did not run.", "verifier", workspace?.artifactId);
+            classification = infrastructureClassification("Verifier did not run.", "verifier", workspace);
           } else {
             try {
               const verifierPromise = Promise.resolve(options.verifier({
@@ -508,9 +508,9 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                 abortPromise.then((value) => ({ kind: value })),
               ]);
               if (verifierOutcome.kind === "aborted" || controller.signal.aborted) {
-                if (verifierOutcome.kind === "result") record.verifier = verifierOutcome.value;
+                if (verifierOutcome.kind === "result") record.verifier = snapshotVerifier(verifierOutcome.value);
                 const settledVerifier = await settleWithTimeout(verifierPromise, options.shutdownGraceMs ?? 250);
-                if (settledVerifier.status === "completed" && record.verifier === undefined) record.verifier = settledVerifier.value;
+                if (settledVerifier.status === "completed" && record.verifier === undefined) record.verifier = snapshotVerifier(settledVerifier.value);
                 if (settledVerifier.status === "failed" && record.verifier === undefined) {
                   record.verifier = { status: "error", error: errorMessage(settledVerifier.error) };
                 }
@@ -519,14 +519,15 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                 }
                 classification = abortClassification(abortCause, budgetExpired);
               } else {
-                record.verifier = verifierOutcome.value;
-                classification = classifyVerifier(verifierOutcome.value, workspace);
+                const verifier = snapshotVerifier(verifierOutcome.value);
+                record.verifier = verifier;
+                classification = classifyVerifier(verifier, workspace);
               }
             } catch (error) {
               record.verifier = { status: "error", error: errorMessage(error) };
               classification = controller.signal.aborted
                 ? abortClassification(abortCause, budgetExpired, errorMessage(error))
-                : verifierErrorClassification(errorMessage(error), workspace?.artifactId);
+                : verifierErrorClassification(errorMessage(error), workspace);
             }
           }
         }
@@ -535,7 +536,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       await flush();
     }
   } catch (error) {
-    classification ??= infrastructureClassification(errorMessage(error), "runner", workspace?.artifactId);
+    classification ??= infrastructureClassification(errorMessage(error), "runner", workspace);
   } finally {
     if (lifecycle.state !== "cleaning" && lifecycle.state !== "terminal") {
       lifecycle.transition("cleaning");
@@ -568,11 +569,11 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     } catch (error) {
       cleanupStatus = { status: "failed", error: errorMessage(error) };
       if (classification === undefined || classificationUnderlyingKind(classification) === "completed") {
-        classification = infrastructureClassification(errorMessage(error), "cleanup", workspace?.artifactId);
+        classification = infrastructureClassification(errorMessage(error), "cleanup", workspace);
       }
     }
     if (cleanupStatus?.status === "timed-out" && classificationUnderlyingKind(classification ?? infrastructureClassification("Run did not produce a terminal outcome.", "runner")) === "completed") {
-      classification = infrastructureClassification(cleanupStatus.error ?? "Workspace cleanup timed out.", "cleanup", workspace?.artifactId);
+      classification = infrastructureClassification(cleanupStatus.error ?? "Workspace cleanup timed out.", "cleanup", workspace);
     }
     record.cleanup = cleanupStatus;
     await flush();
@@ -586,7 +587,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       classification = abortClassification(abortCause, budgetExpired);
     }
     if (persistenceError !== undefined && classification !== undefined && classificationUnderlyingKind(classification) === "completed") {
-      classification = infrastructureClassification(persistenceError, "runner", workspace?.artifactId);
+      classification = infrastructureClassification(persistenceError, "runner", workspace);
     }
     if (record.capture?.status === "incomplete" && classification !== undefined && classification.kind !== "capture-incomplete") {
       classification = {
@@ -599,7 +600,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     }
     if (budgetTimer !== undefined) clearTimeout(budgetTimer);
     lifecycle.transition("terminal");
-    classification ??= infrastructureClassification("Run did not produce a terminal outcome.", "runner", workspace?.artifactId);
+    classification ??= infrastructureClassification("Run did not produce a terminal outcome.", "runner", workspace);
     record.classification = classification;
     record.terminal = classification.terminal;
     record.partial = classificationUnderlyingKind(classification) !== "completed"
@@ -608,7 +609,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     await persist();
     if (persistenceError !== undefined && persistenceBeforeTerminal === undefined
         && classificationUnderlyingKind(classification) === "completed") {
-      const failedPersistence = infrastructureClassification(persistenceError, "runner", workspace?.artifactId);
+      const failedPersistence = infrastructureClassification(persistenceError, "runner", workspace);
       classification = record.capture?.status === "incomplete"
         ? { ...failedPersistence, kind: "capture-incomplete", source: "capture", underlying: failedPersistence.kind }
         : failedPersistence;
@@ -695,9 +696,7 @@ async function assertAttemptRecordPathAvailable(
   if (existing.run.id !== run.id || existing.attempt.id !== attempt.id) {
     throw new Error(`Attempt record "${path}" already belongs to another attempt.`);
   }
-  if (existing.terminal !== undefined || existing.classification !== undefined) {
-    throw new Error(`Attempt record "${path}" is already terminal.`);
-  }
+  throw new Error(`Attempt record "${path}" is already owned; use a new linked attempt.`);
 }
 
 function validateOptions(options: RunAttemptOptions): void {
@@ -726,7 +725,7 @@ function validateOptions(options: RunAttemptOptions): void {
 
 function classifyHarness(
   result: HarnessExecutionResult,
-  workspaceArtifactId: string | undefined,
+  workspace: WorkspaceExecutionResult | undefined,
 ): AttemptClassification | undefined {
   switch (result.status) {
     case "completed":
@@ -737,12 +736,12 @@ function classifyHarness(
           ? result.reason ?? "Harness reported task failure without verifier evidence."
           : result.reason ?? "Harness failed.",
         "harness",
-        workspaceArtifactId,
+        workspace,
       );
     case "stopped":
       if (result.stopReason === "policy") return policyClassification(result.reason);
       if (result.stopReason === "budget") return budgetClassification("harness", result.reason);
-      return infrastructureClassification("Harness stopped without an explicit stop reason.", "harness", workspaceArtifactId);
+      return infrastructureClassification("Harness stopped without an explicit stop reason.", "harness", workspace);
     case "interrupted":
       return interruptedClassification(result.reason);
   }
@@ -755,16 +754,16 @@ function classifyVerifier(result: VerifierExecutionResult, workspace: WorkspaceE
     case "failed":
       return taskClassification(result.error ?? "Verifier reported task failure.", workspace, "verifier");
     case "error":
-      return verifierErrorClassification(result.error ?? "Verifier failed to execute.", workspace?.artifactId);
+      return verifierErrorClassification(result.error ?? "Verifier failed to execute.", workspace);
     case "not-run":
-      return infrastructureClassification("Verifier did not run.", "verifier", workspace?.artifactId);
+      return infrastructureClassification("Verifier did not run.", "verifier", workspace);
   }
 }
 
 function completedClassification(workspace: WorkspaceExecutionResult | undefined): AttemptClassification {
   if (workspace === undefined || workspace.status !== "ready" || workspace.retained === false
       || workspace.artifactId === undefined) {
-    return infrastructureClassification("Completed run requires a retained workspace artifact.", "workspace", workspace?.artifactId);
+    return infrastructureClassification("Completed run requires a retained workspace artifact.", "workspace", workspace);
   }
   return {
     kind: "completed",
@@ -780,7 +779,7 @@ function taskClassification(
 ): AttemptClassification {
   if (workspace === undefined || workspace.status !== "ready" || workspace.retained === false
       || workspace.artifactId === undefined) {
-    return infrastructureClassification("Task failure requires a retained workspace artifact.", "workspace", workspace?.artifactId);
+    return infrastructureClassification("Task failure requires a retained workspace artifact.", "workspace", workspace);
   }
   return {
     kind: "task-failure",
@@ -793,8 +792,9 @@ function taskClassification(
 function infrastructureClassification(
   reason: string,
   source: AttemptClassification["source"],
-  workspaceArtifactId?: string,
+  workspace?: WorkspaceExecutionResult,
 ): AttemptClassification {
+  const workspaceArtifactId = retainedWorkspaceArtifactId(workspace);
   return {
     kind: source === "verifier" ? "verifier-error" : "infrastructure-failure",
     terminal: { state: "failed", failureClass: "infrastructure", stopReason: "none", ...(workspaceArtifactId === undefined ? {} : { workspaceArtifactId }) },
@@ -803,13 +803,20 @@ function infrastructureClassification(
   };
 }
 
-function verifierErrorClassification(reason: string, workspaceArtifactId?: string): AttemptClassification {
+function verifierErrorClassification(reason: string, workspace?: WorkspaceExecutionResult): AttemptClassification {
+  const workspaceArtifactId = retainedWorkspaceArtifactId(workspace);
   return {
     kind: "verifier-error",
     terminal: { state: "failed", failureClass: "infrastructure", stopReason: "none", ...(workspaceArtifactId === undefined ? {} : { workspaceArtifactId }) },
     reason,
     source: "verifier",
   };
+}
+
+function retainedWorkspaceArtifactId(workspace: WorkspaceExecutionResult | undefined): string | undefined {
+  return workspace?.status === "ready" && workspace.retained !== false && workspace.artifactId !== undefined
+    ? workspace.artifactId
+    : undefined;
 }
 
 function budgetClassification(source: "coordinator" | "harness", reason?: string): AttemptClassification {
@@ -860,6 +867,10 @@ function snapshotWorkspace(workspace: WorkspaceExecutionResult): WorkspaceExecut
     ...workspace,
     ...(workspace.evidence === undefined ? {} : { evidence: structuredClone(workspace.evidence) }),
   };
+}
+
+function snapshotVerifier(verifier: VerifierExecutionResult): VerifierExecutionResult {
+  return structuredClone(verifier);
 }
 
 async function shutdownHarness(
