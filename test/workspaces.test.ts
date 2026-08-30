@@ -172,6 +172,7 @@ test("keeps workspaces private while preserving executable fixture and setup mod
     ["README.md", "src", "tool.sh"],
   );
   const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+  let setupPath = "";
 
   try {
     freezeTaskPacket(root, "packet.json");
@@ -180,8 +181,14 @@ test("keeps workspaces private while preserving executable fixture and setup mod
       packetLocator: "packet.json",
       attemptId: "private-modes",
       workspaceParent: parent,
-      setup: (workspacePath) => writeFileSync(join(workspacePath, "setup.sh"), "#!/bin/sh\n", { mode: 0o755 }),
+      setup: (workspacePath) => {
+        setupPath = workspacePath;
+        writeFileSync(join(workspacePath, "setup.sh"), "#!/bin/sh\n", { mode: 0o755 });
+        writeFileSync(join(workspacePath, "setup-path.txt"), workspacePath);
+      },
     });
+    assert.equal(result.workspacePath, setupPath);
+    assert.equal(readFileSync(join(result.workspacePath, "setup-path.txt"), "utf8"), setupPath);
     assert.equal(statSync(result.workspacePath).mode & 0o7777, 0o700);
     assert.equal(statSync(join(result.workspacePath, "tool.sh")).mode & 0o7777, 0o700);
     assert.equal(statSync(join(result.workspacePath, "setup.sh")).mode & 0o7777, 0o700);

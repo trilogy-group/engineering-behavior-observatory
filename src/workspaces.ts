@@ -114,12 +114,16 @@ export async function materializeWorkspace(
     workspaceIdentity = await readWorkspaceRootIdentity(workspacePath);
     await chmod(workspacePath, DIRECTORY_MODE);
     for (const entry of entries) await materializeEntry(workspacePath, entry);
-    await runSetup(options.setup, options.setupSteps, workspacePath);
     workspacePath = sealWorkspace(workspacePath, join(parent.path, `.ebo-${attemptId}-sealed-${randomUUID()}`), workspaceIdentity);
+    await runSetup(options.setup, options.setupSteps, workspacePath);
     normalizeWorkspace(workspacePath, workspaceIdentity);
     assertWorkspaceRoot(workspacePath, workspaceIdentity);
     const workspaceFingerprint = digestMaterializedWorkspace(workspacePath, workspaceIdentity);
     assertWorkspaceRoot(workspacePath, workspaceIdentity);
+    const settledFingerprint = digestMaterializedWorkspace(workspacePath, workspaceIdentity);
+    if (workspaceFingerprint !== settledFingerprint) {
+      throw new Error("Workspace changed while its final fingerprint was settling.");
+    }
     result = createResult({
       attemptId,
       packet,
