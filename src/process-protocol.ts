@@ -177,13 +177,19 @@ export class JsonlEvidenceWriter {
 
   public close(): Promise<void> {
     const operation = this.queue.then(async () => {
-      if (this.closed) return;
-      this.closed = true;
-      if (this.handle !== undefined) {
-        await this.handle.close();
-        this.handle = undefined;
+      if (this.closed) {
+        this.releaseClaimNow();
+        return;
       }
-      this.releaseClaimNow();
+      this.closed = true;
+      try {
+        if (this.handle !== undefined) {
+          await this.handle.close();
+          this.handle = undefined;
+        }
+      } finally {
+        this.releaseClaimNow();
+      }
     });
     this.queue = operation.catch(() => undefined);
     return operation;
@@ -567,6 +573,7 @@ export class ProtocolProcess {
   private readonly writer: JsonlEvidenceWriter;
   private readonly now: () => string;
   private readonly command: string;
+  private readonly detached: boolean;
   private readonly ownsWriter: boolean;
   private readonly evidencePath?: string;
   private readonly stderrPath?: string;
@@ -603,6 +610,7 @@ export class ProtocolProcess {
     this.maxInMemoryObservations = positiveInteger(options.maxInMemoryObservations ?? DEFAULT_MAX_IN_MEMORY_OBSERVATIONS, "In-memory observation limit");
     this.now = options.now ?? (() => new Date().toISOString());
     this.command = options.command;
+    this.detached = options.spawnOptions?.detached ?? process.platform !== "win32";
     this.startedAt = this.now();
     assertTimestamp(this.startedAt, "Process start timestamp");
     this.cwd = resolve(options.cwd ?? process.cwd());
@@ -635,7 +643,7 @@ export class ProtocolProcess {
       cwd: this.cwd,
       env: options.env,
       stdio: ["pipe", "pipe", "pipe"],
-      detached: options.spawnOptions?.detached ?? process.platform !== "win32",
+      detached: this.detached,
     };
     try {
       this.child = spawn(options.command, this.args, spawnOptions);
@@ -839,7 +847,7 @@ export class ProtocolProcess {
     const pid = this.child.pid;
     if (pid === undefined) return;
     try {
-      if (process.platform !== "win32" && this.options.spawnOptions?.detached !== false) {
+      if (process.platform !== "win32" && this.detached) {
         process.kill(-pid, signal);
       } else {
         this.child.kill(signal);
@@ -851,7 +859,7 @@ export class ProtocolProcess {
     if (graceMs > 0) await waitForExit(this.child, graceMs);
     if (this.child.exitCode === null && this.child.signalCode === null) {
       try {
-        if (process.platform !== "win32" && this.options.spawnOptions?.detached !== false) {
+        if (process.platform !== "win32" && this.detached) {
           process.kill(-pid, "SIGKILL");
         } else {
           this.child.kill("SIGKILL");

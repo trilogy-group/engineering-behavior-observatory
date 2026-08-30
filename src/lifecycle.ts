@@ -1670,6 +1670,10 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       if (!isRecord(value.verifier) || (value.verifier.status !== "error" && value.verifier.status !== "not-run")) {
         throw new Error("Verifier-error terminal records require an error or not-run verifier result.");
       }
+      assertShutdownCompleted(value.harness, "Harness");
+      if (value.harnessTerminationConfirmed === false) {
+        throw new Error("Verifier-error terminal records require confirmed harness termination.");
+      }
     }
     const expectedPartial = classificationUnderlyingKind(value.classification as unknown as AttemptClassification) !== "completed"
       || isRecord(value.capture) && value.capture.status === "incomplete";
@@ -1712,6 +1716,7 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       throw new Error("Task-failure terminal records require running and verifying lifecycle phases.");
     }
     assertHarnessStatus(value.harness, "completed");
+    assertShutdownCompleted(value.workspace, "Workspace");
     assertShutdownCompleted(value.harness, "Harness");
     assertShutdownCompleted(value.verifier, "Verifier");
     if (value.harnessTerminationConfirmed === false || value.verifierTerminationConfirmed === false) {
@@ -1740,6 +1745,14 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
   }
   if (lifecycle.state === "terminal" && (!isRecord(value.cleanup) || !["completed", "failed", "timed-out"].includes(String(value.cleanup.status)))) {
     throw new Error("Terminal attempt records require explicit cleanup status.");
+  }
+  if (lifecycle.state === "terminal" && isRecord(value.cleanup) && value.cleanup.status === "completed") {
+    if (value.harnessTerminationConfirmed === false || value.verifierTerminationConfirmed === false) {
+      throw new Error("Completed cleanup requires confirmed execution termination.");
+    }
+    assertShutdownCompleted(value.workspace, "Workspace");
+    assertShutdownCompleted(value.harness, "Harness");
+    assertShutdownCompleted(value.verifier, "Verifier");
   }
   if (lifecycle.state === "terminal"
       && (!isRecord(value.capture) || !["complete", "incomplete"].includes(String(value.capture.status)))) {
