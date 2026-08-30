@@ -330,6 +330,47 @@ test("a hanging evidence flush is bounded by cancellation grace", async () => {
   assert.equal(result.record.capture?.status, "incomplete");
 });
 
+test("a flush that completes during cancellation grace remains complete", async () => {
+  let flushes = 0;
+  const result = await executeRunAttempt({
+    run,
+    maxWallClockMs: 10,
+    shutdownGraceMs: 50,
+    workspace: workspace(),
+    harness: async () => ({ status: "completed" }),
+    evidence: {
+      flush: async () => {
+        flushes += 1;
+        await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, flushes === 1 ? 20 : 0));
+      },
+    },
+  });
+  assert.equal(result.terminal.state, "stopped");
+  assert.equal(result.record.capture?.status, "complete");
+});
+
+test("cleanup timeout is retained and prevents false completion", async () => {
+  const controller = new AbortController();
+  const result = await executeRunAttempt({
+    run,
+    shutdownGraceMs: 10,
+    signal: controller.signal,
+    workspace: {
+      setup: async () => ({ status: "ready", artifactId: "workspace-1" }),
+      cleanup: async () => {
+        controller.abort();
+        return new Promise<void>(() => undefined);
+      },
+    },
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => ({ status: "passed" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.record.cleanup?.status, "timed-out");
+  assert.equal(result.terminal.failureClass, "infrastructure");
+  assert.equal(result.classification.source, "cleanup");
+});
+
 test("a verifier result that settles during interruption remains in the partial record", async () => {
   const controller = new AbortController();
   let verifierStartedResolve: (() => void) | undefined;
@@ -515,6 +556,37 @@ test("terminal attempt records require matching terminal classification", async 
       partial: true,
     }));
     await assert.rejects(readAttemptRecord(path), /terminal and classification/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("durable validation rejects classification kinds that contradict terminals", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-kind-record-"));
+  try {
+    const path = join(root, "contradictory.json");
+    writeFileSync(path, JSON.stringify({
+      schemaVersion: "ebo.attempt/v1",
+      run,
+      attempt: createAttemptIdentity(run.id, 1, "attempt-1"),
+      lifecycle: {
+        state: "terminal",
+        createdAt: "a",
+        startedAt: "b",
+        timestamps: { created: "a", setup: "b", running: "c", verifying: "d", cleaning: "e", terminal: "f" },
+        transitions: [
+          { from: "created", to: "setup", at: "b" },
+          { from: "setup", to: "running", at: "c" },
+          { from: "running", to: "verifying", at: "d" },
+          { from: "verifying", to: "cleaning", at: "e" },
+          { from: "cleaning", to: "terminal", at: "f" },
+        ],
+      },
+      terminal: { state: "failed", failureClass: "infrastructure", stopReason: "none" },
+      classification: { kind: "completed", terminal: { state: "failed", failureClass: "infrastructure", stopReason: "none" } },
+      partial: true,
+    }));
+    await assert.rejects(readAttemptRecord(path), /classification kind/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

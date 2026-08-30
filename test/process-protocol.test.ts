@@ -165,6 +165,7 @@ test("bounds an unterminated stdout frame before accumulating it", async () => {
     });
     assert.equal(processResult.status, "malformed");
     assert.match(processResult.protocolError?.message ?? "", /exceeds/);
+    assert.equal(processResult.protocolError?.line, 1);
     assert.equal(processResult.stdoutFrames, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -200,6 +201,24 @@ test("does not process frames queued after malformed output", async () => {
     });
     assert.equal(processResult.status, "malformed");
     assert.equal(observed, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("retains valid frames queued before an oversized frame", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("process.stdout.write(JSON.stringify({before:true}) + '\\n' + 'x'.repeat(1000))"),
+      source: "fake-harness",
+      maxLineBytes: 32,
+      evidencePath: join(root, "before-oversized.jsonl"),
+    });
+    assert.equal(processResult.status, "malformed");
+    assert.equal(processResult.stdoutFrames, 1);
+    assert.equal((processResult.observations.find((record) => record.kind === "frame")?.payload as { before?: boolean }).before, true);
+    assert.equal(processResult.protocolError?.line, 2);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

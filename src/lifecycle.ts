@@ -158,7 +158,7 @@ export type AttemptRecord = {
   workspace?: WorkspaceExecutionResult;
   harness?: HarnessExecutionResult;
   verifier?: VerifierExecutionResult;
-  cleanup?: { status: "completed" | "failed"; error?: string };
+  cleanup?: { status: "completed" | "failed" | "timed-out"; error?: string };
   capture?: { status: "complete" | "incomplete"; error?: string };
   persistence?: { status: "complete" | "incomplete"; error?: string };
   partial: boolean;
@@ -321,8 +321,9 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           abortPromise.then(() => "aborted" as const),
         ]);
         if (outcome === "aborted") {
-          await settle(evidenceFlush, options.shutdownGraceMs ?? 250);
-          throw new Error("Evidence flush interrupted.");
+          const settledFlush = await settleWithTimeout(evidenceFlush, options.shutdownGraceMs ?? 250);
+          if (settledFlush.status === "failed") throw settledFlush.error;
+          if (settledFlush.status === "timed-out") throw new Error("Evidence flush interrupted.");
         }
       }
     } catch (error) {
@@ -509,19 +510,37 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       await persist();
     }
     try {
-      await options.workspace.cleanup?.({
+      const cleanupPromise = Promise.resolve(options.workspace.cleanup?.({
         run: options.run,
         attempt,
         signal: controller.signal,
         outcome: classification?.terminal ?? infrastructureClassification("Run did not produce a terminal outcome.", "runner").terminal,
         ...(workspace === undefined ? {} : { workspace: snapshotWorkspace(workspace) }),
-      });
-      cleanupStatus = { status: "completed" };
+      }));
+      const cleanupOutcome = await Promise.race([
+        cleanupPromise.then(() => "completed" as const),
+        abortPromise.then(() => "aborted" as const),
+      ]);
+      if (cleanupOutcome === "aborted") {
+        const settledCleanup = await settleWithTimeout(cleanupPromise, options.shutdownGraceMs ?? 250);
+        if (settledCleanup.status === "timed-out") {
+          cleanupStatus = { status: "timed-out", error: settledCleanup.error };
+        } else if (settledCleanup.status === "failed") {
+          cleanupStatus = { status: "failed", error: errorMessage(settledCleanup.error) };
+        } else {
+          cleanupStatus = { status: "completed" };
+        }
+      } else {
+        cleanupStatus = { status: "completed" };
+      }
     } catch (error) {
       cleanupStatus = { status: "failed", error: errorMessage(error) };
-      if (classification === undefined || classification.kind === "completed") {
+      if (classification === undefined || classificationUnderlyingKind(classification) === "completed") {
         classification = infrastructureClassification(errorMessage(error), "cleanup", workspace?.artifactId);
       }
+    }
+    if (cleanupStatus?.status === "timed-out" && classificationUnderlyingKind(classification ?? infrastructureClassification("Run did not produce a terminal outcome.", "runner")) === "completed") {
+      classification = infrastructureClassification(cleanupStatus.error ?? "Workspace cleanup timed out.", "cleanup", workspace?.artifactId);
     }
     record.cleanup = cleanupStatus;
     await flush();
@@ -534,7 +553,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     if (controller.signal.aborted && classification?.kind === "completed") {
       classification = abortClassification(abortCause, budgetExpired);
     }
-    if (persistenceError !== undefined && classification?.kind === "completed") {
+    if (persistenceError !== undefined && classification !== undefined && classificationUnderlyingKind(classification) === "completed") {
       classification = infrastructureClassification(persistenceError, "runner", workspace?.artifactId);
     }
     if (record.capture?.status === "incomplete" && classification !== undefined && classification.kind !== "capture-incomplete") {
@@ -818,6 +837,27 @@ async function settle<T>(promise: Promise<T>, graceMs: number): Promise<T | unde
   ]);
 }
 
+async function settleWithTimeout<T>(
+  promise: Promise<T>,
+  milliseconds: number,
+): Promise<
+  | { status: "completed"; value: T }
+  | { status: "failed"; error: unknown }
+  | { status: "timed-out"; error: string }
+> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then((value) => ({ status: "completed" as const, value }), (error) => ({ status: "failed" as const, error })),
+      new Promise<{ status: "timed-out"; error: string }>((resolvePromise) => {
+        timer = setTimeout(() => resolvePromise({ status: "timed-out", error: "Operation exceeded its cancellation grace period." }), milliseconds);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 function assertIdentity(value: string, label: string): void {
   if (typeof value !== "string" || value.trim() === "" || [...value].length > 256) {
     throw new Error(`${label} must be a non-empty identifier of at most 256 characters.`);
@@ -882,6 +922,7 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     if (!sameTerminalRecord(value.terminal, value.classification.terminal)) {
       throw new Error("Attempt terminal and classification records disagree.");
     }
+    assertClassificationTerminal(value.classification.kind, value.classification.terminal, value.classification.underlying);
   }
   for (const field of ["capture", "persistence"] as const) {
     const status = value[field];
@@ -893,7 +934,7 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     }
   }
   if (value.cleanup !== undefined) {
-    if (!isRecord(value.cleanup) || !["completed", "failed"].includes(String(value.cleanup.status))) {
+    if (!isRecord(value.cleanup) || !["completed", "failed", "timed-out"].includes(String(value.cleanup.status))) {
       throw new Error("Attempt cleanup status is invalid.");
     }
     if (value.cleanup.error !== undefined) assertTimestampValue(value.cleanup.error, "Attempt cleanup error");
@@ -935,7 +976,7 @@ function assertTerminalRecord(value: unknown): asserts value is TerminalRecord {
   if (value.state === "completed" && (value.failureClass !== "none" || value.stopReason !== "none" || value.workspaceArtifactId === undefined)) {
     throw new Error("Completed terminal record is incomplete.");
   }
-  if (value.state === "failed" && (value.failureClass !== "infrastructure" && value.failureClass !== "task" || value.stopReason !== "none")) {
+  if (value.state === "failed" && (value.failureClass !== "infrastructure" && value.failureClass !== "task" || value.stopReason !== "none" || value.failureClass === "task" && value.workspaceArtifactId === undefined)) {
     throw new Error("Failed terminal record is invalid.");
   }
   if (value.state === "stopped" && (value.failureClass !== "none" || (value.stopReason !== "budget" && value.stopReason !== "policy"))) {
@@ -952,6 +993,31 @@ function sameTerminalRecord(left: unknown, right: unknown): boolean {
     && left.failureClass === right.failureClass
     && left.stopReason === right.stopReason
     && left.workspaceArtifactId === right.workspaceArtifactId;
+}
+
+function assertClassificationTerminal(
+  kind: AttemptClassificationKind,
+  terminal: TerminalRecord,
+  underlying: unknown,
+): void {
+  const baseKind = kind === "capture-incomplete" ? underlying : kind;
+  if (!isClassificationKind(baseKind) || baseKind === "capture-incomplete") {
+    throw new Error("Capture-incomplete classification must name a concrete underlying outcome.");
+  }
+  const expected = baseKind === "completed"
+    ? { state: "completed", failureClass: "none", stopReason: "none" }
+    : baseKind === "task-failure"
+      ? { state: "failed", failureClass: "task", stopReason: "none" }
+      : baseKind === "infrastructure-failure" || baseKind === "verifier-error"
+        ? { state: "failed", failureClass: "infrastructure", stopReason: "none" }
+        : baseKind === "budget-stop"
+          ? { state: "stopped", failureClass: "none", stopReason: "budget" }
+          : baseKind === "policy-stop"
+            ? { state: "stopped", failureClass: "none", stopReason: "policy" }
+            : { state: "interrupted", failureClass: "infrastructure", stopReason: "none" };
+  if (terminal.state !== expected.state || terminal.failureClass !== expected.failureClass || terminal.stopReason !== expected.stopReason) {
+    throw new Error("Attempt classification kind does not match its terminal outcome.");
+  }
 }
 
 function errorMessage(error: unknown): string {

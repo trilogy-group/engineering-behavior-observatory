@@ -142,6 +142,7 @@ export type {
   HarnessExecutionContext,
   HarnessExecutionResult,
   HarnessExecutor,
+  HarnessShutdownResult,
   LifecycleSnapshot,
   LifecycleState,
   LifecycleTransition,

@@ -413,6 +413,7 @@ export class ProtocolProcess {
   private readonly cwd: string;
   private readonly args: string[];
   private lineCount = 0;
+  private nextLineNumber = 1;
   private frameCount = 0;
   private lineQueue: Promise<void> = Promise.resolve();
   private pendingLineParts: Buffer[] = [];
@@ -536,7 +537,8 @@ export class ProtocolProcess {
         return;
       }
       if (!this.appendPendingLine(chunk.subarray(offset, newline))) return;
-      this.queuePendingLine();
+      this.queuePendingLine(this.nextLineNumber);
+      this.nextLineNumber += 1;
       offset = newline + 1;
     }
   }
@@ -547,43 +549,44 @@ export class ProtocolProcess {
     if (this.pendingLineBytes > this.stdoutLineLimit) {
       this.pendingLineParts = [];
       this.pendingLineBytes = 0;
-      void this.failProtocol("Protocol line exceeds the configured byte limit.");
+      void this.failProtocol(`Protocol line ${this.nextLineNumber} exceeds the configured byte limit.`, undefined, this.nextLineNumber);
       return false;
     }
     this.pendingLineParts.push(part);
     return true;
   }
 
-  private queuePendingLine(): void {
+  private queuePendingLine(lineNumber: number): void {
     const bytes = Buffer.concat(this.pendingLineParts, this.pendingLineBytes);
     this.pendingLineParts = [];
     this.pendingLineBytes = 0;
     this.lineQueue = this.lineQueue
-      .then(() => this.processLine(bytes))
+      .then(() => this.processLine(bytes, lineNumber))
       .catch((error) => this.failRecorder(`Protocol evidence recording failed: ${errorMessage(error)}`));
   }
 
   private flushPendingLine(): void {
     if (this.pendingLineBytes > 0 && this.protocolError === undefined && this.recorderError === undefined) {
-      this.queuePendingLine();
+      this.queuePendingLine(this.nextLineNumber);
+      this.nextLineNumber += 1;
     }
   }
 
-  private async processLine(bytes: Buffer): Promise<void> {
-    if (this.protocolError !== undefined || this.recorderError !== undefined) return;
-    this.lineCount += 1;
+  private async processLine(bytes: Buffer, lineNumber: number): Promise<void> {
+    if (this.recorderError !== undefined || (this.protocolError !== undefined && lineNumber >= this.protocolError.line)) return;
+    this.lineCount = lineNumber;
     let line: string;
     try {
       line = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     } catch (error) {
-      await this.failProtocol(`Malformed UTF-8 protocol output: ${errorMessage(error)}`, bytes.toString("base64"));
+      await this.failProtocol(`Malformed UTF-8 protocol output: ${errorMessage(error)}`, bytes.toString("base64"), lineNumber);
       return;
     }
     let payload: unknown;
     try {
       payload = JSON.parse(line) as unknown;
     } catch (error) {
-      await this.failProtocol(`Malformed JSONL protocol output: ${errorMessage(error)}`, line);
+      await this.failProtocol(`Malformed JSONL protocol output: ${errorMessage(error)}`, line, lineNumber);
       return;
     }
     this.frameCount += 1;
@@ -591,9 +594,9 @@ export class ProtocolProcess {
     if (this.options.onFrame !== undefined) await this.options.onFrame(payload, this.recorder);
   }
 
-  private async failProtocol(message: string, raw?: string): Promise<void> {
+  private async failProtocol(message: string, raw?: string, line = this.nextLineNumber): Promise<void> {
     if (this.protocolError !== undefined) return;
-    this.protocolError = { line: this.lineCount, message, ...(raw === undefined ? {} : { raw }) };
+    this.protocolError = { line, message, ...(raw === undefined ? {} : { raw }) };
     this.termination = "malformed";
     try {
       await this.recorder.recordError(message, raw === undefined ? undefined : { raw });
