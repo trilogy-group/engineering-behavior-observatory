@@ -1,0 +1,673 @@
+import { randomUUID } from "node:crypto";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { mkdir, open, writeFile, type FileHandle } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { createInterface } from "node:readline";
+
+export type ProtocolIdentity = string | number | null;
+
+export type ProtocolObservationKind =
+  | "frame"
+  | "request"
+  | "response"
+  | "notification"
+  | "completion"
+  | "capability"
+  | "error"
+  | "process";
+
+export type ProtocolObservation = {
+  schemaVersion: "ebo.protocol-observation/v1";
+  sequence: number;
+  observedAt: string;
+  kind: ProtocolObservationKind;
+  source: string;
+  stream?: "stdout" | "stderr";
+  method?: string;
+  id?: ProtocolIdentity;
+  sourceIdentity?: string;
+  payload?: unknown;
+  evidence?: unknown;
+  status?: string;
+  capability?: string;
+};
+
+export type ProtocolObservationInput = {
+  source: string;
+  method: string;
+  id?: ProtocolIdentity;
+  sourceIdentity?: string;
+  payload?: unknown;
+  observedAt?: string;
+};
+
+export type ProtocolCompletionEvidence = {
+  source: string;
+  status: string;
+  evidence: unknown;
+  method?: string;
+  sourceIdentity?: string;
+  observedAt?: string;
+};
+
+export type ProtocolCapability = {
+  source: string;
+  name: string;
+  status: "available" | "unsupported" | "missing" | "not-checked";
+  details?: unknown;
+  observedAt?: string;
+};
+
+export type JsonlEvidenceWriterOptions = {
+  maxLineBytes?: number;
+  fsync?: boolean;
+};
+
+const DEFAULT_MAX_LINE_BYTES = 4 * 1024 * 1024;
+const DEFAULT_MAX_STDERR_BYTES = 64 * 1024;
+const DEFAULT_SHUTDOWN_GRACE_MS = 250;
+const DEFAULT_KILL_GRACE_MS = 250;
+
+/**
+ * Appends JSON records one line at a time and optionally fsyncs each append.
+ * A queued writer keeps records ordered even when protocol callbacks overlap.
+ */
+export class JsonlEvidenceWriter {
+  public readonly path: string;
+  private readonly maxLineBytes: number;
+  private readonly shouldFsync: boolean;
+  private handle: FileHandle | undefined;
+  private queue: Promise<void> = Promise.resolve();
+  private closed = false;
+  private _count = 0;
+
+  public constructor(path: string, options: JsonlEvidenceWriterOptions = {}) {
+    if (path.trim() === "") throw new Error("JSONL evidence path is required.");
+    this.path = resolve(path);
+    this.maxLineBytes = positiveInteger(options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES, "JSONL line limit");
+    this.shouldFsync = options.fsync ?? true;
+  }
+
+  public get count(): number {
+    return this._count;
+  }
+
+  public append(record: unknown): Promise<void> {
+    const operation = this.queue.then(async () => {
+      if (this.closed) throw new Error("JSONL evidence writer is closed.");
+      if (!isRecord(record)) throw new Error("JSONL evidence records must be objects.");
+      const line = `${JSON.stringify(record)}\n`;
+      if (Buffer.byteLength(line) > this.maxLineBytes) {
+        throw new Error(`JSONL evidence record exceeds ${this.maxLineBytes} bytes.`);
+      }
+      const handle = await this.openHandle();
+      await handle.write(line, undefined, "utf8");
+      if (this.shouldFsync) await handle.sync();
+      this._count += 1;
+    });
+    this.queue = operation.catch(() => undefined);
+    return operation;
+  }
+
+  public flush(): Promise<void> {
+    const operation = this.queue.then(async () => {
+      if (this.handle !== undefined && this.shouldFsync) await this.handle.sync();
+    });
+    this.queue = operation.catch(() => undefined);
+    return operation;
+  }
+
+  public close(): Promise<void> {
+    const operation = this.queue.then(async () => {
+      if (this.closed) return;
+      this.closed = true;
+      if (this.handle !== undefined) {
+        await this.handle.close();
+        this.handle = undefined;
+      }
+    });
+    this.queue = operation.catch(() => undefined);
+    return operation;
+  }
+
+  public ensureOpen(): Promise<void> {
+    const operation = this.queue.then(async () => {
+      if (this.closed) throw new Error("JSONL evidence writer is closed.");
+      await this.openHandle();
+    });
+    this.queue = operation.catch(() => undefined);
+    return operation;
+  }
+
+  private async openHandle(): Promise<FileHandle> {
+    if (this.handle !== undefined) return this.handle;
+    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+    this.handle = await open(this.path, "a", 0o600);
+    return this.handle;
+  }
+}
+
+export async function openJsonlEvidenceWriter(
+  path: string,
+  options: JsonlEvidenceWriterOptions = {},
+): Promise<JsonlEvidenceWriter> {
+  const writer = new JsonlEvidenceWriter(path, options);
+  await writer.ensureOpen();
+  return writer;
+}
+
+export type BoundedDiagnostic = {
+  bytes: Buffer;
+  text: string;
+  sizeBytes: number;
+  truncated: boolean;
+  maxBytes: number;
+};
+
+/** Keeps a bounded diagnostic prefix while continuing to drain the stream. */
+export class BoundedDiagnosticCapture {
+  private readonly chunks: Buffer[] = [];
+  private _sizeBytes = 0;
+  private _truncated = false;
+  private keptBytes = 0;
+
+  public constructor(public readonly maxBytes: number = DEFAULT_MAX_STDERR_BYTES) {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+      throw new Error("Diagnostic byte limit must be a nonnegative safe integer.");
+    }
+  }
+
+  public write(chunk: Uint8Array): void {
+    const bytes = Buffer.from(chunk);
+    this._sizeBytes += bytes.length;
+    const kept = Math.max(0, Math.min(bytes.length, this.maxBytes - this.keptBytes));
+    if (kept > 0) {
+      this.chunks.push(bytes.subarray(0, kept));
+      this.keptBytes += kept;
+    }
+    if (kept < bytes.length) this._truncated = true;
+  }
+
+  public get sizeBytes(): number {
+    return this._sizeBytes;
+  }
+
+  public get truncated(): boolean {
+    return this._truncated;
+  }
+
+  public result(): BoundedDiagnostic {
+    const bytes = Buffer.concat(this.chunks);
+    return {
+      bytes,
+      text: bytes.toString("utf8"),
+      sizeBytes: this._sizeBytes,
+      truncated: this._truncated,
+      maxBytes: this.maxBytes,
+    };
+  }
+
+}
+
+export type ProtocolProcessOptions = {
+  command: string;
+  args?: readonly string[];
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  source: string;
+  evidencePath?: string;
+  writer?: JsonlEvidenceWriter;
+  stderrPath?: string;
+  maxStderrBytes?: number;
+  maxLineBytes?: number;
+  shutdownGraceMs?: number;
+  killGraceMs?: number;
+  signal?: AbortSignal;
+  now?: () => string;
+  spawnOptions?: Omit<SpawnOptions, "stdio" | "env" | "cwd">;
+  onFrame?: (payload: unknown, recorder: ProtocolEvidenceRecorder) => void | Promise<void>;
+};
+
+export type ProcessTermination = "natural" | "shutdown" | "interrupted" | "malformed";
+
+export type ProtocolProcessResult = {
+  status: "completed" | "failed" | "malformed" | "interrupted" | "shutdown";
+  partial: boolean;
+  protocolOnly: true;
+  launch: {
+    command: string;
+    args: string[];
+    cwd: string;
+    pid: number | null;
+    startedAt: string;
+    endedAt: string;
+    exitCode: number | null;
+    signal: NodeJS.Signals | null;
+  };
+  termination: ProcessTermination;
+  stdoutFrames: number;
+  stderr: BoundedDiagnostic;
+  error?: string;
+  protocolError?: { line: number; message: string };
+  evidencePath?: string;
+  stderrPath?: string;
+  observations: ProtocolObservation[];
+};
+
+export class ProtocolEvidenceRecorder {
+  private sequence = 0;
+  private readonly records: ProtocolObservation[] = [];
+
+  public constructor(
+    private readonly writer: JsonlEvidenceWriter,
+    private readonly source: string,
+    private readonly now: () => string = () => new Date().toISOString(),
+  ) {
+    assertNonEmpty(source, "Protocol source");
+  }
+
+  public get observations(): readonly ProtocolObservation[] {
+    return this.records;
+  }
+
+  public recordFrame(payload: unknown, observedAt = this.now()): Promise<ProtocolObservation> {
+    return this.record({ kind: "frame", source: this.source, stream: "stdout", payload, observedAt });
+  }
+
+  public recordRequest(input: ProtocolObservationInput): Promise<ProtocolObservation> {
+    return this.record({ kind: "request", ...input, observedAt: input.observedAt ?? this.now() });
+  }
+
+  public recordResponse(input: ProtocolObservationInput): Promise<ProtocolObservation> {
+    return this.record({ kind: "response", ...input, observedAt: input.observedAt ?? this.now() });
+  }
+
+  public recordNotification(input: ProtocolObservationInput): Promise<ProtocolObservation> {
+    return this.record({ kind: "notification", ...input, observedAt: input.observedAt ?? this.now() });
+  }
+
+  public recordCompletion(input: ProtocolCompletionEvidence): Promise<ProtocolObservation> {
+    assertNonEmpty(input.source, "Completion source");
+    assertNonEmpty(input.status, "Completion status");
+    return this.record({
+      kind: "completion",
+      source: input.source,
+      ...(input.method === undefined ? {} : { method: input.method }),
+      ...(input.sourceIdentity === undefined ? {} : { sourceIdentity: input.sourceIdentity }),
+      evidence: input.evidence,
+      status: input.status,
+      observedAt: input.observedAt ?? this.now(),
+    });
+  }
+
+  public recordCapability(input: ProtocolCapability): Promise<ProtocolObservation> {
+    assertNonEmpty(input.source, "Capability source");
+    assertNonEmpty(input.name, "Capability name");
+    return this.record({
+      kind: "capability",
+      source: input.source,
+      capability: input.name,
+      status: input.status,
+      ...(input.details === undefined ? {} : { evidence: input.details }),
+      observedAt: input.observedAt ?? this.now(),
+    });
+  }
+
+  public recordError(message: string, evidence?: unknown): Promise<ProtocolObservation> {
+    assertNonEmpty(message, "Protocol error");
+    return this.record({
+      kind: "error",
+      source: this.source,
+      status: message,
+      ...(evidence === undefined ? {} : { evidence }),
+      observedAt: this.now(),
+    });
+  }
+
+  public recordProcess(status: string, evidence?: unknown): Promise<ProtocolObservation> {
+    assertNonEmpty(status, "Process status");
+    return this.record({
+      kind: "process",
+      source: this.source,
+      status,
+      ...(evidence === undefined ? {} : { evidence }),
+      observedAt: this.now(),
+    });
+  }
+
+  public flush(): Promise<void> {
+    return this.writer.flush();
+  }
+
+  public close(): Promise<void> {
+    return this.writer.close();
+  }
+
+  private record(input: {
+    kind: ProtocolObservationKind;
+    source: string;
+    method?: string;
+    id?: ProtocolIdentity;
+    sourceIdentity?: string;
+    payload?: unknown;
+    evidence?: unknown;
+    status?: string;
+    capability?: string;
+    stream?: "stdout" | "stderr";
+    observedAt: string;
+  }): Promise<ProtocolObservation> {
+    assertNonEmpty(input.source, "Protocol source");
+    if (input.method !== undefined) assertNonEmpty(input.method, "Protocol method");
+    const observation: ProtocolObservation = {
+      schemaVersion: "ebo.protocol-observation/v1",
+      sequence: ++this.sequence,
+      observedAt: input.observedAt,
+      kind: input.kind,
+      source: input.source,
+      ...(input.stream === undefined ? {} : { stream: input.stream }),
+      ...(input.method === undefined ? {} : { method: input.method }),
+      ...(input.id === undefined ? {} : { id: input.id }),
+      ...(input.sourceIdentity === undefined ? {} : { sourceIdentity: input.sourceIdentity }),
+      ...(input.payload === undefined ? {} : { payload: input.payload }),
+      ...(input.evidence === undefined ? {} : { evidence: input.evidence }),
+      ...(input.status === undefined ? {} : { status: input.status }),
+      ...(input.capability === undefined ? {} : { capability: input.capability }),
+    };
+    this.records.push(observation);
+    return this.writer.append(observation).then(() => observation);
+  }
+}
+
+export class ProtocolProcess {
+  private readonly child: ChildProcess;
+  private readonly recorder: ProtocolEvidenceRecorder;
+  private readonly stderrCapture: BoundedDiagnosticCapture;
+  private readonly stdoutLineLimit: number;
+  private readonly shutdownGraceMs: number;
+  private readonly killGraceMs: number;
+  private readonly now: () => string;
+  private readonly ownsWriter: boolean;
+  private readonly evidencePath?: string;
+  private readonly stderrPath?: string;
+  private readonly startedAt: string;
+  private readonly cwd: string;
+  private readonly args: string[];
+  private lineCount = 0;
+  private frameCount = 0;
+  private lineQueue: Promise<void> = Promise.resolve();
+  private readonly waitPromise: Promise<ProtocolProcessResult>;
+  private termination: ProcessTermination = "natural";
+  private protocolError: { line: number; message: string } | undefined;
+  private shutdownStarted = false;
+  private interruptionStarted = false;
+  private childError: string | undefined;
+
+  public constructor(private readonly options: ProtocolProcessOptions) {
+    assertNonEmpty(options.command, "Protocol command");
+    assertNonEmpty(options.source, "Protocol source");
+    this.stdoutLineLimit = positiveInteger(options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES, "Protocol line limit");
+    this.stderrCapture = new BoundedDiagnosticCapture(options.maxStderrBytes ?? DEFAULT_MAX_STDERR_BYTES);
+    this.shutdownGraceMs = nonnegativeInteger(options.shutdownGraceMs ?? DEFAULT_SHUTDOWN_GRACE_MS, "Shutdown grace period");
+    this.killGraceMs = nonnegativeInteger(options.killGraceMs ?? DEFAULT_KILL_GRACE_MS, "Kill grace period");
+    this.now = options.now ?? (() => new Date().toISOString());
+    this.startedAt = this.now();
+    this.cwd = resolve(options.cwd ?? process.cwd());
+    this.args = [...(options.args ?? [])];
+    const writer = options.writer ?? new JsonlEvidenceWriter(
+      options.evidencePath ?? resolve(process.cwd(), `.ebo-protocol-${randomUUID()}.jsonl`),
+      { maxLineBytes: this.stdoutLineLimit },
+    );
+    this.ownsWriter = options.writer === undefined;
+    this.evidencePath = options.evidencePath ?? (options.writer === undefined ? writer.path : undefined);
+    this.stderrPath = options.stderrPath === undefined ? undefined : resolve(options.stderrPath);
+    this.recorder = new ProtocolEvidenceRecorder(writer, options.source, this.now);
+
+    const spawnOptions: SpawnOptions = {
+      ...options.spawnOptions,
+      cwd: this.cwd,
+      env: options.env,
+      stdio: ["pipe", "pipe", "pipe"],
+      detached: options.spawnOptions?.detached ?? process.platform !== "win32",
+    };
+    this.child = spawn(options.command, this.args, spawnOptions);
+    this.child.on("error", (error) => {
+      this.childError ??= errorMessage(error);
+    });
+    this.attachStreams();
+    this.waitPromise = new Promise<ProtocolProcessResult>((resolveResult) => {
+      this.child.once("close", (exitCode, signal) => {
+        void this.finish(exitCode, signal, resolveResult);
+      });
+    });
+    const abort = () => {
+      void this.interrupt();
+    };
+    if (this.options.signal?.aborted) abort();
+    else this.options.signal?.addEventListener("abort", abort, { once: true });
+    if (this.childError !== undefined) void this.recorder.recordError(this.childError);
+  }
+
+  public get pid(): number | undefined {
+    return this.child.pid ?? undefined;
+  }
+
+  public get stdin(): NodeJS.WritableStream {
+    if (this.child.stdin === null) throw new Error("Protocol process stdin is unavailable.");
+    return this.child.stdin;
+  }
+
+  public get evidence(): ProtocolEvidenceRecorder {
+    return this.recorder;
+  }
+
+  public wait(): Promise<ProtocolProcessResult> {
+    return this.waitPromise;
+  }
+
+  public async shutdown(): Promise<ProtocolProcessResult> {
+    if (this.child.exitCode !== null || this.child.signalCode !== null) return this.wait();
+    this.shutdownStarted = true;
+    this.termination = "shutdown";
+    await this.sendSignal("SIGTERM", this.shutdownGraceMs);
+    return this.wait();
+  }
+
+  public async interrupt(): Promise<ProtocolProcessResult> {
+    if (this.child.exitCode !== null || this.child.signalCode !== null) return this.wait();
+    this.interruptionStarted = true;
+    this.termination = "interrupted";
+    await this.sendSignal("SIGINT", this.shutdownGraceMs);
+    return this.wait();
+  }
+
+  private attachStreams(): void {
+    if (this.child.stderr !== null) {
+      this.child.stderr.on("data", (chunk: Buffer) => this.stderrCapture.write(chunk));
+    }
+    if (this.child.stdout === null) return;
+    const lines = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
+    lines.on("line", (line) => {
+      this.lineQueue = this.lineQueue
+        .then(() => this.processLine(line))
+        .catch((error) => this.failProtocol(`Protocol evidence recording failed: ${errorMessage(error)}`));
+    });
+  }
+
+  private async processLine(line: string): Promise<void> {
+    this.lineCount += 1;
+    if (Buffer.byteLength(line) > this.stdoutLineLimit) {
+      await this.failProtocol("Protocol line exceeds the configured byte limit.");
+      return;
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(line) as unknown;
+    } catch (error) {
+      await this.failProtocol(`Malformed JSONL protocol output: ${errorMessage(error)}`);
+      return;
+    }
+    this.frameCount += 1;
+    await this.recorder.recordFrame(payload);
+    if (this.options.onFrame !== undefined) await this.options.onFrame(payload, this.recorder);
+  }
+
+  private async failProtocol(message: string): Promise<void> {
+    if (this.protocolError !== undefined) return;
+    this.protocolError = { line: this.lineCount, message };
+    this.termination = "malformed";
+    try {
+      await this.recorder.recordError(message);
+    } catch (error) {
+      this.childError ??= `Protocol error evidence could not be persisted: ${errorMessage(error)}`;
+    }
+    void this.sendSignal("SIGTERM", this.shutdownGraceMs);
+  }
+
+  private async sendSignal(signal: NodeJS.Signals, graceMs: number): Promise<void> {
+    if (this.child.exitCode !== null || this.child.signalCode !== null) return;
+    const pid = this.child.pid;
+    if (pid === undefined) return;
+    try {
+      if (process.platform !== "win32" && this.options.spawnOptions?.detached !== false) {
+        process.kill(-pid, signal);
+      } else {
+        this.child.kill(signal);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") this.childError ??= errorMessage(error);
+      return;
+    }
+    if (graceMs > 0) await waitForExit(this.child, graceMs);
+    if (this.child.exitCode === null && this.child.signalCode === null) {
+      try {
+        if (process.platform !== "win32" && this.options.spawnOptions?.detached !== false) {
+          process.kill(-pid, "SIGKILL");
+        } else {
+          this.child.kill("SIGKILL");
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") this.childError ??= errorMessage(error);
+      }
+      if (this.killGraceMs > 0) await waitForExit(this.child, this.killGraceMs);
+    }
+  }
+
+  private async finish(
+    exitCode: number | null,
+    signal: NodeJS.Signals | null,
+    resolveResult: (result: ProtocolProcessResult) => void,
+  ): Promise<void> {
+    try {
+      await this.lineQueue;
+    } catch (error) {
+      this.childError ??= `Protocol output processing failed: ${errorMessage(error)}`;
+    }
+    try {
+      await this.recorder.flush();
+      await this.recorder.recordProcess(
+        signal === null && exitCode === 0 ? "exited" : "terminated",
+        { exitCode, signal, pid: this.child.pid ?? null },
+      );
+      await this.recorder.flush();
+    } catch (error) {
+      this.childError ??= `Protocol evidence could not be persisted: ${errorMessage(error)}`;
+    }
+    const stderr = this.stderrCapture.result();
+    if (this.stderrPath !== undefined) {
+      try {
+        await mkdir(dirname(this.stderrPath), { recursive: true, mode: 0o700 });
+        await writeFile(this.stderrPath, stderr.bytes, { mode: 0o600 });
+      } catch (error) {
+        this.childError ??= `stderr evidence could not be persisted: ${errorMessage(error)}`;
+      }
+    }
+    const endedAt = this.now();
+    const termination = this.termination;
+    const status = this.protocolError !== undefined
+      ? "malformed"
+      : this.interruptionStarted
+        ? "interrupted"
+        : this.shutdownStarted
+          ? "shutdown"
+          : this.childError !== undefined
+            ? "failed"
+          : exitCode === 0 && signal === null
+            ? "completed"
+            : "failed";
+    const result: ProtocolProcessResult = {
+      status,
+      partial: status === "interrupted" || status === "malformed" || status === "failed",
+      protocolOnly: true,
+      launch: {
+        command: this.options.command,
+        args: this.args,
+        cwd: this.cwd,
+        pid: this.child.pid ?? null,
+        startedAt: this.startedAt,
+        endedAt,
+        exitCode,
+        signal,
+      },
+      termination,
+      stdoutFrames: this.frameCount,
+      stderr,
+      ...(this.protocolError === undefined ? {} : { protocolError: this.protocolError }),
+      ...(this.childError === undefined ? {} : { error: this.childError }),
+      ...(this.evidencePath === undefined ? {} : { evidencePath: this.evidencePath }),
+      observations: [...this.recorder.observations],
+    };
+    if (this.ownsWriter) {
+      // The process record above is durable before the writer is closed.
+      try {
+        await this.recorder.close();
+      } catch (error) {
+        this.childError ??= `Protocol evidence could not be closed: ${errorMessage(error)}`;
+      }
+    }
+    resolveResult(result);
+  }
+}
+
+export function spawnProtocolProcess(options: ProtocolProcessOptions): ProtocolProcess {
+  return new ProtocolProcess(options);
+}
+
+export async function runProtocolProcess(options: ProtocolProcessOptions): Promise<ProtocolProcessResult> {
+  return spawnProtocolProcess(options).wait();
+}
+
+export const spawnJsonlProcess = spawnProtocolProcess;
+export const runJsonlProcess = runProtocolProcess;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertNonEmpty(value: string, label: string): void {
+  if (value.trim() === "") throw new Error(`${label} is required.`);
+}
+
+function positiveInteger(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${label} must be a positive safe integer.`);
+  return value;
+}
+
+function nonnegativeInteger(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${label} must be a nonnegative safe integer.`);
+  return value;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function waitForExit(child: ChildProcess, milliseconds: number): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise<void>((resolvePromise) => {
+    const timer = setTimeout(resolvePromise, milliseconds);
+    child.once("close", () => {
+      clearTimeout(timer);
+      resolvePromise();
+    });
+  });
+}
