@@ -102,6 +102,19 @@ test("request observation inputs cannot override their fixed kind", async () => 
   }
 });
 
+test("process timer grace periods reject values above Node's maximum", () => {
+  assert.throws(() => spawnProtocolProcess({
+    ...nodeScript(""),
+    source: "fake-harness",
+    shutdownGraceMs: 2_147_483_648,
+  }), /Node timer maximum/);
+  assert.throws(() => spawnProtocolProcess({
+    ...nodeScript(""),
+    source: "fake-harness",
+    killGraceMs: 2_147_483_648,
+  }), /Node timer maximum/);
+});
+
 test("retains the original JSONL frame text when parsed values lose precision", async () => {
   const root = temporaryRoot();
   try {

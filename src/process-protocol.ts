@@ -70,6 +70,7 @@ const DEFAULT_MAX_STDERR_BYTES = 64 * 1024;
 const DEFAULT_SHUTDOWN_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 250;
 const DEFAULT_MAX_IN_MEMORY_OBSERVATIONS = 1024;
+const MAX_TIMER_MS = 2_147_483_647;
 const INTERNAL_RECORDER_TOKEN = Symbol("internal recorder event");
 
 /**
@@ -481,6 +482,8 @@ export class ProtocolProcess {
     this.stderrCapture = new BoundedDiagnosticCapture(options.maxStderrBytes ?? DEFAULT_MAX_STDERR_BYTES);
     this.shutdownGraceMs = nonnegativeInteger(options.shutdownGraceMs ?? DEFAULT_SHUTDOWN_GRACE_MS, "Shutdown grace period");
     this.killGraceMs = nonnegativeInteger(options.killGraceMs ?? DEFAULT_KILL_GRACE_MS, "Kill grace period");
+    if (this.shutdownGraceMs > MAX_TIMER_MS) throw new Error("Shutdown grace period must not exceed the Node timer maximum.");
+    if (this.killGraceMs > MAX_TIMER_MS) throw new Error("Kill grace period must not exceed the Node timer maximum.");
     this.maxInMemoryObservations = positiveInteger(options.maxInMemoryObservations ?? DEFAULT_MAX_IN_MEMORY_OBSERVATIONS, "In-memory observation limit");
     this.now = options.now ?? (() => new Date().toISOString());
     this.startedAt = this.now();

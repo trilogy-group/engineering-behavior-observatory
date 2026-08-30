@@ -220,6 +220,7 @@ const LIFECYCLE_PROGRESS: Record<LifecycleState, number> = {
   cleaning: 4,
   terminal: 5,
 };
+const MAX_TIMER_MS = 2_147_483_647;
 
 export function createRunIdentity(input: {
   id?: string;
@@ -993,6 +994,15 @@ function validateOptions(options: RunAttemptOptions): void {
   if (options.shutdownGraceMs !== undefined && options.shutdownGraceMs < 0) {
     throw new Error("Shutdown grace period must be a nonnegative safe integer.");
   }
+  for (const [label, milliseconds] of [
+    ["Coordinator wall-clock budget", options.maxWallClockMs],
+    ["Harness budget", options.harnessBudgetMs],
+    ["Shutdown grace period", options.shutdownGraceMs],
+  ] as const) {
+    if (milliseconds !== undefined && milliseconds > MAX_TIMER_MS) {
+      throw new Error(`${label} must not exceed the Node timer maximum.`);
+    }
+  }
 }
 
 function assertCheckpointDoesNotRegress(existing: AttemptRecord, incoming: AttemptRecord): void {
@@ -1415,6 +1425,11 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       || isRecord(value.capture) && value.capture.status === "incomplete";
     if (value.partial !== expectedPartial) throw new Error("Attempt partial state contradicts its terminal outcome.");
   }
+  const retainedArtifactId = retainedRecordWorkspaceArtifactId(value.workspace);
+  if (retainedArtifactId !== undefined && value.terminal !== undefined
+      && value.terminal.workspaceArtifactId !== retainedArtifactId) {
+    throw new Error("Retained workspace evidence must be linked from the terminal outcome.");
+  }
   if (value.terminal?.workspaceArtifactId !== undefined) {
     assertTerminalWorkspaceEvidence(
       value.workspace,
@@ -1425,6 +1440,10 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     );
   }
   if (value.terminal?.state === "completed") {
+    if (!visitedStates.has("running") || !visitedStates.has("verifying")) {
+      throw new Error("Completed terminal records require running and verifying lifecycle phases.");
+    }
+    assertHarnessStatus(value.harness, "completed");
     assertTerminalWorkspaceEvidence(value.workspace, value.terminal.workspaceArtifactId);
     assertVerifierStatus(value.verifier, "passed");
   }
@@ -1541,6 +1560,11 @@ function assertTerminalWorkspaceEvidence(workspace: unknown, artifactId: string 
   }
 }
 
+function retainedRecordWorkspaceArtifactId(workspace: unknown): string | undefined {
+  if (!isRecord(workspace) || workspace.retained === false || typeof workspace.artifactId !== "string") return undefined;
+  return workspace.status === "ready" || workspace.retained === true ? workspace.artifactId : undefined;
+}
+
 function assertWorkspaceResult(value: unknown): asserts value is WorkspaceExecutionResult {
   if (!isRecord(value) || value.status !== "ready" && value.status !== "failed") {
     throw new Error("Attempt workspace evidence is invalid.");
@@ -1601,6 +1625,12 @@ function assertShutdownResult(value: unknown, label: string): asserts value is {
 function assertVerifierStatus(verifier: unknown, status: "passed" | "failed"): void {
   if (!isRecord(verifier) || verifier.status !== status) {
     throw new Error(`Terminal outcome requires a ${status} verifier result.`);
+  }
+}
+
+function assertHarnessStatus(harness: unknown, status: HarnessExecutionResult["status"]): void {
+  if (!isRecord(harness) || harness.status !== status) {
+    throw new Error(`Terminal outcome requires a ${status} harness result.`);
   }
 }
 

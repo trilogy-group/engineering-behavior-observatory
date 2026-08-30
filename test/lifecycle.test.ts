@@ -814,7 +814,7 @@ test("run identity fields are validated before callbacks execute", async () => {
 
 test("invalid shutdown grace periods are rejected before callbacks execute", async () => {
   let setupCalled = false;
-  for (const shutdownGraceMs of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+  for (const shutdownGraceMs of [-1, Number.NaN, Number.POSITIVE_INFINITY, 2_147_483_648]) {
     await assert.rejects(executeRunAttempt({
       run,
       shutdownGraceMs,
@@ -1198,6 +1198,53 @@ test("terminal attempt records require explicit capture status", async () => {
     const path = join(root, "missing-capture.json");
     writeFileSync(path, `${JSON.stringify(record)}\n`);
     await assert.rejects(readAttemptRecord(path), /explicit capture status/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("completed attempt records require harness and verification lifecycle phases", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-completed-phases-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    const record = structuredClone(result.record);
+    const lifecycle = new LifecycleController(() => "created");
+    lifecycle.transition("setup", "setup");
+    lifecycle.transition("cleaning", "cleaning");
+    lifecycle.transition("terminal", "terminal");
+    record.lifecycle = lifecycle.snapshot();
+    delete record.harness;
+    const path = join(root, "missing-phases.json");
+    writeFileSync(path, `${JSON.stringify(record)}\n`);
+    await assert.rejects(readAttemptRecord(path), /running and verifying lifecycle phases/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("retained workspace evidence must be linked from partial terminals", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-partial-link-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    const record = structuredClone(result.record);
+    record.terminal = { state: "interrupted", failureClass: "infrastructure", stopReason: "none" };
+    record.classification = { kind: "interrupted", terminal: structuredClone(record.terminal) };
+    record.partial = true;
+    const path = join(root, "missing-partial-link.json");
+    writeFileSync(path, `${JSON.stringify(record)}\n`);
+    await assert.rejects(readAttemptRecord(path), /Retained workspace evidence must be linked/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
