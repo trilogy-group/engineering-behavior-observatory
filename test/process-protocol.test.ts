@@ -308,6 +308,18 @@ test("snapshots direct writer records when append is called", async () => {
   }
 });
 
+test("direct JSONL appends reject values that JSON cannot preserve", async () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "invalid-direct-record.jsonl"));
+    await assert.rejects(writer.append({ value: Number.NaN }), /finite JSON number/);
+    await assert.rejects(writer.append({ value: new Map([["key", "value"]]) }), /JSON object or array/);
+    await writer.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("does not retain observations whose append fails", async () => {
   const root = temporaryRoot();
   try {
