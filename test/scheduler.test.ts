@@ -609,6 +609,11 @@ test("bundle-root queue validation rechecks real frozen sources", () => {
     });
     assert.deepEqual(validateRunQueue(queue, undefined, "queue.json", { bundleRoot: root }), []);
     assert.deepEqual(validateRunQueue(queue, experiment, "queue.json", { bundleRoot: root }), []);
+    const persistedFreeze = JSON.parse(readFileSync(join(root, "freezes/task-a.json"), "utf8")) as FrozenTaskInput;
+    assert.deepEqual(validateRunQueue(queue, experiment, "queue.json", {
+      bundleRoot: root,
+      frozenTasks: { "task-a": persistedFreeze },
+    }), []);
 
     for (const ordering of [
       { seed: "bundle-seed", strategy: "sequential" as const },

@@ -1075,13 +1075,11 @@ function provenanceOptions(
     }]));
     resolved = { ...resolved, frozenTasks };
   }
-  if (options.bundleRoot === undefined) {
-    const persistedLocators = Object.fromEntries(queue.entries.map((entry) => [entry.taskId, entry.task.freezeLocator]));
-    resolved = {
-      ...resolved,
-      freezeLocators: { ...persistedLocators, ...options.freezeLocators },
-    };
-  }
+  const persistedLocators = Object.fromEntries(queue.entries.map((entry) => [entry.taskId, entry.task.freezeLocator]));
+  resolved = {
+    ...resolved,
+    freezeLocators: { ...persistedLocators, ...options.freezeLocators },
+  };
   return resolved;
 }
 
