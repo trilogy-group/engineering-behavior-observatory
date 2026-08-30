@@ -1634,6 +1634,9 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       if (!isRecord(value.workspace) || (value.workspace.status !== "ready" && value.workspace.status !== "failed")) {
         throw new Error("Workspace infrastructure-failure records require a native workspace result.");
       }
+      if (value.workspace.status === "ready" && !workspaceShowsFailure(value.workspace)) {
+        throw new Error("Workspace infrastructure-failure records require workspace failure evidence.");
+      }
     }
     if (classificationKind === "infrastructure-failure" && classificationSource === "cleanup") {
       if (!isRecord(value.cleanup) || (value.cleanup.status !== "failed" && value.cleanup.status !== "timed-out")) {
@@ -1642,6 +1645,9 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     }
     if (classificationKind === "task-failure" && classificationSource !== "verifier") {
       throw new Error("Task-failure terminal records require verifier attribution.");
+    }
+    if (classificationKind === "completed" && classificationSource !== "runner") {
+      throw new Error("Completed terminal records require runner attribution.");
     }
     if (classificationKind === "verifier-error") {
       if (classificationSource !== "verifier") {
@@ -1698,6 +1704,8 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       throw new Error("Task-failure terminal records require running and verifying lifecycle phases.");
     }
     assertHarnessStatus(value.harness, "completed");
+    assertShutdownCompleted(value.harness, "Harness");
+    assertShutdownCompleted(value.verifier, "Verifier");
     assertTerminalWorkspaceEvidence(value.workspace, value.terminal.workspaceArtifactId);
     assertVerifierStatus(value.verifier, "failed");
   }
@@ -1817,6 +1825,13 @@ function assertTerminalWorkspaceEvidence(workspace: unknown, artifactId: string 
 function retainedRecordWorkspaceArtifactId(workspace: unknown): string | undefined {
   if (!isRecord(workspace) || workspace.retained === false || typeof workspace.artifactId !== "string") return undefined;
   return workspace.status === "ready" || workspace.retained === true ? workspace.artifactId : undefined;
+}
+
+function workspaceShowsFailure(workspace: Record<string, unknown>): boolean {
+  return workspace.error !== undefined
+    || workspace.artifactId === undefined
+    || workspace.retained === false
+    || isRecord(workspace.shutdownResult) && workspace.shutdownResult.status !== "completed";
 }
 
 function assertWorkspaceResult(value: unknown): asserts value is WorkspaceExecutionResult {
