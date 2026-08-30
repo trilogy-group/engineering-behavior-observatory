@@ -95,6 +95,16 @@ test("compiles arbitrary matrices with stable serialized identities", () => {
   assert.deepEqual(first.captureProfile, experiment.captureProfile);
   assert.equal(first.entries[0]!.trial.index, first.entries[0]!.trialIndex);
 
+  const changedExperiment = structuredClone(experiment);
+  changedExperiment.captureProfile = {
+    ...changedExperiment.captureProfile,
+    digest: { algorithm: "sha256", value: "9".repeat(64) },
+  };
+  assert.notEqual(
+    first.entries[0]!.runId,
+    compileRunQueue(changedExperiment, compileOptions(changedExperiment)).entries[0]!.runId,
+  );
+
   const twentyFour = fixture("experiment.24-cell.v1.json");
   const queue = compileRunQueue(twentyFour, compileOptions(twentyFour));
   assert.equal(queue.entries.length, 24);
@@ -159,6 +169,11 @@ test("matrix compilation rejects unfrozen, duplicate, and unresolved inputs", ()
     [experiment.ordering.strategy === "permuted" ? experiment.ordering.permutationAlgorithmRef!.locator : "algorithm.json"]: "unknown",
   };
   assert.throws(() => compileRunQueue(experiment, unsupported), /Unsupported permutation algorithm/);
+  const unversioned = compileOptions(experiment);
+  unversioned.permutationAlgorithms = {
+    [experiment.ordering.strategy === "permuted" ? experiment.ordering.permutationAlgorithmRef!.locator : "algorithm.json"]: "fisher-yates",
+  };
+  assert.throws(() => compileRunQueue(experiment, unversioned), /Unsupported permutation algorithm/);
 });
 
 test("queue validation binds entry references to the supplied experiment", () => {
@@ -219,6 +234,14 @@ test("strategy-inapplicable ordering fields are rejected", () => {
     balanceBy: "model",
   };
   assert.match(validateRunQueue(experiment).map((error) => error.message).join("\n"), /must NOT be valid/);
+});
+
+test("standalone queue ordering rejects inapplicable fields", () => {
+  const experiment = fixture("experiment.18-cell.v1.json");
+  const queue = compileRunQueue(experiment, compileOptions(experiment));
+  const invalid = structuredClone(queue);
+  invalid.ordering.balanceBy = "model";
+  assert.match(validateRunQueue(invalid).map((error) => error.message).join("\n"), /must NOT be valid/);
 });
 
 test("a persisted local queue is validated and consumed in order", () => {

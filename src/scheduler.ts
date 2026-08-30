@@ -133,6 +133,7 @@ export function compileRunQueue(
   assertMatrixSize(experiment);
 
   const ordering = normalizeOrdering(experiment.ordering);
+  const experimentDigest = digestMetadata(experiment);
   const resolvedDigests = resolveConfigurationDigests(experiment, options);
   assertResolvedExperimentConfigurationDigests(experiment, resolvedDigests);
   const permutationAlgorithm = resolvePermutationAlgorithm(experiment, options);
@@ -160,7 +161,7 @@ export function compileRunQueue(
     };
     return {
       ...cell,
-      runId: runId(experiment.id, task, model, harness, cell.trialIndex),
+      runId: runId(experiment.id, experimentDigest, task, model, harness, cell.trialIndex),
       task,
       model,
       harness,
@@ -172,7 +173,7 @@ export function compileRunQueue(
   const queue: RunQueue = {
     schemaVersion: "ebo.run-queue/v1",
     experimentId: experiment.id,
-    experimentDigest: digestMetadata(experiment),
+    experimentDigest,
     captureProfile: experiment.captureProfile,
     seed: experiment.ordering.seed,
     ordering,
@@ -295,7 +296,14 @@ export function validateRunQueue(
         semanticErrors.push(queueError(artifact, `${field}/task`, "Frozen task identity does not match its referenced freeze record."));
       }
     }
-    if (entry.runId !== runId(runQueue.experimentId, entry.task, entry.model, entry.harness, entry.trialIndex)) {
+    if (entry.runId !== runId(
+      runQueue.experimentId,
+      runQueue.experimentDigest,
+      entry.task,
+      entry.model,
+      entry.harness,
+      entry.trialIndex,
+    )) {
       semanticErrors.push(queueError(artifact, `${field}/runId`, "Run ID does not match its frozen cell identities."));
     }
   }
@@ -469,7 +477,7 @@ function resolvePermutationAlgorithm(
     : isRecord(definition)
       ? definition.algorithm ?? definition.name ?? definition.id ?? definition.kind
       : undefined;
-  if (name === "fisher-yates-v1" || name === "fisher-yates") return "fisher-yates-v1";
+  if (name === "fisher-yates-v1") return "fisher-yates-v1";
   throw new Error(`Unsupported permutation algorithm "${String(name)}".`);
 }
 
@@ -497,9 +505,16 @@ function resolveFrozenTasks(
   const packetDigests = new Set<string>();
 
   for (const [taskId, condition] of Object.entries(experiment.taskSet)) {
+    const suppliedInput = supplied?.[taskId] ?? supplied?.[condition.packetRef.locator];
     const identity = options.bundleRoot !== undefined
-      ? frozenTaskFromBundle(options.bundleRoot, taskId, condition.packetRef.locator, condition.packetRef)
-      : frozenTaskFromInput(taskId, condition.packetRef, supplied?.[taskId] ?? supplied?.[condition.packetRef.locator]);
+      ? frozenTaskFromBundle(
+        options.bundleRoot,
+        taskId,
+        condition.packetRef.locator,
+        condition.packetRef,
+        freezeLocatorOf(suppliedInput),
+      )
+      : frozenTaskFromInput(taskId, condition.packetRef, suppliedInput);
     if (packetDigests.has(digestIdentity(identity.packetRef.digest))) {
       throw new Error(`Task packet "${taskId}" duplicates a packet digest.`);
     }
@@ -517,8 +532,9 @@ function frozenTaskFromBundle(
   taskId: string,
   packetLocator: string,
   packetRef: ArtifactReference,
+  freezeLocator?: string,
 ): FrozenTaskIdentity {
-  const status = statusTaskPacket(bundleRoot, packetLocator);
+  const status = statusTaskPacket(bundleRoot, packetLocator, freezeLocator ?? defaultFreezeLocator(packetLocator));
   if (status.status !== "frozen" || status.packetId === null || status.packetDigest === null || status.aggregateDigest === null) {
     const details = status.errors.length > 0 ? ` ${formatErrors(status.errors)}` : "";
     throw new Error(`Task packet "${taskId}" is not frozen.${details}`);
@@ -533,6 +549,12 @@ function frozenTaskFromBundle(
     freezeLocator: status.freezeLocator,
     aggregateDigest: status.aggregateDigest,
   };
+}
+
+function freezeLocatorOf(input: FrozenTaskInput | undefined): string | undefined {
+  return isRecord(input) && "freezeLocator" in input && typeof input.freezeLocator === "string"
+    ? input.freezeLocator
+    : undefined;
 }
 
 function frozenTaskFromInput(
@@ -627,12 +649,13 @@ function interleave(cells: DeclaredMatrixCell[], dimension: "task" | "model" | "
 
 function runId(
   experimentId: string,
+  experimentDigest: Digest,
   task: FrozenTaskIdentity,
   model: RunQueueEntry["model"],
   harness: RunQueueEntry["harness"],
   trialIndex: number,
 ): string {
-  return `run-${digestMetadata({ experimentId, task, model, harness, trialIndex }).value}`;
+  return `run-${digestMetadata({ experimentId, experimentDigest, task, model, harness, trialIndex }).value}`;
 }
 
 function queueError(artifact: string, field: string, message: string): ArtifactValidationError {

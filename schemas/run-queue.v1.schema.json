@@ -19,7 +19,34 @@
         "strategy": { "enum": ["sequential", "seeded-shuffle", "balanced"] },
         "balanceBy": { "enum": ["task", "model", "harness"] },
         "permutationAlgorithmRef": { "$ref": "#/$defs/reference" }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "strategy": { "const": "sequential" } }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["balanceBy"] },
+                { "required": ["permutationAlgorithmRef"] }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "strategy": { "const": "balanced" } }
+          },
+          "then": { "not": { "required": ["permutationAlgorithmRef"] } }
+        },
+        {
+          "if": {
+            "properties": { "strategy": { "enum": ["seeded-shuffle"] } }
+          },
+          "then": { "not": { "required": ["balanceBy"] } }
+        }
+      ]
     },
     "entries": {
       "type": "array",
