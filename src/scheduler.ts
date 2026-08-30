@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, mkdirSync, openSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 
 import {
@@ -278,9 +278,14 @@ function readRunQueueBytes(path: string): Buffer {
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const opened = fstatSync(descriptor);
     if (!opened.isFile()) throw new Error(`Run queue path "${path}" is not a regular file.`);
+    const namedBefore = lstatSync(path);
+    if (!namedBefore.isFile() || !sameFileIdentity(namedBefore, opened)) {
+      throw new Error(`Run queue file "${path}" changed while being opened.`);
+    }
     if (!Number.isSafeInteger(opened.size) || opened.size > MAX_RUN_QUEUE_BYTES) {
       throw new Error(`Run queue file exceeds the local byte limit of ${MAX_RUN_QUEUE_BYTES}.`);
     }
+    const openedTimes = fstatSync(descriptor, { bigint: true });
     const bytes = Buffer.alloc(opened.size);
     for (let offset = 0; offset < opened.size;) {
       const read = readSync(descriptor, bytes, offset, opened.size - offset, offset);
@@ -292,8 +297,11 @@ function readRunQueueBytes(path: string): Buffer {
       throw new Error(`Run queue file "${path}" grew while being read.`);
     }
     const completed = fstatSync(descriptor);
+    const completedTimes = fstatSync(descriptor, { bigint: true });
+    const namedAfter = lstatSync(path);
     if (!completed.isFile() || completed.dev !== opened.dev || completed.ino !== opened.ino
-        || completed.size !== opened.size) {
+        || completed.size !== opened.size || !namedAfter.isFile() || !sameFileIdentity(namedAfter, completed)
+        || completedTimes.mtimeNs !== openedTimes.mtimeNs || completedTimes.ctimeNs !== openedTimes.ctimeNs) {
       throw new Error(`Run queue file "${path}" changed while being read.`);
     }
     return bytes;
@@ -1385,6 +1393,10 @@ function sameOptionalDigest(left: Digest | null, right: Digest | null | undefine
   return left === null
     ? right === null
     : right !== null && right !== undefined && sameDigest(left, right);
+}
+
+function sameFileIdentity(left: { dev: number; ino: number }, right: { dev: number; ino: number }): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
 }
 
 function digestIdentity(digest: Digest): string {
