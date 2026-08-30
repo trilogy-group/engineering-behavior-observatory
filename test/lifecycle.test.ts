@@ -127,6 +127,8 @@ test("harness infrastructure, policy, and cleanup outcomes stay classified", asy
     harness: async () => ({ status: "stopped", stopReason: "policy", reason: "approval required" }),
   });
   assert.equal(policyStop.terminal.stopReason, "policy");
+  assert.equal(policyStop.terminal.workspaceArtifactId, "workspace-1");
+  assert.equal(policyStop.terminal.workspaceArtifactId, "workspace-1");
 
   const harnessInterrupt = await executeRunAttempt({
     run,
@@ -135,6 +137,8 @@ test("harness infrastructure, policy, and cleanup outcomes stay classified", asy
     evidence: { flush: () => undefined },
   });
   assert.equal(harnessInterrupt.classification.source, "harness");
+  assert.equal(harnessInterrupt.terminal.workspaceArtifactId, "workspace-1");
+  assert.equal(harnessInterrupt.terminal.workspaceArtifactId, "workspace-1");
 
   const cleanupFailure = await executeRunAttempt({
     run,
@@ -247,6 +251,7 @@ test("a workspace that settles during interruption is retained for cleanup and e
   setTimeout(() => controller.abort(), 1);
   const result = await runPromise;
   assert.equal(result.terminal.state, "interrupted");
+  assert.equal(result.terminal.workspaceArtifactId, "late-workspace");
   assert.equal(result.record.workspace?.artifactId, "late-workspace");
   assert.equal(cleanedWorkspace, "late-workspace");
 });
@@ -890,6 +895,10 @@ test("attempt persistence rejects stale lifecycle checkpoints", async () => {
       workspace: { status: "ready" as const, artifactId: "workspace-1" },
     };
     await writeAttemptRecord(path, current);
+    await assert.rejects(writeAttemptRecord(path, {
+      ...current,
+      workspace: { status: "ready", artifactId: "rewritten-workspace" },
+    }), /changes retained workspace evidence/);
     const { workspace: _workspace, ...currentWithoutWorkspace } = current;
     const stale = {
       ...currentWithoutWorkspace,
@@ -919,6 +928,23 @@ test("completed harness results reject contradictory failure and stop fields", a
   });
   assert.equal(failureField.terminal.failureClass, "infrastructure");
   assert.equal(stopField.terminal.failureClass, "infrastructure");
+});
+
+test("non-completed harness results reject fields owned by another status", async () => {
+  const stoppedWithFailure = await executeRunAttempt({
+    run,
+    workspace: workspace(),
+    harness: async () => ({ status: "stopped", failureClass: "task", stopReason: "budget" }),
+    evidence: { flush: () => undefined },
+  });
+  const failedWithStop = await executeRunAttempt({
+    run,
+    workspace: workspace(),
+    harness: async () => ({ status: "failed", failureClass: "infrastructure", stopReason: "policy" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(stoppedWithFailure.terminal.failureClass, "infrastructure");
+  assert.equal(failedWithStop.terminal.failureClass, "infrastructure");
 });
 
 test("attempt persistence rejects reopening a terminal attempt", async () => {
