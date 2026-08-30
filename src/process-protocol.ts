@@ -125,11 +125,37 @@ export class JsonlEvidenceWriter {
     }
     this.hasWrites = true;
     const operation = this.queue.then(async () => {
-      if (this.closed) throw new Error("JSONL evidence writer is closed.");
-      const handle = await this.openHandle();
-      await handle.write(line, undefined, "utf8");
-      if (this.shouldFsync) await handle.sync();
-      this._count += 1;
+      let directLockFd: number | undefined;
+      let directLockPath: string | undefined;
+      try {
+        if (token !== INTERNAL_RECORDER_TOKEN) {
+          const canonicalPath = canonicalWriterPath(this.path);
+          directLockPath = `${canonicalPath}.protocol.direct.lock`;
+          mkdirSync(dirname(canonicalPath), { recursive: true, mode: 0o700 });
+          try {
+            directLockFd = openSync(directLockPath, "wx", 0o600);
+          } catch (error) {
+            throw new Error(`JSONL evidence path is reserved by a protocol recorder: ${errorMessage(error)}`);
+          }
+          if (writerPathIsReserved(this.path)) {
+            throw new Error("JSONL evidence path is reserved by a protocol recorder.");
+          }
+        }
+        if (this.closed) throw new Error("JSONL evidence writer is closed.");
+        const handle = await this.openHandle();
+        await handle.write(line, undefined, "utf8");
+        if (this.shouldFsync) await handle.sync();
+        this._count += 1;
+      } finally {
+        if (directLockFd !== undefined && directLockPath !== undefined) {
+          closeSync(directLockFd);
+          try {
+            unlinkSync(directLockPath);
+          } catch {
+            // Preserve the append result; a missing lock is already released.
+          }
+        }
+      }
     });
     this.queue = operation.catch(() => undefined);
     return operation;
@@ -170,6 +196,7 @@ export class JsonlEvidenceWriter {
     if (this.claimed) throw new Error("JSONL evidence writer is already claimed by a protocol recorder.");
     const canonicalPath = canonicalWriterPath(this.path);
     if (CLAIMED_WRITER_PATHS.has(canonicalPath)) throw new Error("JSONL evidence path is already claimed by a protocol recorder.");
+    if (writerDirectPathIsReserved(canonicalPath)) throw new Error("JSONL evidence path is reserved by a direct writer append.");
     if (this.hasWrites) throw new Error("JSONL evidence writer cannot be claimed after direct writes.");
     if (token !== INTERNAL_RECORDER_TOKEN) throw new Error("JSONL evidence writer claim is internal.");
     mkdirSync(dirname(canonicalPath), { recursive: true, mode: 0o700 });
@@ -939,6 +966,16 @@ function writerPathIsReserved(path: string): boolean {
   if (CLAIMED_WRITER_PATHS.has(canonicalPath)) return true;
   try {
     lstatSync(`${canonicalPath}.protocol.lock`);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function writerDirectPathIsReserved(canonicalPath: string): boolean {
+  try {
+    lstatSync(`${canonicalPath}.protocol.direct.lock`);
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
