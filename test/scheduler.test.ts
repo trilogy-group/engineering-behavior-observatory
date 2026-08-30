@@ -521,6 +521,19 @@ test("standalone queues reject conflicting identities for one condition ID", () 
   const alteredPolicy = structuredClone(queue);
   alteredPolicy.ordering = { strategy: "balanced", balanceBy: "model" };
   assert.match(validateRunQueue(alteredPolicy).map((error) => error.message).join("\n"), /Scheduling digest/);
+
+  const collidingFreezePath = structuredClone(queue);
+  for (const entry of collidingFreezePath.entries) entry.task.freezeLocator = "packets";
+  assert.match(
+    validateRunQueue(collidingFreezePath).map((error) => error.message).join("\n"),
+    /Freeze locator.*aliases persisted artifact path/,
+  );
+  const collidingArtifactPath = structuredClone(queue);
+  collidingArtifactPath.captureProfile.locator = "models";
+  assert.match(
+    validateRunQueue(collidingArtifactPath).map((error) => error.message).join("\n"),
+    /Persisted artifact path.*aliases/,
+  );
 });
 
 test("queue validation rejects another valid artifact schema", () => {

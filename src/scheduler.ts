@@ -284,6 +284,7 @@ export function validateRunQueue(
 
   const runQueue = queue as unknown as RunQueue;
   const semanticErrors: ArtifactValidationError[] = [];
+  semanticErrors.push(...validateQueueLocatorBindings(runQueue, artifact));
   if (!sameDigest(
     runQueue.schedulingDigest,
     digestScheduling(
@@ -861,6 +862,63 @@ function assertDistinctFreezeLocatorBindings(
 
 function pathsAlias(left: string, right: string): boolean {
   return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+}
+
+function validateQueueLocatorBindings(queue: RunQueue, artifact: string): ArtifactValidationError[] {
+  const errors: ArtifactValidationError[] = [];
+  const artifactPaths = new Map<string, { path: string; field: string }>();
+  const addArtifact = (path: string, field: string) => {
+    if (!artifactPaths.has(path)) artifactPaths.set(path, { path, field });
+  };
+  addArtifact(queue.captureProfile.locator, "/captureProfile");
+  if (queue.ordering.permutationAlgorithmRef !== undefined) {
+    addArtifact(queue.ordering.permutationAlgorithmRef.locator, "/ordering/permutationAlgorithmRef");
+  }
+  for (const [index, entry] of queue.entries.entries()) {
+    addArtifact(entry.task.packetRef.locator, `/entries/${index}/task`);
+    addArtifact(entry.model.configurationRef.locator, `/entries/${index}/model`);
+    addArtifact(entry.harness.configurationRef.locator, `/entries/${index}/harness`);
+    addArtifact(entry.harness.nativeLimitsRef.locator, `/entries/${index}/harness/nativeLimits`);
+    addArtifact(entry.harness.nativeToolPolicyRef.locator, `/entries/${index}/harness/nativeToolPolicy`);
+  }
+
+  const ordinary = [...artifactPaths.values()];
+  for (let index = 0; index < ordinary.length; index += 1) {
+    for (let otherIndex = index + 1; otherIndex < ordinary.length; otherIndex += 1) {
+      const left = ordinary[index]!;
+      const right = ordinary[otherIndex]!;
+      const leftKey = left.path.toLowerCase();
+      const rightKey = right.path.toLowerCase();
+      if (leftKey === rightKey && left.path !== right.path) {
+        errors.push(queueError(artifact, right.field, `Persisted artifact path "${right.path}" case-aliases "${left.path}".`));
+      } else if (leftKey !== rightKey && pathsAlias(leftKey, rightKey)) {
+        errors.push(queueError(artifact, right.field, `Persisted artifact path "${right.path}" aliases "${left.path}".`));
+      }
+    }
+  }
+
+  const freezePaths = new Map<string, { taskId: string; path: string; field: string }>();
+  for (const [index, entry] of queue.entries.entries()) {
+    const key = `${entry.taskId}\u0000${entry.task.freezeLocator}`;
+    if (!freezePaths.has(key)) {
+      freezePaths.set(key, { taskId: entry.taskId, path: entry.task.freezeLocator, field: `/entries/${index}/task/freezeLocator` });
+    }
+  }
+  const freezes = [...freezePaths.values()];
+  for (const freeze of freezes) {
+    const freezeKey = freeze.path.toLowerCase();
+    for (const persisted of ordinary) {
+      if (pathsAlias(freezeKey, persisted.path.toLowerCase())) {
+        errors.push(queueError(artifact, freeze.field, `Freeze locator "${freeze.path}" aliases persisted artifact path "${persisted.path}".`));
+      }
+    }
+    for (const other of freezes) {
+      if (freeze.taskId !== other.taskId && pathsAlias(freezeKey, other.path.toLowerCase())) {
+        errors.push(queueError(artifact, freeze.field, `Freeze locator "${freeze.path}" aliases task "${other.taskId}" freeze locator "${other.path}".`));
+      }
+    }
+  }
+  return errors;
 }
 
 function assertAdmittedFreezeRecords(
