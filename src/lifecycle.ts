@@ -383,6 +383,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   else options.signal?.addEventListener("abort", externalAbort, { once: true });
   let budgetTimer: ReturnType<typeof setTimeout> | undefined;
   let budgetExpired: "coordinator" | "harness" | undefined;
+  let harnessDeadlineAt: number | undefined;
   let harnessResult: HarnessExecutionResult | undefined;
   let workspace: WorkspaceExecutionResult | undefined;
   let classification: AttemptClassification | undefined;
@@ -396,18 +397,24 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     if (controller.signal.aborted) resolveAbort("aborted");
     else controller.signal.addEventListener("abort", () => resolveAbort("aborted"), { once: true });
   });
+  const noteBudgetStop = (requested: "coordinator" | "harness") => {
+    if (abortCause === "interrupted") return;
+    const nowMs = Date.now();
+    const coordinatorDeadlineAt = options.maxWallClockMs === undefined ? undefined : executionStartedAt + options.maxWallClockMs;
+    const source = coordinatorDeadlineAt !== undefined && harnessDeadlineAt !== undefined
+      && nowMs >= coordinatorDeadlineAt && nowMs >= harnessDeadlineAt
+      ? coordinatorDeadlineAt <= harnessDeadlineAt ? "coordinator" : "harness"
+      : requested;
+    abortCause ??= "budget";
+    budgetExpired = source;
+    controller.abort("budget");
+  };
   if (options.maxWallClockMs !== undefined) {
-    budgetTimer = setTimeout(() => {
-      abortCause ??= "budget";
-      budgetExpired ??= "coordinator";
-      controller.abort("budget");
-    }, options.maxWallClockMs);
+    budgetTimer = setTimeout(() => noteBudgetStop("coordinator"), options.maxWallClockMs);
   }
   const markCoordinatorBudgetIfExpired = () => {
     if (options.maxWallClockMs !== undefined && Date.now() - executionStartedAt >= options.maxWallClockMs) {
-      abortCause ??= "budget";
-      budgetExpired ??= "coordinator";
-      controller.abort("budget");
+      noteBudgetStop("coordinator");
     }
   };
 
@@ -526,15 +533,12 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       const timers: Array<ReturnType<typeof setTimeout>> = [];
       const installBudget = (milliseconds: number | undefined) => {
         if (milliseconds === undefined) return;
-        const timer = setTimeout(() => {
-          abortCause ??= "budget";
-          budgetExpired ??= "harness";
-          controller.abort("budget");
-        }, milliseconds);
+        const timer = setTimeout(() => noteBudgetStop("harness"), milliseconds);
         timers.push(timer);
       };
-      installBudget(options.harnessBudgetMs);
       const harnessStartedAt = Date.now();
+      harnessDeadlineAt = options.harnessBudgetMs === undefined ? undefined : harnessStartedAt + options.harnessBudgetMs;
+      installBudget(options.harnessBudgetMs);
       let harnessPromise: Promise<HarnessExecutionResult>;
       try {
         harnessPromise = Promise.resolve(options.harness({
@@ -549,8 +553,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         harnessPromise = Promise.reject(error);
       }
       if (options.harnessBudgetMs !== undefined && Date.now() - harnessStartedAt >= options.harnessBudgetMs) {
-        budgetExpired ??= "harness";
-        controller.abort("budget");
+        noteBudgetStop("harness");
       }
       markCoordinatorBudgetIfExpired();
       let outcome: { kind: "result"; value: HarnessExecutionResult } | { kind: "aborted" } | undefined;
@@ -1299,14 +1302,29 @@ function normalizeHarnessBudgetResult(
   result: HarnessExecutionResult,
   budgetExpired: "coordinator" | "harness" | undefined,
 ): HarnessExecutionResult {
-  return budgetExpired === "harness" && result.status === "completed"
-    ? {
-      ...result,
-      status: "stopped",
-      stopReason: "budget",
-      reason: result.reason ?? "Harness completed after its budget deadline.",
-    }
-    : result;
+  if (budgetExpired !== "harness" || result.status === "stopped" && result.stopReason === "budget") return result;
+  const {
+    status: nativeStatus,
+    failureClass: nativeFailureClass,
+    stopReason: nativeStopReason,
+    reason: nativeReason,
+    error: nativeError,
+    evidence: nativeEvidence,
+    ...rest
+  } = result;
+  return {
+    ...rest,
+    status: "stopped",
+    stopReason: "budget",
+    reason: nativeReason ?? nativeError ?? "Harness result arrived after its budget deadline.",
+    evidence: {
+      nativeStatus,
+      ...(nativeFailureClass === undefined ? {} : { nativeFailureClass }),
+      ...(nativeStopReason === undefined ? {} : { nativeStopReason }),
+      ...(nativeError === undefined ? {} : { nativeError }),
+      ...(nativeEvidence === undefined ? {} : { nativeEvidence }),
+    },
+  };
 }
 
 async function settleWithTimeout<T>(

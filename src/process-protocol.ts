@@ -185,12 +185,14 @@ export class JsonlEvidenceWriter {
       CLAIMED_WRITER_PATHS.add(canonicalPath);
       return sequence;
     } catch (error) {
-      if (lockFd !== undefined) closeSync(lockFd);
-      try {
-        unlinkSync(lockPath);
-        syncDirectory(dirname(lockPath));
-      } catch {
-        // Preserve the original claim/recovery error.
+      if (lockFd !== undefined) {
+        closeSync(lockFd);
+        try {
+          unlinkSync(lockPath);
+          syncDirectory(dirname(lockPath));
+        } catch {
+          // Preserve the original claim/recovery error.
+        }
       }
       throw error;
     }
