@@ -1266,6 +1266,9 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     throw new Error("Lifecycle ended timestamp is present before terminal state.");
   }
   if (typeof value.partial !== "boolean") throw new Error("Attempt record partial state is invalid.");
+  if (lifecycle.state !== "terminal" && value.partial !== true) {
+    throw new Error("Nonterminal attempt records must remain partial.");
+  }
   if (value.harnessTerminationConfirmed !== undefined && typeof value.harnessTerminationConfirmed !== "boolean") {
     throw new Error("Harness termination confirmation is invalid.");
   }
@@ -1336,6 +1339,10 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       throw new Error("Attempt cleanup status is invalid.");
     }
     if (value.cleanup.error !== undefined) assertTimestampValue(value.cleanup.error, "Attempt cleanup error");
+  }
+  if (value.classification?.kind === "capture-incomplete"
+      && (!isRecord(value.capture) || value.capture.status !== "incomplete" || value.partial !== true)) {
+    throw new Error("Capture-incomplete classifications require incomplete capture evidence and partial state.");
   }
 }
 

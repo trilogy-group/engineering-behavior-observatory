@@ -1002,6 +1002,49 @@ test("attempt records reject lifecycle timestamps that disagree with transitions
   }
 });
 
+test("attempt checkpoints remain partial before terminal state", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-partial-checkpoint-"));
+  try {
+    const path = join(root, "checkpoint.json");
+    writeFileSync(path, JSON.stringify({
+      schemaVersion: "ebo.attempt/v1",
+      run,
+      attempt: createAttemptIdentity(run.id, 1, "attempt-1"),
+      lifecycle: new LifecycleController(() => "created").snapshot(),
+      partial: false,
+    }));
+    await assert.rejects(readAttemptRecord(path), /Nonterminal attempt records must remain partial/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("capture-incomplete classifications require incomplete capture evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-capture-classification-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    const record = structuredClone(result.record);
+    record.classification = {
+      kind: "capture-incomplete",
+      underlying: "completed",
+      terminal: structuredClone(result.terminal),
+    };
+    record.capture = { status: "complete" };
+    record.partial = false;
+    const path = join(root, "contradictory-capture.json");
+    writeFileSync(path, `${JSON.stringify(record)}\n`);
+    await assert.rejects(readAttemptRecord(path), /Capture-incomplete classifications require/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("terminal attempt records require matching terminal classification", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-terminal-record-"));
   try {

@@ -473,6 +473,26 @@ test("clean shutdown is explicit and does not imply prompt completion", async ()
   }
 });
 
+test("fences caller-owned recorders before publishing process completion", async () => {
+  const root = temporaryRoot();
+  try {
+    const evidencePath = join(root, "fenced-completion.jsonl");
+    const writer = new JsonlEvidenceWriter(evidencePath);
+    const protocol = spawnProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({ready:true}))"),
+      source: "fake-harness",
+      writer,
+    });
+    const result = await protocol.wait();
+    await assert.rejects(protocol.evidence.recordNotification({ source: "fake-harness", method: "late" }), /fenced/);
+    await writer.close();
+    assert.equal(result.status, "completed");
+    assert.equal(readFileSync(evidencePath, "utf8").includes('"method":"late"'), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("shutdown with diagnostic persistence failure remains failed and partial", async () => {
   const root = temporaryRoot();
   try {

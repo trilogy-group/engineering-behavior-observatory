@@ -732,6 +732,7 @@ export class ProtocolProcess {
     }
     try {
       await this.recorder.flush();
+      this.recorder.fence();
       await this.recorder.recordProcess(
         signal === null && exitCode === 0 ? "exited" : "terminated",
         { exitCode, signal, pid: this.child.pid ?? null },
