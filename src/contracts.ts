@@ -23,6 +23,10 @@ export type ArchiveEntry = {
   kind: string;
 };
 
+export type TaskArchiveEntry = ArchiveEntry & {
+  bytes: Buffer;
+};
+
 export type ArchiveLimits = {
   maxCompressedBytes: number;
   maxExpandedBytes: number;
@@ -260,6 +264,14 @@ export function validateTaskArchive(
   limits: ArchiveLimits,
   includePaths: readonly string[],
 ): void {
+  readTaskArchive(bytes, limits, includePaths);
+}
+
+export function readTaskArchive(
+  bytes: Uint8Array,
+  limits: ArchiveLimits,
+  includePaths: readonly string[],
+): TaskArchiveEntry[] {
   if (![limits.maxCompressedBytes, limits.maxExpandedBytes, limits.maxMembers]
     .every((value) => Number.isSafeInteger(value) && value >= 1)) {
     throw new Error("Sanitized archive limits must be positive safe integers.");
@@ -286,6 +298,7 @@ export function validateTaskArchive(
     return entryPath === selectedPath || entryPath.startsWith(`${selectedPath}/`);
   }));
   assertNoSelectedSymlinks(selected, includePaths, parsed.entries);
+  return selected;
 }
 
 export function resolveBundleConfiguration(
@@ -966,8 +979,8 @@ function assertPositiveSafeInteger(value: number, label: string): void {
   }
 }
 
-function parseTarArchive(bytes: Buffer, maxMembers: number): { entries: ArchiveEntry[]; expandedBytes: number } {
-  const entries: ArchiveEntry[] = [];
+function parseTarArchive(bytes: Buffer, maxMembers: number): { entries: TaskArchiveEntry[]; expandedBytes: number } {
+  const entries: TaskArchiveEntry[] = [];
   let expandedBytes = 0;
   let offset = 0;
   let pendingPath: string | undefined;
@@ -1027,7 +1040,7 @@ function parseTarArchive(bytes: Buffer, maxMembers: number): { entries: ArchiveE
     const size = pendingPax?.size ?? headerSize;
     if (!Number.isSafeInteger(size) || size < 0) throw new Error("Sanitized task archive contains an invalid member size.");
     const kind = tarEntryKind(type);
-    entries.push({ path, kind });
+    entries.push({ path, kind, bytes: data });
     if (entries.length > maxMembers) throw new Error("Sanitized archive exceeds its declared materialization limits.");
     if (kind === "file") {
       if (!Number.isSafeInteger(expandedBytes + size)) throw new Error("Sanitized task archive exceeds safe expanded size.");

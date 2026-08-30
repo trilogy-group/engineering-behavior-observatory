@@ -86,6 +86,24 @@ and reports the named mismatching component before a later materializer or
 scheduler can consume it. The model-visible projection is only `agentInput`;
 reference solutions, verifier bytes, and review records remain restricted.
 
+## Workspace materialization
+
+`materializeWorkspace` accepts an admitted packet with a `frozen` status and
+creates an attempt-identified directory outside the task bundle. It verifies
+the digest-pinned TAR+gzip source, copies only the declared literal allowlist,
+rejects links, special entries, traversal, and a selected `restricted/`
+subtree, then normalizes modes and timestamps before calculating the
+`workspaceFingerprint` used by the verifier. The result's `startingDigest` is
+the declared fixture digest; `workspaceDigest` is the normalized tree
+fingerprint.
+
+Setup callbacks receive only the disposable workspace path and run before the
+fingerprint is calculated. Call `cleanupWorkspace(result, "success")` (or
+`result.cleanup("success")`) after a successful attempt. A failed setup returns
+a failed lifecycle result; `retainOnFailure: true` keeps its attempt path for
+inspection, while the default removes it. Failure retention never changes the
+model-visible input surface or the frozen packet.
+
 ## Experiments
 
 `schemas/experiment.v1.schema.json` treats task, model, and harness sets;
