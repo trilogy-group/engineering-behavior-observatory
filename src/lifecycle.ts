@@ -154,6 +154,7 @@ export type AttemptRecord = {
   verifier?: VerifierExecutionResult;
   cleanup?: { status: "completed" | "failed"; error?: string };
   capture?: { status: "complete" | "incomplete"; error?: string };
+  persistence?: { status: "complete" | "incomplete"; error?: string };
   partial: boolean;
 };
 
@@ -282,6 +283,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   const attempt = options.attempt ?? createAttemptIdentity(options.run.id);
   const lifecycle = new LifecycleController(now);
   const controller = new AbortController();
+  const executionStartedAt = Date.now();
   const record: AttemptRecord = {
     schemaVersion: "ebo.attempt/v1",
     run: structuredClone(options.run),
@@ -289,9 +291,20 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     lifecycle: lifecycle.snapshot(),
     partial: true,
   };
+  if (options.evidence?.flush === undefined) {
+    record.capture = { status: "incomplete", error: "Evidence flush boundary is unavailable." };
+  }
+  let persistenceError: string | undefined;
   const persist = async (): Promise<void> => {
     record.lifecycle = lifecycle.snapshot();
-    if (options.recordPath !== undefined) await writeAttemptRecord(options.recordPath, record);
+    if (options.recordPath === undefined) return;
+    try {
+      await writeAttemptRecord(options.recordPath, record);
+      record.persistence = { status: "complete" };
+    } catch (error) {
+      persistenceError ??= errorMessage(error);
+      record.persistence = { status: "incomplete", error: persistenceError };
+    }
   };
   const flush = async (): Promise<void> => {
     try {
@@ -320,6 +333,12 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       controller.abort("budget");
     }, options.maxWallClockMs);
   }
+  const markCoordinatorBudgetIfExpired = () => {
+    if (options.maxWallClockMs !== undefined && Date.now() - executionStartedAt >= options.maxWallClockMs) {
+      budgetExpired = "coordinator";
+      controller.abort("budget");
+    }
+  };
 
   try {
     await flush();
@@ -352,18 +371,12 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         ? budgetExpired === undefined ? interruptedClassification(errorMessage(error)) : budgetClassification(budgetExpired, errorMessage(error))
         : infrastructureClassification(errorMessage(error), "workspace");
     }
+    markCoordinatorBudgetIfExpired();
     await flush();
 
     if (classification === undefined) {
       lifecycle.transition("running");
       await persist();
-      const harnessPromise = Promise.resolve(options.harness({
-        run: options.run,
-        attempt,
-        signal: controller.signal,
-        ...(options.harnessBudgetMs === undefined ? {} : { budgetMs: options.harnessBudgetMs }),
-        ...(workspace === undefined ? {} : { workspace }),
-      }));
       const timers: Array<ReturnType<typeof setTimeout>> = [];
       const installBudget = (milliseconds: number | undefined) => {
         if (milliseconds === undefined) return;
@@ -374,13 +387,38 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         timers.push(timer);
       };
       installBudget(options.harnessBudgetMs);
-      const outcome = await Promise.race([
-        harnessPromise.then((value) => ({ kind: "result" as const, value })),
-        abortPromise.then((value) => ({ kind: value })),
-      ]).finally(() => {
+      const harnessStartedAt = Date.now();
+      let harnessPromise: Promise<HarnessExecutionResult>;
+      try {
+        harnessPromise = Promise.resolve(options.harness({
+          run: options.run,
+          attempt,
+          signal: controller.signal,
+          ...(options.harnessBudgetMs === undefined ? {} : { budgetMs: options.harnessBudgetMs }),
+          ...(workspace === undefined ? {} : { workspace }),
+        }));
+      } catch (error) {
+        harnessPromise = Promise.reject(error);
+      }
+      if (options.harnessBudgetMs !== undefined && Date.now() - harnessStartedAt >= options.harnessBudgetMs) {
+        budgetExpired ??= "harness";
+        controller.abort("budget");
+      }
+      markCoordinatorBudgetIfExpired();
+      let outcome: { kind: "result"; value: HarnessExecutionResult } | { kind: "aborted" } | undefined;
+      try {
+        outcome = await Promise.race([
+          harnessPromise.then((value) => ({ kind: "result" as const, value })),
+          abortPromise.then((value) => ({ kind: value })),
+        ]);
+      } catch (error) {
+        classification = controller.signal.aborted
+          ? budgetExpired === undefined ? interruptedClassification(errorMessage(error)) : budgetClassification(budgetExpired, errorMessage(error))
+          : infrastructureClassification(errorMessage(error), "harness", workspace?.artifactId);
+      } finally {
         for (const timer of timers) clearTimeout(timer);
-      });
-      if (outcome.kind === "aborted" || controller.signal.aborted) {
+      }
+      if (outcome !== undefined && (outcome.kind === "aborted" || controller.signal.aborted)) {
         if (outcome.kind === "result") {
           harnessResult = outcome.value;
           record.harness = durableHarnessResult(outcome.value);
@@ -396,7 +434,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           classification = interruptedClassification();
         }
         await shutdownHarness(harnessResult, options.shutdownGraceMs ?? 250);
-      } else {
+      } else if (outcome?.kind === "result") {
         harnessResult = outcome.value;
         record.harness = durableHarnessResult(harnessResult);
         classification = classifyHarness(harnessResult, workspace?.artifactId);
@@ -404,7 +442,8 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           lifecycle.transition("verifying");
           await persist();
           if (options.verifier === undefined) {
-            classification = completedClassification(workspace?.artifactId);
+            record.verifier = { status: "not-run" };
+            classification = infrastructureClassification("Verifier did not run.", "verifier", workspace?.artifactId);
           } else {
             try {
               const verifierPromise = Promise.resolve(options.verifier({
@@ -417,18 +456,22 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                 verifierPromise.then((value) => ({ kind: "result" as const, value })),
                 abortPromise.then((value) => ({ kind: value })),
               ]);
-              if (verifierOutcome.kind === "aborted") {
-                await settle(verifierPromise, options.shutdownGraceMs ?? 250);
+              if (verifierOutcome.kind === "aborted" || controller.signal.aborted) {
+                if (verifierOutcome.kind === "result") record.verifier = verifierOutcome.value;
+                const settledVerifier = await settle(verifierPromise, options.shutdownGraceMs ?? 250);
+                if (settledVerifier !== undefined && record.verifier === undefined) record.verifier = settledVerifier;
                 classification = budgetExpired === undefined
                   ? interruptedClassification()
                   : budgetClassification(budgetExpired);
               } else {
                 record.verifier = verifierOutcome.value;
-                classification = classifyVerifier(verifierOutcome.value, workspace?.artifactId);
+                classification = classifyVerifier(verifierOutcome.value, workspace);
               }
             } catch (error) {
               record.verifier = { status: "error", error: errorMessage(error) };
-              classification = verifierErrorClassification(errorMessage(error), workspace?.artifactId);
+              classification = controller.signal.aborted
+                ? budgetExpired === undefined ? interruptedClassification(errorMessage(error)) : budgetClassification(budgetExpired, errorMessage(error))
+                : verifierErrorClassification(errorMessage(error), workspace?.artifactId);
             }
           }
         }
@@ -439,7 +482,6 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   } catch (error) {
     classification ??= infrastructureClassification(errorMessage(error), "runner", workspace?.artifactId);
   } finally {
-    options.signal?.removeEventListener("abort", externalAbort);
     if (lifecycle.state !== "cleaning" && lifecycle.state !== "terminal") {
       lifecycle.transition("cleaning");
       await persist();
@@ -461,11 +503,17 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     }
     record.cleanup = cleanupStatus;
     await flush();
-    if (record.capture?.status !== "incomplete" && options.evidence !== undefined) {
-    record.capture = { status: "complete" };
+    if (record.capture?.status !== "incomplete" && options.evidence?.flush !== undefined) {
+      record.capture = { status: "complete" };
     }
     if (budgetExpired !== undefined && classification?.kind === "completed") {
       classification = budgetClassification(budgetExpired);
+    }
+    if (controller.signal.aborted && classification?.kind === "completed") {
+      classification = budgetExpired === undefined ? interruptedClassification() : budgetClassification(budgetExpired);
+    }
+    if (persistenceError !== undefined && classification?.kind === "completed") {
+      classification = infrastructureClassification(persistenceError, "runner", workspace?.artifactId);
     }
     if (record.capture?.status === "incomplete" && classification !== undefined && classification.kind !== "capture-incomplete") {
       classification = {
@@ -486,6 +534,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       : classification.kind;
     record.partial = underlying !== "completed";
     await persist();
+    options.signal?.removeEventListener("abort", externalAbort);
   }
 
   return {
@@ -542,6 +591,9 @@ export async function readAttemptRecord(path: string): Promise<AttemptRecord> {
 
 function validateOptions(options: RunAttemptOptions): void {
   assertIdentity(options.run.id, "Run ID");
+  if (options.attempt !== undefined) {
+    createAttemptIdentity(options.run.id, options.attempt.number, options.attempt.id, options.attempt.retryOf);
+  }
   if (!Number.isSafeInteger(options.maxWallClockMs) && options.maxWallClockMs !== undefined) {
     throw new Error("Coordinator wall-clock budget must be a positive safe integer.");
   }
@@ -568,31 +620,35 @@ function classifyHarness(
         ? taskClassification(result.reason ?? "Harness reported task failure.", workspaceArtifactId, "harness")
         : infrastructureClassification(result.reason ?? "Harness failed.", "harness", workspaceArtifactId);
     case "stopped":
-      return result.stopReason === "policy"
-        ? policyClassification(result.reason)
-        : budgetClassification("harness", result.reason);
+      if (result.stopReason === "policy") return policyClassification(result.reason);
+      if (result.stopReason === "budget") return budgetClassification("harness", result.reason);
+      return infrastructureClassification("Harness stopped without an explicit stop reason.", "harness", workspaceArtifactId);
     case "interrupted":
       return interruptedClassification(result.reason);
   }
 }
 
-function classifyVerifier(result: VerifierExecutionResult, workspaceArtifactId: string | undefined): AttemptClassification {
+function classifyVerifier(result: VerifierExecutionResult, workspace: WorkspaceExecutionResult | undefined): AttemptClassification {
   switch (result.status) {
     case "passed":
-      return completedClassification(workspaceArtifactId);
+      return completedClassification(workspace);
     case "failed":
-      return taskClassification(result.error ?? "Verifier reported task failure.", workspaceArtifactId, "verifier");
+      return taskClassification(result.error ?? "Verifier reported task failure.", workspace?.artifactId, "verifier");
     case "error":
-      return verifierErrorClassification(result.error ?? "Verifier failed to execute.", workspaceArtifactId);
+      return verifierErrorClassification(result.error ?? "Verifier failed to execute.", workspace?.artifactId);
     case "not-run":
-      return infrastructureClassification("Verifier did not run.", "verifier", workspaceArtifactId);
+      return infrastructureClassification("Verifier did not run.", "verifier", workspace?.artifactId);
   }
 }
 
-function completedClassification(workspaceArtifactId?: string): AttemptClassification {
+function completedClassification(workspace: WorkspaceExecutionResult | undefined): AttemptClassification {
+  if (workspace === undefined || workspace.status === "failed" || workspace.retained === false
+      || workspace.artifactId === undefined) {
+    return infrastructureClassification("Completed run requires a retained workspace artifact.", "workspace", workspace?.artifactId);
+  }
   return {
     kind: "completed",
-    terminal: { state: "completed", failureClass: "none", stopReason: "none", ...(workspaceArtifactId === undefined ? {} : { workspaceArtifactId }) },
+    terminal: { state: "completed", failureClass: "none", stopReason: "none", workspaceArtifactId: workspace.artifactId },
     source: "runner",
   };
 }

@@ -17,7 +17,7 @@ import {
 
 const run = createRunIdentity({ taskId: "task-1", modelId: "model-1", harnessId: "harness-1" });
 
-function workspace(result: { status: "ready" | "failed" } = { status: "ready" }) {
+function workspace(result: { status: "ready" | "failed"; artifactId?: string } = { status: "ready", artifactId: "workspace-1" }) {
   return {
     setup: async () => result,
     cleanup: async () => undefined,
@@ -67,6 +67,7 @@ test("runtime shutdown callbacks stay executable but never enter durable records
     run,
     workspace: workspace(),
     harness: async () => ({ status: "completed", shutdown: () => { shutdownCalls += 1; } }),
+    verifier: async () => ({ status: "passed" }),
   });
   assert.equal(result.terminal.state, "completed");
   assert.equal(shutdownCalls, 0);
@@ -79,6 +80,7 @@ test("verifier task failures and verifier errors remain distinct", async () => {
     workspace: workspace(),
     harness: async () => ({ status: "completed" }),
     verifier: async () => ({ status: "failed", error: "assertion failed" }),
+    evidence: { flush: () => undefined },
   });
   assert.equal(taskFailure.terminal.failureClass, "task");
   assert.equal(taskFailure.classification.kind, "task-failure");
@@ -88,6 +90,7 @@ test("verifier task failures and verifier errors remain distinct", async () => {
     workspace: workspace(),
     harness: async () => ({ status: "completed" }),
     verifier: async () => ({ status: "error", error: "verifier crashed" }),
+    evidence: { flush: () => undefined },
   });
   assert.equal(infrastructureFailure.terminal.failureClass, "infrastructure");
   assert.equal(infrastructureFailure.classification.kind, "verifier-error");
@@ -191,6 +194,51 @@ test("a workspace that settles during interruption is retained for cleanup and e
   assert.equal(cleanedWorkspace, "late-workspace");
 });
 
+test("cancellation during cleanup reaches cleanup and interrupts a successful outcome", async () => {
+  const controller = new AbortController();
+  let cleanupSawAbort = false;
+  const resultPromise = executeRunAttempt({
+    run,
+    signal: controller.signal,
+    workspace: {
+      setup: async () => ({ status: "ready", artifactId: "workspace-1" }),
+      cleanup: async ({ signal }) => {
+        controller.abort();
+        cleanupSawAbort = signal.aborted;
+      },
+    },
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => ({ status: "passed" }),
+  });
+  const result = await resultPromise;
+  assert.equal(cleanupSawAbort, true);
+  assert.equal(result.terminal.state, "interrupted");
+});
+
+test("a verifier result that settles during interruption remains in the partial record", async () => {
+  const controller = new AbortController();
+  let verifierStartedResolve: (() => void) | undefined;
+  const verifierStarted = new Promise<void>((resolvePromise) => { verifierStartedResolve = resolvePromise; });
+  const resultPromise = executeRunAttempt({
+    run,
+    signal: controller.signal,
+    shutdownGraceMs: 100,
+    workspace: workspace({ status: "ready" }),
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => {
+      verifierStartedResolve?.();
+      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 20));
+      return { status: "passed", evidence: { completed: true } };
+    },
+    evidence: { flush: () => undefined },
+  });
+  await verifierStarted;
+  controller.abort();
+  const result = await resultPromise;
+  assert.equal(result.terminal.state, "interrupted");
+  assert.equal(result.record.verifier?.status, "passed");
+});
+
 test("an already-aborted signal is retained as an interruption", async () => {
   const controller = new AbortController();
   controller.abort();
@@ -208,12 +256,45 @@ test("an already-aborted signal is retained as an interruption", async () => {
   assert.equal(result.terminal.state, "interrupted");
 });
 
+test("a missing verifier is recorded as not-run instead of a false completion", async () => {
+  const result = await executeRunAttempt({
+    run,
+    workspace: workspace(),
+    harness: async () => ({ status: "completed" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.record.verifier?.status, "not-run");
+  assert.equal(result.terminal.failureClass, "infrastructure");
+  assert.equal(result.classification.kind, "verifier-error");
+});
+
+test("completion requires a retained workspace artifact", async () => {
+  const result = await executeRunAttempt({
+    run,
+    workspace: workspace({ status: "ready" }),
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => ({ status: "passed" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.failureClass, "infrastructure");
+  assert.equal(result.classification.source, "workspace");
+});
+
 test("retry creates a new linked identity and never replaces the prior attempt", () => {
   const first = createAttemptIdentity(run.id, 1, "attempt-1");
   const second = retryAttempt(first, "attempt-2");
   assert.deepEqual(second, { id: "attempt-2", number: 2, retryOf: "attempt-1" });
   assert.notEqual(second.id, first.id);
   assert.throws(() => createAttemptIdentity(run.id, 2, "attempt-2"), /retryOf/);
+});
+
+test("supplied attempt identities are validated before execution", async () => {
+  await assert.rejects(executeRunAttempt({
+    run,
+    attempt: { id: "attempt-2", number: 2 },
+    workspace: workspace(),
+    harness: async () => ({ status: "completed" }),
+  }), /retryOf/);
 });
 
 test("attempt persistence rejects replacing another attempt's record", async () => {
@@ -231,6 +312,29 @@ test("attempt persistence rejects replacing another attempt's record", async () 
     await writeAttemptRecord(path, first);
     await assert.rejects(writeAttemptRecord(path, second), /another attempt/);
     assert.equal((await readAttemptRecord(path)).attempt.id, "first");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("record persistence failure does not bypass cleanup", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-persist-"));
+  let cleaned = false;
+  try {
+    const result = await executeRunAttempt({
+      run,
+      recordPath: root,
+      workspace: {
+        setup: async () => ({ status: "ready", artifactId: "workspace-1" }),
+        cleanup: async () => { cleaned = true; },
+      },
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    assert.equal(cleaned, true);
+    assert.equal(result.terminal.failureClass, "infrastructure");
+    assert.equal(result.record.persistence?.status, "incomplete");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -280,4 +384,31 @@ test("a final capture failure is classified before the durable terminal record",
   assert.equal(result.classification.kind, "capture-incomplete");
   assert.equal(result.record.classification?.kind, "capture-incomplete");
   assert.equal(result.record.capture?.status, "incomplete");
+});
+
+test("a stopped harness without a reason is not silently treated as a budget stop", async () => {
+  const result = await executeRunAttempt({
+    run,
+    workspace: workspace(),
+    harness: async () => ({ status: "stopped" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.failureClass, "infrastructure");
+  assert.notEqual(result.terminal.stopReason, "budget");
+});
+
+test("a synchronously over-budget harness is stopped before its result is accepted", async () => {
+  const result = await executeRunAttempt({
+    run,
+    harnessBudgetMs: 1,
+    workspace: workspace(),
+    harness: () => {
+      const end = Date.now() + 5;
+      while (Date.now() < end) {}
+      return { status: "completed" };
+    },
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.state, "stopped");
+  assert.equal(result.terminal.stopReason, "budget");
 });

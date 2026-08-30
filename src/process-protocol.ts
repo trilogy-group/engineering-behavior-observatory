@@ -618,6 +618,7 @@ export class ProtocolProcess {
       ...(this.protocolError === undefined ? {} : { protocolError: this.protocolError }),
       ...(this.childError === undefined ? {} : { error: this.childError }),
       ...(this.evidencePath === undefined ? {} : { evidencePath: this.evidencePath }),
+      ...(this.stderrPath === undefined ? {} : { stderrPath: this.stderrPath }),
       observations: [...this.recorder.observations],
     };
     if (this.ownsWriter) {
