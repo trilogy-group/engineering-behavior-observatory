@@ -53,11 +53,31 @@ export type {
   DeclaredMatrixCell,
   Digest,
   ExperimentConfiguration,
+  ExperimentOrdering,
   ReferenceSolutionDeclaration,
   ResolvedTaskPacket,
   TaskCondition,
   TaskConditionSet,
 } from "./contracts.js";
+export {
+  assertValidRunQueue,
+  compileRunQueue,
+  expandMatrixCells,
+  inspectRunQueue,
+  LocalRunQueue,
+  readRunQueue,
+  validateRunQueue,
+  writeRunQueue,
+} from "./scheduler.js";
+export type {
+  CompileRunQueueOptions,
+  FrozenTaskIdentity,
+  FrozenTaskInput,
+  QueueOrderingStrategy,
+  RunQueue,
+  RunQueueEntry,
+  RunQueueInspection,
+} from "./scheduler.js";
 export {
   digestWorkspace,
   executeVerifier,

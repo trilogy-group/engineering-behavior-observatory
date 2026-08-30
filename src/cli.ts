@@ -12,8 +12,19 @@ import {
   inspectTaskPacket,
   statusTaskPacket,
 } from "./task-packets.js";
+import {
+  compileRunQueue,
+  inspectRunQueue,
+  readRunQueue,
+  validateRunQueue,
+  writeRunQueue,
+  type RunQueue,
+} from "./scheduler.js";
 
 const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <command> ...
+       ebo matrix compile <experiment.json> <bundle-root> <queue.json>
+       ebo queue inspect <queue.json>
+       ebo queue validate <queue.json> [experiment.json]
 
 Engineering Behavior Observatory
 `;
@@ -33,6 +44,29 @@ export function main(
 
   if (args[0] === "task-packet") {
     return runTaskPacketCommand(args.slice(1), write);
+  }
+
+  if ((args[0] === "matrix" && args[1] === "compile") || args[0] === "compile") {
+    return compileQueue(args[0] === "matrix" ? args.slice(2) : args.slice(1), write);
+  }
+
+  if (args[0] === "queue" && args[1] === "inspect") {
+    if (args[2] === undefined) {
+      write("Usage: ebo queue inspect <queue.json>\n");
+      return 1;
+    }
+    try {
+      const inspection = inspectRunQueue(readRunQueue(args[2]));
+      write(`Run queue ${args[2]}: ${inspection.entryCount} entr${inspection.entryCount === 1 ? "y" : "ies"}; seed=${inspection.seed}; strategy=${inspection.strategy}.\n`);
+      return 0;
+    } catch (error) {
+      write(`${errorMessage(error)}\n`);
+      return 1;
+    }
+  }
+
+  if (args[0] === "queue" && args[1] === "validate") {
+    return validateQueue(args.slice(2), write);
   }
 
   if (args[0] === "validate") {
@@ -55,6 +89,10 @@ export function main(
     });
     const errors = artifacts.flatMap(({ artifact, document, error }) => {
       if (error !== undefined) return [error];
+      if (document !== undefined && typeof document === "object" && document !== null
+          && (document as { schemaVersion?: unknown }).schemaVersion === "ebo.run-queue/v1") {
+        return validateRunQueue(document, undefined, artifact);
+      }
       const validation = validateArtifact(artifact, document);
       return document !== undefined && typeof document === "object" && document !== null
         && (document as { schemaVersion?: unknown }).schemaVersion === "run-manifest/v1"
@@ -88,6 +126,84 @@ export function main(
 
   process.stderr.write(`Unknown argument: ${args[0]}\n`);
   return 1;
+}
+
+function compileQueue(
+  args: string[],
+  write: (message: string) => void,
+): number {
+  const positional: string[] = [];
+  let bundleRoot: string | undefined;
+  let outputPath: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (argument === "--bundle-root") {
+      bundleRoot = args[++index];
+    } else if (argument === "--output") {
+      outputPath = args[++index];
+    } else {
+      positional.push(argument);
+    }
+  }
+  const experimentPath = positional.shift();
+  if (experimentPath === undefined) {
+    write("Usage: ebo matrix compile <experiment.json> <bundle-root> <queue.json>\n");
+    return 1;
+  }
+  if (bundleRoot === undefined && positional.length === 2) bundleRoot = positional.shift();
+  if (outputPath === undefined && positional.length === 1) outputPath = positional.shift();
+  if (bundleRoot === undefined) bundleRoot = dirname(experimentPath);
+  if (outputPath === undefined) {
+    write("Usage: ebo matrix compile <experiment.json> <bundle-root> <queue.json>\n");
+    return 1;
+  }
+
+  try {
+    const experiment = readJson(experimentPath);
+    const queue = compileRunQueue(experiment as Parameters<typeof compileRunQueue>[0], { bundleRoot });
+    writeRunQueue(outputPath, queue);
+    write(`Compiled ${queue.entries.length} run entr${queue.entries.length === 1 ? "y" : "ies"} into ${outputPath}. Seed: ${queue.seed}.\n`);
+    return 0;
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  }
+}
+
+function validateQueue(
+  args: string[],
+  write: (message: string) => void,
+): number {
+  const queuePath = args[0];
+  if (queuePath === undefined || args.length > 2) {
+    write("Usage: ebo queue validate <queue.json> [experiment.json]\n");
+    return 1;
+  }
+  try {
+    const queue = readJson(queuePath);
+    const experiment = args[1] === undefined ? undefined : readJson(args[1]);
+    const errors = validateRunQueue(queue, experiment as Parameters<typeof compileRunQueue>[0] | undefined, queuePath);
+    if (errors.length > 0) {
+      for (const error of errors) write(`${error.artifact} [${error.schemaVersion}] ${error.field}: ${error.message}\n`);
+      return 1;
+    }
+    const entryCount = (queue as RunQueue).entries.length;
+    write(`Validated run queue ${queuePath} (${entryCount} entr${entryCount === 1 ? "y" : "ies"}).\n`);
+    return 0;
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  }
+}
+
+function readJson(path: string): unknown {
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(path));
+  assertNoDuplicateJsonKeys(text);
+  return JSON.parse(text);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unable to process run queue.";
 }
 
 function runTaskPacketCommand(

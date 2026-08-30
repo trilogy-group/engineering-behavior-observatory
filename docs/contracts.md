@@ -122,5 +122,27 @@ The fixtures include a generic 18-cell matrix and a differently shaped matrix
 to show that no study dimensions are built into the contract. Parsed numeric
 controls are limited to JavaScript safe integers.
 
+## Run queues
+
+`compileRunQueue` expands an experiment into a persisted
+`ebo.run-queue/v1` document. Every entry contains the task-packet freeze
+identity, digest-pinned model and harness configuration references, and a
+one-based trial identity. Run IDs are hashes of those identities, so compiling
+the same experiment with the same seed produces byte-identical queue metadata.
+
+The compiler supports sequential (`declared` is retained as its legacy name),
+seeded-shuffle (`permuted` is retained as its legacy name), and balanced
+interleaving. Interleaving round-robins the selected dimension (model by
+default) and preserves every cell exactly once, including matrices whose
+groups have different sizes. Configuration references are resolved before
+compilation, and every task packet must have a matching, admitted freeze
+record. Queue writes use the existing atomic artifact writer and do not
+execute work or coordinate across machines.
+
+The CLI exposes `ebo matrix compile <experiment.json> <bundle-root>
+<queue.json>`, `ebo queue inspect <queue.json>`, and `ebo queue validate
+<queue.json> [experiment.json]`. The 18-cell fixture is only a generality test;
+the compiler has no fixed task, model, harness, or trial count.
+
 Unknown schema versions and sharing classifications are invalid. Consumers must
 validate a document before materializing a workspace or scheduling a run.
