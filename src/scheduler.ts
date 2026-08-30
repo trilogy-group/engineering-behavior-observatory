@@ -798,6 +798,9 @@ function resolveFrozenTasks(
   const tasks = new Map<string, FrozenTaskIdentity>();
   const packetDigests = new Set<string>();
   const freezeLocators = new Map<string, string>();
+  const packetLocators = new Map(
+    Object.entries(experiment.taskSet).map(([taskId, condition]) => [condition.packetRef.locator.toLowerCase(), taskId]),
+  );
 
   for (const [taskId, condition] of Object.entries(experiment.taskSet)) {
     const suppliedInput = supplied?.[taskId] ?? supplied?.[condition.packetRef.locator];
@@ -814,6 +817,10 @@ function resolveFrozenTasks(
       throw new Error(`Task packet "${taskId}" duplicates a packet digest.`);
     }
     const freezeLocatorKey = identity.freezeLocator.toLowerCase();
+    const packetOwner = packetLocators.get(freezeLocatorKey);
+    if (packetOwner !== undefined) {
+      throw new Error(`Task packet "${taskId}" freeze locator aliases packet locator for task "${packetOwner}".`);
+    }
     const previousTask = freezeLocators.get(freezeLocatorKey);
     if (previousTask !== undefined && previousTask !== taskId) {
       throw new Error(`Task packet "${taskId}" shares a freeze locator with task "${previousTask}".`);
@@ -893,8 +900,11 @@ function provenanceOptions(
     resolved = { ...resolved, frozenTasks };
   }
   if (options.bundleRoot === undefined && !hasExplicitFreezeInputs) {
-    const freezeLocators = Object.fromEntries(queue.entries.map((entry) => [entry.taskId, entry.task.freezeLocator]));
-    resolved = { ...resolved, freezeLocators };
+    const persistedLocators = Object.fromEntries(queue.entries.map((entry) => [entry.taskId, entry.task.freezeLocator]));
+    resolved = {
+      ...resolved,
+      freezeLocators: { ...persistedLocators, ...options.freezeLocators },
+    };
   }
   return resolved;
 }

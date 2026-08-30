@@ -247,6 +247,13 @@ test("compiles arbitrary matrices with stable serialized identities", () => {
     }),
     [],
   );
+  assert.match(
+    validateRunQueue(customNoRootQueue, experiment, "run-queue.json", {
+      resolvedPackets: customFreezeOptions.resolvedPackets,
+      freezeLocators: { "task-a": "freezes/other-task-a.json" },
+    }).map((error) => error.message).join("\n"),
+    /Frozen task identity/,
+  );
   assert.throws(
     () => compileRunQueue(experiment, {
       ...compileOptions(experiment),
@@ -260,6 +267,13 @@ test("compiles arbitrary matrices with stable serialized identities", () => {
       freezeLocators: { "task-a": "freezes/shared.json", "task-b": "freezes/shared.json" },
     }),
     /task-b.*shares a freeze locator/,
+  );
+  assert.throws(
+    () => compileRunQueue(experiment, {
+      ...compileOptions(experiment),
+      freezeLocators: { "task-a": "packets/task-b.json" },
+    }),
+    /task-a.*aliases packet locator.*task-b/,
   );
 
   const changedExperiment = structuredClone(experiment);
