@@ -355,6 +355,9 @@ export class ProtocolEvidenceRecorder {
   public recordCapability(input: ProtocolCapability): Promise<ProtocolObservation> {
     assertNonEmpty(input.source, "Capability source");
     assertNonEmpty(input.name, "Capability name");
+    if (!["available", "unsupported", "missing", "not-checked"].includes(String(input.status))) {
+      return Promise.reject(new Error("Capability status is invalid."));
+    }
     return this.record({
       kind: "capability",
       source: input.source,

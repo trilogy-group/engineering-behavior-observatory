@@ -59,6 +59,7 @@ export type AttemptClassification = {
   reason?: string;
   source?: "runner" | "workspace" | "harness" | "verifier" | "cleanup" | "capture";
   underlying?: AttemptClassificationKind;
+  underlyingSource?: AttemptClassification["source"];
 };
 
 export type WorkspaceExecutionResult = {
@@ -787,6 +788,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         reason: record.capture.error,
         source: "capture",
         underlying: classification.kind,
+        ...(classification.source === undefined ? {} : { underlyingSource: classification.source }),
       };
     }
     if (budgetTimer !== undefined) clearTimeout(budgetTimer);
@@ -802,7 +804,13 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         && classificationUnderlyingKind(classification) === "completed") {
       const failedPersistence = infrastructureClassification(persistenceError, "runner", workspace);
       classification = record.capture?.status === "incomplete"
-        ? { ...failedPersistence, kind: "capture-incomplete", source: "capture", underlying: failedPersistence.kind }
+        ? {
+          ...failedPersistence,
+          kind: "capture-incomplete",
+          source: "capture",
+          underlying: failedPersistence.kind,
+          ...(failedPersistence.source === undefined ? {} : { underlyingSource: failedPersistence.source }),
+        }
         : failedPersistence;
       record.classification = classification;
       record.terminal = classification.terminal;
@@ -1411,11 +1419,17 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     if (value.classification.source !== undefined && !["runner", "workspace", "harness", "verifier", "cleanup", "capture"].includes(String(value.classification.source))) {
       throw new Error("Classification source is invalid.");
     }
+    if (value.classification.underlyingSource !== undefined
+        && !["runner", "workspace", "harness", "verifier", "cleanup", "capture"].includes(String(value.classification.underlyingSource))) {
+      throw new Error("Classification underlying source is invalid.");
+    }
     if (value.classification.underlying !== undefined) {
       if (value.classification.kind !== "capture-incomplete" || !isClassificationKind(value.classification.underlying)
           || value.classification.underlying === "capture-incomplete") {
         throw new Error("Classification underlying outcome is invalid.");
       }
+    } else if (value.classification.underlyingSource !== undefined) {
+      throw new Error("Classification underlying source requires a wrapped outcome.");
     }
     assertTerminalRecord(value.classification.terminal);
     if (!sameTerminalRecord(value.terminal, value.classification.terminal)) {
@@ -1425,12 +1439,25 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     const classificationKind = value.classification.kind === "capture-incomplete"
       ? value.classification.underlying
       : value.classification.kind;
+    const classificationSource = value.classification.kind === "capture-incomplete"
+      ? value.classification.underlyingSource
+      : value.classification.source;
     if (classificationKind === "policy-stop") {
       if (!visitedStates.has("running")) {
         throw new Error("Policy-stop terminal records require the running lifecycle phase.");
       }
       if (!isRecord(value.harness) || value.harness.status !== "stopped" || value.harness.stopReason !== "policy") {
         throw new Error("Policy-stop terminal records require a matching stopped harness result.");
+      }
+    }
+    if (classificationKind === "budget-stop" && classificationSource !== "runner") {
+      if (!visitedStates.has("running")) {
+        throw new Error("Harness budget-stop terminal records require the running lifecycle phase.");
+      }
+      if (!isRecord(value.harness)
+          || !((value.harness.status === "stopped" && value.harness.stopReason === "budget")
+            || value.harness.status === "interrupted")) {
+        throw new Error("Harness budget-stop terminal records require compatible harness evidence.");
       }
     }
     const expectedPartial = classificationUnderlyingKind(value.classification as unknown as AttemptClassification) !== "completed"
@@ -1457,6 +1484,9 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     }
     assertHarnessStatus(value.harness, "completed");
     assertCleanupStatus(value.cleanup, "completed");
+    if (isRecord(value.persistence) && value.persistence.status !== "complete") {
+      throw new Error("Completed terminal records cannot have incomplete persistence.");
+    }
     assertTerminalWorkspaceEvidence(value.workspace, value.terminal.workspaceArtifactId);
     assertVerifierStatus(value.verifier, "passed");
   }

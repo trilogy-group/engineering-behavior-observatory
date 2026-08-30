@@ -1293,6 +1293,45 @@ test("policy-stop records require native stopped harness evidence", async () => 
   }
 });
 
+test("harness budget-stop records require compatible harness evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-budget-evidence-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "stopped", stopReason: "budget", reason: "harness budget" }),
+      evidence: { flush: () => undefined },
+    });
+    const record = structuredClone(result.record);
+    delete record.harness;
+    const path = join(root, "missing-budget-harness.json");
+    writeFileSync(path, `${JSON.stringify(record)}\n`);
+    await assert.rejects(readAttemptRecord(path), /compatible harness evidence/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("completed terminal records reject incomplete persistence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-persistence-status-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    const record = structuredClone(result.record);
+    record.persistence = { status: "incomplete", error: "publication failed" };
+    const path = join(root, "incomplete-persistence.json");
+    writeFileSync(path, `${JSON.stringify(record)}\n`);
+    await assert.rejects(readAttemptRecord(path), /incomplete persistence/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("terminal attempt records require matching terminal classification", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-terminal-record-"));
   try {
