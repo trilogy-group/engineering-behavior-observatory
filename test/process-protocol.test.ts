@@ -274,11 +274,29 @@ test("keeps frame limits independent from the evidence envelope", async () => {
   }
 });
 
-test("bounds frames to the envelope capacity of a caller-owned writer", async () => {
+test("caller-owned writers retain large frames within their default envelope", async () => {
   const root = temporaryRoot();
   try {
     const evidencePath = join(root, "caller-writer.jsonl");
     const writer = new JsonlEvidenceWriter(evidencePath);
+    const processResult = await runProtocolProcess({
+      ...nodeScript("process.stdout.write(JSON.stringify('x'.repeat(2_100_000)) + '\\n')"),
+      source: "fake-harness",
+      writer,
+    });
+    assert.equal(processResult.status, "completed");
+    assert.equal(processResult.stdoutFrames, 1);
+    await writer.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("caller-owned writer bounds an oversized frame before recorder append", async () => {
+  const root = temporaryRoot();
+  try {
+    const evidencePath = join(root, "bounded-caller-writer.jsonl");
+    const writer = new JsonlEvidenceWriter(evidencePath, { maxLineBytes: 4 * 1024 * 1024 });
     const processResult = await runProtocolProcess({
       ...nodeScript("process.stdout.write(JSON.stringify('x'.repeat(2_100_000)) + '\\n')"),
       source: "fake-harness",

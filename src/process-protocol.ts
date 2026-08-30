@@ -66,6 +66,7 @@ export type JsonlEvidenceWriterOptions = {
 };
 
 const DEFAULT_MAX_LINE_BYTES = 4 * 1024 * 1024;
+const DEFAULT_MAX_RECORD_BYTES = DEFAULT_MAX_LINE_BYTES * 8 + 4096;
 const DEFAULT_MAX_STDERR_BYTES = 64 * 1024;
 const DEFAULT_SHUTDOWN_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 250;
@@ -102,7 +103,7 @@ export class JsonlEvidenceWriter {
   public constructor(path: string, options: JsonlEvidenceWriterOptions = {}) {
     if (path.trim() === "") throw new Error("JSONL evidence path is required.");
     this.path = resolve(path);
-    this.maxLineBytes = positiveInteger(options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES, "JSONL line limit");
+    this.maxLineBytes = positiveInteger(options.maxLineBytes ?? DEFAULT_MAX_RECORD_BYTES, "JSONL line limit");
     this.shouldFsync = options.fsync ?? true;
     this.exclusive = options.exclusive ?? false;
   }
