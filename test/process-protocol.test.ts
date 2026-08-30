@@ -102,6 +102,18 @@ test("request observation inputs cannot override their fixed kind", async () => 
   }
 });
 
+test("a JSONL writer cannot be reused by multiple protocol recorders", async () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "single-recorder.jsonl"));
+    new ProtocolEvidenceRecorder(writer, "first-harness");
+    assert.throws(() => new ProtocolEvidenceRecorder(writer, "second-harness"), /only be used by one/);
+    await writer.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("process timer grace periods reject values above Node's maximum", () => {
   assert.throws(() => spawnProtocolProcess({
     ...nodeScript(""),

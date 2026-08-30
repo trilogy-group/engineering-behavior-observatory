@@ -72,6 +72,7 @@ const DEFAULT_KILL_GRACE_MS = 250;
 const DEFAULT_MAX_IN_MEMORY_OBSERVATIONS = 1024;
 const MAX_TIMER_MS = 2_147_483_647;
 const INTERNAL_RECORDER_TOKEN = Symbol("internal recorder event");
+const RECORDER_WRITERS = new WeakSet<JsonlEvidenceWriter>();
 
 /**
  * Appends JSON records one line at a time and optionally fsyncs each append.
@@ -293,6 +294,8 @@ export class ProtocolEvidenceRecorder {
   ) {
     assertNonEmpty(source, "Protocol source");
     this.maxInMemoryObservations = positiveInteger(maxInMemoryObservations, "In-memory observation limit");
+    if (RECORDER_WRITERS.has(writer)) throw new Error("A JSONL evidence writer can only be used by one protocol recorder.");
+    RECORDER_WRITERS.add(writer);
   }
 
   public get observations(): readonly ProtocolObservation[] {

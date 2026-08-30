@@ -1228,6 +1228,30 @@ test("completed attempt records require harness and verification lifecycle phase
   }
 });
 
+test("task-failure attempt records require harness execution phases", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-task-phases-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "failed", error: "assertion failed" }),
+      evidence: { flush: () => undefined },
+    });
+    const record = structuredClone(result.record);
+    const lifecycle = new LifecycleController(() => "created");
+    lifecycle.transition("setup", "setup");
+    lifecycle.transition("cleaning", "cleaning");
+    lifecycle.transition("terminal", "terminal");
+    record.lifecycle = lifecycle.snapshot();
+    const path = join(root, "missing-task-phases.json");
+    writeFileSync(path, `${JSON.stringify(record)}\n`);
+    await assert.rejects(readAttemptRecord(path), /Task-failure terminal records require/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("retained workspace evidence must be linked from partial terminals", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-partial-link-"));
   try {

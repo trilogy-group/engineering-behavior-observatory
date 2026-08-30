@@ -1207,6 +1207,7 @@ function classificationUnderlyingKind(classification: AttemptClassification): At
 }
 
 function snapshotWorkspace(workspace: WorkspaceExecutionResult): WorkspaceExecutionResult {
+  assertWorkspaceResult(workspace);
   assertJsonValue(workspace, "workspace", new Set<object>());
   return structuredClone(workspace);
 }
@@ -1444,10 +1445,15 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       throw new Error("Completed terminal records require running and verifying lifecycle phases.");
     }
     assertHarnessStatus(value.harness, "completed");
+    assertCleanupStatus(value.cleanup, "completed");
     assertTerminalWorkspaceEvidence(value.workspace, value.terminal.workspaceArtifactId);
     assertVerifierStatus(value.verifier, "passed");
   }
   if (value.terminal?.state === "failed" && value.terminal.failureClass === "task") {
+    if (!visitedStates.has("running") || !visitedStates.has("verifying")) {
+      throw new Error("Task-failure terminal records require running and verifying lifecycle phases.");
+    }
+    assertHarnessStatus(value.harness, "completed");
     assertTerminalWorkspaceEvidence(value.workspace, value.terminal.workspaceArtifactId);
     assertVerifierStatus(value.verifier, "failed");
   }
@@ -1631,6 +1637,12 @@ function assertVerifierStatus(verifier: unknown, status: "passed" | "failed"): v
 function assertHarnessStatus(harness: unknown, status: HarnessExecutionResult["status"]): void {
   if (!isRecord(harness) || harness.status !== status) {
     throw new Error(`Terminal outcome requires a ${status} harness result.`);
+  }
+}
+
+function assertCleanupStatus(cleanup: unknown, status: "completed" | "failed" | "timed-out"): void {
+  if (!isRecord(cleanup) || cleanup.status !== status) {
+    throw new Error(`Terminal outcome requires ${status} cleanup.`);
   }
 }
 
