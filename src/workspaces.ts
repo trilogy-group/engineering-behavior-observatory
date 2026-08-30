@@ -576,11 +576,14 @@ async function runSetup(
       await step(workspacePath);
     }
   } finally {
-    if (processTreeBefore !== undefined) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      reapSetupDescendants(processTreeBefore);
+    try {
+      if (processTreeBefore !== undefined) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        reapSetupDescendants(processTreeBefore);
+      }
+    } finally {
+      releaseSetup?.();
     }
-    releaseSetup?.();
   }
 }
 

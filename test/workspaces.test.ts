@@ -264,6 +264,38 @@ test("rejects a setup FIFO without blocking", { skip: process.platform === "win3
   }
 });
 
+test("releases setup serialization when process reaping fails", { skip: process.platform === "win32" }, async () => {
+  const { root } = createBundle();
+  const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+  const originalPath = process.env.PATH;
+
+  try {
+    freezeTaskPacket(root, "packet.json");
+    const failed = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "reap-failure",
+      workspaceParent: parent,
+      setup: () => { process.env.PATH = ""; },
+    });
+    assert.equal(failed.state, "failed");
+    process.env.PATH = originalPath;
+    const recovered = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "reap-recovered",
+      workspaceParent: parent,
+      setup: () => {},
+    });
+    assert.equal(recovered.state, "ready");
+    await recovered.cleanup("success");
+  } finally {
+    process.env.PATH = originalPath;
+    rmSync(root, { force: true, recursive: true });
+    rmSync(parent, { force: true, recursive: true });
+  }
+});
+
 test("rejects malicious archive paths and selected links before creating a workspace", async () => {
   const cases = [
     fixtureArchive([{ path: "src/../../outside.txt", bytes: Buffer.from("escape") }]),
