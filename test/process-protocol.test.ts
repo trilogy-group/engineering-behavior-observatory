@@ -88,6 +88,20 @@ test("records JSONL frames, source-owned observations, and bounded stderr", asyn
   }
 });
 
+test("request observation inputs cannot override their fixed kind", async () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "fixed-kind.jsonl"));
+    const recorder = new ProtocolEvidenceRecorder(writer, "fake-harness");
+    const input = { source: "fake-harness", method: "event", kind: "response" as const };
+    const observation = await recorder.recordRequest(input);
+    assert.equal(observation.kind, "request");
+    await recorder.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("retains the original JSONL frame text when parsed values lose precision", async () => {
   const root = temporaryRoot();
   try {

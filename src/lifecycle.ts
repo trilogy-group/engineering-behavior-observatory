@@ -212,6 +212,15 @@ const ALLOWED_TRANSITIONS: Record<LifecycleState, readonly LifecycleState[]> = {
   terminal: [],
 };
 
+const LIFECYCLE_PROGRESS: Record<LifecycleState, number> = {
+  created: 0,
+  setup: 1,
+  running: 2,
+  verifying: 3,
+  cleaning: 4,
+  terminal: 5,
+};
+
 export function createRunIdentity(input: {
   id?: string;
   taskId: string;
@@ -853,6 +862,7 @@ async function writeAttemptRecordInternal(path: string, record: AttemptRecord): 
         if (existing.terminal !== undefined || existing.classification !== undefined) {
           throw new Error(`Attempt record "${path}" is already terminal.`);
         }
+        assertCheckpointDoesNotRegress(existing, record);
         await rename(temporary, destination);
         await syncDirectory(dirname(destination));
       }
@@ -979,6 +989,34 @@ function validateOptions(options: RunAttemptOptions): void {
   }
   if (options.shutdownGraceMs !== undefined && options.shutdownGraceMs < 0) {
     throw new Error("Shutdown grace period must be a nonnegative safe integer.");
+  }
+}
+
+function assertCheckpointDoesNotRegress(existing: AttemptRecord, incoming: AttemptRecord): void {
+  const existingProgress = LIFECYCLE_PROGRESS[existing.lifecycle.state];
+  const incomingProgress = LIFECYCLE_PROGRESS[incoming.lifecycle.state];
+  if (incomingProgress < existingProgress || incoming.lifecycle.transitions.length < existing.lifecycle.transitions.length) {
+    throw new Error("Attempt record update regresses lifecycle progress.");
+  }
+  for (const [index, transition] of existing.lifecycle.transitions.entries()) {
+    const incomingTransition = incoming.lifecycle.transitions[index];
+    if (incomingTransition.from !== transition.from || incomingTransition.to !== transition.to || incomingTransition.at !== transition.at) {
+      throw new Error("Attempt record update changes retained lifecycle transitions.");
+    }
+  }
+  for (const field of [
+    "workspace",
+    "harness",
+    "verifier",
+    "harnessTerminationConfirmed",
+    "verifierTerminationConfirmed",
+    "cleanup",
+    "capture",
+    "persistence",
+  ] as const) {
+    if (existing[field] !== undefined && incoming[field] === undefined) {
+      throw new Error(`Attempt record update drops retained ${field} evidence.`);
+    }
   }
 }
 
@@ -1199,6 +1237,7 @@ async function shutdownVerifier(
 
 function durableHarnessResult(result: HarnessExecutionResult): HarnessExecutionResult {
   const { shutdown: _shutdown, ...durable } = result;
+  assertHarnessResult(durable);
   assertJsonValue(durable, "harness", new Set<object>());
   return structuredClone(durable);
 }
@@ -1472,6 +1511,9 @@ function assertWorkspaceResult(value: unknown): asserts value is WorkspaceExecut
 function assertHarnessResult(value: unknown): asserts value is HarnessExecutionResult {
   if (!isRecord(value) || !["completed", "failed", "stopped", "interrupted"].includes(String(value.status))) {
     throw new Error("Attempt harness evidence is invalid.");
+  }
+  if (value.status === "completed" && (value.failureClass !== undefined || value.stopReason !== undefined)) {
+    throw new Error("Completed harness evidence cannot include failure or stop fields.");
   }
   if (value.failureClass !== undefined && !["infrastructure", "task"].includes(String(value.failureClass))) {
     throw new Error("Harness failure class is invalid.");

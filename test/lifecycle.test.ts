@@ -874,6 +874,53 @@ test("attempt persistence rejects replacing another attempt's record", async () 
   }
 });
 
+test("attempt persistence rejects stale lifecycle checkpoints", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-stale-checkpoint-"));
+  try {
+    const path = join(root, "attempt.json");
+    const lifecycle = new LifecycleController(() => "created");
+    lifecycle.transition("setup", "setup");
+    lifecycle.transition("running", "running");
+    const current = {
+      schemaVersion: "ebo.attempt/v1" as const,
+      run,
+      attempt: createAttemptIdentity(run.id, 1, "attempt-1"),
+      lifecycle: lifecycle.snapshot(),
+      partial: true,
+      workspace: { status: "ready" as const, artifactId: "workspace-1" },
+    };
+    await writeAttemptRecord(path, current);
+    const { workspace: _workspace, ...currentWithoutWorkspace } = current;
+    const stale = {
+      ...currentWithoutWorkspace,
+      lifecycle: new LifecycleController(() => "created").snapshot(),
+    };
+    await assert.rejects(writeAttemptRecord(path, stale), /regresses lifecycle progress/);
+    assert.equal((await readAttemptRecord(path)).lifecycle.state, "running");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("completed harness results reject contradictory failure and stop fields", async () => {
+  const failureField = await executeRunAttempt({
+    run,
+    workspace: workspace(),
+    harness: async () => ({ status: "completed", failureClass: "task" }),
+    verifier: async () => ({ status: "passed" }),
+    evidence: { flush: () => undefined },
+  });
+  const stopField = await executeRunAttempt({
+    run,
+    workspace: workspace(),
+    harness: async () => ({ status: "completed", stopReason: "budget" }),
+    verifier: async () => ({ status: "passed" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(failureField.terminal.failureClass, "infrastructure");
+  assert.equal(stopField.terminal.failureClass, "infrastructure");
+});
+
 test("attempt persistence rejects reopening a terminal attempt", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-terminal-overwrite-"));
   try {

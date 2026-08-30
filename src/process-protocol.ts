@@ -312,15 +312,15 @@ export class ProtocolEvidenceRecorder {
   }
 
   public recordRequest(input: ProtocolObservationInput): Promise<ProtocolObservation> {
-    return this.record({ kind: "request", ...input, observedAt: input.observedAt ?? this.now() });
+    return this.record({ ...input, kind: "request", observedAt: input.observedAt ?? this.now() });
   }
 
   public recordResponse(input: ProtocolObservationInput): Promise<ProtocolObservation> {
-    return this.record({ kind: "response", ...input, observedAt: input.observedAt ?? this.now() });
+    return this.record({ ...input, kind: "response", observedAt: input.observedAt ?? this.now() });
   }
 
   public recordNotification(input: ProtocolObservationInput): Promise<ProtocolObservation> {
-    return this.record({ kind: "notification", ...input, observedAt: input.observedAt ?? this.now() });
+    return this.record({ ...input, kind: "notification", observedAt: input.observedAt ?? this.now() });
   }
 
   public recordCompletion(input: ProtocolCompletionEvidence): Promise<ProtocolObservation> {
@@ -472,6 +472,7 @@ export class ProtocolProcess {
   private interruptionStarted = false;
   private childError: string | undefined;
   private signalQueue: Promise<void> = Promise.resolve();
+  private abortListener: (() => void) | undefined;
 
   public constructor(private readonly options: ProtocolProcessOptions) {
     assertNonEmpty(options.command, "Protocol command");
@@ -529,6 +530,7 @@ export class ProtocolProcess {
     const abort = () => {
       void this.interrupt();
     };
+    this.abortListener = abort;
     if (this.options.signal?.aborted) abort();
     else this.options.signal?.addEventListener("abort", abort, { once: true });
     if (this.childError !== undefined) void this.recorder.recordError(this.childError, undefined, INTERNAL_RECORDER_TOKEN);
@@ -749,6 +751,9 @@ export class ProtocolProcess {
       await this.recorder.flush();
     } catch (error) {
       this.childError ??= `Protocol evidence could not be persisted: ${errorMessage(error)}`;
+    }
+    if (this.options.signal !== undefined && this.abortListener !== undefined) {
+      this.options.signal.removeEventListener("abort", this.abortListener);
     }
     const stderr = this.stderrCapture.result();
     if (this.stderrPath !== undefined) {
