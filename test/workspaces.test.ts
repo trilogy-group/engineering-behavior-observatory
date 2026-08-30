@@ -327,6 +327,38 @@ test("turns setup spawn errors into failed attempts", { skip: process.platform =
   }
 });
 
+test("closes the setup process context before returning", { skip: process.platform === "win32" }, async () => {
+  const { root } = createBundle();
+  const parent = mkdtempSync(join(tmpdir(), "ebo-workspace-parent-"));
+  let lateError: unknown;
+
+  try {
+    freezeTaskPacket(root, "packet.json");
+    const result = await materializeWorkspace({
+      bundleRoot: root,
+      packetLocator: "packet.json",
+      attemptId: "closed-setup-context",
+      workspaceParent: parent,
+      setup: (_workspacePath, context) => {
+        setTimeout(() => {
+          try {
+            context.spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+          } catch (error) {
+            lateError = error;
+          }
+        }, 25);
+      },
+    });
+    assert.equal(result.state, "ready");
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    assert.match(String(lateError), /Workspace setup context is closed/);
+    await result.cleanup("success");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(parent, { force: true, recursive: true });
+  }
+});
+
 test("rejects malicious archive paths and selected links before creating a workspace", async () => {
   const cases = [
     fixtureArchive([{ path: "src/../../outside.txt", bytes: Buffer.from("escape") }]),

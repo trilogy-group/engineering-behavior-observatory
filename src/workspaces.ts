@@ -17,6 +17,7 @@ import {
   readSync,
   rmSync,
   realpathSync,
+  unlinkSync,
   writeSync,
 } from "node:fs";
 import { chmod, lstat, mkdir, realpath } from "node:fs/promises";
@@ -749,8 +750,10 @@ async function runSetup(
   if (process.platform === "win32") throw new Error("Workspace setup process tracking is unavailable on this platform.");
   const children = new Map<number, ChildProcess>();
   let spawnError: Error | undefined;
+  let contextOpen = true;
   const context: WorkspaceSetupContext = {
     spawn(command, args, options) {
+      if (!contextOpen) throw new Error("Workspace setup context is closed.");
       const child = spawnOwnedProcess(command, args, options);
       child.once("error", (error: unknown) => {
         spawnError = error instanceof Error ? error : new Error("Workspace setup child failed.");
@@ -765,6 +768,7 @@ async function runSetup(
       await step(workspacePath, context);
     }
   } finally {
+    contextOpen = false;
     await new Promise<void>((resolve) => setImmediate(resolve));
     await reapSetupChildren(children);
     if (spawnError !== undefined) throw new Error(`Workspace setup child failed: ${spawnError.message}`);
@@ -909,17 +913,13 @@ function removeWorkspaceIfOwned(path: string, expected: WorkspaceIdentity | unde
       const moved = lstatSync(quarantine);
       if (moved.isDirectory() && !moved.isSymbolicLink()
           && moved.dev === expected.dev && moved.ino === expected.ino) {
-        rmSync(quarantine, { force: true, recursive: true });
-        return true;
+        if (removeQuarantinedWorkspace(quarantine, expected)) return true;
       }
-      if (moved.isSymbolicLink()) {
-        rmSync(quarantine, { force: true });
-      } else {
+      if (sameIdentity(moved, { dev: expected.dev, ino: expected.ino })) {
         try {
           lstatSync(path);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === "ENOENT") renameSync(quarantine, path);
-          else throw error;
         }
       }
       return false;
@@ -930,6 +930,119 @@ function removeWorkspaceIfOwned(path: string, expected: WorkspaceIdentity | unde
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return expected === undefined;
     throw error;
   }
+}
+
+function removeQuarantinedWorkspace(path: string, expected: WorkspaceIdentity): boolean {
+  let rootFd: number;
+  try {
+    rootFd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  } catch {
+    return false;
+  }
+  const originalCwd = process.cwd();
+  try {
+    if (!sameIdentity(fstatSync(rootFd), expected)) return false;
+    process.chdir(path);
+    const cwdFd = openSync(".", constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    try {
+      if (!sameIdentity(fstatSync(cwdFd), expected)) return false;
+      removeDirectoryContentsFromCwd();
+    } finally {
+      closeSync(cwdFd);
+    }
+    process.chdir(originalCwd);
+    const current = lstatSync(path);
+    if (!current.isDirectory() || current.isSymbolicLink() || !sameIdentity(current, expected)) return false;
+    rmdirSync(path);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    process.chdir(originalCwd);
+    closeSync(rootFd);
+  }
+}
+
+function removeDirectoryContentsFromCwd(): void {
+  const handle = opendirSync(".");
+  try {
+    for (let entry = handle.readSync(); entry !== null; entry = handle.readSync()) {
+      removeDirectoryEntryFromCwd(entry.name, entry.isDirectory());
+    }
+  } finally {
+    handle.closeSync();
+  }
+}
+
+function removeDirectoryEntryFromCwd(name: string, directory: boolean): void {
+  const current = lstatSync(name);
+  if (current.isSymbolicLink()) {
+    moveAndUnlinkFromCwd(name, current);
+    return;
+  }
+  if (!current.isDirectory() && !current.isFile()) {
+    moveAndUnlinkFromCwd(name, current);
+    return;
+  }
+  const childFd = openChildSync(name, directory);
+  try {
+    const opened = fstatSync(childFd);
+    if (!sameIdentity(current, opened)) throw new Error(`Workspace entry "${name}" changed during cleanup.`);
+    if (opened.isDirectory()) moveAndRemoveDirectoryFromCwd(name, opened);
+    else moveAndUnlinkFromCwd(name, opened);
+  } finally {
+    closeSync(childFd);
+  }
+}
+
+function moveAndUnlinkFromCwd(name: string, expected: { dev: number; ino: number }): void {
+  const alias = `.ebo-clean-${randomUUID()}`;
+  try {
+    lstatSync(alias);
+    throw new Error(`Workspace cleanup alias already exists: "${alias}".`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  renameSync(name, alias);
+  const moved = lstatSync(alias);
+  if (!sameIdentity(moved, expected)) throw new Error(`Workspace entry "${name}" changed during cleanup.`);
+  const final = lstatSync(alias);
+  if (!sameIdentity(final, expected)) throw new Error(`Workspace entry "${name}" changed during cleanup.`);
+  unlinkSync(alias);
+}
+
+function moveAndRemoveDirectoryFromCwd(
+  name: string,
+  expected: { dev: number; ino: number },
+): void {
+  const alias = `.ebo-clean-${randomUUID()}`;
+  try {
+    lstatSync(alias);
+    throw new Error(`Workspace cleanup alias already exists: "${alias}".`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  renameSync(name, alias);
+  let entered = false;
+  try {
+    if (!sameIdentity(lstatSync(alias), expected)) throw new Error(`Workspace entry "${name}" changed during cleanup.`);
+    process.chdir(alias);
+    entered = true;
+    const cwdFd = openSync(".", constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    try {
+      if (!sameIdentity(fstatSync(cwdFd), expected)) throw new Error(`Workspace entry "${name}" changed during cleanup.`);
+      removeDirectoryContentsFromCwd();
+    } finally {
+      closeSync(cwdFd);
+    }
+  } finally {
+    if (entered) process.chdir("..");
+  }
+  const final = lstatSync(join(".", alias));
+  if (!final.isDirectory() || final.isSymbolicLink() || !sameIdentity(final, expected)) {
+    throw new Error(`Workspace entry "${name}" changed during cleanup.`);
+  }
+  rmdirSync(alias);
 }
 
 function assertAttemptId(attemptId: string): void {
