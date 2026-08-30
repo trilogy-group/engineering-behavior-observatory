@@ -467,6 +467,15 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           record.workspace = snapshotWorkspace(workspace);
           if (workspace.status === "failed") {
             classification = infrastructureClassification("Workspace setup failed.", "workspace", workspace);
+            if (workspaceShutdown !== undefined) {
+              workspaceTerminationConfirmed = false;
+              const shutdownResult = await shutdownWorkspace(workspaceShutdown, options.shutdownGraceMs ?? 250);
+              if (shutdownResult !== undefined) {
+                workspace = { ...workspace, shutdownResult };
+                record.workspace = snapshotWorkspace(workspace);
+                workspaceTerminationConfirmed = shutdownResult.status === "completed";
+              }
+            }
           }
         }
       }
@@ -1279,6 +1288,16 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
   if (value.classification !== undefined) {
     if (!isRecord(value.classification) || !isClassificationKind(value.classification.kind)) {
       throw new Error("Attempt classification is invalid.");
+    }
+    if (value.classification.reason !== undefined) assertTimestampValue(value.classification.reason, "Classification reason");
+    if (value.classification.source !== undefined && !["runner", "workspace", "harness", "verifier", "cleanup", "capture"].includes(String(value.classification.source))) {
+      throw new Error("Classification source is invalid.");
+    }
+    if (value.classification.underlying !== undefined) {
+      if (value.classification.kind !== "capture-incomplete" || !isClassificationKind(value.classification.underlying)
+          || value.classification.underlying === "capture-incomplete") {
+        throw new Error("Classification underlying outcome is invalid.");
+      }
     }
     assertTerminalRecord(value.classification.terminal);
     if (!sameTerminalRecord(value.terminal, value.classification.terminal)) {

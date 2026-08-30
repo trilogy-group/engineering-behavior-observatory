@@ -229,6 +229,36 @@ test("bounds a frame observer that never settles", async () => {
   }
 });
 
+test("fences a late frame observer before it can append after finalization", async () => {
+  const root = temporaryRoot();
+  let lateError: Error | undefined;
+  try {
+    const evidencePath = join(root, "late-observer.jsonl");
+    const writer = new JsonlEvidenceWriter(evidencePath);
+    const processResult = await runProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({ready:true})); setTimeout(()=>{}, 10000)"),
+      source: "fake-harness",
+      writer,
+      shutdownGraceMs: 5,
+      onFrame: async (_payload, recorder) => {
+        await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 30));
+        try {
+          await recorder.recordNotification({ source: "fake-harness", method: "late" });
+        } catch (error) {
+          lateError = error instanceof Error ? error : new Error(String(error));
+        }
+      },
+    });
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 40));
+    await writer.close();
+    assert.equal(processResult.status, "failed");
+    assert.match(lateError?.message ?? "", /fenced/);
+    assert.equal(readFileSync(evidencePath, "utf8").includes('"method":"late"'), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("records recorder-triggered termination distinctly", async () => {
   const root = temporaryRoot();
   try {

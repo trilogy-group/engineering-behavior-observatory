@@ -487,6 +487,28 @@ test("cleanup receives a workspace snapshot and cannot rewrite retained evidence
   assert.equal(result.record.workspace?.shutdownResult?.status, "completed");
 });
 
+test("a failed workspace setup shuts down its registered helper before cleanup", async () => {
+  let shutdownCalls = 0;
+  let cleanupCalls = 0;
+  const result = await executeRunAttempt({
+    run,
+    shutdownGraceMs: 50,
+    workspace: {
+      setup: async ({ registerShutdown }) => {
+        registerShutdown(async () => { shutdownCalls += 1; });
+        return { status: "failed", error: "materialization failed" };
+      },
+      cleanup: async () => { cleanupCalls += 1; },
+    },
+    harness: async () => ({ status: "completed" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.terminal.failureClass, "infrastructure");
+  assert.equal(shutdownCalls, 1);
+  assert.equal(cleanupCalls, 1);
+  assert.equal(result.record.workspace?.shutdownResult?.status, "completed");
+});
+
 test("verifier results are snapshotted before cleanup can mutate them", async () => {
   let verifierResult: { status: "passed" | "failed" } = { status: "passed" };
   const result = await executeRunAttempt({

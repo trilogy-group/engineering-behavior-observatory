@@ -70,6 +70,7 @@ const DEFAULT_MAX_STDERR_BYTES = 64 * 1024;
 const DEFAULT_SHUTDOWN_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 250;
 const DEFAULT_MAX_IN_MEMORY_OBSERVATIONS = 1024;
+const INTERNAL_RECORDER_TOKEN = Symbol("internal recorder event");
 
 /**
  * Appends JSON records one line at a time and optionally fsyncs each append.
@@ -272,6 +273,7 @@ export class ProtocolEvidenceRecorder {
   private readonly records: ProtocolObservation[] = [];
   private readonly maxInMemoryObservations: number;
   private queue: Promise<void> = Promise.resolve();
+  private fenced = false;
   private _dropped = 0;
 
   public constructor(
@@ -290,6 +292,11 @@ export class ProtocolEvidenceRecorder {
 
   public get droppedObservations(): number {
     return this._dropped;
+  }
+
+  /** Prevents late observer callbacks from appending after process finalization. */
+  public fence(): void {
+    this.fenced = true;
   }
 
   public recordFrame(payload: unknown, observedAt = this.now(), raw?: string): Promise<ProtocolObservation> {
@@ -335,7 +342,7 @@ export class ProtocolEvidenceRecorder {
     });
   }
 
-  public recordError(message: string, evidence?: unknown): Promise<ProtocolObservation> {
+  public recordError(message: string, evidence?: unknown, token?: typeof INTERNAL_RECORDER_TOKEN): Promise<ProtocolObservation> {
     assertNonEmpty(message, "Protocol error");
     return this.record({
       kind: "error",
@@ -343,10 +350,10 @@ export class ProtocolEvidenceRecorder {
       status: message,
       ...(evidence === undefined ? {} : { evidence }),
       observedAt: this.now(),
-    });
+    }, token === INTERNAL_RECORDER_TOKEN);
   }
 
-  public recordProcess(status: string, evidence?: unknown): Promise<ProtocolObservation> {
+  public recordProcess(status: string, evidence?: unknown, token?: typeof INTERNAL_RECORDER_TOKEN): Promise<ProtocolObservation> {
     assertNonEmpty(status, "Process status");
     return this.record({
       kind: "process",
@@ -354,7 +361,7 @@ export class ProtocolEvidenceRecorder {
       status,
       ...(evidence === undefined ? {} : { evidence }),
       observedAt: this.now(),
-    });
+    }, token === INTERNAL_RECORDER_TOKEN);
   }
 
   public flush(): Promise<void> {
@@ -378,7 +385,8 @@ export class ProtocolEvidenceRecorder {
     capability?: string;
     stream?: "stdout" | "stderr";
     observedAt: string;
-  }): Promise<ProtocolObservation> {
+  }, allowFenced = false): Promise<ProtocolObservation> {
+    if (this.fenced && !allowFenced) return Promise.reject(new Error("Protocol evidence recorder is fenced."));
     assertNonEmpty(input.source, "Protocol source");
     if (input.method !== undefined) assertNonEmpty(input.method, "Protocol method");
     if (input.id !== undefined && (typeof input.id === "number" && !Number.isFinite(input.id)
@@ -502,7 +510,7 @@ export class ProtocolProcess {
     this.child = spawn(options.command, this.args, spawnOptions);
     this.child.on("error", (error) => {
       this.childError ??= errorMessage(error);
-      void this.recorder.recordError(this.childError).catch(() => undefined);
+      void this.recorder.recordError(this.childError, undefined, INTERNAL_RECORDER_TOKEN).catch(() => undefined);
     });
     this.attachStreams();
     this.waitPromise = new Promise<ProtocolProcessResult>((resolveResult) => {
@@ -515,7 +523,7 @@ export class ProtocolProcess {
     };
     if (this.options.signal?.aborted) abort();
     else this.options.signal?.addEventListener("abort", abort, { once: true });
-    if (this.childError !== undefined) void this.recorder.recordError(this.childError);
+    if (this.childError !== undefined) void this.recorder.recordError(this.childError, undefined, INTERNAL_RECORDER_TOKEN);
   }
 
   public get pid(): number | undefined {
@@ -642,7 +650,10 @@ export class ProtocolProcess {
       const observer = Promise.resolve(this.options.onFrame(payload, this.recorder));
       const outcome = await settleObserver(observer, this.shutdownGraceMs);
       if (outcome.status === "failed") throw outcome.error;
-      if (outcome.status === "timed-out") throw new Error("Protocol frame observer exceeded its grace period.");
+      if (outcome.status === "timed-out") {
+        this.recorder.fence();
+        throw new Error("Protocol frame observer exceeded its grace period.");
+      }
     }
   }
 
@@ -651,7 +662,7 @@ export class ProtocolProcess {
     this.protocolError = { line, message, ...(raw === undefined ? {} : { raw }) };
     this.setTermination("malformed");
     try {
-      await this.recorder.recordError(message, raw === undefined ? undefined : { raw });
+      await this.recorder.recordError(message, raw === undefined ? undefined : { raw }, INTERNAL_RECORDER_TOKEN);
     } catch (error) {
       this.childError ??= `Protocol error evidence could not be persisted: ${errorMessage(error)}`;
     }
@@ -663,7 +674,7 @@ export class ProtocolProcess {
     this.recorderError = message;
     this.setTermination("recorder-error");
     try {
-      await this.recorder.recordError(message);
+      await this.recorder.recordError(message, undefined, INTERNAL_RECORDER_TOKEN);
     } catch (error) {
       this.childError ??= `Protocol error evidence could not be persisted: ${errorMessage(error)}`;
     }
@@ -724,6 +735,7 @@ export class ProtocolProcess {
       await this.recorder.recordProcess(
         signal === null && exitCode === 0 ? "exited" : "terminated",
         { exitCode, signal, pid: this.child.pid ?? null },
+        INTERNAL_RECORDER_TOKEN,
       );
       await this.recorder.flush();
     } catch (error) {
