@@ -902,7 +902,13 @@ export class ProtocolProcess {
         this.childError ??= `Protocol evidence could not be closed: ${errorMessage(error)}`;
       }
     }
-    const endedAt = this.now();
+    let endedAt: string;
+    try {
+      endedAt = this.now();
+    } catch (error) {
+      this.childError ??= `Process completion timestamp could not be recorded: ${errorMessage(error)}`;
+      endedAt = this.startedAt;
+    }
     const termination = this.termination;
     const status = this.protocolError !== undefined
       ? "malformed"

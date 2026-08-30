@@ -343,6 +343,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   let persistenceError: string | undefined;
   let initialCheckpointError: string | undefined;
   let reservationPath: string | undefined;
+  let allowTerminalReplacement = false;
   if (options.recordPath !== undefined) {
     await assertAttemptRecordPathAvailable(options.recordPath, runSnapshot, attemptSnapshot);
     reservationPath = await reserveAttemptRecordPath(options.recordPath);
@@ -352,7 +353,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     if (options.recordPath === undefined) return;
     try {
       record.persistence = { status: "complete" };
-      await writeAttemptRecordInternal(options.recordPath, record);
+      await writeAttemptRecordInternal(options.recordPath, record, allowTerminalReplacement);
     } catch (error) {
       persistenceError ??= errorMessage(error);
       record.persistence = { status: "incomplete", error: persistenceError };
@@ -816,7 +817,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         ...(classification.source === undefined ? {} : { underlyingSource: classification.source }),
       };
     }
-    if (budgetTimer !== undefined) clearTimeout(budgetTimer);
+    markCoordinatorBudgetIfExpired();
     lifecycle.transition("terminal");
     classification ??= infrastructureClassification("Run did not produce a terminal outcome.", "runner", workspace);
     record.classification = classification;
@@ -825,6 +826,17 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       || record.capture?.status === "incomplete";
     const persistenceBeforeTerminal = persistenceError;
     await persist();
+    markCoordinatorBudgetIfExpired();
+    if (classificationUnderlyingKind(classification) === "completed"
+        && (budgetExpired !== undefined || abortCause === "interrupted")) {
+      classification = abortClassification(abortCause, budgetExpired, undefined, workspace);
+      record.classification = classification;
+      record.terminal = classification.terminal;
+      record.partial = true;
+      allowTerminalReplacement = true;
+      await persist();
+      allowTerminalReplacement = false;
+    }
     if (persistenceError !== undefined && persistenceBeforeTerminal === undefined
         && classificationUnderlyingKind(classification) === "completed") {
       const failedPersistence = infrastructureClassification(persistenceError, "runner", workspace);
@@ -872,7 +884,7 @@ export async function writeAttemptRecord(path: string, record: AttemptRecord): P
   await withRecordReservationLock(destination, () => writeAttemptRecordInternal(path, record));
 }
 
-async function writeAttemptRecordInternal(path: string, record: AttemptRecord): Promise<void> {
+async function writeAttemptRecordInternal(path: string, record: AttemptRecord, allowTerminalReplacement = false): Promise<void> {
   assertRecord(record);
   const destination = resolve(path);
   await withRecordPublicationLock(destination, async () => {
@@ -896,10 +908,10 @@ async function writeAttemptRecordInternal(path: string, record: AttemptRecord): 
         if (existing.run.id !== record.run.id || existing.attempt.id !== record.attempt.id) {
           throw new Error(`Attempt record "${path}" already belongs to another attempt.`);
         }
-        if (existing.terminal !== undefined || existing.classification !== undefined) {
+        if (!allowTerminalReplacement && (existing.terminal !== undefined || existing.classification !== undefined)) {
           throw new Error(`Attempt record "${path}" is already terminal.`);
         }
-        assertCheckpointDoesNotRegress(existing, record);
+        if (!allowTerminalReplacement) assertCheckpointDoesNotRegress(existing, record);
         await rename(temporary, destination);
         await syncDirectory(dirname(destination));
       }
