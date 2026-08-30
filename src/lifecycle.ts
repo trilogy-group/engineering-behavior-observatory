@@ -829,7 +829,17 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     markCoordinatorBudgetIfExpired();
     if (classificationUnderlyingKind(classification) === "completed"
         && (budgetExpired !== undefined || abortCause === "interrupted")) {
-      classification = abortClassification(abortCause, budgetExpired, undefined, workspace);
+      const correctedClassification = abortClassification(abortCause, budgetExpired, undefined, workspace);
+      classification = record.capture?.status === "incomplete"
+        ? {
+          kind: "capture-incomplete",
+          terminal: correctedClassification.terminal,
+          ...(record.capture.error === undefined ? {} : { reason: record.capture.error }),
+          source: "capture",
+          underlying: correctedClassification.kind,
+          ...(correctedClassification.source === undefined ? {} : { underlyingSource: correctedClassification.source }),
+        }
+        : correctedClassification;
       record.classification = classification;
       record.terminal = classification.terminal;
       record.partial = true;
@@ -856,6 +866,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       // persistence failure rather than reporting an unverified completion.
       await persist();
     }
+    if (budgetTimer !== undefined) clearTimeout(budgetTimer);
     options.signal?.removeEventListener("abort", externalAbort);
     if (reservationPath !== undefined) await rm(reservationPath, { force: true });
     if (initialCheckpointError !== undefined) {
