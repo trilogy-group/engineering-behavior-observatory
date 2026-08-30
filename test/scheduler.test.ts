@@ -487,6 +487,19 @@ test("queue validation checks the supplied experiment and frozen task record", (
   invalidExperiment.extra = true;
   assert.match(validateRunQueue(queue, invalidExperiment).map((error) => error.message).join("\n"), /must NOT have additional properties/);
 
+  const invalidDeclaredOrder = structuredClone(experiment);
+  invalidDeclaredOrder.ordering = {
+    ...invalidDeclaredOrder.ordering,
+    declaredOrder: {
+      taskIds: ["missing-task"],
+      modelIds: Object.keys(invalidDeclaredOrder.modelSet),
+      harnessIds: Object.keys(invalidDeclaredOrder.harnessSet),
+    },
+  };
+  const invalidOrderErrors = validateRunQueue(queue, invalidDeclaredOrder);
+  assert.equal(invalidOrderErrors[0]?.field, "/experiment");
+  assert.match(invalidOrderErrors.map((error) => error.message).join("\n"), /Declared task IDs/);
+
   const unknownBytes = Buffer.from("{\"algorithm\":\"unknown\"}");
   const unsupported = compileOptions(experiment, unknownBytes);
   assert.match(

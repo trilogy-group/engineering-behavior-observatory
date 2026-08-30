@@ -254,7 +254,16 @@ export function writeRunQueue(path: string, queue: RunQueue): Digest {
 }
 
 function assertRunQueueByteLimit(queue: RunQueue): void {
-  if (Buffer.byteLength(canonicalizeMetadata(queue)) > MAX_RUN_QUEUE_BYTES) {
+  const emptyEntries = { ...queue, entries: [] };
+  let bytes = Buffer.byteLength(canonicalizeMetadata(emptyEntries));
+  for (const entry of queue.entries) {
+    bytes += Buffer.byteLength(canonicalizeMetadata(entry));
+    if (bytes > MAX_RUN_QUEUE_BYTES) {
+      throw new Error(`Run queue exceeds the local byte limit of ${MAX_RUN_QUEUE_BYTES}.`);
+    }
+  }
+  if (queue.entries.length > 1) bytes += queue.entries.length - 1;
+  if (bytes > MAX_RUN_QUEUE_BYTES) {
     throw new Error(`Run queue exceeds the local byte limit of ${MAX_RUN_QUEUE_BYTES}.`);
   }
 }
@@ -323,11 +332,13 @@ export function validateRunQueue(
   options: ValidateRunQueueOptions = {},
 ): ArtifactValidationError[] {
   let validatedPermutationAlgorithm: PermutationAlgorithm | undefined;
+  let expectedMatrix: RunQueueMatrix | undefined;
   if (experiment !== undefined) {
     const experimentErrors = validateArtifact("experiment.json", experiment);
     if (experimentErrors.length > 0) return experimentErrors;
     try {
       assertMatrixSize(experiment);
+      expectedMatrix = { ...matrixOrder(experiment), trialCount: experiment.trialCount };
       if (options.bundleRoot !== undefined || options.resolvedDigests !== undefined) {
         assertResolvedExperimentConfigurationDigests(experiment, resolveConfigurationDigests(experiment, options));
       }
@@ -517,7 +528,7 @@ export function validateRunQueue(
     if (runQueue.coordinatorBudget.maxWallClockMs !== experiment.coordinatorBudget.maxWallClockMs) {
       semanticErrors.push(queueError(artifact, "/coordinatorBudget", "Run queue coordinator budget does not match the experiment."));
     }
-    if (!sameMatrix(runQueue.matrix, { ...matrixOrder(experiment), trialCount: experiment.trialCount })) {
+    if (expectedMatrix !== undefined && !sameMatrix(runQueue.matrix, expectedMatrix)) {
       semanticErrors.push(queueError(artifact, "/matrix", "Run queue matrix metadata does not match the experiment."));
     }
     const expectedOrdering = normalizeOrdering(experiment.ordering);
@@ -529,19 +540,22 @@ export function validateRunQueue(
         || (expectedOrdering.strategy === "seeded-shuffle" && runQueue.ordering.permutationAlgorithm === undefined)) {
       semanticErrors.push(queueError(artifact, "/ordering", "Run queue ordering does not match the experiment."));
     }
-    const expectedCells = new Set(expandMatrixCells(experiment).map(cellKeyOf));
-    if (expectedCells.size !== cells.size || [...expectedCells].some((key) => !cells.has(key))) {
-      semanticErrors.push(queueError(artifact, "/entries", "Run queue cells do not match the experiment matrix."));
-    }
-    const expectedOrder = orderCells(
-      expandMatrixCells(experiment),
-      experiment.ordering,
-      validatedPermutationAlgorithm ?? runQueue.ordering.permutationAlgorithm ?? "fisher-yates-v1",
-    ).map(cellKeyOf);
-    const actualOrder = runQueue.entries.map(cellKeyOf);
-    if (expectedOrder.length !== actualOrder.length
-        || expectedOrder.some((key, index) => key !== actualOrder[index])) {
-      semanticErrors.push(queueError(artifact, "/entries", "Run queue order does not match the experiment ordering policy."));
+    if (expectedMatrix !== undefined) {
+      const expectedCells = [...declaredMatrixCells(expectedMatrix, experiment.trialCount)];
+      const expectedKeys = new Set(expectedCells.map(cellKeyOf));
+      if (expectedKeys.size !== cells.size || [...expectedKeys].some((key) => !cells.has(key))) {
+        semanticErrors.push(queueError(artifact, "/entries", "Run queue cells do not match the experiment matrix."));
+      }
+      const expectedOrder = orderCells(
+        expectedCells,
+        experiment.ordering,
+        validatedPermutationAlgorithm ?? runQueue.ordering.permutationAlgorithm ?? "fisher-yates-v1",
+      ).map(cellKeyOf);
+      const actualOrder = runQueue.entries.map(cellKeyOf);
+      if (expectedOrder.length !== actualOrder.length
+          || expectedOrder.some((key, index) => key !== actualOrder[index])) {
+        semanticErrors.push(queueError(artifact, "/entries", "Run queue order does not match the experiment ordering policy."));
+      }
     }
   }
   return semanticErrors;
