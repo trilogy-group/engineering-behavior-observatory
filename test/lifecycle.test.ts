@@ -1505,6 +1505,32 @@ test("a synchronously over-budget harness is stopped before its result is accept
   assert.equal(result.terminal.stopReason, "budget");
 });
 
+test("post-budget harness completion is durably retained as a budget stop", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-budget-completion-"));
+  try {
+    const recordPath = join(root, "attempt.json");
+    const result = await executeRunAttempt({
+      run,
+      recordPath,
+      harnessBudgetMs: 1,
+      workspace: workspace(),
+      harness: () => {
+        const end = Date.now() + 5;
+        while (Date.now() < end) {}
+        return { status: "completed", completionEvidence: { completed: true } };
+      },
+      evidence: { flush: () => undefined },
+    });
+    assert.equal(result.terminal.state, "stopped");
+    assert.equal(result.terminal.stopReason, "budget");
+    assert.equal(result.record.harness?.status, "stopped");
+    assert.equal(result.record.harness?.stopReason, "budget");
+    assert.equal((await readAttemptRecord(recordPath)).terminal?.stopReason, "budget");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a synchronously over-budget verifier cannot produce completion", async () => {
   const result = await executeRunAttempt({
     run,

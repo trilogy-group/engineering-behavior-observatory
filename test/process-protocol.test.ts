@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { readFileSync, rmSync, mkdtempSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -124,6 +124,23 @@ test("a closed recorder cannot be replaced by a new writer for the same path", a
     await firstRecorder.recordProcess("exited");
     await firstWriter.close();
     const secondWriter = new JsonlEvidenceWriter(path);
+    assert.throws(() => new ProtocolEvidenceRecorder(secondWriter, "second-harness"), /path is already claimed/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("writer claims follow symlinked evidence paths", async () => {
+  const root = temporaryRoot();
+  try {
+    const target = join(root, "target.jsonl");
+    const alias = join(root, "alias.jsonl");
+    const firstWriter = new JsonlEvidenceWriter(target);
+    const firstRecorder = new ProtocolEvidenceRecorder(firstWriter, "first-harness");
+    await firstRecorder.recordProcess("exited");
+    await firstWriter.close();
+    symlinkSync(target, alias);
+    const secondWriter = new JsonlEvidenceWriter(alias);
     assert.throws(() => new ProtocolEvidenceRecorder(secondWriter, "second-harness"), /path is already claimed/);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -422,6 +439,7 @@ test("rejects values that JSONL cannot preserve", async () => {
     await assert.rejects(recorder.recordResponse({ source: "fake-harness", method: "event", id: Number.POSITIVE_INFINITY }), /Protocol identity/);
     await assert.rejects(recorder.recordCapability({ source: "fake-harness", name: "unknown-capability", status: "unknown" as never }), /Capability status/);
     await assert.rejects(recorder.recordCompletion({ source: "fake-harness", status: "completed", evidence: undefined }), /Completion evidence/);
+    await assert.rejects(recorder.recordFrame(undefined), /Frame payload/);
     await recorder.close();
   } finally {
     rmSync(root, { recursive: true, force: true });

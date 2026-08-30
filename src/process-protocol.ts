@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
-import { closeSync, constants, fsyncSync, mkdirSync, openSync } from "node:fs";
+import { closeSync, constants, fsyncSync, mkdirSync, openSync, realpathSync } from "node:fs";
 import { mkdir, open, type FileHandle } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 
 export type ProtocolIdentity = string | number | null;
 
@@ -161,11 +161,12 @@ export class JsonlEvidenceWriter {
 
   public claim(token?: typeof INTERNAL_RECORDER_TOKEN): void {
     if (this.claimed) throw new Error("JSONL evidence writer is already claimed by a protocol recorder.");
-    if (CLAIMED_WRITER_PATHS.has(this.path)) throw new Error("JSONL evidence path is already claimed by a protocol recorder.");
+    const canonicalPath = canonicalWriterPath(this.path);
+    if (CLAIMED_WRITER_PATHS.has(canonicalPath)) throw new Error("JSONL evidence path is already claimed by a protocol recorder.");
     if (this.hasWrites) throw new Error("JSONL evidence writer cannot be claimed after direct writes.");
     if (token !== INTERNAL_RECORDER_TOKEN) throw new Error("JSONL evidence writer claim is internal.");
     this.claimed = true;
-    CLAIMED_WRITER_PATHS.add(this.path);
+    CLAIMED_WRITER_PATHS.add(canonicalPath);
   }
 
   private async openHandle(): Promise<FileHandle> {
@@ -326,6 +327,7 @@ export class ProtocolEvidenceRecorder {
   }
 
   public recordFrame(payload: unknown, observedAt = this.now(), raw?: string): Promise<ProtocolObservation> {
+    if (payload === undefined) return Promise.reject(new Error("Frame payload is required."));
     return this.record({ kind: "frame", source: this.source, stream: "stdout", ...(raw === undefined ? {} : { raw }), payload, observedAt });
   }
 
@@ -863,6 +865,22 @@ function syncDirectory(path: string): void {
     fsyncSync(descriptor);
   } finally {
     closeSync(descriptor);
+  }
+}
+
+function canonicalWriterPath(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    let parent: string;
+    try {
+      parent = realpathSync.native(dirname(path));
+    } catch (parentError) {
+      if ((parentError as NodeJS.ErrnoException).code !== "ENOENT") throw parentError;
+      parent = resolve(dirname(path));
+    }
+    return resolve(parent, basename(path));
   }
 }
 

@@ -580,14 +580,14 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       if (outcome !== undefined && (outcome.kind === "aborted" || controller.signal.aborted)) {
         let harnessTerminationConfirmed = false;
         if (outcome.kind === "result") {
-          harnessResult = outcome.value;
-          record.harness = durableHarnessResult(outcome.value);
+          harnessResult = normalizeHarnessBudgetResult(outcome.value, budgetExpired);
+          record.harness = durableHarnessResult(harnessResult);
           harnessTerminationConfirmed = true;
         }
         const settledHarness = await settleWithTimeout(harnessPromise, options.shutdownGraceMs ?? 250);
         if (settledHarness.status === "completed" && harnessResult === undefined) {
-          harnessResult = settledHarness.value;
-          record.harness = durableHarnessResult(settledHarness.value);
+          harnessResult = normalizeHarnessBudgetResult(settledHarness.value, budgetExpired);
+          record.harness = durableHarnessResult(harnessResult);
           harnessTerminationConfirmed = true;
         } else if (settledHarness.status === "failed" && harnessResult === undefined) {
           record.harness = { status: "interrupted", error: errorMessage(settledHarness.error) };
@@ -612,14 +612,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
         };
         record.harnessTerminationConfirmed = harnessTerminationConfirmed;
       } else if (outcome?.kind === "result") {
-        harnessResult = budgetExpired === "harness" && outcome.value.status === "completed"
-          ? {
-            ...outcome.value,
-            status: "stopped",
-            stopReason: "budget",
-            reason: outcome.value.reason ?? "Harness completed after its budget deadline.",
-          }
-          : outcome.value;
+        harnessResult = normalizeHarnessBudgetResult(outcome.value, budgetExpired);
         record.harness = durableHarnessResult(harnessResult);
         classification = classifyHarness(harnessResult, workspace);
         if (classification !== undefined && harnessResult.status !== "completed") {
@@ -1302,6 +1295,20 @@ function durableHarnessResult(result: HarnessExecutionResult): HarnessExecutionR
   return structuredClone(durable);
 }
 
+function normalizeHarnessBudgetResult(
+  result: HarnessExecutionResult,
+  budgetExpired: "coordinator" | "harness" | undefined,
+): HarnessExecutionResult {
+  return budgetExpired === "harness" && result.status === "completed"
+    ? {
+      ...result,
+      status: "stopped",
+      stopReason: "budget",
+      reason: result.reason ?? "Harness completed after its budget deadline.",
+    }
+    : result;
+}
+
 async function settleWithTimeout<T>(
   promise: Promise<T>,
   milliseconds: number,
@@ -1499,6 +1506,9 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     }
     assertHarnessStatus(value.harness, "completed");
     assertCleanupStatus(value.cleanup, "completed");
+    if (value.harnessTerminationConfirmed === false || value.verifierTerminationConfirmed === false) {
+      throw new Error("Completed terminal records require confirmed execution termination.");
+    }
     if (isRecord(value.persistence) && value.persistence.status !== "complete") {
       throw new Error("Completed terminal records cannot have incomplete persistence.");
     }
