@@ -6,13 +6,16 @@ import {
   fstatSync,
   futimesSync,
   lstatSync,
+  mkdtempSync,
   openSync,
   opendirSync,
+  renameSync,
   rmdirSync,
   readSync,
+  rmSync,
   realpathSync,
 } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, open, realpath, rename, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, parse, posix, relative, resolve, sep } from "node:path";
 
@@ -97,21 +100,22 @@ export async function materializeWorkspace(
 
   const bundleRoot = await realpath(options.bundleRoot);
   const parent = await prepareWorkspaceParent(options.workspaceParent ?? options.workspaceRoot ?? tmpdir(), bundleRoot);
-  let workspacePath = await realpath(await mkdtemp(join(parent, `ebo-${attemptId}-`)));
+  const createdWorkspace = createWorkspace(parent, attemptId);
+  let workspacePath = createdWorkspace.path;
   if (!isDisjoint(bundleRoot, workspacePath)) {
-    await rm(workspacePath, { force: true, recursive: true });
+    removeWorkspaceIfOwned(workspacePath, createdWorkspace.identity);
     throw new Error("Workspace and task-bundle roots must be separate.");
   }
 
   const retainOnFailure = options.retainOnFailure === true;
-  let workspaceIdentity: WorkspaceIdentity | undefined;
+  let workspaceIdentity: WorkspaceIdentity | undefined = createdWorkspace.identity;
   let result: WorkspaceMaterialization | undefined;
   try {
     workspaceIdentity = await readWorkspaceRootIdentity(workspacePath);
     await chmod(workspacePath, DIRECTORY_MODE);
     for (const entry of entries) await materializeEntry(workspacePath, entry);
     await runSetup(options.setup, options.setupSteps, workspacePath);
-    workspacePath = await sealWorkspace(workspacePath, join(parent, `.ebo-${attemptId}-sealed-${randomUUID()}`), workspaceIdentity);
+    workspacePath = sealWorkspace(workspacePath, join(parent.path, `.ebo-${attemptId}-sealed-${randomUUID()}`), workspaceIdentity);
     normalizeWorkspace(workspacePath, workspaceIdentity);
     assertWorkspaceRoot(workspacePath, workspaceIdentity);
     const workspaceFingerprint = digestMaterializedWorkspace(workspacePath, workspaceIdentity);
@@ -134,7 +138,7 @@ export async function materializeWorkspace(
       && await isSafeWorkspaceRoot(workspacePath, workspaceIdentity)
       && await isSafeWorkspaceTree(workspacePath);
     if (!retainOnFailure || !rootIsSafe) {
-      await removeWorkspaceIfOwned(workspacePath, workspaceIdentity);
+      removeWorkspaceIfOwned(workspacePath, workspaceIdentity);
     }
     result = createResult({
       attemptId,
@@ -159,7 +163,7 @@ export async function cleanupWorkspace(
 ): Promise<void> {
   if (materialization.state === "cleaned") return;
   if (outcome === "failure" && materialization.retainOnFailure && materialization.retained) return;
-  if (!await removeWorkspaceIfOwned(materialization.workspacePath, materialization.workspaceIdentity)) {
+  if (!removeWorkspaceIfOwned(materialization.workspacePath, materialization.workspaceIdentity)) {
     throw new Error("Workspace root changed before cleanup.");
   }
   materialization.status = "cleaned";
@@ -201,7 +205,9 @@ function createResult(input: {
   return result;
 }
 
-async function prepareWorkspaceParent(parent: string, bundleRoot: string): Promise<string> {
+type WorkspaceParent = WorkspaceIdentity & { path: string };
+
+async function prepareWorkspaceParent(parent: string, bundleRoot: string): Promise<WorkspaceParent> {
   const absolute = await resolveFuturePath(resolve(parent));
   const created: Array<{ path: string; dev: number; ino: number }> = [];
   const filesystemRoot = parse(absolute).root;
@@ -226,7 +232,8 @@ async function prepareWorkspaceParent(parent: string, bundleRoot: string): Promi
         throw new Error("Workspace parent must be outside the task-bundle root.");
       }
     }
-    return current;
+    const metadata = await lstat(current);
+    return { path: current, dev: metadata.dev, ino: metadata.ino };
   } catch (error) {
     for (const entry of created.reverse()) {
       try {
@@ -251,6 +258,35 @@ async function resolveFuturePath(path: string): Promise<string> {
     const parent = dirname(path);
     if (parent === path) return path;
     return resolve(await resolveFuturePath(parent), basename(path));
+  }
+}
+
+function createWorkspace(parent: WorkspaceParent, attemptId: string): { path: string; identity: WorkspaceIdentity } {
+  const parentFd = openSync(parent.path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  const originalCwd = process.cwd();
+  let createdPath: string | undefined;
+  try {
+    // This synchronous section has no await points, so concurrent callers cannot
+    // interleave cwd changes while mkdtemp is anchored to parentFd's directory.
+    process.chdir(parent.path);
+    if (!sameIdentity(fstatSync(parentFd), lstatSync("."))) {
+      throw new Error("Workspace parent changed before attempt creation.");
+    }
+    createdPath = mkdtempSync(`ebo-${attemptId}-`);
+    if (!sameIdentity(fstatSync(parentFd), lstatSync("."))) {
+      throw new Error("Workspace parent changed during attempt creation.");
+    }
+    const metadata = lstatSync(createdPath);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+      throw new Error("Workspace root is not a directory.");
+    }
+    return { path: realpathSync(createdPath), identity: { dev: metadata.dev, ino: metadata.ino } };
+  } catch (error) {
+    if (createdPath !== undefined) rmSync(createdPath, { force: true, recursive: true });
+    throw error;
+  } finally {
+    process.chdir(originalCwd);
+    closeSync(parentFd);
   }
 }
 
@@ -279,19 +315,19 @@ async function materializeEntry(root: string, entry: TaskArchiveEntry): Promise<
   }
 }
 
-async function sealWorkspace(path: string, destination: string, expected: WorkspaceIdentity): Promise<string> {
-  const current = await lstat(path);
+function sealWorkspace(path: string, destination: string, expected: WorkspaceIdentity): string {
+  const current = lstatSync(path);
   if (!current.isDirectory() || current.isSymbolicLink() || !sameIdentity(current, expected)) {
     throw new Error("Workspace root changed before sealing.");
   }
-  await rename(path, destination);
+  renameSync(path, destination);
   try {
-    const sealed = await lstat(destination);
+    const sealed = lstatSync(destination);
     if (!sealed.isDirectory() || sealed.isSymbolicLink() || !sameIdentity(sealed, expected)) {
-      if (sealed.isSymbolicLink()) await rm(destination, { force: true });
+      if (sealed.isSymbolicLink()) rmSync(destination, { force: true });
       throw new Error("Workspace root changed during sealing.");
     }
-    return await realpath(destination);
+    return realpathSync(destination);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       throw new Error("Workspace root disappeared during sealing.");
@@ -588,11 +624,11 @@ function isSafeWorkspaceTree(
   }
 }
 
-async function removeWorkspaceIfOwned(path: string, expected: WorkspaceIdentity | undefined): Promise<boolean> {
+function removeWorkspaceIfOwned(path: string, expected: WorkspaceIdentity | undefined): boolean {
   try {
-    const metadata = await lstat(path);
+    const metadata = lstatSync(path);
     if (metadata.isSymbolicLink()) {
-      await rm(path, { force: true });
+      rmSync(path, { force: true });
       return true;
     }
     if (expected === undefined || !metadata.isDirectory()
@@ -600,32 +636,32 @@ async function removeWorkspaceIfOwned(path: string, expected: WorkspaceIdentity 
 
     const parent = dirname(path);
     const quarantine = join(parent, `.${basename(path)}-cleanup-${randomUUID()}`);
-    const parentHandle = await open(parent, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    const parentHandle = openSync(parent, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
     try {
-      if (!sameIdentity(await parentHandle.stat(), await lstat(parent))) return false;
-      const current = await lstat(path);
+      if (!sameIdentity(fstatSync(parentHandle), lstatSync(parent))) return false;
+      const current = lstatSync(path);
       if (current.isSymbolicLink() || !current.isDirectory()
           || current.dev !== expected.dev || current.ino !== expected.ino) return false;
-      await rename(path, quarantine);
-      const moved = await lstat(quarantine);
+      renameSync(path, quarantine);
+      const moved = lstatSync(quarantine);
       if (moved.isDirectory() && !moved.isSymbolicLink()
           && moved.dev === expected.dev && moved.ino === expected.ino) {
-        await rm(quarantine, { force: true, recursive: true });
+        rmSync(quarantine, { force: true, recursive: true });
         return true;
       }
       if (moved.isSymbolicLink()) {
-        await rm(quarantine, { force: true });
+        rmSync(quarantine, { force: true });
       } else {
         try {
-          await lstat(path);
+          lstatSync(path);
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === "ENOENT") await rename(quarantine, path);
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") renameSync(quarantine, path);
           else throw error;
         }
       }
       return false;
     } finally {
-      await parentHandle.close();
+      closeSync(parentHandle);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
