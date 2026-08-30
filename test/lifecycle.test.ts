@@ -1274,6 +1274,25 @@ test("retained workspace evidence must be linked from partial terminals", async 
   }
 });
 
+test("policy-stop records require native stopped harness evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-policy-evidence-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "stopped", stopReason: "policy", reason: "approval required" }),
+      evidence: { flush: () => undefined },
+    });
+    const record = structuredClone(result.record);
+    delete record.harness;
+    const path = join(root, "missing-policy-harness.json");
+    writeFileSync(path, `${JSON.stringify(record)}\n`);
+    await assert.rejects(readAttemptRecord(path), /matching stopped harness result/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("terminal attempt records require matching terminal classification", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-terminal-record-"));
   try {

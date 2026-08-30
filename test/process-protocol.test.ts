@@ -107,7 +107,8 @@ test("a JSONL writer cannot be reused by multiple protocol recorders", async () 
   try {
     const writer = new JsonlEvidenceWriter(join(root, "single-recorder.jsonl"));
     new ProtocolEvidenceRecorder(writer, "first-harness");
-    assert.throws(() => new ProtocolEvidenceRecorder(writer, "second-harness"), /only be used by one/);
+    assert.throws(() => new ProtocolEvidenceRecorder(writer, "second-harness"), /already claimed/);
+    await assert.rejects(writer.append({ kind: "direct" }), /claimed by a protocol recorder/);
     await writer.close();
   } finally {
     rmSync(root, { recursive: true, force: true });

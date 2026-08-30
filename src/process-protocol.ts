@@ -72,7 +72,6 @@ const DEFAULT_KILL_GRACE_MS = 250;
 const DEFAULT_MAX_IN_MEMORY_OBSERVATIONS = 1024;
 const MAX_TIMER_MS = 2_147_483_647;
 const INTERNAL_RECORDER_TOKEN = Symbol("internal recorder event");
-const RECORDER_WRITERS = new WeakSet<JsonlEvidenceWriter>();
 
 /**
  * Appends JSON records one line at a time and optionally fsyncs each append.
@@ -86,6 +85,8 @@ export class JsonlEvidenceWriter {
   private handle: FileHandle | undefined;
   private queue: Promise<void> = Promise.resolve();
   private closed = false;
+  private claimed = false;
+  private hasWrites = false;
   private _count = 0;
 
   public constructor(path: string, options: JsonlEvidenceWriterOptions = {}) {
@@ -100,7 +101,10 @@ export class JsonlEvidenceWriter {
     return this._count;
   }
 
-  public append(record: unknown): Promise<void> {
+  public append(record: unknown, token?: typeof INTERNAL_RECORDER_TOKEN): Promise<void> {
+    if (this.claimed && token !== INTERNAL_RECORDER_TOKEN) {
+      return Promise.reject(new Error("JSONL evidence writer is claimed by a protocol recorder."));
+    }
     if (!isRecord(record)) return Promise.reject(new Error("JSONL evidence records must be objects."));
     let line: string;
     try {
@@ -112,6 +116,7 @@ export class JsonlEvidenceWriter {
     if (Buffer.byteLength(line) > this.maxLineBytes) {
       return Promise.reject(new Error(`JSONL evidence record exceeds ${this.maxLineBytes} bytes.`));
     }
+    this.hasWrites = true;
     const operation = this.queue.then(async () => {
       if (this.closed) throw new Error("JSONL evidence writer is closed.");
       const handle = await this.openHandle();
@@ -151,6 +156,13 @@ export class JsonlEvidenceWriter {
     });
     this.queue = operation.catch(() => undefined);
     return operation;
+  }
+
+  public claim(token?: typeof INTERNAL_RECORDER_TOKEN): void {
+    if (this.claimed) throw new Error("JSONL evidence writer is already claimed by a protocol recorder.");
+    if (this.hasWrites) throw new Error("JSONL evidence writer cannot be claimed after direct writes.");
+    if (token !== INTERNAL_RECORDER_TOKEN) throw new Error("JSONL evidence writer claim is internal.");
+    this.claimed = true;
   }
 
   private async openHandle(): Promise<FileHandle> {
@@ -294,8 +306,7 @@ export class ProtocolEvidenceRecorder {
   ) {
     assertNonEmpty(source, "Protocol source");
     this.maxInMemoryObservations = positiveInteger(maxInMemoryObservations, "In-memory observation limit");
-    if (RECORDER_WRITERS.has(writer)) throw new Error("A JSONL evidence writer can only be used by one protocol recorder.");
-    RECORDER_WRITERS.add(writer);
+    writer.claim(INTERNAL_RECORDER_TOKEN);
   }
 
   public get observations(): readonly ProtocolObservation[] {
@@ -430,7 +441,7 @@ export class ProtocolEvidenceRecorder {
         ...(input.status === undefined ? {} : { status: input.status }),
         ...(input.capability === undefined ? {} : { capability: input.capability }),
       };
-      await this.writer.append(observation);
+      await this.writer.append(observation, INTERNAL_RECORDER_TOKEN);
       this.sequence = observation.sequence;
       if (this.records.length >= this.maxInMemoryObservations) {
         this.records.shift();

@@ -1422,6 +1422,17 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
       throw new Error("Attempt terminal and classification records disagree.");
     }
     assertClassificationTerminal(value.classification.kind, value.classification.terminal, value.classification.underlying);
+    const classificationKind = value.classification.kind === "capture-incomplete"
+      ? value.classification.underlying
+      : value.classification.kind;
+    if (classificationKind === "policy-stop") {
+      if (!visitedStates.has("running")) {
+        throw new Error("Policy-stop terminal records require the running lifecycle phase.");
+      }
+      if (!isRecord(value.harness) || value.harness.status !== "stopped" || value.harness.stopReason !== "policy") {
+        throw new Error("Policy-stop terminal records require a matching stopped harness result.");
+      }
+    }
     const expectedPartial = classificationUnderlyingKind(value.classification as unknown as AttemptClassification) !== "completed"
       || isRecord(value.capture) && value.capture.status === "incomplete";
     if (value.partial !== expectedPartial) throw new Error("Attempt partial state contradicts its terminal outcome.");
