@@ -89,3 +89,6 @@ the EBO product specification.
 
 The versioned task-packet and experiment contract surfaces are documented in
 [docs/contracts.md](docs/contracts.md).
+
+Run and attempt lifecycle plus the narrow process-protocol boundary are
+documented in [docs/run-lifecycle.md](docs/run-lifecycle.md).

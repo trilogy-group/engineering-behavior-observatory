@@ -1,0 +1,922 @@
+import { strict as assert } from "node:assert";
+import { readFileSync, rmSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+
+import {
+  BoundedDiagnosticCapture,
+  JsonlEvidenceWriter,
+  ProtocolEvidenceRecorder,
+  runProtocolProcess,
+  spawnProtocolProcess,
+} from "../src/index.js";
+
+function temporaryRoot(): string {
+  return mkdtempSync(join(tmpdir(), "ebo-process-protocol-"));
+}
+
+function nodeScript(source: string): { command: string; args: string[] } {
+  return { command: process.execPath, args: ["-e", source] };
+}
+
+test("records JSONL frames, source-owned observations, and bounded stderr", async () => {
+  const root = temporaryRoot();
+  try {
+    const evidencePath = join(root, "protocol.jsonl");
+    const stderrPath = join(root, "diagnostics", "stderr.log");
+    const processResult = await runProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({event:'ready'})); console.error('123456789')"),
+      source: "fake-harness",
+      evidencePath,
+      stderrPath,
+      maxStderrBytes: 4,
+      onFrame: async (_payload, recorder) => {
+        await recorder.recordRequest({
+          source: "fake-harness",
+          method: "session/prompt",
+          id: 7,
+          sourceIdentity: "session-1",
+          payload: { prompt: "hello" },
+        });
+        await recorder.recordResponse({
+          source: "fake-harness",
+          method: "session/prompt",
+          id: 7,
+          sourceIdentity: "session-1",
+          payload: { accepted: true },
+        });
+        await recorder.recordNotification({
+          source: "fake-harness",
+          method: "session.status",
+          sourceIdentity: "session-1",
+          payload: { status: "idle" },
+        });
+        await recorder.recordCompletion({
+          source: "fake-harness",
+          status: "documented-idle",
+          evidence: { session: "session-1", status: "idle" },
+        });
+        await recorder.recordCapability({
+          source: "fake-harness",
+          name: "prompt-cancel",
+          status: "unsupported",
+        });
+      },
+    });
+
+    assert.equal(processResult.status, "completed");
+    assert.equal(processResult.protocolOnly, true);
+    assert.equal(processResult.stdoutFrames, 1);
+    assert.equal(processResult.stderr.text, "1234");
+    assert.equal(processResult.stderr.truncated, true);
+    assert.equal(processResult.stderrPath, stderrPath);
+    assert.equal(readFileSync(stderrPath, "utf8"), "1234");
+    assert.deepEqual(
+      processResult.observations.filter((record) => ["request", "response", "notification"].includes(record.kind)).map((record) => [record.kind, record.method, record.id, record.sourceIdentity]),
+      [
+        ["request", "session/prompt", 7, "session-1"],
+        ["response", "session/prompt", 7, "session-1"],
+        ["notification", "session.status", undefined, "session-1"],
+      ],
+    );
+    const lines = readFileSync(evidencePath, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { sequence: number });
+    assert.equal(lines.length, processResult.observations.length);
+    assert.deepEqual(lines.map((line) => line.sequence), lines.map((_line, index) => index + 1));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("request observation inputs cannot override their fixed kind", async () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "fixed-kind.jsonl"));
+    const recorder = new ProtocolEvidenceRecorder(writer, "fake-harness");
+    const input = { source: "fake-harness", method: "event", kind: "response" as const };
+    const observation = await recorder.recordRequest(input);
+    assert.equal(observation.kind, "request");
+    await recorder.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a JSONL writer cannot be reused by multiple protocol recorders", async () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "single-recorder.jsonl"));
+    new ProtocolEvidenceRecorder(writer, "first-harness");
+    assert.throws(() => new ProtocolEvidenceRecorder(writer, "second-harness"), /already claimed/);
+    await assert.rejects(writer.append({ kind: "direct" }), /claimed by a protocol recorder/);
+    await writer.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("direct writers respect an active path reservation", async () => {
+  const root = temporaryRoot();
+  try {
+    const path = join(root, "reserved.jsonl");
+    const firstWriter = new JsonlEvidenceWriter(path);
+    new ProtocolEvidenceRecorder(firstWriter, "first-harness");
+    const secondWriter = new JsonlEvidenceWriter(path);
+    await assert.rejects(secondWriter.append({ direct: true }), /path is reserved/);
+    await firstWriter.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a closed recorder resumes the sequence with a new writer for the same path", async () => {
+  const root = temporaryRoot();
+  try {
+    const path = join(root, "reopened.jsonl");
+    const firstWriter = new JsonlEvidenceWriter(path);
+    const firstRecorder = new ProtocolEvidenceRecorder(firstWriter, "first-harness");
+    await firstRecorder.recordProcess("exited");
+    await firstWriter.close();
+    const secondWriter = new JsonlEvidenceWriter(path);
+    const secondRecorder = new ProtocolEvidenceRecorder(secondWriter, "second-harness");
+    const observation = await secondRecorder.recordProcess("exited");
+    assert.equal(observation.sequence, 2);
+    await secondWriter.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("writer claims follow symlinked evidence paths", async () => {
+  const root = temporaryRoot();
+  try {
+    const target = join(root, "target.jsonl");
+    const alias = join(root, "alias.jsonl");
+    const firstWriter = new JsonlEvidenceWriter(target);
+    const firstRecorder = new ProtocolEvidenceRecorder(firstWriter, "first-harness");
+    await firstRecorder.recordProcess("exited");
+    await firstWriter.close();
+    symlinkSync(target, alias);
+    const secondWriter = new JsonlEvidenceWriter(alias);
+    const secondRecorder = new ProtocolEvidenceRecorder(secondWriter, "second-harness");
+    const observation = await secondRecorder.recordProcess("exited");
+    assert.equal(observation.sequence, 2);
+    await secondWriter.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("writer sequence recovery rejects non-observation records", async () => {
+  const root = temporaryRoot();
+  try {
+    const path = join(root, "invalid-stream.jsonl");
+    const directWriter = new JsonlEvidenceWriter(path);
+    await directWriter.append({ sequence: 1 });
+    await directWriter.close();
+    const recorderWriter = new JsonlEvidenceWriter(path);
+    assert.throws(() => new ProtocolEvidenceRecorder(recorderWriter, "fake-harness"), /not a contiguous protocol observation/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("writer sequence recovery rejects an unterminated final observation", async () => {
+  const root = temporaryRoot();
+  try {
+    const path = join(root, "unterminated.jsonl");
+    writeFileSync(path, JSON.stringify({
+      schemaVersion: "ebo.protocol-observation/v1",
+      sequence: 1,
+      observedAt: "now",
+      kind: "process",
+      source: "fake-harness",
+      status: "exited",
+    }));
+    const writer = new JsonlEvidenceWriter(path);
+    assert.throws(() => new ProtocolEvidenceRecorder(writer, "fake-harness"), /unterminated final record/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("process timer grace periods reject values above Node's maximum", () => {
+  assert.throws(() => spawnProtocolProcess({
+    ...nodeScript(""),
+    source: "fake-harness",
+    shutdownGraceMs: 2_147_483_648,
+  }), /Node timer maximum/);
+  assert.throws(() => spawnProtocolProcess({
+    ...nodeScript(""),
+    source: "fake-harness",
+    killGraceMs: 2_147_483_648,
+  }), /Node timer maximum/);
+});
+
+test("spawn options cannot bypass protocol termination provenance", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("setTimeout(()=>console.log(JSON.stringify({ok:true})), 20)"),
+      source: "fake-harness",
+      evidencePath: join(root, "spawn-controls.jsonl"),
+      // timeout is deliberately supplied through an untyped boundary to
+      // prove the runtime strips controls that are not protocol-owned.
+      spawnOptions: { timeout: 1 } as never,
+    });
+    assert.equal(processResult.status, "completed");
+    assert.equal(processResult.termination, "natural");
+    assert.equal(processResult.stdoutFrames, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("snapshots the frame observer at process creation", async () => {
+  const root = temporaryRoot();
+  try {
+    const calls: string[] = [];
+    const options = {
+      ...nodeScript("setTimeout(()=>console.log(JSON.stringify({ready:true})), 20)"),
+      source: "fake-harness",
+      evidencePath: join(root, "observer-snapshot.jsonl"),
+      onFrame: () => { calls.push("initial"); },
+    };
+    const protocol = spawnProtocolProcess(options);
+    options.onFrame = () => { calls.push("mutated"); };
+    const processResult = await protocol.wait();
+    assert.equal(processResult.status, "completed");
+    assert.deepEqual(calls, ["initial"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("synchronous spawn errors release the protocol writer claim", async () => {
+  const root = temporaryRoot();
+  try {
+    const path = join(root, "spawn-error.jsonl");
+    const writer = new JsonlEvidenceWriter(path);
+    assert.throws(() => spawnProtocolProcess({ command: "bad\u0000command", source: "fake-harness", writer }), /null byte|NUL|argument/);
+    await writer.append({ direct: true });
+    await writer.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("retains the original JSONL frame text when parsed values lose precision", async () => {
+  const root = temporaryRoot();
+  try {
+    const raw = '{"id":9007199254740993,"id":1,"method":"session/status"}';
+    const processResult = await runProtocolProcess({
+      ...nodeScript(`console.log(${JSON.stringify(raw)})`),
+      source: "fake-harness",
+      evidencePath: join(root, "raw.jsonl"),
+    });
+    const frame = processResult.observations.find((record) => record.kind === "frame");
+    assert.equal(frame?.raw, raw);
+    assert.equal((frame?.payload as { id?: number }).id, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("retains valid frames with out-of-range JSON numbers", async () => {
+  const root = temporaryRoot();
+  try {
+    const raw = '{"n":1e400}';
+    const evidencePath = join(root, "non-finite-number.jsonl");
+    const processResult = await runProtocolProcess({
+      ...nodeScript(`console.log(${JSON.stringify(raw)})`),
+      source: "fake-harness",
+      evidencePath,
+    });
+    const frame = processResult.observations.find((record) => record.kind === "frame");
+    assert.equal(processResult.status, "completed");
+    assert.equal(processResult.recorderError, undefined);
+    assert.equal(processResult.stdoutFrames, 1);
+    assert.equal(frame?.raw, raw);
+    assert.match(frame?.parseError ?? "", /non-finite number/);
+    assert.equal("payload" in (frame ?? {}), false);
+    assert.match(readFileSync(evidencePath, "utf8"), /non-finite number/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects conflicting writer and evidence paths", () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "actual.jsonl"));
+    assert.throws(() => spawnProtocolProcess({
+      ...nodeScript(""),
+      source: "fake-harness",
+      writer,
+      evidencePath: join(root, "other.jsonl"),
+    }), /conflicts/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("keeps frame limits independent from the evidence envelope", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({ok:true}))"),
+      source: "fake-harness",
+      maxLineBytes: 16,
+      evidencePath: join(root, "small-limit.jsonl"),
+    });
+    assert.equal(processResult.status, "completed");
+    assert.equal(processResult.stdoutFrames, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("caller-owned writers retain large frames within their default envelope", async () => {
+  const root = temporaryRoot();
+  try {
+    const evidencePath = join(root, "caller-writer.jsonl");
+    const writer = new JsonlEvidenceWriter(evidencePath);
+    const processResult = await runProtocolProcess({
+      ...nodeScript("process.stdout.write(JSON.stringify('x'.repeat(2_100_000)) + '\\n')"),
+      source: "fake-harness",
+      writer,
+    });
+    assert.equal(processResult.status, "completed");
+    assert.equal(processResult.stdoutFrames, 1);
+    await writer.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("caller-owned writer bounds an oversized frame before recorder append", async () => {
+  const root = temporaryRoot();
+  try {
+    const evidencePath = join(root, "bounded-caller-writer.jsonl");
+    const writer = new JsonlEvidenceWriter(evidencePath, { maxLineBytes: 4 * 1024 * 1024 });
+    const processResult = await runProtocolProcess({
+      ...nodeScript("process.stdout.write(JSON.stringify('x'.repeat(2_100_000)) + '\\n')"),
+      source: "fake-harness",
+      writer,
+    });
+    assert.equal(processResult.status, "malformed");
+    assert.equal(processResult.recorderError, undefined);
+    assert.match(processResult.protocolError?.message ?? "", /exceeds/);
+    await writer.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a caller-owned writer too small for protocol observations", () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "undersized-caller-writer.jsonl"), { maxLineBytes: 1024 });
+    assert.throws(() => spawnProtocolProcess({
+      ...nodeScript("console.log('0')"),
+      source: "fake-harness",
+      writer,
+    }), /too small for a protocol observation envelope/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("validates caller-owned writer paths before spawning", async () => {
+  const root = temporaryRoot();
+  try {
+    const path = join(root, "existing.jsonl");
+    writeFileSync(path, "existing evidence\n");
+    const writer = new JsonlEvidenceWriter(path, { exclusive: true });
+    assert.throws(() => spawnProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({shouldNotRun:true}))"),
+      source: "fake-harness",
+      writer,
+    }), /EEXIST|already exists/);
+    await writer.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects closed caller-owned writers before spawning", async () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "closed.jsonl"));
+    await writer.close();
+    assert.throws(() => spawnProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({shouldNotRun:true}))"),
+      source: "fake-harness",
+      writer,
+    }), /writer is closed/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("does not expose a pre-existing diagnostic path as this process evidence", async () => {
+  const root = temporaryRoot();
+  try {
+    const stderrPath = join(root, "existing.log");
+    writeFileSync(stderrPath, "previous attempt");
+    const processResult = await runProtocolProcess({
+      ...nodeScript("console.error('new diagnostic')"),
+      source: "fake-harness",
+      evidencePath: join(root, "protocol.jsonl"),
+      stderrPath,
+    });
+    assert.equal(processResult.stderrPath, undefined);
+    assert.match(processResult.error ?? "", /stderr evidence could not be persisted/);
+    assert.equal(readFileSync(stderrPath, "utf8"), "previous attempt");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("creates each internally owned protocol evidence file exclusively", async () => {
+  const root = temporaryRoot();
+  try {
+    const evidencePath = join(root, "exclusive.jsonl");
+    const first = await runProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({first:true}))"),
+      source: "fake-harness",
+      evidencePath,
+    });
+    const original = readFileSync(evidencePath, "utf8");
+    await assert.rejects(runProtocolProcess({
+      ...nodeScript(""),
+      source: "fake-harness",
+      evidencePath,
+    }), /EEXIST|already exists/);
+    assert.equal(first.status, "completed");
+    assert.equal(readFileSync(evidencePath, "utf8"), original);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bounds an unterminated stdout frame before accumulating it", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("process.stdout.write('x'.repeat(1000000))"),
+      source: "fake-harness",
+      maxLineBytes: 32,
+      evidencePath: join(root, "oversized.jsonl"),
+    });
+    assert.equal(processResult.status, "malformed");
+    assert.match(processResult.protocolError?.message ?? "", /exceeds/);
+    assert.equal(processResult.protocolError?.line, 1);
+    assert.equal(processResult.stdoutFrames, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("keeps recorder failures separate from malformed protocol output", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({ok:true}))"),
+      source: "fake-harness",
+      evidencePath: join(root, "recorder-error.jsonl"),
+      onFrame: () => { throw new Error("adapter observer failed"); },
+    });
+    assert.equal(processResult.status, "failed");
+    assert.equal(processResult.protocolError, undefined);
+    assert.match(processResult.recorderError ?? "", /adapter observer failed/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bounds a frame observer that never settles", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({ok:true}))"),
+      source: "fake-harness",
+      shutdownGraceMs: 10,
+      evidencePath: join(root, "observer-timeout.jsonl"),
+      onFrame: async () => new Promise<void>(() => undefined),
+    });
+    assert.equal(processResult.status, "failed");
+    assert.match(processResult.recorderError ?? "", /observer exceeded/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("fences a late frame observer before it can append after finalization", async () => {
+  const root = temporaryRoot();
+  let lateError: Error | undefined;
+  try {
+    const evidencePath = join(root, "late-observer.jsonl");
+    const writer = new JsonlEvidenceWriter(evidencePath);
+    const processResult = await runProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({ready:true})); setTimeout(()=>{}, 10000)"),
+      source: "fake-harness",
+      writer,
+      shutdownGraceMs: 5,
+      onFrame: async (_payload, recorder) => {
+        await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 30));
+        try {
+          await recorder.recordNotification({ source: "fake-harness", method: "late" });
+        } catch (error) {
+          lateError = error instanceof Error ? error : new Error(String(error));
+        }
+      },
+    });
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 40));
+    await writer.close();
+    assert.equal(processResult.status, "failed");
+    assert.match(lateError?.message ?? "", /fenced/);
+    assert.equal(readFileSync(evidencePath, "utf8").includes('"method":"late"'), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("records recorder-triggered termination distinctly", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({ok:true})); setTimeout(()=>{}, 10000)"),
+      source: "fake-harness",
+      shutdownGraceMs: 10,
+      evidencePath: join(root, "recorder-termination.jsonl"),
+      onFrame: () => { throw new Error("observer failed"); },
+    });
+    assert.equal(processResult.status, "failed");
+    assert.equal(processResult.termination, "recorder-error");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("snapshots caller payloads before observer mutation", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({state:'before'}))"),
+      source: "fake-harness",
+      evidencePath: join(root, "payload.jsonl"),
+      onFrame: (payload) => { (payload as { state: string }).state = "after"; },
+    });
+    const frame = processResult.observations.find((record) => record.kind === "frame");
+    assert.equal((frame?.payload as { state?: string }).state, "before");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("snapshots direct writer records when append is called", async () => {
+  const root = temporaryRoot();
+  try {
+    const path = join(root, "writer.jsonl");
+    const writer = new JsonlEvidenceWriter(path);
+    const record = { state: "before" };
+    const append = writer.append(record);
+    record.state = "after";
+    await append;
+    await writer.close();
+    assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), { state: "before" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("direct JSONL appends reject values that JSON cannot preserve", async () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "invalid-direct-record.jsonl"));
+    await assert.rejects(writer.append({ value: Number.NaN }), /finite JSON number/);
+    await assert.rejects(writer.append({ value: new Map([["key", "value"]]) }), /JSON object or array/);
+    await writer.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("does not retain observations whose append fails", async () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "append-failure.jsonl"), { maxLineBytes: 256 });
+    const recorder = new ProtocolEvidenceRecorder(writer, "fake-harness");
+    await assert.rejects(recorder.recordNotification({
+      source: "fake-harness",
+      method: "event",
+      payload: { detail: "x".repeat(512) },
+    }), /exceeds/);
+    await recorder.recordProcess("exited");
+    await recorder.close();
+    const observations = recorder.observations;
+    assert.deepEqual(observations.map((record) => [record.sequence, record.kind]), [[1, "process"]]);
+    assert.deepEqual(readFileSync(join(root, "append-failure.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line).sequence), [1]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("returns detached recorder observations", async () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "detached.jsonl"));
+    const recorder = new ProtocolEvidenceRecorder(writer, "fake-harness");
+    const returned = await recorder.recordNotification({ source: "fake-harness", method: "event", payload: { value: 1 } });
+    returned.method = "mutated";
+    (returned.payload as { value: number }).value = 2;
+    assert.equal(recorder.observations[0]?.method, "event");
+    assert.equal((recorder.observations[0]?.payload as { value: number }).value, 1);
+    await recorder.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects values that JSONL cannot preserve", async () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "json-values.jsonl"));
+    const recorder = new ProtocolEvidenceRecorder(writer, "fake-harness");
+    await assert.rejects(recorder.recordNotification({ source: "fake-harness", method: "event", payload: new Map([["x", 1]]) }), /JSON object or array/);
+    await assert.rejects(recorder.recordNotification({ source: "fake-harness", method: "event", payload: Number.NaN }), /finite JSON number/);
+    await assert.rejects(recorder.recordRequest({ source: "fake-harness", method: "event", id: Number.NaN }), /Protocol identity/);
+    await assert.rejects(recorder.recordResponse({ source: "fake-harness", method: "event", id: Number.POSITIVE_INFINITY }), /Protocol identity/);
+    await assert.rejects(recorder.recordCapability({ source: "fake-harness", name: "unknown-capability", status: "unknown" as never }), /Capability status/);
+    await assert.rejects(recorder.recordCompletion({ source: "fake-harness", status: "completed", evidence: undefined }), /Completion evidence/);
+    await assert.rejects(recorder.recordFrame(undefined), /Frame payload/);
+    assert.throws(() => recorder.recordFrame({ ok: true }, "now", " "), /Raw frame text/);
+    assert.throws(() => recorder.recordNotification({ source: "fake-harness", method: "event", observedAt: "" }), /Observation timestamp/);
+    assert.throws(() => recorder.recordNotification({ source: "fake-harness", method: "event", sourceIdentity: "" }), /Protocol source identity/);
+    await recorder.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("does not process frames queued after malformed output", async () => {
+  const root = temporaryRoot();
+  let observed = 0;
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("process.stdout.write('not-json\\n' + JSON.stringify({after:true}) + '\\n')"),
+      source: "fake-harness",
+      evidencePath: join(root, "queued-malformed.jsonl"),
+      onFrame: () => { observed += 1; },
+    });
+    assert.equal(processResult.status, "malformed");
+    assert.equal(observed, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("retains valid frames queued before an oversized frame", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("process.stdout.write(JSON.stringify({before:true}) + '\\n' + 'x'.repeat(1000))"),
+      source: "fake-harness",
+      maxLineBytes: 32,
+      evidencePath: join(root, "before-oversized.jsonl"),
+    });
+    assert.equal(processResult.status, "malformed");
+    assert.equal(processResult.stdoutFrames, 1);
+    assert.equal((processResult.observations.find((record) => record.kind === "frame")?.payload as { before?: boolean }).before, true);
+    assert.equal(processResult.protocolError?.line, 2);
+    assert.deepEqual(processResult.observations.slice(0, 2).map((record) => record.kind), ["frame", "error"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bounds in-memory observations while retaining the complete JSONL stream", async () => {
+  const root = temporaryRoot();
+  try {
+    const processResult = await runProtocolProcess({
+      ...nodeScript("for (let i=0;i<1100;i++) console.log(JSON.stringify({i}))"),
+      source: "fake-harness",
+      maxInMemoryObservations: 10,
+      evidencePath: join(root, "bounded-memory.jsonl"),
+    });
+    assert.equal(processResult.status, "completed");
+    assert.equal(processResult.observations.length, 10);
+    assert.ok(processResult.droppedObservations > 0);
+    assert.ok(readFileSync(join(root, "bounded-memory.jsonl"), "utf8").trim().split("\n").length > 1000);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("malformed protocol output stops the process and retains a readable partial record", async () => {
+  const root = temporaryRoot();
+  try {
+    const evidencePath = join(root, "malformed.jsonl");
+    const processResult = await runProtocolProcess({
+      ...nodeScript("console.log('not-json'); console.error('diagnostic')"),
+      source: "fake-harness",
+      evidencePath,
+    });
+    assert.equal(processResult.status, "malformed");
+    assert.equal(processResult.partial, true);
+    assert.equal(processResult.protocolError?.line, 1);
+    assert.equal(processResult.stdoutFrames, 0);
+    assert.match(readFileSync(evidencePath, "utf8"), /Malformed JSONL protocol output/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("unterminated child stdout is retained as malformed partial evidence", async () => {
+  const root = temporaryRoot();
+  try {
+    const result = await runProtocolProcess({
+      ...nodeScript("process.stdout.write(JSON.stringify({ready:true}))"),
+      source: "fake-harness",
+      evidencePath: join(root, "unterminated-child.jsonl"),
+    });
+    assert.equal(result.status, "malformed");
+    assert.equal(result.partial, true);
+    assert.match(result.protocolError?.message ?? "", /Unterminated/);
+    assert.equal(result.stdoutFrames, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("interrupts after delivered frames and flushes partial evidence", async () => {
+  const root = temporaryRoot();
+  try {
+    const evidencePath = join(root, "interrupted.jsonl");
+    const protocol = spawnProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({notification:1})); setTimeout(()=>{}, 10000)"),
+      source: "fake-harness",
+      evidencePath,
+    });
+    setTimeout(() => void protocol.interrupt(), 100);
+    const processResult = await protocol.wait();
+    assert.equal(processResult.status, "interrupted");
+    assert.equal(processResult.termination, "interrupted");
+    assert.equal(processResult.partial, true);
+    assert.equal(processResult.stdoutFrames, 1);
+    assert.match(readFileSync(evidencePath, "utf8"), /notification/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("clean shutdown is explicit and does not imply prompt completion", async () => {
+  const root = temporaryRoot();
+  try {
+    const writer = new JsonlEvidenceWriter(join(root, "shutdown.jsonl"));
+    const protocol = spawnProtocolProcess({
+      ...nodeScript("setTimeout(()=>{}, 10000)"),
+      source: "fake-harness",
+      writer,
+    });
+    await protocol.shutdown();
+    const processResult = await protocol.wait();
+    assert.equal(processResult.status, "shutdown");
+    assert.equal(processResult.termination, "shutdown");
+    assert.equal(processResult.observations.some((record) => record.kind === "completion"), false);
+    await writer.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("shutdown signals a detached group after the root exits", { skip: process.platform === "win32" }, async () => {
+  const root = temporaryRoot();
+  try {
+    const protocol = spawnProtocolProcess({
+      ...nodeScript("const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e','setInterval(()=>{},10000)'],{stdio:['ignore','inherit','inherit']}); child.unref(); process.exit(0)"),
+      source: "fake-harness",
+      shutdownGraceMs: 25,
+      killGraceMs: 25,
+      evidencePath: join(root, "detached-root-exit.jsonl"),
+    });
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 25));
+    const processResult = await Promise.race([
+      protocol.shutdown(),
+      new Promise<never>((_resolvePromise, reject) => setTimeout(() => reject(new Error("shutdown did not settle")), 500)),
+    ]);
+    assert.equal(processResult.status, "shutdown");
+    assert.equal(processResult.termination, "shutdown");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("shutdown remains bounded when a non-detached descendant holds pipes open", async () => {
+  const root = temporaryRoot();
+  try {
+    const protocol = spawnProtocolProcess({
+      ...nodeScript("const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e','setTimeout(()=>{},200)'],{stdio:['ignore','inherit','inherit']}); child.unref(); process.exit(0)"),
+      source: "fake-harness",
+      spawnOptions: { detached: false },
+      shutdownGraceMs: 25,
+      killGraceMs: 25,
+      evidencePath: join(root, "nondetached-root-exit.jsonl"),
+    });
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 25));
+    const processResult = await Promise.race([
+      protocol.shutdown(),
+      new Promise<never>((_resolvePromise, reject) => setTimeout(() => reject(new Error("shutdown did not settle")), 500)),
+    ]);
+    assert.equal(processResult.status, "shutdown");
+    assert.equal(processResult.termination, "shutdown");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("fences caller-owned recorders before publishing process completion", async () => {
+  const root = temporaryRoot();
+  try {
+    const evidencePath = join(root, "fenced-completion.jsonl");
+    const writer = new JsonlEvidenceWriter(evidencePath);
+    const protocol = spawnProtocolProcess({
+      ...nodeScript("console.log(JSON.stringify({ready:true}))"),
+      source: "fake-harness",
+      writer,
+    });
+    const result = await protocol.wait();
+    await assert.rejects(protocol.evidence.recordNotification({ source: "fake-harness", method: "late" }), /fenced/);
+    await writer.close();
+    assert.equal(result.status, "completed");
+    assert.equal(readFileSync(evidencePath, "utf8").includes('"method":"late"'), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("shutdown with diagnostic persistence failure remains failed and partial", async () => {
+  const root = temporaryRoot();
+  try {
+    const stderrPath = join(root, "existing.log");
+    writeFileSync(stderrPath, "previous");
+    const protocol = spawnProtocolProcess({
+      ...nodeScript("setTimeout(()=>{}, 10000)"),
+      source: "fake-harness",
+      evidencePath: join(root, "shutdown-error.jsonl"),
+      stderrPath,
+    });
+    const processResult = await protocol.shutdown();
+    assert.equal(processResult.status, "failed");
+    assert.equal(processResult.partial, true);
+    assert.equal(processResult.stderrPath, undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the first process termination cause wins concurrent shutdown requests", async () => {
+  const root = temporaryRoot();
+  try {
+    const protocol = spawnProtocolProcess({
+      ...nodeScript("setTimeout(()=>{}, 10000)"),
+      source: "fake-harness",
+      evidencePath: join(root, "termination-order.jsonl"),
+    });
+    const interrupt = protocol.interrupt();
+    const shutdown = protocol.shutdown();
+    const result = await Promise.all([interrupt, shutdown]).then(([first]) => first);
+    assert.equal(result.status, "interrupted");
+    assert.equal(result.termination, "interrupted");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an already-aborted process signal still produces a partial result", async () => {
+  const root = temporaryRoot();
+  try {
+    const controller = new AbortController();
+    controller.abort();
+    const processResult = await runProtocolProcess({
+      ...nodeScript("setTimeout(()=>{}, 10000)"),
+      source: "fake-harness",
+      evidencePath: join(root, "already-interrupted.jsonl"),
+      signal: controller.signal,
+    });
+    assert.equal(processResult.status, "interrupted");
+    assert.equal(processResult.partial, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("diagnostic capture keeps its bound while draining all bytes", () => {
+  const capture = new BoundedDiagnosticCapture(3);
+  capture.write(Buffer.from("abcdef"));
+  capture.write(Buffer.from("gh"));
+  assert.equal(capture.result().text, "abc");
+  assert.equal(capture.result().sizeBytes, 8);
+  assert.equal(capture.result().truncated, true);
+});
