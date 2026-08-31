@@ -18,6 +18,18 @@ docs:
   default_visibility: public
   deny_private_links: true
 areas:
+  m2-native-agent-sdk-capture:
+    title: M2 Native Agent Sdk Capture
+    docs_target: docs/m2-native-agent-sdk-capture.md
+    visibility: public
+    status: stable
+    confidence: 80
+    aliases:
+    - m2 native agent sdk capture
+    - m2-native-agent-sdk-capture
+    source_refs:
+      linear_milestones:
+      - 'M2: Native Agent SDK Capture'
   quality:
     title: Quality
     docs_target: docs/quality.md
