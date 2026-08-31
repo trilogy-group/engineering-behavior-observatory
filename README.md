@@ -83,12 +83,17 @@ schedule or retry attempts.
 
 `ebo validate` checks the supported task-packet, experiment, and run-bundle
 artifact versions. On failure it identifies the artifact, schema version, and
-failing JSON field. Export, adapter, evaluation, and Atlas behavior are
-introduced by their separately scoped tasks.
+failing JSON field. Adapter, evaluation, and Atlas behavior are introduced by
+their separately scoped tasks.
 
 Task-packet commands validate externally authored packets, enforce their
 recorded admission decision, persist a digest-based freeze record, and report
 component changes. They do not generate tasks or perform human review.
+
+Safe M2 evidence export is a library boundary:
+`createPortableRunBundleExport` writes a separate partner/public derivative,
+and `readPortableRunBundleExport` performs the required schema, integrity,
+policy, and secret-scan readback. It does not publish or package a corpus.
 
 The matrix compiler expands any valid experiment into a local, persisted run
 queue. Sequential, seeded-shuffle, and balanced/interleaved policies retain
