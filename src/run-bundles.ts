@@ -218,7 +218,9 @@ export class RunBundleAssembler {
     if (input.evidence.telemetry === undefined && input.evidence.usage === undefined) {
       throw new Error("Agent SDK telemetry evidence requires telemetry or SDK-reported usage.");
     }
+    const previousMissing = this.captureMissing;
     const receipt = input.evidence.telemetry?.receipt;
+    this.captureMissing = previousMissing.filter((entry) => !["telemetry", "telemetry-receipt"].includes(entry.kind));
     if (input.evidence.telemetry === undefined || receipt?.status !== "received") {
       const reason = receipt?.status === "not-checked"
         ? "not-checked"
@@ -230,20 +232,25 @@ export class RunBundleAssembler {
         { kind: receipt === undefined ? "telemetry" : "telemetry-receipt", reason, affects: ["timing-resource"] },
       ]);
     }
-    return this.writeJsonArtifact({
-      id: input.id ?? "telemetry",
-      source: "anthropic-agent-sdk",
-      kind: "telemetry",
-      mediaType: "application/json",
-      sharingClass: "restricted",
-      relativePath: input.relativePath ?? "telemetry/agent-sdk.json",
-      ...(input.traceId === undefined ? {} : { nativeReference: { type: "trace", id: input.traceId } }),
-    }, {
-      schemaVersion: "ebo.agent-sdk-telemetry/v1",
-      attemptId: this.attempt.id,
-      ...(input.evidence.telemetry === undefined ? {} : { telemetry: structuredClone(input.evidence.telemetry) }),
-      ...(input.evidence.usage === undefined ? {} : { usage: structuredClone(input.evidence.usage) }),
-    });
+    try {
+      return await this.writeJsonArtifact({
+        id: input.id ?? "telemetry",
+        source: "anthropic-agent-sdk",
+        kind: "telemetry",
+        mediaType: "application/json",
+        sharingClass: "restricted",
+        relativePath: input.relativePath ?? "telemetry/agent-sdk.json",
+        ...(input.traceId === undefined ? {} : { nativeReference: { type: "trace", id: input.traceId } }),
+      }, {
+        schemaVersion: "ebo.agent-sdk-telemetry/v1",
+        attemptId: this.attempt.id,
+        ...(input.evidence.telemetry === undefined ? {} : { telemetry: structuredClone(input.evidence.telemetry) }),
+        ...(input.evidence.usage === undefined ? {} : { usage: structuredClone(input.evidence.usage) }),
+      });
+    } catch (error) {
+      this.captureMissing = previousMissing;
+      throw error;
+    }
   }
 
   public async captureWorkspaceOutcome(options: CaptureWorkspaceOutcomeOptions): Promise<CapturedWorkspaceOutcome> {
@@ -445,9 +452,15 @@ async function workspacePatch(startPath: string, finalPath: string, finalTreeDig
       await cp(join(finalPath, entry), join(worktree, entry), { recursive: true, preserveTimestamps: true, force: false });
     }
     await execFileAsync("git", ["add", "--force", "--intent-to-add", "--all"], { cwd: worktree });
-    const { stdout } = await execFileAsync("git", [
-      "diff", "--binary", "--full-index", "--no-ext-diff", "--no-renames", "HEAD", "--", ".",
-    ], { cwd: worktree, encoding: "utf8", maxBuffer: MAX_WORKSPACE_PATCH_BYTES });
+    let stdout: string;
+    try {
+      ({ stdout } = await execFileAsync("git", [
+        "diff", "--binary", "--full-index", "--no-ext-diff", "--no-renames", "HEAD", "--", ".",
+      ], { cwd: worktree, encoding: "utf8", maxBuffer: MAX_WORKSPACE_PATCH_BYTES }));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return undefined;
+      throw error;
+    }
     const patch = Buffer.from(stdout);
 
     await cp(startPath, applied, { recursive: true, preserveTimestamps: true, force: false });
@@ -481,7 +494,7 @@ async function workspaceSnapshot(finalPath: string, finalTreeDigest: DigestStrin
     const snapshot = Buffer.from(stdout);
     await writeFile(snapshotPath, snapshot, { flag: "wx", mode: 0o600 });
     await mkdir(extracted, { mode: 0o700 });
-    await execFileAsync(TAR_COMMAND, ["-xzf", snapshotPath, "-C", extracted]);
+    await execFileAsync(TAR_COMMAND, ["-xzpf", snapshotPath, "-C", extracted]);
     if (await digestWorkspaceTree(join(extracted, "workspace")) !== finalTreeDigest) {
       throw new Error("Bounded workspace snapshot cannot reproduce the final workspace tree.");
     }

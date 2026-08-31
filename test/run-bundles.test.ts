@@ -194,18 +194,33 @@ test("falls back to a bounded standard snapshot when a patch cannot preserve the
     const bundleRoot = join(root, "bundle");
     const fixture = createWorkspaceFixture(root);
     mkdirSync(join(fixture.final, "empty"));
-    chmodSync(join(fixture.final, "changed.txt"), 0o640);
+    chmodSync(join(fixture.final, "changed.txt"), 0o666);
     const assembler = await createRunBundleAssembler(definition(bundleRoot, "snapshot"));
     const captured = await assembler.captureWorkspaceOutcome({ startPath: fixture.start, finalPath: fixture.final });
     assert.equal(captured.format, "snapshot");
     assert.equal(captured.descriptor.mediaType, "application/gzip");
     const extracted = join(root, "extracted");
     mkdirSync(extracted);
-    const extraction = spawnSync("tar", ["-xzf", join(bundleRoot, captured.descriptor.relativePath), "-C", extracted], {
+    const extraction = spawnSync("tar", ["-xzpf", join(bundleRoot, captured.descriptor.relativePath), "-C", extracted], {
       encoding: "utf8",
     });
     assert.equal(extraction.status, 0, extraction.stderr);
     assert.equal(await digestWorkspaceTree(join(extracted, "workspace")), captured.treeDigest);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an oversized patch falls back to a bounded compressible snapshot", { timeout: 60_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-run-bundle-large-patch-"));
+  try {
+    const bundleRoot = join(root, "bundle");
+    const fixture = createWorkspaceFixture(root);
+    writeFileSync(join(fixture.final, "changed.txt"), Buffer.alloc(64 * 1024 * 1024, 0x61));
+    const assembler = await createRunBundleAssembler(definition(bundleRoot, "large-patch"));
+    const captured = await assembler.captureWorkspaceOutcome({ startPath: fixture.start, finalPath: fixture.final });
+    assert.equal(captured.format, "snapshot");
+    assert.ok(captured.descriptor.sizeBytes < 64 * 1024 * 1024);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -234,6 +249,42 @@ test("usage-only evidence keeps telemetry capture explicitly missing", async () 
     ), "utf8")) as { capabilities: { timingResource: { status: string } }; missingEvidence: Array<{ kind: string }> };
     assert.equal(report.capabilities.timingResource.status, "missing");
     assert.ok(report.missingEvidence.some((entry) => entry.kind === "telemetry"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a failed telemetry write does not poison a confirmed retry", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-run-bundle-telemetry-retry-"));
+  try {
+    const bundleRoot = join(root, "bundle");
+    const assembler = await createRunBundleAssembler(definition(bundleRoot, "telemetry-retry"));
+    mkdirSync(join(bundleRoot, "telemetry"));
+    writeFileSync(join(bundleRoot, "telemetry", "agent-sdk.json"), "occupied");
+    await assert.rejects(assembler.writeAgentSdkTelemetry({
+      evidence: {
+        usage: {
+          source: "sdk-result",
+          totalCostUsd: 0.25,
+          numTurns: 1,
+          mainLoop: { input_tokens: 3, output_tokens: 5 },
+          byModel: {},
+        },
+      } as unknown as Pick<ClaudeAgentSdkAttemptEvidence, "telemetry" | "usage">,
+    }), /already exists/);
+    await assembler.writeAgentSdkTelemetry({
+      relativePath: "telemetry/confirmed.json",
+      evidence: {
+        telemetry: { receipt: { status: "received", signals: ["traces", "metrics", "logs"] } },
+      } as unknown as Pick<ClaudeAgentSdkAttemptEvidence, "telemetry" | "usage">,
+    });
+    const manifest = assertBundleValid(bundleRoot);
+    const report = JSON.parse(readFileSync(join(
+      bundleRoot,
+      manifest.evidence.find((descriptor) => descriptor.kind === "capture-report")!.relativePath,
+    ), "utf8")) as { capabilities: { timingResource: { status: string } }; missingEvidence: Array<{ kind: string }> };
+    assert.equal(report.capabilities.timingResource.status, "available");
+    assert.equal(report.missingEvidence.some((entry) => ["telemetry", "telemetry-receipt"].includes(entry.kind)), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
