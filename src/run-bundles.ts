@@ -411,7 +411,7 @@ async function workspacePatch(startPath: string, finalPath: string, finalTreeDig
   try {
     await cp(startPath, worktree, { recursive: true, preserveTimestamps: true, force: false });
     await execFileAsync("git", ["init", "--quiet"], { cwd: worktree });
-    await execFileAsync("git", ["add", "--all"], { cwd: worktree });
+    await execFileAsync("git", ["add", "--force", "--all"], { cwd: worktree });
     await execFileAsync("git", ["-c", "user.name=EBO", "-c", "user.email=ebo.invalid", "commit", "--quiet", "--allow-empty", "-m", "starting fixture"], { cwd: worktree });
     for (const entry of await readdir(worktree)) {
       if (entry !== ".git") await rm(join(worktree, entry), { recursive: true, force: true });
@@ -420,7 +420,7 @@ async function workspacePatch(startPath: string, finalPath: string, finalTreeDig
       if (entry === ".git") throw new Error("Workspace patches cannot retain Git administrative state.");
       await cp(join(finalPath, entry), join(worktree, entry), { recursive: true, preserveTimestamps: true, force: false });
     }
-    await execFileAsync("git", ["add", "--intent-to-add", "--all"], { cwd: worktree });
+    await execFileAsync("git", ["add", "--force", "--intent-to-add", "--all"], { cwd: worktree });
     const { stdout } = await execFileAsync("git", [
       "diff", "--binary", "--full-index", "--no-ext-diff", "--no-renames", "HEAD", "--", ".",
     ], { cwd: worktree, encoding: "utf8", maxBuffer: MAX_WORKSPACE_PATCH_BYTES });

@@ -293,10 +293,15 @@ function createWorkspaceFixture(root: string, binary = false): { start: string; 
   writeFileSync(join(start, "changed.txt"), "before\n");
   writeFileSync(join(start, "deleted.txt"), "remove me\n");
   writeFileSync(join(start, "mode.sh"), "#!/bin/sh\nexit 0\n");
+  if (binary) {
+    writeFileSync(join(start, ".gitignore"), "ignored.bin\n");
+    writeFileSync(join(start, "ignored.bin"), Buffer.from([0, 1]));
+  }
   cpSync(start, final, { recursive: true, preserveTimestamps: true });
   writeFileSync(join(final, "changed.txt"), "after\n");
   rmSync(join(final, "deleted.txt"));
   writeFileSync(join(final, binary ? "added.bin" : "added.txt"), binary ? Buffer.from([0, 1, 2, 0xff]) : "added\n");
+  if (binary) writeFileSync(join(final, "ignored.bin"), Buffer.from([2, 3]));
   chmodSync(join(final, "mode.sh"), 0o755);
   return { start, final };
 }
