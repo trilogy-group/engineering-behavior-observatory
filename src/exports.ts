@@ -45,7 +45,12 @@ export type PortableExportArtifact = {
   sizeBytes: number;
   relativePath: string;
   sourceDigest: DigestString;
-  diagnosticSource?: { verifierId: string; stream: "stdout" | "stderr" };
+  diagnosticSource?: {
+    verifierId: string;
+    stream: "stdout" | "stderr";
+    locatorDigest: DigestString;
+    sizeBytes: number;
+  };
 };
 
 export type PortableExportManifest = {
@@ -214,6 +219,7 @@ export async function createPortableRunBundleExport(
           sensitiveValues,
           localIdentifiers,
           counts,
+          "diagnostic",
         );
         const digest = await writeArtifactAtomically(destinationRoot, relativePath, outputBytes, undefined, { overwrite: false });
         const artifact: PortableExportArtifact = {
@@ -225,7 +231,12 @@ export async function createPortableRunBundleExport(
           sizeBytes: outputBytes.length,
           relativePath,
           sourceDigest: diagnostic.digest,
-          diagnosticSource: { verifierId: verifier.id, stream: diagnostic.stream },
+          diagnosticSource: {
+            verifierId: verifier.id,
+            stream: diagnostic.stream,
+            locatorDigest: digestText(diagnostic.locator),
+            sizeBytes: diagnostic.sizeBytes,
+          },
         };
         artifacts.push(artifact);
         transformations.push(...[...counts.entries()].map(([action, count]) => ({ artifactId: id, action, count })));
@@ -257,6 +268,7 @@ export async function createPortableRunBundleExport(
         sensitiveValues,
         localIdentifiers,
         counts,
+        descriptor.kind,
         portableDiagnostics,
       );
       const relativePath = `evidence/${String(index).padStart(4, "0")}${extensionFor(descriptor.mediaType)}`;
@@ -290,7 +302,7 @@ export async function createPortableRunBundleExport(
     const schemaErrors = validateArtifact("manifest.json", manifest);
     if (schemaErrors.length > 0) throw new Error(formatValidationErrors(schemaErrors));
     await writeMetadataAtomically(destinationRoot, "manifest.json", manifest, undefined, { overwrite: false });
-    const readback = await readPortableRunBundleExport(destinationRoot, options.policy, sourceManifest);
+    const readback = await readPortableRunBundleExport(destinationRoot, options.policy, sourceManifest, sourceRoot);
     if (readback.sourceManifestDigest !== sourceManifestDigest) {
       throw new Error("Portable export source-manifest digest changed before readback.");
     }
@@ -306,6 +318,7 @@ export async function readPortableRunBundleExport(
   exportRoot: string,
   policy: PortableExportPolicy,
   sourceManifest?: RunManifest,
+  sourceRoot?: string,
 ): Promise<PortableExportManifest> {
   validatePolicy(policy);
   const root = resolve(exportRoot);
@@ -349,7 +362,7 @@ export async function readPortableRunBundleExport(
     artifactBytes.push(bytes);
   }
   validatePortableDiagnosticReferences(manifest, artifactBytes);
-  if (sourceManifest !== undefined) validateSourceReferences(manifest, sourceManifest);
+  if (sourceManifest !== undefined) await validateSourceReferences(manifest, sourceManifest, sourceRoot);
   scanPortableTree(
     [manifestBytes, ...artifactBytes],
     effectiveSensitiveValues(policy),
@@ -379,12 +392,15 @@ function sanitizeArtifact(
   sensitiveValues: readonly string[],
   localIdentifiers: readonly string[],
   counts: Map<TransformationAction, number>,
+  kind?: PortableKind,
   portableDiagnostics: ReadonlyMap<string, PortableDiagnosticOutput> = new Map(),
 ): Buffer {
   if (mediaType === "application/json") {
     increment(counts, "canonicalized");
     const output = Buffer.from(canonicalizeMetadata(sanitizeValue(
-      rewriteVerifierDiagnosticReferences(parseJson(bytes, "JSON evidence"), portableDiagnostics),
+      kind === "verifier"
+        ? rewriteVerifierDiagnosticReferences(parseJson(bytes, "JSON evidence"), portableDiagnostics)
+        : parseJson(bytes, "JSON evidence"),
       policy,
       replacements,
       sensitiveValues,
@@ -607,14 +623,33 @@ function scanPortableTree(
   }
 }
 
-function validateSourceReferences(manifest: PortableExportManifest, source: RunManifest): void {
+async function validateSourceReferences(
+  manifest: PortableExportManifest,
+  source: RunManifest,
+  sourceRoot?: string,
+): Promise<void> {
   const sourceById = new Map(source.evidence.map((descriptor) => [descriptor.id, descriptor]));
   if (manifest.sourceManifestDigest === undefined) throw new Error("Portable export omits its source-manifest digest.");
   for (const artifact of manifest.artifacts) {
     if (artifact.kind === "diagnostic") {
-      if (artifact.diagnosticSource === undefined
-          || sourceById.get(artifact.diagnosticSource.verifierId)?.kind !== "verifier") {
+      const verifier = artifact.diagnosticSource === undefined
+        ? undefined
+        : sourceById.get(artifact.diagnosticSource.verifierId);
+      if (artifact.diagnosticSource === undefined || verifier?.kind !== "verifier") {
         throw new Error(`Portable diagnostic ${artifact.id} does not reference a source verifier.`);
+      }
+      if (sourceRoot === undefined) {
+        throw new Error("Source root is required to validate portable diagnostic provenance.");
+      }
+      const verifierBytes = await readVerifiedArtifact(
+        sourceRoot, verifier.relativePath, digestValue(verifier.digest), MAX_SOURCE_ARTIFACT_BYTES,
+      );
+      const sourceDiagnostic = sourceDiagnostics(parseJson(verifierBytes, "Source verifier evidence")).find((diagnostic) =>
+        diagnostic.stream === artifact.diagnosticSource?.stream
+          && digestText(diagnostic.locator) === artifact.diagnosticSource.locatorDigest);
+      if (sourceDiagnostic === undefined || sourceDiagnostic.digest !== artifact.sourceDigest
+          || sourceDiagnostic.sizeBytes !== artifact.diagnosticSource.sizeBytes) {
+        throw new Error(`Portable diagnostic ${artifact.id} does not match its source diagnostic reference.`);
       }
       continue;
     }
@@ -749,6 +784,10 @@ function sourceCorrelationValues(manifest: RunManifest): string[] {
 
 function rewrittenId(kind: string, value: string, salt: DigestString): string {
   return `${kind}-${createHash("sha256").update(`${salt}\0${value}`).digest("hex").slice(0, 24)}`;
+}
+
+function digestText(value: string): DigestString {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
 function policyRecord(policy: PortableExportPolicy): Record<string, unknown> {

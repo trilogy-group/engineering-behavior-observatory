@@ -886,10 +886,12 @@
         "diagnosticSource": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["verifierId", "stream"],
+          "required": ["verifierId", "stream", "locatorDigest", "sizeBytes"],
           "properties": {
             "verifierId": { "$ref": "#/$defs/identifier" },
-            "stream": { "enum": ["stdout", "stderr"] }
+            "stream": { "enum": ["stdout", "stderr"] },
+            "locatorDigest": { "$ref": "#/$defs/digest" },
+            "sizeBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
           }
         }
       }

@@ -257,6 +257,10 @@ test("exports verifier diagnostic sidecars with portable references", async () =
   try {
     stageSource(source);
     const sourceManifest = JSON.parse(readFileSync(join(source, "manifest.json"), "utf8")) as SourceManifest;
+    replaceArtifact(source, sourceManifest, "telemetry/trace.json", Buffer.from(JSON.stringify({
+      traceId: "trace-complete-1",
+      diagnostics: [{ locator: "telemetry-only" }],
+    })));
     const diagnosticPath = "diagnostics/verifier.stderr.txt";
     const diagnosticBytes = Buffer.from(`password="${heuristicSecret}"\nuseful diagnostic\n`);
     mkdirSync(join(source, "diagnostics"));
@@ -276,14 +280,29 @@ test("exports verifier diagnostic sidecars with portable references", async () =
     const verifierArtifact = manifest.artifacts.find(({ kind }) => kind === "verifier")!;
     const diagnosticArtifact = manifest.artifacts.find(({ kind }) => kind === "diagnostic")!;
     const portableVerifier = jsonArtifact(destination, manifest, "verifier");
+    const portableTelemetry = jsonArtifact(destination, manifest, "telemetry");
     const diagnostic = (portableVerifier.diagnostics as Array<Record<string, unknown>>)[0]!;
 
     assert.equal(diagnostic.locator, diagnosticArtifact.relativePath);
     assert.equal(diagnostic.digest, diagnosticArtifact.digest);
     assert.equal(diagnostic.sizeBytes, diagnosticArtifact.sizeBytes);
-    assert.deepEqual(diagnosticArtifact.diagnosticSource, { verifierId: verifierArtifact.id, stream: "stderr" });
+    assert.deepEqual(portableTelemetry.diagnostics, [{ locator: "telemetry-only" }]);
+    assert.deepEqual(diagnosticArtifact.diagnosticSource, {
+      verifierId: verifierArtifact.id,
+      stream: "stderr",
+      locatorDigest: `sha256:${createHash("sha256").update(diagnosticPath).digest("hex")}`,
+      sizeBytes: diagnosticBytes.length,
+    });
     assert.equal(readFileSync(join(destination, diagnosticArtifact.relativePath), "utf8").includes(heuristicSecret), false);
 
+    const sourceDigest = diagnosticArtifact.sourceDigest;
+    diagnosticArtifact.sourceDigest = `sha256:${"e".repeat(64)}`;
+    writeFileSync(join(destination, "manifest.json"), JSON.stringify(manifest));
+    await assert.rejects(
+      readPortableRunBundleExport(destination, exportPolicy, sourceManifest as unknown as RunManifest, source),
+      /source diagnostic reference/i,
+    );
+    diagnosticArtifact.sourceDigest = sourceDigest;
     diagnostic.locator = "missing/diagnostic.txt";
     const tamperedBytes = Buffer.from(JSON.stringify(portableVerifier));
     writeFileSync(join(destination, verifierArtifact.relativePath), tamperedBytes);
