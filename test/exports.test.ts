@@ -4,6 +4,7 @@ import {
   appendFileSync,
   cpSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -32,6 +33,8 @@ const clientSecret = "client-secret-value-12345";
 const privateKey = "private-key-value-12345";
 const secretAccessKey = "aws-secret-value-12345";
 const credentialsJson = "credential-json-value-12345";
+const genericToken = "generic-token-value-12345";
+const privateKeyBlock = "-----BEGIN PRIVATE KEY-----\ncHJpdmF0ZS1rZXktbWF0ZXJpYWw=\n-----END PRIVATE KEY-----";
 
 test("exports a sanitized public M2 bundle without mutating its source", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-export-"));
@@ -166,6 +169,66 @@ test("fails closed on unknown inputs and a final secret-scan finding", async (t)
         /secret scan/i,
       );
       assert.equal(existsSync(destination), false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test("sanitizes untruncated text evidence and preserves pre-existing destinations", async (t) => {
+  await t.test("text evidence", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ebo-export-text-"));
+    const source = join(root, "source");
+    const destination = join(root, "portable");
+    try {
+      stageSource(source, {
+        "workspace.patch": `${readFileSync(join(fixtureRoot, "workspace.patch"), "utf8")}
++/workspace/acme/private-repo
++session-complete-1
++password="${heuristicSecret}"
++token="${genericToken}"
++refresh_token=${genericToken}
++id_token='${genericToken}'
++${privateKeyBlock}
+`,
+      });
+      const exportPolicy = policy({ maxArtifactBytes: 16_384, maxStringBytes: 8192 });
+      const manifest = await createPortableRunBundleExport({ sourceRoot: source, destinationRoot: destination, policy: exportPolicy });
+      const workspace = manifest.artifacts.find(({ kind }) => kind === "workspace")!;
+      const text = readFileSync(join(destination, workspace.relativePath), "utf8");
+
+      for (const forbidden of [
+        "/workspace/acme/private-repo",
+        "session-complete-1",
+        heuristicSecret,
+        genericToken,
+        "cHJpdmF0ZS1rZXktbWF0ZXJpYWw=",
+        "BEGIN PRIVATE KEY",
+        "END PRIVATE KEY",
+      ]) assert.equal(text.includes(forbidden), false, `portable text leaked ${forbidden}`);
+      assert.ok(text.includes(String(manifest.correlations.sessionId)));
+      assert.ok(text.includes("[REDACTED_SECRET]"));
+      assert.ok(text.includes("[LOCAL_PATH]"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test("pre-existing destination", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ebo-export-existing-"));
+    const destination = join(root, "portable");
+    const source = join(destination, "source");
+    const marker = join(destination, "keep.txt");
+    try {
+      mkdirSync(destination);
+      writeFileSync(marker, "keep");
+      stageSource(source);
+      await assert.rejects(
+        createPortableRunBundleExport({ sourceRoot: source, destinationRoot: destination, policy: policy() }),
+        /exist|EEXIST/i,
+      );
+      assert.equal(readFileSync(marker, "utf8"), "keep");
+      assert.equal(existsSync(join(source, "manifest.json")), true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

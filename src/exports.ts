@@ -122,13 +122,13 @@ const TRUNCATABLE_FIELDS = new Set([
   "toolresult",
 ]);
 const SECRET_PATTERNS = [
-  /()(?:-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----)()/gu,
+  /()(?:-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----|$))()/gu,
   /()(?:\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{12,}|AKIA[0-9A-Z]{16})\b)()/gu,
-  /((?:authorization|api[_-]?key|access[_-]?token|oauth[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=]\s*")(?!\[REDACTED_SECRET\]")(?:\\.|[^"\\])*(")/giu,
-  /((?:authorization|api[_-]?key|access[_-]?token|oauth[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=]\s*')(?!\[REDACTED_SECRET\]')(?:\\.|[^'\\])*(')/giu,
-  /((?:authorization|api[_-]?key|access[_-]?token|oauth[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=]\s*(?:Bearer\s+)?)(?!\[REDACTED_)[^\s,"'}\]]{8,}()/giu,
+  /((?:authorization|api[_-]?key|(?:access|oauth|refresh|id)?[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=]\s*")(?!\[REDACTED_SECRET\]")(?:\\.|[^"\\])*(")/giu,
+  /((?:authorization|api[_-]?key|(?:access|oauth|refresh|id)?[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=]\s*')(?!\[REDACTED_SECRET\]')(?:\\.|[^'\\])*(')/giu,
+  /((?:authorization|api[_-]?key|(?:access|oauth|refresh|id)?[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=]\s*(?:Bearer\s+)?)(?!\[REDACTED_)[^\s,"'}\]]{8,}()/giu,
 ];
-const LOCAL_PATH = /(^|[\s"'=:(])(?:[A-Za-z]:\\(?:[^\\\s"']+\\)*[^\\\s"']*|\/(?!\/)[^\s"']+)/gu;
+const LOCAL_PATH = /(^|[\s"'=:(+\-])(?:[A-Za-z]:\\(?:[^\\\s"']+\\)*[^\\\s"']*|\/(?!\/)[^\s"']+)/gu;
 
 /** Create one separately rooted, sanitized derivative of an M2 run bundle. */
 export async function createPortableRunBundleExport(
@@ -284,7 +284,12 @@ export async function readPortableRunBundleExport(
     artifactBytes.push(bytes);
   }
   if (sourceManifest !== undefined) validateSourceReferences(manifest, sourceManifest);
-  scanPortableTree([manifestBytes, ...artifactBytes], effectiveSensitiveValues(policy), [homedir(), userInfo().username]);
+  scanPortableTree(
+    [manifestBytes, ...artifactBytes],
+    effectiveSensitiveValues(policy),
+    [homedir(), userInfo().username],
+    sourceManifest === undefined ? [] : sourceCorrelationValues(sourceManifest),
+  );
   return structuredClone(manifest);
 }
 
@@ -335,7 +340,7 @@ function sanitizeArtifact(
     return Buffer.from(`${retained.join("\n")}\n`);
   }
   const sanitized = rewriteString(
-    decode(bytes, "text evidence"), policy, replacements, sensitiveValues, localIdentifiers, counts, false, true,
+    decode(bytes, "text evidence"), policy, replacements, sensitiveValues, localIdentifiers, counts, false, true, true,
   );
   const bounded = truncateUtf8(sanitized, policy.maxArtifactBytes);
   if (bounded !== sanitized) increment(counts, "truncated");
@@ -406,12 +411,23 @@ function rewriteString(
   counts: Map<TransformationAction, number>,
   rewriteCorrelation: boolean,
   truncateContent: boolean,
+  rewriteTextCorrelations = false,
 ): string {
   let output = input;
   const correlation = rewriteCorrelation ? replacements.get(output) : undefined;
   if (correlation !== undefined) {
     output = correlation;
     increment(counts, "rewritten-correlation");
+  }
+  if (rewriteTextCorrelations) {
+    for (const [source, replacement] of replacements) {
+      if (source.length < 8) continue;
+      const occurrences = countOccurrences(output, source);
+      if (occurrences > 0) {
+        output = output.replaceAll(source, replacement);
+        increment(counts, "rewritten-correlation", occurrences);
+      }
+    }
   }
   for (const secret of sensitiveValues) {
     const occurrences = countOccurrences(output, secret);
@@ -447,6 +463,7 @@ function scanPortableTree(
   buffers: readonly Buffer[],
   sensitiveValues: readonly string[],
   localIdentifiers: readonly string[],
+  sourceCorrelations: readonly string[],
 ): void {
   for (const bytes of buffers) {
     const text = decode(bytes, "portable export");
@@ -454,6 +471,7 @@ function scanPortableTree(
         || SECRET_PATTERNS.some((pattern) => pattern.test(text))
         || LOCAL_PATH.test(text)
         || localIdentifiers.filter((value) => value.length > 1).some((value) => text.includes(value))
+        || sourceCorrelations.filter((value) => value.length >= 8).some((value) => text.includes(value))
         || /"(?:chain[_-]?of[_-]?thought|extended[_-]?thinking|hidden[_-]?reasoning|reasoning|thinking|raw[_-]?(?:api|request|response)[_-]?body)"\s*:/iu.test(text)) {
       resetPatterns();
       throw new Error("Portable export failed the final secret scan.");
@@ -548,6 +566,16 @@ function correlationReplacements(
     replacements.push([manifest.run.native.traceId, projected.traceId]);
   }
   return new Map(replacements);
+}
+
+function sourceCorrelationValues(manifest: RunManifest): string[] {
+  return [
+    manifest.bundleId,
+    manifest.run.id,
+    manifest.attempt.id,
+    ...(manifest.run.native?.sessionId === undefined ? [] : [manifest.run.native.sessionId]),
+    ...(manifest.run.native?.traceId === undefined ? [] : [manifest.run.native.traceId]),
+  ];
 }
 
 function rewrittenId(kind: string, value: string, salt: DigestString): string {
