@@ -1,4 +1,5 @@
 import type { HookEvent } from "@anthropic-ai/claude-agent-sdk";
+import { stat } from "node:fs/promises";
 
 import {
   executeClaudeAgentSdk,
@@ -61,6 +62,10 @@ export type CaptureClaudeAgentSdkRunResult = {
 export async function captureClaudeAgentSdkRun(
   options: CaptureClaudeAgentSdkRunOptions,
 ): Promise<CaptureClaudeAgentSdkRunResult> {
+  if (options.definition.run.model.id !== options.configuration.model) {
+    throw new Error("The declared model must match the Agent SDK model configuration.");
+  }
+  const expectedHooks = [...new Set(options.expectedHooks ?? [])];
   const capabilities = probeClaudeAgentSdkCapabilities();
   const definition = withPinnedRuntime(options.definition, capabilities.sdkVersion, capabilities.claudeCodeVersion);
   const assembler = await createRunBundleAssembler(definition);
@@ -108,7 +113,12 @@ export async function captureClaudeAgentSdkRun(
     modelId: definition.run.model.id,
     harnessId: definition.run.harness.id,
   });
-  const attemptIdentity = createAttemptIdentity(definition.attempt.id, definition.attempt.number, definition.attempt.retryOf);
+  const attemptIdentity = createAttemptIdentity(
+    definition.run.id,
+    definition.attempt.number,
+    definition.attempt.id,
+    definition.attempt.retryOf,
+  );
   let attempt: RunAttemptResult;
   try {
     attempt = await executeRunAttempt({
@@ -120,16 +130,6 @@ export async function captureClaudeAgentSdkRun(
         verifier: async (context) => {
           const outcome = await captureWorkspace();
           const result = await options.verifier!(context, outcome);
-          for (const diagnostic of result.diagnostics ?? []) {
-            await assembler.registerArtifact({
-              id: `verifier-${diagnostic.stream}`,
-              source: "ebo-verifier",
-              kind: "diagnostic",
-              mediaType: "text/plain",
-              sharingClass: "restricted",
-              relativePath: diagnostic.locator,
-            });
-          }
           await assembler.writeJsonArtifact({
             id: "verifier",
             source: "ebo-verifier",
@@ -151,32 +151,35 @@ export async function captureClaudeAgentSdkRun(
       ...(options.harnessBudgetMs === undefined ? {} : { harnessBudgetMs: options.harnessBudgetMs }),
       ...(options.shutdownGraceMs === undefined ? {} : { shutdownGraceMs: options.shutdownGraceMs }),
     });
-    await Promise.all([streamCapture.flush(), hookCapture.flush()]);
   } finally {
     await Promise.allSettled([streamCapture.close(), hookCapture.close()]);
   }
-  if (workspace?.status === "ready") await captureWorkspace();
+  if (workspace?.status === "ready") await captureWorkspace().catch(() => undefined);
 
   const stream = streamCapture.report();
-  await assembler.registerArtifact({
-    id: "session",
-    source: "anthropic-agent-sdk",
-    kind: "session",
-    mediaType: "application/x-ndjson",
-    sharingClass: "restricted",
-    relativePath: "session.jsonl",
-    ...(stream.capabilities.sessionIdentity.status === "available"
-      ? { nativeReference: { type: "session", id: stream.capabilities.sessionIdentity.sessionId } }
-      : {}),
-  });
-  await assembler.registerArtifact({
-    id: "hooks",
-    source: "anthropic-agent-sdk",
-    kind: "hook",
-    mediaType: "application/x-ndjson",
-    sharingClass: "restricted",
-    relativePath: "hooks.jsonl",
-  });
+  if (await isNonemptyFile(streamCapture.path)) {
+    await assembler.registerArtifact({
+      id: "session",
+      source: "anthropic-agent-sdk",
+      kind: "session",
+      mediaType: "application/x-ndjson",
+      sharingClass: "restricted",
+      relativePath: "session.jsonl",
+      ...(stream.capabilities.sessionIdentity.status === "available"
+        ? { nativeReference: { type: "session", id: stream.capabilities.sessionIdentity.sessionId } }
+        : {}),
+    });
+  }
+  if (await isNonemptyFile(hookCapture.path)) {
+    await assembler.registerArtifact({
+      id: "hooks",
+      source: "anthropic-agent-sdk",
+      kind: "hook",
+      mediaType: "application/x-ndjson",
+      sharingClass: "restricted",
+      relativePath: "hooks.jsonl",
+    });
+  }
 
   const agentSdkEvidence = attempt.record.harness?.evidence as ClaudeAgentSdkAttemptEvidence | undefined;
   if (agentSdkEvidence?.telemetry !== undefined || agentSdkEvidence?.usage !== undefined) {
@@ -198,15 +201,22 @@ export async function captureClaudeAgentSdkRun(
     startingWorkspacePath: options.startingWorkspacePath,
     ...(agentSdkEvidence === undefined ? {} : { agentSdkEvidence }),
     hookCapabilities: capabilities,
-    expectedHooks: options.expectedHooks ?? [],
+    expectedHooks,
   };
+  const terminal = structuredClone(attempt.terminal);
+  if (workspaceOutcome === undefined) delete terminal.workspaceArtifactId;
   const manifest = await assembler.finalize({
-    terminal: attempt.terminal,
+    terminal,
     missingEvidence,
     qualification: qualificationOptions,
   });
   const qualification = await qualifyRunBundle(assembler.bundleRoot, qualificationOptions);
   return { attempt, manifest, qualification, stream };
+}
+
+async function isNonemptyFile(path: string): Promise<boolean> {
+  const size = (await stat(path).catch(() => undefined))?.size;
+  return size !== undefined && size > 0;
 }
 
 function withPinnedRuntime(

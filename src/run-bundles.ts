@@ -95,7 +95,7 @@ export type RunBundleDefinition = {
 export type RegisterRunBundleArtifact = {
   id: string;
   source: string;
-  kind: EvidenceKind | "diagnostic";
+  kind: EvidenceKind;
   mediaType: string;
   sharingClass: Exclude<SharingClass, "partner" | "public">;
   relativePath: string;
@@ -209,13 +209,12 @@ const PROVISIONAL_TERMINAL: TerminalRecord = {
   failureClass: "infrastructure",
   stopReason: "none",
 };
-const AUTHORITIES: Record<EvidenceKind | "diagnostic", EvidenceAuthority> = {
+const AUTHORITIES: Record<EvidenceKind, EvidenceAuthority> = {
   session: "semantic",
   hook: "semantic",
   telemetry: "timing-resource",
   workspace: "outcome",
   verifier: "outcome",
-  diagnostic: "outcome",
 };
 
 export async function createRunBundleAssembler(definition: RunBundleDefinition): Promise<RunBundleAssembler> {

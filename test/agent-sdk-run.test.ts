@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -8,6 +8,7 @@ import type { HookInput, SDKMessage, SDKResultMessage } from "@anthropic-ai/clau
 
 import {
   captureClaudeAgentSdkRun,
+  digestBytes,
   probeClaudeAgentSdkCapabilities,
   type ClaudeAgentSdkQuery,
   type RunBundleDefinition,
@@ -39,7 +40,7 @@ test("captures and qualifies one caller-supplied Agent SDK run", async () => {
         { source: "anthropic", name: "agent-cli", version: capabilities.claudeCodeVersion },
       ],
     },
-    attempt: { id: "attempt-production-capture", number: 1 },
+    attempt: { id: "attempt-production-capture", number: 2, retryOf: "attempt-prior" },
     configuration: { digest: SHA("b"), budgetDigest: SHA("c"), toolPolicyDigest: SHA("d") },
   };
   const query: ClaudeAgentSdkQuery = (input) => ({
@@ -77,40 +78,80 @@ test("captures and qualifies one caller-supplied Agent SDK run", async () => {
           checkReceipt: () => ({ status: "received", signals: ["traces", "metrics", "logs"] }),
         },
       },
-      expectedHooks: ["UserPromptSubmit", "SessionStart", "SessionEnd"],
+      expectedHooks: ["UserPromptSubmit", "SessionStart", "SessionEnd", "SessionStart"],
       query,
-      verifier: async (_context, workspace) => ({
-        schemaVersion: "verifier-result/v1",
-        bundleId: definition.bundleId,
-        status: "passed",
-        exitCode: 0,
-        workspace: {
-          artifactId: workspace.descriptor.id,
-          digest: workspace.descriptor.digest,
-          fingerprint: workspace.fingerprint,
-        },
-        assertions: [{ id: "result", status: "passed" }],
-      }),
+      verifier: async (_context, workspace) => {
+        const bytes = Buffer.from("verifier output\n");
+        writeFileSync(join(bundleRoot, "verifier.stdout"), bytes);
+        return {
+          schemaVersion: "verifier-result/v1",
+          bundleId: definition.bundleId,
+          status: "passed",
+          exitCode: 0,
+          workspace: {
+            artifactId: workspace.descriptor.id,
+            digest: workspace.descriptor.digest,
+            fingerprint: workspace.fingerprint,
+          },
+          assertions: [{ id: "result", status: "passed" }],
+          diagnostics: [{
+            stream: "stdout",
+            locator: "verifier.stdout",
+            digest: `sha256:${digestBytes(bytes).value}` as const,
+            sizeBytes: bytes.length,
+            truncated: false,
+          }],
+        };
+      },
     });
 
     assert.equal(result.attempt.classification.kind, "completed");
+    assert.deepEqual(result.attempt.record.attempt, definition.attempt);
     assert.equal(result.qualification.status, "qualified");
     assert.equal(result.manifest.terminal.state, "completed");
     const descriptor = result.manifest.evidence.find((entry) => entry.kind === "capture-report")!;
     const report = JSON.parse(readFileSync(join(bundleRoot, descriptor.relativePath), "utf8")) as {
-      agentSdk: { capabilities: { sdkVersion: string }; effectiveConfiguration: { model: string } };
+      agentSdk: { capabilities: { sdkVersion: string }; effectiveConfiguration: { model: string }; expectedHooks: string[] };
       structuralQualification: { status: string };
     };
     assert.equal(report.agentSdk.capabilities.sdkVersion, capabilities.sdkVersion);
     assert.equal(report.agentSdk.effectiveConfiguration.model, "claude-test");
+    assert.deepEqual(report.agentSdk.expectedHooks, ["UserPromptSubmit", "SessionStart", "SessionEnd"]);
     assert.equal(report.structuralQualification.status, "qualified");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("retains interrupted and verifier-error attempts through the single-run entry point", async (context) => {
-  for (const scenario of ["interrupted", "verifier-error"] as const) {
+test("rejects a declared model that differs from the executed SDK model", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-run-model-mismatch-"));
+  try {
+    const capabilities = probeClaudeAgentSdkCapabilities();
+    await assert.rejects(captureClaudeAgentSdkRun({
+      definition: {
+        bundleRoot: join(root, "bundle"), bundleId: "bundle-model-mismatch",
+        run: {
+          id: "run-model-mismatch", task: { id: "task-model-mismatch" },
+          fixture: { id: "fixture-model-mismatch", digest: SHA("a") },
+          model: { provider: "anthropic", id: "declared-model" },
+          harness: { id: "agent-sdk", version: capabilities.sdkVersion },
+          runtime: [{ source: "anthropic", name: "agent-sdk", version: capabilities.sdkVersion }],
+        },
+        attempt: { id: "attempt-model-mismatch", number: 1 },
+        configuration: { digest: SHA("b"), budgetDigest: SHA("c"), toolPolicyDigest: SHA("d") },
+      },
+      startingWorkspacePath: root,
+      workspace: { setup: async () => ({ status: "ready", path: root, artifactId: "workspace", retained: true }) },
+      configuration: { prompt: "test", model: "executed-model", tools: [], permissionMode: "dontAsk" },
+    }), /declared model/i);
+    assert.equal(existsSync(join(root, "bundle")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("retains interrupted, verifier-error, and capture/workspace-failure attempts", async (context) => {
+  for (const scenario of ["interrupted", "verifier-error", "capture-failure", "workspace-error"] as const) {
     await context.test(scenario, async () => {
       const root = mkdtempSync(join(tmpdir(), `ebo-agent-sdk-run-${scenario}-`));
       const start = join(root, "start");
@@ -120,6 +161,7 @@ test("retains interrupted and verifier-error attempts through the single-run ent
       writeFileSync(join(start, "result.txt"), "before\n");
       cpSync(start, final, { recursive: true, preserveTimestamps: true });
       writeFileSync(join(final, "result.txt"), "after\n");
+      if (scenario === "workspace-error") symlinkSync("result.txt", join(final, "unsafe-link"));
       const capabilities = probeClaudeAgentSdkCapabilities();
       const definition: RunBundleDefinition = {
         bundleRoot,
@@ -139,9 +181,11 @@ test("retains interrupted and verifier-error attempts through the single-run ent
       const query: ClaudeAgentSdkQuery = () => ({
         close: () => undefined,
         async *[Symbol.asyncIterator]() {
-          yield assistantMessage();
+          yield scenario === "capture-failure"
+            ? ({ type: "future", payload: 1n } as unknown as SDKMessage)
+            : assistantMessage();
           if (scenario === "interrupted") controller.abort("fixture interruption");
-          else yield sdkResult();
+          else if (scenario !== "capture-failure") yield sdkResult();
         },
       });
       try {
@@ -162,7 +206,9 @@ test("retains interrupted and verifier-error attempts through the single-run ent
             },
           },
           query,
-          ...(scenario === "interrupted" ? { signal: controller.signal } : {
+          ...(["interrupted", "capture-failure", "workspace-error"].includes(scenario) ? {
+            ...(scenario === "interrupted" ? { signal: controller.signal } : {}),
+          } : {
             verifier: async (_verifierContext, workspace) => ({
               schemaVersion: "verifier-result/v1" as const,
               bundleId: definition.bundleId,
@@ -177,8 +223,15 @@ test("retains interrupted and verifier-error attempts through the single-run ent
             }),
           }),
         });
-        assert.equal(result.attempt.classification.kind, scenario === "interrupted" ? "interrupted" : "verifier-error");
+        const expectedClassification = scenario === "interrupted" ? "interrupted"
+          : scenario === "verifier-error" ? "verifier-error"
+            : scenario === "capture-failure" ? "capture-incomplete" : "verifier-error";
+        assert.equal(result.attempt.classification.kind, expectedClassification);
         assert.equal(result.manifest.terminal.state, scenario === "interrupted" ? "interrupted" : "failed");
+        if (scenario === "workspace-error") {
+          assert.equal(result.manifest.evidence.some((entry) => entry.kind === "workspace"), false);
+          assert.equal(result.manifest.terminal.workspaceArtifactId, undefined);
+        }
         assert.equal(result.qualification.status, "unqualified");
         const reportDescriptor = result.manifest.evidence.find((entry) => entry.kind === "capture-report")!;
         const report = JSON.parse(readFileSync(join(bundleRoot, reportDescriptor.relativePath), "utf8")) as {
