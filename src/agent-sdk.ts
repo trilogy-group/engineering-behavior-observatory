@@ -228,6 +228,10 @@ export function buildClaudeAgentSdkEnvironment(input: {
       ? encodedAttributes
       : `${inheritedResourceAttributes},${encodedAttributes}`,
   });
+  for (const signal of TELEMETRY_SIGNALS) {
+    delete env[`OTEL_EXPORTER_OTLP_${signal.toUpperCase()}_ENDPOINT`];
+    delete env[`OTEL_EXPORTER_OTLP_${signal.toUpperCase()}_PROTOCOL`];
+  }
   if (input.telemetry.detailedHookSpans === undefined) {
     delete env.ENABLE_BETA_TRACING_DETAILED;
     delete env.BETA_TRACING_ENDPOINT;

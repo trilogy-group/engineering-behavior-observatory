@@ -275,6 +275,12 @@ test("builds a safe correlated telemetry environment without leaking secret sett
       KEEP_PARENT: "parent",
       OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=test",
       OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer collector-secret",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://stale.example.test/v1/traces",
+      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "https://stale.example.test/v1/metrics",
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "https://stale.example.test/v1/logs",
+      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "grpc",
+      OTEL_EXPORTER_OTLP_METRICS_PROTOCOL: "grpc",
+      OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: "grpc",
       OTEL_LOG_USER_PROMPTS: "1",
       OTEL_LOG_TOOL_DETAILS: "1",
       OTEL_LOG_TOOL_CONTENT: "1",
@@ -302,6 +308,12 @@ test("builds a safe correlated telemetry environment without leaking secret sett
   assert.equal(built.env.OTEL_LOG_TOOL_DETAILS, "0");
   assert.equal(built.env.OTEL_LOG_TOOL_CONTENT, "0");
   assert.equal(built.env.OTEL_LOG_RAW_API_BODIES, "0");
+  assert.equal(built.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, undefined);
+  assert.equal(built.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT, undefined);
+  assert.equal(built.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT, undefined);
+  assert.equal(built.env.OTEL_EXPORTER_OTLP_TRACES_PROTOCOL, undefined);
+  assert.equal(built.env.OTEL_EXPORTER_OTLP_METRICS_PROTOCOL, undefined);
+  assert.equal(built.env.OTEL_EXPORTER_OTLP_LOGS_PROTOCOL, undefined);
   assert.equal(built.env.ENABLE_BETA_TRACING_DETAILED, undefined);
   assert.equal(built.env.BETA_TRACING_ENDPOINT, undefined);
   assert.equal(
