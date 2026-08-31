@@ -35,15 +35,15 @@ export type ClaudeAgentSdkLifecycleEvent =
   | { type: "failed"; at: string; messageCount: number; error: string };
 
 export type ClaudeAgentSdkEvidenceSink = EvidenceSink & {
-  message?: (message: SDKMessage) => void | Promise<void>;
-  stderr?: (data: string) => void;
-  hook?: (
+  message: (message: SDKMessage) => void | Promise<void>;
+  stderr: (data: string) => void;
+  hook: (
     event: HookEvent,
     input: HookInput,
     toolUseId: string | undefined,
     signal: AbortSignal,
   ) => void | Promise<void>;
-  lifecycle?: (event: ClaudeAgentSdkLifecycleEvent) => void | Promise<void>;
+  lifecycle: (event: ClaudeAgentSdkLifecycleEvent) => void | Promise<void>;
 };
 
 export type ClaudeAgentSdkCapabilities = {
@@ -99,7 +99,7 @@ export function probeClaudeAgentSdkCapabilities(): ClaudeAgentSdkCapabilities {
 export async function executeClaudeAgentSdk(
   context: HarnessExecutionContext,
   configuration: ClaudeAgentSdkConfiguration,
-  sink: ClaudeAgentSdkEvidenceSink = {},
+  sink: ClaudeAgentSdkEvidenceSink,
   queryFunction: QueryFunction = query,
 ): Promise<HarnessExecutionResult> {
   let queryHandle: QueryHandle | undefined;
@@ -144,6 +144,7 @@ export async function executeClaudeAgentSdk(
   else context.signal.addEventListener("abort", abort, { once: true });
 
   try {
+    validateEvidenceSink(sink);
     validateConfiguration(configuration, context);
     const capabilities = probeClaudeAgentSdkCapabilities();
     evidence = executorEvidence(configuration, context, capabilities);
@@ -316,6 +317,12 @@ function validateConfiguration(configuration: ClaudeAgentSdkConfiguration, conte
   }
   if (context.workspace?.status !== "ready" || context.workspace.path === undefined || context.workspace.path.trim() === "") {
     throw new Error("Claude Agent SDK requires a ready attempt workspace path.");
+  }
+}
+
+function validateEvidenceSink(sink: ClaudeAgentSdkEvidenceSink): void {
+  if (!isRecord(sink) || [sink.message, sink.stderr, sink.hook, sink.lifecycle].some((callback) => typeof callback !== "function")) {
+    throw new Error("Claude Agent SDK evidence sink requires message, stderr, hook, and lifecycle callbacks.");
   }
 }
 

@@ -43,6 +43,13 @@ const configuration: ClaudeAgentSdkConfiguration = {
   env: { EBO_CHILD_SETTING: "child" },
 };
 
+const noOpSink: ClaudeAgentSdkEvidenceSink = {
+  message: () => undefined,
+  stderr: () => undefined,
+  hook: () => undefined,
+  lifecycle: () => undefined,
+};
+
 test("runs a typed SDK stream in the attempt workspace and records effective manifest facts", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-success-"));
   const previousParentSetting = process.env.EBO_PARENT_SETTING;
@@ -138,7 +145,7 @@ test("retains SDK stderr and classifies API failures as infrastructure", async (
     const result = await executeRunAttempt({
       run,
       workspace: { setup: async () => ({ status: "ready", path: root, artifactId: "workspace-1", retained: true }) },
-      harness: (context) => executeClaudeAgentSdk(context, configuration, {}, query),
+      harness: (context) => executeClaudeAgentSdk(context, configuration, noOpSink, query),
       evidence: { flush: () => undefined },
     });
 
@@ -162,7 +169,7 @@ test("forwards abort through the SDK controller and closes the query", async () 
     const pending = executeRunAttempt({
       run,
       workspace: { setup: async () => ({ status: "ready", path: root, artifactId: "workspace-1", retained: true }) },
-      harness: (context) => executeClaudeAgentSdk(context, configuration, {}, query),
+      harness: (context) => executeClaudeAgentSdk(context, configuration, noOpSink, query),
       signal: external.signal,
       evidence: { flush: () => undefined },
     });
@@ -185,7 +192,7 @@ test("lets the lifecycle enforce timeout as a budget stop", async () => {
     const result = await executeRunAttempt({
       run,
       workspace: { setup: async () => ({ status: "ready", path: root, artifactId: "workspace-1", retained: true }) },
-      harness: (context) => executeClaudeAgentSdk(context, configuration, {}, blockingQuery(undefined, () => { closed = true; })),
+      harness: (context) => executeClaudeAgentSdk(context, configuration, noOpSink, blockingQuery(undefined, () => { closed = true; })),
       harnessBudgetMs: 20,
       shutdownGraceMs: 100,
       evidence: { flush: () => undefined },
@@ -207,7 +214,7 @@ test("rejects malformed configuration before starting the SDK", async () => {
     const result = await executeRunAttempt({
       run,
       workspace: { setup: async () => ({ status: "ready", path: root, artifactId: "workspace-1", retained: true }) },
-      harness: (context) => executeClaudeAgentSdk(context, invalid, {}, () => {
+      harness: (context) => executeClaudeAgentSdk(context, invalid, noOpSink, () => {
         called = true;
         return stream([]);
       }),
@@ -217,6 +224,28 @@ test("rejects malformed configuration before starting the SDK", async () => {
     assert.equal(called, false);
     assert.equal(result.classification.kind, "infrastructure-failure");
     assert.match(result.record.harness?.error ?? "", /prompt must be a nonempty string/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("requires every native evidence callback before starting the SDK", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-sink-"));
+  try {
+    let called = false;
+    const result = await executeRunAttempt({
+      run,
+      workspace: { setup: async () => ({ status: "ready", path: root, artifactId: "workspace-1", retained: true }) },
+      harness: (context) => executeClaudeAgentSdk(context, configuration, {} as ClaudeAgentSdkEvidenceSink, () => {
+        called = true;
+        return stream([]);
+      }),
+      evidence: { flush: () => undefined },
+    });
+
+    assert.equal(called, false);
+    assert.equal(result.classification.kind, "infrastructure-failure");
+    assert.match(result.record.harness?.error ?? "", /requires message, stderr, hook, and lifecycle callbacks/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
