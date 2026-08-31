@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -14,6 +14,7 @@ import {
   createRunIdentity,
   executeClaudeAgentSdk,
   executeRunAttempt,
+  openClaudeAgentSdkStreamCapture,
   probeClaudeAgentSdkCapabilities,
   type ClaudeAgentSdkAttemptEvidence,
   type ClaudeAgentSdkConfiguration,
@@ -260,6 +261,141 @@ test("capability probe exposes every public hook and explicit missing telemetry"
   assert.deepEqual(capabilities.missingEvidence.map((entry) => entry.capability), ["beta-telemetry"]);
 });
 
+test("persists typed native messages in arrival order with public result identity", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-capture-"));
+  const path = join(root, "session.jsonl");
+  const messages = nativeFixtureMessages();
+  let tick = 0;
+  const capturedAt = messages.map((_, index) => `2026-08-31T00:00:0${index}.000Z`);
+  const capture = await openClaudeAgentSdkStreamCapture(path, noOpSink, () => capturedAt[tick++]!);
+  try {
+    for (const message of messages) await capture.message(message);
+    await capture.flush();
+
+    const records = readJsonl(path);
+    assert.deepEqual(records.map((record) => record.sequence), [1, 2, 3, 4]);
+    assert.deepEqual(records.map((record) => record.capturedAt), capturedAt);
+    assert.deepEqual(records.map((record) => record.nativeType), ["user", "assistant", "user", "result"]);
+    assert.deepEqual(records.map((record) => record.message), messages);
+    assert.deepEqual(capture.report(), {
+      schemaVersion: "ebo.agent-sdk-capture/v1",
+      status: "complete",
+      artifact: {
+        path,
+        kind: "session",
+        authority: "semantic",
+        mediaType: "application/x-ndjson",
+        sharingClass: "restricted",
+      },
+      capabilities: {
+        typedMessageStream: { status: "available", messageCount: 4 },
+        sessionIdentity: { status: "available", sessionId: "session-1", source: "sdk-result.session_id" },
+      },
+      result: { uuid: "result-1", subtype: "success", sessionId: "session-1" },
+      diagnostics: { count: 0, retained: [], truncated: false },
+    });
+  } finally {
+    await capture.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("forced interruption retains each fully received message as a readable partial capture", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-partial-"));
+  const path = join(root, "session.jsonl");
+  const capture = await openClaudeAgentSdkStreamCapture(path, noOpSink);
+  try {
+    const external = new AbortController();
+    let firstPersisted!: () => void;
+    const persisted = new Promise<void>((resolve) => { firstPersisted = resolve; });
+    const first = nativeFixtureMessages()[1]!;
+    const pending = executeRunAttempt({
+      run,
+      workspace: { setup: async () => ({ status: "ready", path: root, artifactId: "workspace-1", retained: true }) },
+      harness: (context) => executeClaudeAgentSdk(context, configuration, capture, interruptibleStream(first, firstPersisted)),
+      signal: external.signal,
+      evidence: capture,
+    });
+    await persisted;
+    external.abort("forced interruption");
+    const result = await pending;
+
+    assert.equal(result.classification.kind, "interrupted");
+    assert.deepEqual(readJsonl(path).map((record) => record.message), [first]);
+    assert.deepEqual(capture.report().capabilities, {
+      typedMessageStream: { status: "available", messageCount: 1 },
+      sessionIdentity: { status: "available", sessionId: "session-1", source: "sdk-message.session_id" },
+    });
+    assert.equal(capture.report().status, "partial");
+  } finally {
+    await capture.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("retains unknown future message types with bounded diagnostics without failing the attempt", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-unknown-"));
+  const path = join(root, "session.jsonl");
+  const capture = await openClaudeAgentSdkStreamCapture(path, noOpSink);
+  const futureMessages = Array.from({ length: 40 }, (_, index) => ({
+    type: `future_message_${index}`,
+    session_id: "session-1",
+    payload: { index },
+  } as unknown as SDKMessage));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: { setup: async () => ({ status: "ready", path: root, artifactId: "workspace-1", retained: true }) },
+      harness: (context) => executeClaudeAgentSdk(context, configuration, capture, () => stream([...futureMessages, sdkResult("success")])),
+      verifier: async () => ({ status: "passed" }),
+      evidence: capture,
+    });
+
+    assert.equal(result.classification.kind, "completed");
+    const records = readJsonl(path);
+    assert.equal(records.length, 41);
+    assert.deepEqual(records.slice(0, 40).map((record) => record.message), futureMessages);
+    assert.deepEqual(capture.report().diagnostics, {
+      count: 40,
+      retained: futureMessages.slice(0, 32).map((message, index) => ({
+        sequence: index + 1,
+        code: "unknown-native-type",
+        nativeType: (message as unknown as { type: string }).type,
+      })),
+      truncated: true,
+    });
+    assert.equal(capture.report().status, "complete");
+  } finally {
+    await capture.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("keeps an append failure visible through lifecycle flushes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-append-failure-"));
+  const path = join(root, "session.jsonl");
+  const capture = await openClaudeAgentSdkStreamCapture(path, noOpSink);
+  const valid = nativeFixtureMessages()[0]!;
+  const invalid = { type: "future_message", payload: { invalid: 1n } } as unknown as SDKMessage;
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: { setup: async () => ({ status: "ready", path: root, artifactId: "workspace-1", retained: true }) },
+      harness: (context) => executeClaudeAgentSdk(context, configuration, capture, () => stream([valid, invalid])),
+      evidence: capture,
+    });
+
+    assert.equal(result.classification.kind, "capture-incomplete");
+    assert.equal(result.record.capture?.status, "incomplete");
+    assert.match(result.record.capture?.error ?? "", /JSON/);
+    assert.deepEqual(readJsonl(path).map((record) => record.message), [valid]);
+    assert.equal(capture.report().status, "partial");
+  } finally {
+    await capture.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function stream(messages: SDKMessage[], before?: () => void | Promise<void>): QueryHandle {
   return {
     close: () => undefined,
@@ -289,6 +425,66 @@ function blockingQuery(start?: () => void, close?: () => void): QueryFunction {
   };
 }
 
+function interruptibleStream(message: SDKMessage, persisted: () => void): QueryFunction {
+  return (input) => {
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    const signal = input.options?.abortController?.signal;
+    const abort = () => { release(); };
+    if (signal?.aborted) release();
+    else signal?.addEventListener("abort", abort, { once: true });
+    return {
+      close: release,
+      async *[Symbol.asyncIterator]() {
+        yield message;
+        persisted();
+        await released;
+        signal?.removeEventListener("abort", abort);
+      },
+    };
+  };
+}
+
+function nativeFixtureMessages(): SDKMessage[] {
+  return [
+    {
+      type: "user",
+      uuid: "prompt-1",
+      session_id: "session-1",
+      parent_tool_use_id: null,
+      message: { role: "user", content: "Inspect the attempt workspace." },
+    } as unknown as SDKMessage,
+    {
+      type: "assistant",
+      uuid: "assistant-1",
+      session_id: "session-1",
+      parent_tool_use_id: null,
+      message: {
+        id: "message-1",
+        type: "message",
+        role: "assistant",
+        model: "claude-test",
+        content: [{ type: "tool_use", id: "tool-1", name: "Read", input: { file_path: "README.md" } }],
+        stop_reason: "tool_use",
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    } as unknown as SDKMessage,
+    {
+      type: "user",
+      uuid: "tool-result-1",
+      session_id: "session-1",
+      parent_tool_use_id: null,
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tool-1", content: "README" }] },
+    } as unknown as SDKMessage,
+    sdkResult("success"),
+  ];
+}
+
+function readJsonl(path: string): Array<Record<string, unknown>> {
+  return readFileSync(path, "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
 function sdkResult(
   subtype: SDKResultMessage["subtype"],
   errors: string[] = [],
@@ -297,8 +493,7 @@ function sdkResult(
     type: "result",
     subtype,
     is_error: subtype !== "success",
-    errors,
-    result: subtype === "success" ? "done" : undefined,
+    ...(subtype === "success" ? { result: "done" } : { errors }),
     session_id: "session-1",
     uuid: "result-1",
   } as unknown as SDKMessage;
