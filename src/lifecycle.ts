@@ -114,6 +114,7 @@ export type HarnessExecutionResult = {
   stopReason?: Exclude<StopReason, "none">;
   reason?: string;
   error?: string;
+  captureError?: string;
   completionEvidence?: unknown;
   evidence?: unknown;
   shutdown?: () => void | Promise<void>;
@@ -399,6 +400,9 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
       if (record.capture?.status !== "incomplete") {
         record.capture = { status: "incomplete", error: errorMessage(error) };
       }
+    }
+    if (record.capture?.status !== "incomplete" && record.harness?.captureError !== undefined) {
+      record.capture = { status: "incomplete", error: record.harness.captureError };
     }
     await persist();
   };
@@ -1975,7 +1979,7 @@ function assertHarnessResult(value: unknown): asserts value is HarnessExecutionR
   if (value.stopReason !== undefined && !["budget", "policy"].includes(String(value.stopReason))) {
     throw new Error("Harness stop reason is invalid.");
   }
-  for (const field of ["reason", "error"] as const) {
+  for (const field of ["reason", "error", "captureError"] as const) {
     if (value[field] !== undefined) assertTimestampValue(value[field], `Harness ${field}`);
   }
   if (value.shutdownResult !== undefined) assertShutdownResult(value.shutdownResult, "Harness shutdown");

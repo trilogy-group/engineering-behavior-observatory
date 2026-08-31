@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   HOOK_EVENTS,
+  type HookEvent,
   type HookInput,
   type Options,
   type SDKMessage,
@@ -14,11 +15,13 @@ import {
   createRunIdentity,
   executeClaudeAgentSdk,
   executeRunAttempt,
+  openClaudeAgentSdkHookCapture,
   openClaudeAgentSdkStreamCapture,
   probeClaudeAgentSdkCapabilities,
   type ClaudeAgentSdkAttemptEvidence,
   type ClaudeAgentSdkConfiguration,
   type ClaudeAgentSdkEvidenceSink,
+  type ClaudeAgentSdkHookRecord,
 } from "../src/index.js";
 
 type QueryInput = { prompt: string; options?: Options };
@@ -50,6 +53,51 @@ const noOpSink: ClaudeAgentSdkEvidenceSink = {
   hook: () => undefined,
   lifecycle: () => undefined,
 };
+
+const hookBase = {
+  session_id: "session-hooks",
+  transcript_path: "/restricted/session-hooks.jsonl",
+  cwd: "/attempt/workspace",
+  prompt_id: "prompt-hooks",
+  agent_id: "agent-hooks",
+  agent_type: "general-purpose",
+} as const;
+
+const hookFixtures = {
+  PreToolUse: { ...hookBase, hook_event_name: "PreToolUse", tool_name: "Read", tool_input: {}, tool_use_id: "tool-pre" },
+  PostToolUse: { ...hookBase, hook_event_name: "PostToolUse", tool_name: "Read", tool_input: {}, tool_response: {}, tool_use_id: "tool-post" },
+  PostToolUseFailure: { ...hookBase, hook_event_name: "PostToolUseFailure", tool_name: "Read", tool_input: {}, tool_use_id: "tool-failed", error: "failed" },
+  PostToolBatch: { ...hookBase, hook_event_name: "PostToolBatch", tool_calls: [{ tool_name: "Read", tool_input: {}, tool_use_id: "tool-batch", tool_response: {} }] },
+  Notification: { ...hookBase, hook_event_name: "Notification", message: "working", notification_type: "status" },
+  UserPromptSubmit: { ...hookBase, hook_event_name: "UserPromptSubmit", prompt: "Inspect the workspace." },
+  UserPromptExpansion: { ...hookBase, hook_event_name: "UserPromptExpansion", expansion_type: "slash_command", command_name: "review", command_args: "", prompt: "Review." },
+  SessionStart: { ...hookBase, hook_event_name: "SessionStart", source: "startup" },
+  SessionEnd: { ...hookBase, hook_event_name: "SessionEnd", reason: "other" },
+  Stop: { ...hookBase, hook_event_name: "Stop", stop_hook_active: false },
+  StopFailure: { ...hookBase, hook_event_name: "StopFailure", error: "unknown" },
+  SubagentStart: { ...hookBase, hook_event_name: "SubagentStart" },
+  SubagentStop: { ...hookBase, hook_event_name: "SubagentStop", stop_hook_active: false, agent_transcript_path: "/restricted/agent-hooks.jsonl" },
+  PreCompact: { ...hookBase, hook_event_name: "PreCompact", trigger: "auto", custom_instructions: "retain facts" },
+  PostCompact: { ...hookBase, hook_event_name: "PostCompact", trigger: "auto", compact_summary: "summary" },
+  PreModelSwitch: { ...hookBase, hook_event_name: "PreModelSwitch", from_model: "claude-a", to_model: "claude-b", requested_model: "claude-b", source: "sdk", context_tokens: 10, prompt_cache_warm: true, cache_ttl: "5m", estimated_cache_write_usd: 0, pricing: "catalog" },
+  PostModelSwitch: { ...hookBase, hook_event_name: "PostModelSwitch", from_model: "claude-a", to_model: "claude-b", requested_model: "claude-b", source: "sdk", context_tokens: 10, prompt_cache_warm: true, cache_ttl: "5m", estimated_cache_write_usd: 0, pricing: "catalog" },
+  PermissionRequest: { ...hookBase, hook_event_name: "PermissionRequest", tool_name: "Write", tool_input: {} },
+  PermissionDenied: { ...hookBase, hook_event_name: "PermissionDenied", tool_name: "Write", tool_input: {}, tool_use_id: "tool-denied", reason: "policy" },
+  Setup: { ...hookBase, hook_event_name: "Setup", trigger: "init" },
+  TeammateIdle: { ...hookBase, hook_event_name: "TeammateIdle", teammate_name: "worker", team_name: "team" },
+  TaskCreated: { ...hookBase, hook_event_name: "TaskCreated", task_id: "task-created", task_subject: "Created task" },
+  TaskCompleted: { ...hookBase, hook_event_name: "TaskCompleted", task_id: "task-completed", task_subject: "Completed task" },
+  Elicitation: { ...hookBase, hook_event_name: "Elicitation", mcp_server_name: "server", message: "Choose." },
+  ElicitationResult: { ...hookBase, hook_event_name: "ElicitationResult", mcp_server_name: "server", action: "decline" },
+  ConfigChange: { ...hookBase, hook_event_name: "ConfigChange", source: "project_settings", file_path: "/attempt/workspace/.claude/settings.json" },
+  WorktreeCreate: { ...hookBase, hook_event_name: "WorktreeCreate", name: "feature" },
+  WorktreeRemove: { ...hookBase, hook_event_name: "WorktreeRemove", worktree_path: "/attempt/worktree" },
+  InstructionsLoaded: { ...hookBase, hook_event_name: "InstructionsLoaded", file_path: "/attempt/workspace/CLAUDE.md", memory_type: "Project", load_reason: "session_start" },
+  CwdChanged: { ...hookBase, hook_event_name: "CwdChanged", old_cwd: "/attempt/workspace", new_cwd: "/attempt/workspace/subdir" },
+  FileChanged: { ...hookBase, hook_event_name: "FileChanged", file_path: "/attempt/workspace/file.ts", event: "change" },
+  DirectoryAdded: { ...hookBase, hook_event_name: "DirectoryAdded", directory: "/attempt/other", source: "register_repo_root" },
+  MessageDisplay: { ...hookBase, hook_event_name: "MessageDisplay", turn_id: "turn-hooks", message_id: "message-hooks", index: 0, final: true, delta: "Done." },
+} satisfies { [Event in HookEvent]: Extract<HookInput, { hook_event_name: Event }> };
 
 test("runs a typed SDK stream in the attempt workspace and records effective manifest facts", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-success-"));
@@ -252,13 +300,125 @@ test("requires every native evidence callback before starting the SDK", async ()
   }
 });
 
-test("capability probe exposes every public hook and explicit missing telemetry", () => {
+test("persists every pinned typed hook in ordered restricted JSONL with neutral outputs", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-hooks-"));
+  const capture = await openClaudeAgentSdkHookCapture(
+    join(root, "hooks.jsonl"),
+    (() => {
+      let timestamp = Date.parse("2026-08-31T00:00:00.000Z");
+      return () => new Date(timestamp++).toISOString();
+    })(),
+  );
+  try {
+    const callbackOutputs: unknown[] = [];
+    const sink: ClaudeAgentSdkEvidenceSink = {
+      ...noOpSink,
+      flush: capture.flush,
+      hook: capture.hook,
+    };
+    const query: QueryFunction = (input) => stream([sdkResult("success")], async () => {
+      for (const event of HOOK_EVENTS) {
+        const callback = input.options?.hooks?.[event]?.[0]?.hooks[0];
+        assert.ok(callback, `missing ${event} callback`);
+        const signal = new AbortController();
+        if (event === HOOK_EVENTS.at(-1)) signal.abort("fixture");
+        callbackOutputs.push(await callback(hookFixtures[event], callbackToolUseId(hookFixtures[event]), { signal: signal.signal }));
+      }
+    });
+    const result = await executeRunAttempt({
+      run,
+      workspace: { setup: async () => ({ status: "ready", path: root, artifactId: "workspace-hooks", retained: true }) },
+      harness: (context) => executeClaudeAgentSdk(context, configuration, sink, query),
+      verifier: async () => ({ status: "passed" }),
+      evidence: sink,
+    });
+
+    assert.equal(result.classification.kind, "completed");
+    assert.deepEqual(callbackOutputs, HOOK_EVENTS.map(() => ({})));
+    const records = readFileSync(capture.path, "utf8").trim().split("\n").map((line) => JSON.parse(line) as ClaudeAgentSdkHookRecord);
+    assert.deepEqual(records.map((record) => record.sequence), HOOK_EVENTS.map((_, index) => index + 1));
+    assert.deepEqual(records.map((record) => record.hook), HOOK_EVENTS);
+    assert.deepEqual(records.map((record) => record.nativePayload), HOOK_EVENTS.map((event) => hookFixtures[event]));
+    assert.deepEqual(records.map((record) => record.callbackOutput), HOOK_EVENTS.map(() => ({})));
+    assert.deepEqual(records[0], {
+      schemaVersion: "ebo.claude-agent-hook/v1",
+      sequence: 1,
+      callbackAt: "2026-08-31T00:00:00.000Z",
+      hook: "PreToolUse",
+      sessionId: hookBase.session_id,
+      transcriptPath: hookBase.transcript_path,
+      cwd: hookBase.cwd,
+      promptId: hookBase.prompt_id,
+      toolUseId: "tool-pre",
+      agentId: hookBase.agent_id,
+      agentType: hookBase.agent_type,
+      signalAborted: false,
+      callbackOutput: {},
+      nativePayload: hookFixtures.PreToolUse,
+    });
+    assert.equal(records.at(-1)?.signalAborted, true);
+    assert.deepEqual((result.record.harness?.evidence as ClaudeAgentSdkAttemptEvidence).captureWarnings, {
+      count: 0,
+      diagnostic: "",
+      sizeBytes: 0,
+      truncated: false,
+    });
+  } finally {
+    await capture.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("contains hook sink failure as a capture warning while returning neutral output", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-hook-failure-"));
+  const capture = await openClaudeAgentSdkHookCapture(join(root, "hooks.jsonl"));
+  await capture.close();
+  try {
+    let callbackOutput: unknown;
+    const sink: ClaudeAgentSdkEvidenceSink = { ...noOpSink, flush: () => undefined, hook: capture.hook };
+    const query: QueryFunction = (input) => stream([sdkResult("success")], async () => {
+      callbackOutput = await input.options?.hooks?.PreToolUse?.[0]?.hooks[0]?.(
+        hookFixtures.PreToolUse,
+        "tool-pre",
+        { signal: new AbortController().signal },
+      );
+    });
+    const result = await executeRunAttempt({
+      run,
+      workspace: { setup: async () => ({ status: "ready", path: root, artifactId: "workspace-hook-failure", retained: true }) },
+      harness: (context) => executeClaudeAgentSdk(context, configuration, sink, query),
+      verifier: async () => ({ status: "passed" }),
+      evidence: sink,
+    });
+
+    assert.equal(result.classification.kind, "capture-incomplete");
+    assert.equal(result.classification.underlying, "completed");
+    assert.equal(result.record.harness?.status, "completed");
+    assert.match(result.record.harness?.captureError ?? "", /hook capture reported 1 warning/);
+    assert.equal(result.record.capture?.status, "incomplete");
+    assert.deepEqual(callbackOutput, {});
+    const warnings = (result.record.harness?.evidence as ClaudeAgentSdkAttemptEvidence).captureWarnings;
+    assert.equal(warnings.count, 1);
+    assert.match(warnings.diagnostic, /"type":"hook-capture-warning"/);
+    assert.match(warnings.diagnostic, /"hook":"PreToolUse"/);
+    assert.match(warnings.diagnostic, /JSONL evidence writer is closed/);
+    assert.equal(warnings.truncated, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("capability probe separates hook callbacks from optional detailed-beta span timing", () => {
   const capabilities = probeClaudeAgentSdkCapabilities();
   assert.equal(capabilities.sdkVersion, "0.3.251");
   assert.equal(capabilities.claudeCodeVersion, "2.1.251");
   assert.deepEqual(Object.keys(capabilities.hooks).sort(), [...HOOK_EVENTS].sort());
-  assert.equal(capabilities.betaTelemetry.status, "unsupported");
-  assert.deepEqual(capabilities.missingEvidence.map((entry) => entry.capability), ["beta-telemetry"]);
+  assert.ok(Object.values(capabilities.hooks).every((hook) => hook.status === "available" && hook.evidence === "callback"));
+  assert.deepEqual(capabilities.unsupportedHooks, []);
+  assert.equal(capabilities.hookOccurrenceAuthority, "hooks.jsonl");
+  assert.deepEqual(capabilities.detailedBetaHookSpanTiming.status, "unsupported");
+  assert.equal(capabilities.detailedBetaHookSpanTiming.optional, true);
+  assert.deepEqual(capabilities.missingEvidence.map((entry) => entry.capability), ["beta-telemetry", "detailed-beta-hook-span-timing"]);
 });
 
 test("persists typed native messages in arrival order with public result identity", async () => {
@@ -497,4 +657,9 @@ function sdkResult(
     session_id: "session-1",
     uuid: "result-1",
   } as unknown as SDKMessage;
+}
+
+function callbackToolUseId(input: HookInput): string | undefined {
+  if ("tool_use_id" in input && typeof input.tool_use_id === "string") return input.tool_use_id;
+  return input.hook_event_name === "PermissionRequest" ? "tool-permission" : undefined;
 }

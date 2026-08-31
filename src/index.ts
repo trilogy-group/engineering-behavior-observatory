@@ -165,12 +165,20 @@ export {
   runProtocolProcess,
   spawnProtocolProcess,
 } from "./process-protocol.js";
-export { executeClaudeAgentSdk, openClaudeAgentSdkStreamCapture, probeClaudeAgentSdkCapabilities } from "./agent-sdk.js";
+export {
+  executeClaudeAgentSdk,
+  openClaudeAgentSdkHookCapture,
+  openClaudeAgentSdkStreamCapture,
+  probeClaudeAgentSdkCapabilities,
+} from "./agent-sdk.js";
 export type {
+  ClaudeAgentSdkCaptureWarnings,
   ClaudeAgentSdkCaptureReport,
   ClaudeAgentSdkCapabilities,
   ClaudeAgentSdkConfiguration,
   ClaudeAgentSdkEvidenceSink,
+  ClaudeAgentSdkHookCapture,
+  ClaudeAgentSdkHookRecord,
   ClaudeAgentSdkLifecycleEvent,
   ClaudeAgentSdkMessageDiagnostic,
   ClaudeAgentSdkMessageRecord,

@@ -25,6 +25,21 @@ source provides one—native type and identity. Native content stays in the
 referenced file. Artifact IDs are unique within a bundle, and every bundle
 retains exactly one capture-report descriptor.
 
+For TypeScript Agent SDK runs, `openClaudeAgentSdkHookCapture` creates the
+no-clobber `hooks.jsonl` sink. Each source-specific record retains the complete
+typed callback input, callback time, empty neutral callback output, abort-signal
+state, and only the session, prompt, tool-use, agent, transcript, and working
+directory identities the callback exposed. Because the native payload can
+contain prompts, tool inputs, and local paths, the resulting artifact is
+restricted evidence; later export policy must not treat the source file as a
+sanitized derivative.
+
+`hooks.jsonl` is authoritative for callback occurrence. Optional detailed-beta
+hook spans are a separate timing capability and are not required to infer or
+confirm an occurrence. If a hook append fails, the executor returns the neutral
+empty hook output, keeps the agent operation running, and retains a bounded
+capture warning in the attempt evidence.
+
 All paths are bundle-relative. The schema rejects absolute and parent-traversal
 paths; the shared artifact utilities will also resolve symlinks and verify
 digests before use. Each retained path appears exactly once under a
