@@ -4,12 +4,14 @@ export {
   canonicalizeMetadata,
   digestBytes,
   digestMetadata,
+  inspectRetainedArtifact,
   readVerifiedArtifact,
   SUPPORTED_ARTIFACT_SCHEMA_VERSIONS,
   validateArtifact,
   validateExportManifest,
   validateRunManifestEvidence,
   verifyDigest,
+  writeArtifactAtomically,
   writeMetadataAtomically,
 } from "./artifacts.js";
 export type { ArtifactIdentity, ArtifactValidationError } from "./artifacts.js";
@@ -87,6 +89,7 @@ export type {
 } from "./scheduler.js";
 export {
   digestWorkspace,
+  digestWorkspaceTree,
   executeVerifier,
   serializeVerifierResult,
   writeVerifierResult,
@@ -156,6 +159,22 @@ export type {
   WorkspaceShutdownResult,
   WorkspaceSetupContext as LifecycleWorkspaceSetupContext,
 } from "./lifecycle.js";
+export {
+  createRunBundleAssembler,
+  RunBundleAssembler,
+} from "./run-bundles.js";
+export type {
+  CapturedWorkspaceOutcome,
+  CaptureMissingEvidence,
+  CaptureWorkspaceOutcomeOptions,
+  RegisterRunBundleArtifact,
+  RunBundleConfiguration,
+  RunBundleDefinition,
+  RunBundleEvidenceDescriptor,
+  RunBundleRun,
+  RunBundleRuntimeComponent,
+  RunManifest,
+} from "./run-bundles.js";
 export {
   BoundedDiagnosticCapture,
   JsonlEvidenceWriter,

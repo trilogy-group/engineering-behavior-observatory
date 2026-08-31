@@ -183,6 +183,13 @@ test("runs a typed SDK stream in the attempt workspace and records effective man
     assert.equal(evidence.capabilities.telemetry.logs.stability, "stable");
     assert.equal(evidence.capabilities.telemetry.traces.stability, "beta");
     assert.deepEqual(Object.keys(evidence.capabilities.hooks).sort(), [...HOOK_EVENTS].sort());
+    assert.deepEqual(evidence.usage, {
+      source: "sdk-result",
+      totalCostUsd: 0.25,
+      numTurns: 1,
+      mainLoop: { input_tokens: 1, output_tokens: 2 },
+      byModel: { "claude-test": { inputTokens: 1, outputTokens: 2, costUSD: 0.25 } },
+    });
   } finally {
     if (previousParentSetting === undefined) delete process.env.EBO_PARENT_SETTING;
     else process.env.EBO_PARENT_SETTING = previousParentSetting;
@@ -848,7 +855,15 @@ function sdkResult(
   return {
     type: "result",
     subtype,
+    duration_ms: 1,
+    duration_api_ms: 1,
     is_error: subtype !== "success",
+    num_turns: 1,
+    stop_reason: null,
+    total_cost_usd: 0.25,
+    usage: { input_tokens: 1, output_tokens: 2 },
+    modelUsage: { "claude-test": { inputTokens: 1, outputTokens: 2, costUSD: 0.25 } },
+    permission_denials: [],
     ...(subtype === "success" ? { result: "done" } : { errors }),
     session_id: "session-1",
     uuid: "result-1",

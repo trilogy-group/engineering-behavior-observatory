@@ -230,6 +230,13 @@ export type ClaudeAgentSdkAttemptEvidence = {
   };
   capabilities: ClaudeAgentSdkCapabilities;
   telemetry?: ClaudeAgentSdkTelemetryEvidence;
+  usage?: {
+    source: "sdk-result";
+    totalCostUsd: number;
+    numTurns: number;
+    mainLoop: SDKResultMessage["usage"];
+    byModel: SDKResultMessage["modelUsage"];
+  };
   captureWarnings: ClaudeAgentSdkCaptureWarnings;
 };
 
@@ -676,6 +683,13 @@ function classifyResult(
       evidence,
     };
   }
+  evidence.usage = {
+    source: "sdk-result",
+    totalCostUsd: result.total_cost_usd,
+    numTurns: result.num_turns,
+    mainLoop: structuredClone(result.usage),
+    byModel: structuredClone(result.modelUsage),
+  };
   const completionEvidence = {
     type: "sdk-result",
     subtype: result.subtype,

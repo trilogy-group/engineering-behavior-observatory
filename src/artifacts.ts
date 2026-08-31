@@ -972,6 +972,14 @@ export async function readVerifiedArtifact(
   }
 }
 
+export async function inspectRetainedArtifact(
+  artifactRoot: string,
+  relativePath: string,
+): Promise<{ digest: Digest; sizeBytes: number }> {
+  const { path } = await resolveExistingArtifactPath(artifactRoot, relativePath);
+  return inspectExistingPath(path, relativePath);
+}
+
 export async function writeMetadataAtomically(
   artifactRoot: string,
   relativePath: string,
@@ -980,6 +988,17 @@ export async function writeMetadataAtomically(
   options: { overwrite?: boolean } = {},
 ): Promise<Digest> {
   const bytes = Buffer.from(canonicalizeMetadata(metadata));
+  return writeArtifactAtomically(artifactRoot, relativePath, bytes, signal, options);
+}
+
+export async function writeArtifactAtomically(
+  artifactRoot: string,
+  relativePath: string,
+  content: Uint8Array,
+  signal?: AbortSignal,
+  options: { overwrite?: boolean } = {},
+): Promise<Digest> {
+  const bytes = Buffer.from(content);
   const { parent, path } = await prepareArtifactPath(artifactRoot, relativePath);
   const temporaryPath = resolve(parent, `.${randomUUID()}.tmp`);
   let handle: Awaited<ReturnType<typeof open>> | undefined;
@@ -1388,6 +1407,10 @@ function prepareArtifactPathSync(
 }
 
 function digestExistingPath(path: string, relativePath: string): Digest {
+  return inspectExistingPath(path, relativePath).digest;
+}
+
+function inspectExistingPath(path: string, relativePath: string): { digest: Digest; sizeBytes: number } {
   const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     let opened = fstatSync(descriptor);
@@ -1419,7 +1442,10 @@ function digestExistingPath(path: string, relativePath: string): Digest {
         || completedTimes.mtimeNs !== openedTimes.mtimeNs || completedTimes.ctimeNs !== openedTimes.ctimeNs) {
       throw new Error(`Artifact path "${relativePath}" changed while it was being read.`);
     }
-    return { algorithm: "sha256", value: hash.digest("hex") };
+    return {
+      digest: { algorithm: "sha256", value: hash.digest("hex") },
+      sizeBytes: opened.size,
+    };
   } finally {
     closeSync(descriptor);
   }
