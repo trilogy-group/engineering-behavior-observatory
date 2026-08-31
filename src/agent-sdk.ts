@@ -12,7 +12,13 @@ import {
   type SDKMessage,
   type SDKResultMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { EvidenceSink, HarnessExecutionContext, HarnessExecutionResult } from "./lifecycle.js";
+import type {
+  AttemptIdentity,
+  EvidenceSink,
+  HarnessExecutionContext,
+  HarnessExecutionResult,
+  RunIdentity,
+} from "./lifecycle.js";
 import { BoundedDiagnosticCapture, openJsonlEvidenceWriter } from "./process-protocol.js";
 
 export type ClaudeAgentSdkConfiguration = {
@@ -26,6 +32,67 @@ export type ClaudeAgentSdkConfiguration = {
   maxTurns?: number;
   maxBudgetUsd?: number;
   env?: NodeJS.ProcessEnv;
+  telemetry?: ClaudeAgentSdkTelemetryConfiguration;
+};
+
+export type ClaudeAgentSdkTelemetrySignal = "traces" | "metrics" | "logs";
+
+export type ClaudeAgentSdkTelemetryCorrelation = {
+  type: "resource-attributes";
+  attributes: {
+    "ebo.run.id": string;
+    "ebo.attempt.id": string;
+    "ebo.attempt.number": string;
+  };
+};
+
+export type ClaudeAgentSdkTelemetryReceipt =
+  | { status: "received"; signals: ClaudeAgentSdkTelemetrySignal[] }
+  | {
+    status: "missing";
+    signals: ClaudeAgentSdkTelemetrySignal[];
+    reason: "not-received" | "collector-unreachable" | "process-interrupted" | "partial-receipt" | "receipt-check-failed";
+  }
+  | { status: "not-checked"; signals: []; reason: "no-receipt-check" };
+
+export type ClaudeAgentSdkTelemetryConfiguration = {
+  endpoint: string;
+  protocol?: "http/protobuf" | "http/json" | "grpc";
+  exportIntervalMs?: number;
+  logUserPrompts?: boolean;
+  logToolDetails?: boolean;
+  logToolContent?: boolean;
+  logRawApiBodies?: boolean;
+  detailedHookSpans?: { endpoint: string };
+  checkReceipt?: (
+    correlation: ClaudeAgentSdkTelemetryCorrelation,
+  ) => ClaudeAgentSdkTelemetryReceipt | Promise<ClaudeAgentSdkTelemetryReceipt>;
+};
+
+export type ClaudeAgentSdkTelemetryEvidence = {
+  effectiveSettings: {
+    endpoint: string;
+    protocol: "http/protobuf" | "http/json" | "grpc";
+    exporters: Record<ClaudeAgentSdkTelemetrySignal, "otlp">;
+    exportIntervalMs: Record<ClaudeAgentSdkTelemetrySignal, number>;
+    diagnostics: "stderr";
+    content: {
+      userPrompts: boolean;
+      toolDetails: boolean;
+      toolContent: boolean;
+      rawApiBodies: boolean;
+    };
+    secretHeadersConfigured: boolean;
+  };
+  correlation: ClaudeAgentSdkTelemetryCorrelation & { inheritedResourceAttributesPreserved: boolean };
+  traces: { status: "beta" };
+  hookSpans: { status: "disabled" } | { status: "enabled"; stability: "detailed-beta"; endpoint: string };
+  receipt: ClaudeAgentSdkTelemetryReceipt;
+};
+
+export type ClaudeAgentSdkEnvironment = {
+  env: NodeJS.ProcessEnv;
+  telemetry?: ClaudeAgentSdkTelemetryEvidence;
 };
 
 export type ClaudeAgentSdkLifecycleEvent =
@@ -136,9 +203,14 @@ export type ClaudeAgentSdkCapabilities = {
   hooks: Record<HookEvent, { status: "available"; evidence: "callback" }>;
   unsupportedHooks: string[];
   hookOccurrenceAuthority: "hooks.jsonl";
-  betaTelemetry: { status: "unsupported"; reason: string };
+  telemetry: {
+    metrics: { status: "available"; stability: "stable" };
+    logs: { status: "available"; stability: "stable" };
+    traces: { status: "available"; stability: "beta" };
+    hookSpans: { status: "optional"; stability: "detailed-beta" };
+  };
   detailedBetaHookSpanTiming: { status: "unsupported"; optional: true; reason: string };
-  missingEvidence: Array<{ capability: "beta-telemetry" | "detailed-beta-hook-span-timing"; reason: string }>;
+  missingEvidence: Array<{ capability: "detailed-beta-hook-span-timing"; reason: string }>;
 };
 
 type QueryHandle = AsyncIterable<SDKMessage> & { close: () => void };
@@ -157,11 +229,14 @@ export type ClaudeAgentSdkAttemptEvidence = {
     workingDirectory: "attempt-workspace";
   };
   capabilities: ClaudeAgentSdkCapabilities;
+  telemetry?: ClaudeAgentSdkTelemetryEvidence;
   captureWarnings: ClaudeAgentSdkCaptureWarnings;
 };
 
 const PACKAGE_NAME = "@anthropic-ai/claude-agent-sdk";
-const BETA_TELEMETRY_REASON = "The pinned SDK exposes no typed telemetry callback; external telemetry capture is not emulated.";
+const TELEMETRY_SIGNALS = ["traces", "metrics", "logs"] as const;
+const TELEMETRY_EXPORTER_KEYS = ["OTEL_TRACES_EXPORTER", "OTEL_METRICS_EXPORTER", "OTEL_LOGS_EXPORTER"] as const;
+const DEFAULT_EXPORT_INTERVAL_MS = 1_000;
 const DETAILED_BETA_HOOK_SPAN_REASON = "Optional detailed-beta hook spans are not required; hooks.jsonl is authoritative for hook occurrence.";
 
 export async function openClaudeAgentSdkHookCapture(
@@ -194,7 +269,6 @@ export async function openClaudeAgentSdkHookCapture(
     close: () => writer.close(),
   };
 }
-
 const MAX_CAPTURE_DIAGNOSTICS = 32;
 const KNOWN_MESSAGE_TYPES = new Set<SDKMessage["type"]>([
   "assistant",
@@ -301,12 +375,106 @@ export function probeClaudeAgentSdkCapabilities(): ClaudeAgentSdkCapabilities {
     hooks: Object.fromEntries(HOOK_EVENTS.map((event) => [event, { status: "available", evidence: "callback" }])) as Record<HookEvent, { status: "available"; evidence: "callback" }>,
     unsupportedHooks: [],
     hookOccurrenceAuthority: "hooks.jsonl",
-    betaTelemetry: { status: "unsupported", reason: BETA_TELEMETRY_REASON },
+    telemetry: {
+      metrics: { status: "available", stability: "stable" },
+      logs: { status: "available", stability: "stable" },
+      traces: { status: "available", stability: "beta" },
+      hookSpans: { status: "optional", stability: "detailed-beta" },
+    },
     detailedBetaHookSpanTiming: { status: "unsupported", optional: true, reason: DETAILED_BETA_HOOK_SPAN_REASON },
-    missingEvidence: [
-      { capability: "beta-telemetry", reason: BETA_TELEMETRY_REASON },
-      { capability: "detailed-beta-hook-span-timing", reason: DETAILED_BETA_HOOK_SPAN_REASON },
-    ],
+    missingEvidence: [{ capability: "detailed-beta-hook-span-timing", reason: DETAILED_BETA_HOOK_SPAN_REASON }],
+  };
+}
+
+export function buildClaudeAgentSdkEnvironment(input: {
+  inherited: NodeJS.ProcessEnv;
+  overrides?: NodeJS.ProcessEnv;
+  telemetry?: ClaudeAgentSdkTelemetryConfiguration;
+  run: RunIdentity;
+  attempt: AttemptIdentity;
+}): ClaudeAgentSdkEnvironment {
+  const env = { ...input.inherited, ...input.overrides };
+  if (input.telemetry === undefined) {
+    rejectConsoleExporter(env);
+    return { env };
+  }
+
+  validateTelemetryConfiguration(input.telemetry);
+  const protocol = input.telemetry.protocol ?? "http/protobuf";
+  const exportIntervalMs = input.telemetry.exportIntervalMs ?? DEFAULT_EXPORT_INTERVAL_MS;
+  const attributes = {
+    "ebo.run.id": input.run.id,
+    "ebo.attempt.id": input.attempt.id,
+    "ebo.attempt.number": String(input.attempt.number),
+  };
+  const encodedAttributes = Object.entries(attributes)
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join(",");
+  const inheritedResourceAttributes = env.OTEL_RESOURCE_ATTRIBUTES;
+  const content = {
+    userPrompts: input.telemetry.logUserPrompts ?? false,
+    toolDetails: input.telemetry.logToolDetails ?? false,
+    toolContent: input.telemetry.logToolContent ?? false,
+    rawApiBodies: input.telemetry.logRawApiBodies ?? false,
+  };
+
+  Object.assign(env, {
+    CLAUDE_CODE_ENABLE_TELEMETRY: "1",
+    CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: "1",
+    CLAUDE_CODE_OTEL_DIAG_STDERR: "1",
+    OTEL_TRACES_EXPORTER: "otlp",
+    OTEL_METRICS_EXPORTER: "otlp",
+    OTEL_LOGS_EXPORTER: "otlp",
+    OTEL_EXPORTER_OTLP_PROTOCOL: protocol,
+    OTEL_EXPORTER_OTLP_ENDPOINT: input.telemetry.endpoint,
+    OTEL_METRIC_EXPORT_INTERVAL: String(exportIntervalMs),
+    OTEL_LOGS_EXPORT_INTERVAL: String(exportIntervalMs),
+    OTEL_TRACES_EXPORT_INTERVAL: String(exportIntervalMs),
+    OTEL_LOG_USER_PROMPTS: content.userPrompts ? "1" : "0",
+    OTEL_LOG_TOOL_DETAILS: content.toolDetails ? "1" : "0",
+    OTEL_LOG_TOOL_CONTENT: content.toolContent ? "1" : "0",
+    OTEL_LOG_RAW_API_BODIES: content.rawApiBodies ? "1" : "0",
+    OTEL_RESOURCE_ATTRIBUTES: inheritedResourceAttributes === undefined || inheritedResourceAttributes === ""
+      ? encodedAttributes
+      : `${inheritedResourceAttributes},${encodedAttributes}`,
+  });
+  for (const signal of TELEMETRY_SIGNALS) {
+    delete env[`OTEL_EXPORTER_OTLP_${signal.toUpperCase()}_ENDPOINT`];
+    delete env[`OTEL_EXPORTER_OTLP_${signal.toUpperCase()}_PROTOCOL`];
+  }
+  if (input.telemetry.detailedHookSpans === undefined) {
+    delete env.ENABLE_BETA_TRACING_DETAILED;
+    delete env.BETA_TRACING_ENDPOINT;
+  } else {
+    env.ENABLE_BETA_TRACING_DETAILED = "1";
+    env.BETA_TRACING_ENDPOINT = input.telemetry.detailedHookSpans.endpoint;
+  }
+  rejectConsoleExporter(env);
+
+  return {
+    env,
+    telemetry: {
+      effectiveSettings: {
+        endpoint: input.telemetry.endpoint,
+        protocol,
+        exporters: { traces: "otlp", metrics: "otlp", logs: "otlp" },
+        exportIntervalMs: { traces: exportIntervalMs, metrics: exportIntervalMs, logs: exportIntervalMs },
+        diagnostics: "stderr",
+        content,
+        secretHeadersConfigured: TELEMETRY_SIGNALS.some((signal) => env[`OTEL_EXPORTER_OTLP_${signal.toUpperCase()}_HEADERS`] !== undefined)
+          || env.OTEL_EXPORTER_OTLP_HEADERS !== undefined,
+      },
+      correlation: {
+        type: "resource-attributes",
+        attributes,
+        inheritedResourceAttributesPreserved: inheritedResourceAttributes !== undefined && inheritedResourceAttributes !== "",
+      },
+      traces: { status: "beta" },
+      hookSpans: input.telemetry.detailedHookSpans === undefined
+        ? { status: "disabled" }
+        : { status: "enabled", stability: "detailed-beta", endpoint: input.telemetry.detailedHookSpans.endpoint },
+      receipt: { status: "not-checked", signals: [], reason: "no-receipt-check" },
+    },
   };
 }
 
@@ -326,6 +494,7 @@ export async function executeClaudeAgentSdk(
   let abortLifecycleError: string | undefined;
   let closeError: string | undefined;
   let closed = false;
+  let receiptChecked = false;
 
   const close = (): void => {
     if (queryHandle === undefined || closed) return;
@@ -361,7 +530,14 @@ export async function executeClaudeAgentSdk(
     validateEvidenceSink(sink);
     validateConfiguration(configuration, context);
     const capabilities = probeClaudeAgentSdkCapabilities();
-    evidence = executorEvidence(configuration, context, capabilities);
+    const environment = buildClaudeAgentSdkEnvironment({
+      inherited: process.env,
+      overrides: configuration.env,
+      telemetry: configuration.telemetry,
+      run: context.run,
+      attempt: context.attempt,
+    });
+    evidence = executorEvidence(configuration, context, capabilities, environment.telemetry);
     const hookWarningCapture = new BoundedDiagnosticCapture();
     const hooks = passiveHooks(sink, (warning) => {
       evidence!.captureWarnings.count += 1;
@@ -374,7 +550,7 @@ export async function executeClaudeAgentSdk(
     const options: Options = {
       abortController: controller,
       cwd: context.workspace!.path,
-      env: { ...process.env, ...configuration.env },
+      env: environment.env,
       model: configuration.model,
       tools: [...configuration.tools],
       allowedTools: [...(configuration.allowedTools ?? [])],
@@ -399,6 +575,9 @@ export async function executeClaudeAgentSdk(
       await sink.message?.(message);
       if (message.type === "result") lastResult = message;
     }
+    close();
+    if (closeError !== undefined) throw new Error(closeError);
+    await checkTelemetryReceipt();
     await abortEvent;
     if (abortLifecycleError !== undefined) throw new Error(abortLifecycleError);
 
@@ -413,6 +592,8 @@ export async function executeClaudeAgentSdk(
       : { type: "failed", at: new Date().toISOString(), messageCount, error: result.error ?? result.reason ?? "Claude Agent SDK failed." });
     return withCaptureError(result, evidence);
   } catch (error) {
+    close();
+    await checkTelemetryReceipt();
     await abortEvent;
     const diagnostic = joinDiagnostics(errorMessage(error), closeError, diagnosticText(stderr));
     if (context.signal.aborted || controller.signal.aborted) {
@@ -428,6 +609,12 @@ export async function executeClaudeAgentSdk(
   function captureStderr(data: string): void {
     stderr.write(Buffer.from(data));
     sink.stderr?.(data);
+  }
+
+  async function checkTelemetryReceipt(): Promise<void> {
+    if (receiptChecked || configuration.telemetry === undefined || evidence?.telemetry === undefined) return;
+    receiptChecked = true;
+    evidence.telemetry.receipt = await checkTelemetryReceiptSafely(configuration.telemetry, evidence.telemetry.correlation);
   }
 }
 
@@ -519,6 +706,7 @@ function executorEvidence(
   configuration: ClaudeAgentSdkConfiguration,
   context: HarnessExecutionContext,
   capabilities: ClaudeAgentSdkCapabilities,
+  telemetry: ClaudeAgentSdkTelemetryEvidence | undefined,
 ): ClaudeAgentSdkAttemptEvidence {
   return {
     runtime: [
@@ -540,6 +728,7 @@ function executorEvidence(
       workingDirectory: "attempt-workspace",
     },
     capabilities,
+    ...(telemetry === undefined ? {} : { telemetry }),
     captureWarnings: { count: 0, diagnostic: "", sizeBytes: 0, truncated: false },
   };
 }
@@ -569,9 +758,86 @@ function validateConfiguration(configuration: ClaudeAgentSdkConfiguration, conte
       if (value !== undefined && typeof value !== "string") throw new Error("Claude Agent SDK env values must be strings or undefined.");
     }
   }
+  if (configuration.telemetry !== undefined && !isRecord(configuration.telemetry)) {
+    throw new Error("Claude Agent SDK telemetry must be an object.");
+  }
   if (context.workspace?.status !== "ready" || context.workspace.path === undefined || context.workspace.path.trim() === "") {
     throw new Error("Claude Agent SDK requires a ready attempt workspace path.");
   }
+}
+
+function validateTelemetryConfiguration(configuration: ClaudeAgentSdkTelemetryConfiguration): void {
+  if (!isRecord(configuration)) throw new Error("Claude Agent SDK telemetry must be an object.");
+  assertTelemetryEndpoint(configuration.endpoint, "endpoint");
+  if (configuration.protocol !== undefined && !["http/protobuf", "http/json", "grpc"].includes(configuration.protocol)) {
+    throw new Error("Claude Agent SDK telemetry protocol is invalid.");
+  }
+  if (configuration.exportIntervalMs !== undefined
+      && (!Number.isSafeInteger(configuration.exportIntervalMs) || configuration.exportIntervalMs < 1)) {
+    throw new Error("Claude Agent SDK telemetry exportIntervalMs must be a positive safe integer.");
+  }
+  for (const field of ["logUserPrompts", "logToolDetails", "logToolContent", "logRawApiBodies"] as const) {
+    if (configuration[field] !== undefined && typeof configuration[field] !== "boolean") {
+      throw new Error(`Claude Agent SDK telemetry ${field} must be a boolean.`);
+    }
+  }
+  if (configuration.detailedHookSpans !== undefined) {
+    if (!isRecord(configuration.detailedHookSpans)) throw new Error("Claude Agent SDK detailedHookSpans must be an object.");
+    assertTelemetryEndpoint(configuration.detailedHookSpans.endpoint, "detailedHookSpans.endpoint");
+  }
+  if (configuration.checkReceipt !== undefined && typeof configuration.checkReceipt !== "function") {
+    throw new Error("Claude Agent SDK telemetry checkReceipt must be a function.");
+  }
+}
+
+function assertTelemetryEndpoint(value: unknown, field: string): asserts value is string {
+  assertText(value, `telemetry ${field}`);
+  let endpoint: URL;
+  try {
+    endpoint = new URL(value);
+  } catch {
+    throw new Error(`Claude Agent SDK telemetry ${field} must be an absolute URL.`);
+  }
+  if (!(["http:", "https:"] as string[]).includes(endpoint.protocol)
+      || endpoint.username !== "" || endpoint.password !== "" || endpoint.search !== "" || endpoint.hash !== "") {
+    throw new Error(`Claude Agent SDK telemetry ${field} must be an HTTP(S) URL without credentials, query, or fragment.`);
+  }
+}
+
+function rejectConsoleExporter(env: NodeJS.ProcessEnv): void {
+  for (const key of TELEMETRY_EXPORTER_KEYS) {
+    if ((env[key] ?? "").split(",").some((exporter) => exporter.trim().toLowerCase() === "console")) {
+      throw new Error(`Claude Agent SDK ${key} cannot use the console exporter because stdout is the SDK protocol channel.`);
+    }
+  }
+}
+
+async function checkTelemetryReceiptSafely(
+  configuration: ClaudeAgentSdkTelemetryConfiguration,
+  correlation: ClaudeAgentSdkTelemetryCorrelation,
+): Promise<ClaudeAgentSdkTelemetryReceipt> {
+  if (configuration.checkReceipt === undefined) return { status: "not-checked", signals: [], reason: "no-receipt-check" };
+  let receipt: ClaudeAgentSdkTelemetryReceipt;
+  try {
+    receipt = await configuration.checkReceipt(correlation);
+  } catch {
+    return { status: "missing", signals: [], reason: "receipt-check-failed" };
+  }
+  if (!isRecord(receipt) || !Array.isArray(receipt.signals)
+      || receipt.signals.some((signal) => !TELEMETRY_SIGNALS.includes(signal as ClaudeAgentSdkTelemetrySignal))) {
+    return { status: "missing", signals: [], reason: "receipt-check-failed" };
+  }
+  const signals = [...new Set(receipt.signals)] as ClaudeAgentSdkTelemetrySignal[];
+  if (receipt.status === "received") {
+    return TELEMETRY_SIGNALS.every((signal) => signals.includes(signal))
+      ? { status: "received", signals }
+      : { status: "missing", signals, reason: "partial-receipt" };
+  }
+  if (receipt.status === "missing"
+      && ["not-received", "collector-unreachable", "process-interrupted", "partial-receipt", "receipt-check-failed"].includes(String(receipt.reason))) {
+    return { status: "missing", signals, reason: receipt.reason };
+  }
+  return { status: "missing", signals, reason: "receipt-check-failed" };
 }
 
 function validateEvidenceSink(sink: ClaudeAgentSdkEvidenceSink): void {
