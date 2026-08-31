@@ -19,7 +19,7 @@ import {
   inspectRetainedArtifact,
   validateArtifact,
   validateRunManifestEvidence,
-  type CapturedWorkspacePatch,
+  type CapturedWorkspaceOutcome,
   type ClaudeAgentSdkAttemptEvidence,
   type RunBundleAssembler,
   type RunBundleDefinition,
@@ -38,11 +38,6 @@ type OutcomeCase = {
   telemetry: boolean;
   qualification: "qualified" | "incomplete";
   timingStatus: "available" | "not-checked";
-  missingEvidence?: Array<{
-    kind: string;
-    reason: "not-checked";
-    affects: ["timing-resource"];
-  }>;
 };
 
 for (const scenario of [
@@ -76,7 +71,6 @@ for (const scenario of [
     telemetry: true,
     qualification: "incomplete",
     timingStatus: "not-checked",
-    missingEvidence: [{ kind: "telemetry-receipt", reason: "not-checked", affects: ["timing-resource"] }],
   },
 ] satisfies OutcomeCase[]) {
   test(`assembles a schema-valid ${scenario.name} run bundle`, async () => {
@@ -85,22 +79,22 @@ for (const scenario of [
       const bundleRoot = join(root, "bundle");
       const assembler = await createRunBundleAssembler(definition(bundleRoot, scenario.name));
       await retainSemanticEvidence(assembler, bundleRoot, scenario.name);
-      if (scenario.telemetry) await retainUsage(assembler);
+      if (scenario.telemetry) await retainUsage(
+        assembler,
+        scenario.name === "capture-incomplete" ? "not-checked" : "received",
+      );
 
-      let workspace: CapturedWorkspacePatch | undefined;
+      let workspace: CapturedWorkspaceOutcome | undefined;
       if (scenario.verifier !== undefined) {
         const fixture = createWorkspaceFixture(root);
-        workspace = await assembler.captureWorkspacePatch({
+        workspace = await assembler.captureWorkspaceOutcome({
           startPath: fixture.start,
           finalPath: fixture.final,
         });
         await retainVerifier(assembler, scenario.name, scenario.verifier, workspace);
       }
 
-      const manifest = await assembler.finalize({
-        terminal: scenario.terminal,
-        ...(scenario.missingEvidence === undefined ? {} : { missingEvidence: scenario.missingEvidence }),
-      });
+      const manifest = await assembler.finalize({ terminal: scenario.terminal });
       assert.deepEqual(assertBundleValid(bundleRoot), manifest);
       const reportDescriptor = manifest.evidence.find((descriptor) => descriptor.kind === "capture-report")!;
       const report = JSON.parse(readFileSync(join(bundleRoot, reportDescriptor.relativePath), "utf8")) as {
@@ -119,7 +113,7 @@ for (const scenario of [
           usage: { source: string; totalCostUsd: number };
         };
         assert.equal(document.attemptId, manifest.attempt.id);
-        assert.equal(document.telemetry.receipt.status, "received");
+        assert.equal(document.telemetry.receipt.status, scenario.timingStatus === "not-checked" ? "not-checked" : "received");
         assert.equal(manifest.run.native?.traceId, `trace-${manifest.attempt.id}`);
         assert.deepEqual(document.usage, {
           source: "sdk-result",
@@ -143,12 +137,12 @@ test("a failure after every evidence stage retains a valid partial bundle", asyn
       const bundleRoot = join(root, "bundle");
       const assembler = await createRunBundleAssembler(definition(bundleRoot, `stage-${completedStages}`));
       const fixture = createWorkspaceFixture(root);
-      let workspace: CapturedWorkspacePatch | undefined;
+      let workspace: CapturedWorkspaceOutcome | undefined;
       const stages = [
         async () => retainSession(assembler, bundleRoot, `stage-${completedStages}`),
         async () => retainHooks(assembler, bundleRoot, `stage-${completedStages}`),
         async () => retainUsage(assembler),
-        async () => { workspace = await assembler.captureWorkspacePatch({ startPath: fixture.start, finalPath: fixture.final }); },
+        async () => { workspace = await assembler.captureWorkspaceOutcome({ startPath: fixture.start, finalPath: fixture.final }); },
         async () => retainVerifier(assembler, `stage-${completedStages}`, "passed", workspace!),
       ];
       for (const stage of stages.slice(0, completedStages)) await stage();
@@ -177,7 +171,8 @@ test("workspace patches reproduce the final content and executable-mode tree dig
     const bundleRoot = join(root, "bundle");
     const fixture = createWorkspaceFixture(root, true);
     const assembler = await createRunBundleAssembler(definition(bundleRoot, "patch"));
-    const captured = await assembler.captureWorkspacePatch({ startPath: fixture.start, finalPath: fixture.final });
+    const captured = await assembler.captureWorkspaceOutcome({ startPath: fixture.start, finalPath: fixture.final });
+    assert.equal(captured.format, "patch");
     const applied = join(root, "applied");
     cpSync(fixture.start, applied, { recursive: true, preserveTimestamps: true });
     const appliedPatch = spawnSync("git", ["apply", "--binary", join(bundleRoot, captured.descriptor.relativePath)], {
@@ -188,6 +183,57 @@ test("workspace patches reproduce the final content and executable-mode tree dig
     assert.equal(await digestWorkspaceTree(applied), captured.treeDigest);
     assert.equal(await digestWorkspaceTree(fixture.final), captured.treeDigest);
     assert.notEqual(await digestWorkspaceTree(fixture.start), captured.treeDigest);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("falls back to a bounded standard snapshot when a patch cannot preserve the tree", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-run-bundle-snapshot-"));
+  try {
+    const bundleRoot = join(root, "bundle");
+    const fixture = createWorkspaceFixture(root);
+    mkdirSync(join(fixture.final, "empty"));
+    chmodSync(join(fixture.final, "changed.txt"), 0o640);
+    const assembler = await createRunBundleAssembler(definition(bundleRoot, "snapshot"));
+    const captured = await assembler.captureWorkspaceOutcome({ startPath: fixture.start, finalPath: fixture.final });
+    assert.equal(captured.format, "snapshot");
+    assert.equal(captured.descriptor.mediaType, "application/gzip");
+    const extracted = join(root, "extracted");
+    mkdirSync(extracted);
+    const extraction = spawnSync("tar", ["-xzf", join(bundleRoot, captured.descriptor.relativePath), "-C", extracted], {
+      encoding: "utf8",
+    });
+    assert.equal(extraction.status, 0, extraction.stderr);
+    assert.equal(await digestWorkspaceTree(join(extracted, "workspace")), captured.treeDigest);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("usage-only evidence keeps telemetry capture explicitly missing", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-run-bundle-usage-only-"));
+  try {
+    const bundleRoot = join(root, "bundle");
+    const assembler = await createRunBundleAssembler(definition(bundleRoot, "usage-only"));
+    await assembler.writeAgentSdkTelemetry({
+      evidence: {
+        usage: {
+          source: "sdk-result",
+          totalCostUsd: 0.25,
+          numTurns: 1,
+          mainLoop: { input_tokens: 3, output_tokens: 5 },
+          byModel: {},
+        },
+      } as unknown as Pick<ClaudeAgentSdkAttemptEvidence, "telemetry" | "usage">,
+    });
+    const manifest = assertBundleValid(bundleRoot);
+    const report = JSON.parse(readFileSync(join(
+      bundleRoot,
+      manifest.evidence.find((descriptor) => descriptor.kind === "capture-report")!.relativePath,
+    ), "utf8")) as { capabilities: { timingResource: { status: string } }; missingEvidence: Array<{ kind: string }> };
+    assert.equal(report.capabilities.timingResource.status, "missing");
+    assert.ok(report.missingEvidence.some((entry) => entry.kind === "telemetry"));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -241,11 +287,16 @@ async function retainHooks(assembler: RunBundleAssembler, bundleRoot: string, su
   });
 }
 
-async function retainUsage(assembler: RunBundleAssembler): Promise<void> {
+async function retainUsage(
+  assembler: RunBundleAssembler,
+  receiptStatus: "received" | "not-checked" = "received",
+): Promise<void> {
   await assembler.writeAgentSdkTelemetry({
     evidence: {
       telemetry: {
-        receipt: { status: "received", signals: ["traces", "metrics", "logs"] },
+        receipt: receiptStatus === "received"
+          ? { status: "received", signals: ["traces", "metrics", "logs"] }
+          : { status: "not-checked", signals: [], reason: "no-receipt-check" },
       },
       usage: {
         source: "sdk-result",
@@ -263,7 +314,7 @@ async function retainVerifier(
   assembler: RunBundleAssembler,
   suffix: string,
   status: "passed" | "failed",
-  workspace: CapturedWorkspacePatch,
+  workspace: CapturedWorkspaceOutcome,
 ): Promise<void> {
   await assembler.writeJsonArtifact({
     id: "verifier",

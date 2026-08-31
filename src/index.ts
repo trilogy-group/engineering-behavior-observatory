@@ -164,9 +164,9 @@ export {
   RunBundleAssembler,
 } from "./run-bundles.js";
 export type {
-  CapturedWorkspacePatch,
+  CapturedWorkspaceOutcome,
   CaptureMissingEvidence,
-  CaptureWorkspacePatchOptions,
+  CaptureWorkspaceOutcomeOptions,
   RegisterRunBundleArtifact,
   RunBundleConfiguration,
   RunBundleDefinition,

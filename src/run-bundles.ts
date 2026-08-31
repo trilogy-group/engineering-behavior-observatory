@@ -97,22 +97,26 @@ export type RegisterRunBundleArtifact = {
   nativeReference?: { type: string; id: string };
 };
 
-export type CaptureWorkspacePatchOptions = {
+export type CaptureWorkspaceOutcomeOptions = {
   startPath: string;
   finalPath: string;
   id?: string;
   source?: string;
   relativePath?: string;
+  snapshotRelativePath?: string;
 };
 
-export type CapturedWorkspacePatch = {
+export type CapturedWorkspaceOutcome = {
   descriptor: RunBundleEvidenceDescriptor;
   fingerprint: DigestString;
   treeDigest: DigestString;
+  format: "patch" | "snapshot";
 };
 
 const execFileAsync = promisify(execFile);
 const MAX_WORKSPACE_PATCH_BYTES = 64 * 1024 * 1024;
+const MAX_WORKSPACE_SNAPSHOT_BYTES = 64 * 1024 * 1024;
+const TAR_COMMAND = process.platform === "win32" ? "tar" : "/usr/bin/tar";
 const PROVISIONAL_TERMINAL: TerminalRecord = {
   state: "interrupted",
   failureClass: "infrastructure",
@@ -143,6 +147,7 @@ export class RunBundleAssembler {
   private manifest?: RunManifest;
   private revision = 0;
   private finalized = false;
+  private captureMissing: CaptureMissingEvidence[] = [];
 
   public constructor(definition: RunBundleDefinition) {
     this.bundleRoot = resolve(definition.bundleRoot);
@@ -213,6 +218,18 @@ export class RunBundleAssembler {
     if (input.evidence.telemetry === undefined && input.evidence.usage === undefined) {
       throw new Error("Agent SDK telemetry evidence requires telemetry or SDK-reported usage.");
     }
+    const receipt = input.evidence.telemetry?.receipt;
+    if (input.evidence.telemetry === undefined || receipt?.status !== "received") {
+      const reason = receipt?.status === "not-checked"
+        ? "not-checked"
+        : receipt?.status === "missing" && receipt.reason === "process-interrupted"
+          ? "process-interrupted"
+          : "not-collected";
+      this.captureMissing = deduplicateMissing([
+        ...this.captureMissing,
+        { kind: receipt === undefined ? "telemetry" : "telemetry-receipt", reason, affects: ["timing-resource"] },
+      ]);
+    }
     return this.writeJsonArtifact({
       id: input.id ?? "telemetry",
       source: "anthropic-agent-sdk",
@@ -229,7 +246,7 @@ export class RunBundleAssembler {
     });
   }
 
-  public async captureWorkspacePatch(options: CaptureWorkspacePatchOptions): Promise<CapturedWorkspacePatch> {
+  public async captureWorkspaceOutcome(options: CaptureWorkspaceOutcomeOptions): Promise<CapturedWorkspaceOutcome> {
     this.assertOpen();
     const startPath = resolve(options.startPath);
     const finalPath = resolve(options.finalPath);
@@ -241,18 +258,22 @@ export class RunBundleAssembler {
     if (await digestWorkspace(finalPath) !== fingerprint) {
       throw new Error("Final workspace metadata changed while its outcome was being captured.");
     }
-    const relativePath = options.relativePath ?? "workspace.patch";
-    await writeArtifactAtomically(this.bundleRoot, relativePath, patch, undefined, { overwrite: false });
+    const format = patch === undefined ? "snapshot" : "patch";
+    const content = patch ?? await workspaceSnapshot(finalPath, treeDigest);
+    const relativePath = format === "patch"
+      ? options.relativePath ?? "workspace.patch"
+      : options.snapshotRelativePath ?? "workspace.tar.gz";
+    await writeArtifactAtomically(this.bundleRoot, relativePath, content, undefined, { overwrite: false });
     const descriptor = await this.registerArtifact({
       id: options.id ?? "workspace",
-      source: options.source ?? "workspace-patch",
+      source: options.source ?? `workspace-${format}`,
       kind: "workspace",
-      mediaType: "text/x-diff",
+      mediaType: format === "patch" ? "text/x-diff" : "application/gzip",
       sharingClass: "restricted",
       relativePath,
       fingerprint,
     });
-    return { descriptor, fingerprint, treeDigest };
+    return { descriptor, fingerprint, treeDigest, format };
   }
 
   public async finalize(input: {
@@ -276,7 +297,10 @@ export class RunBundleAssembler {
     terminal: TerminalRecord,
     missingEvidence: CaptureMissingEvidence[] = [],
   ): Promise<void> {
-    const report = captureReport(this.bundleId, evidence, missingEvidence);
+    const report = captureReport(this.bundleId, evidence, [
+      ...this.captureMissing,
+      ...missingEvidence,
+    ]);
     assertValid("capture-report", report);
     const reportPath = `capture/report-${String(this.revision).padStart(4, "0")}-${randomUUID()}.json`;
     const reportDigest = await writeMetadataAtomically(this.bundleRoot, reportPath, report, undefined, { overwrite: false });
@@ -403,7 +427,7 @@ function runWithNativeReference(run: RunBundleRun, descriptor: RunBundleEvidence
   return { ...structuredClone(run), ...(Object.keys(native).length === 0 ? {} : { native }) };
 }
 
-async function workspacePatch(startPath: string, finalPath: string, finalTreeDigest: DigestString): Promise<Buffer> {
+async function workspacePatch(startPath: string, finalPath: string, finalTreeDigest: DigestString): Promise<Buffer | undefined> {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "ebo-workspace-patch-"));
   const worktree = join(temporaryRoot, "worktree");
   const applied = join(temporaryRoot, "applied");
@@ -433,9 +457,35 @@ async function workspacePatch(startPath: string, finalPath: string, finalTreeDig
     }
     const appliedTreeDigest = await digestWorkspaceTree(applied);
     if (appliedTreeDigest !== finalTreeDigest) {
-      throw new Error("A normal Git patch cannot reproduce the final workspace tree.");
+      return undefined;
     }
     return patch;
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
+async function workspaceSnapshot(finalPath: string, finalTreeDigest: DigestString): Promise<Buffer> {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "ebo-workspace-snapshot-"));
+  const snapshotPath = join(temporaryRoot, "workspace.tar.gz");
+  const snapshotParent = join(temporaryRoot, "source");
+  const snapshotRoot = join(snapshotParent, "workspace");
+  const extracted = join(temporaryRoot, "extracted");
+  try {
+    await mkdir(snapshotParent);
+    await cp(finalPath, snapshotRoot, { recursive: true, preserveTimestamps: true, force: false });
+    const { stdout } = await execFileAsync(TAR_COMMAND, ["-czf", "-", "-C", snapshotParent, "workspace"], {
+      encoding: "buffer",
+      maxBuffer: MAX_WORKSPACE_SNAPSHOT_BYTES,
+    });
+    const snapshot = Buffer.from(stdout);
+    await writeFile(snapshotPath, snapshot, { flag: "wx", mode: 0o600 });
+    await mkdir(extracted, { mode: 0o700 });
+    await execFileAsync(TAR_COMMAND, ["-xzf", snapshotPath, "-C", extracted]);
+    if (await digestWorkspaceTree(join(extracted, "workspace")) !== finalTreeDigest) {
+      throw new Error("Bounded workspace snapshot cannot reproduce the final workspace tree.");
+    }
+    return snapshot;
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
