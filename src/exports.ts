@@ -84,11 +84,30 @@ const HIDDEN_FIELDS = new Set([
   "reasoning",
   "thinking",
 ]);
-const SECRET_FIELDS = /^(?:api[_-]?key|authorization|credential|oauth[_-]?token|password|secret|token)$/iu;
+const SECRET_FIELDS = new Set([
+  "accesskey",
+  "accesstoken",
+  "apikey",
+  "authorization",
+  "clientsecret",
+  "connectionstring",
+  "credential",
+  "credentials",
+  "credentialsjson",
+  "databaseurl",
+  "idtoken",
+  "oauthtoken",
+  "password",
+  "privatekey",
+  "refreshtoken",
+  "secret",
+  "secretaccesskey",
+  "token",
+]);
 const SECRET_PATTERNS = [
   /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/gu,
   /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{12,}|AKIA[0-9A-Z]{16})\b/gu,
-  /((?:authorization|api[_-]?key|access[_-]?token|oauth[_-]?token|password)\s*[:=]\s*["']?(?:Bearer\s+)?)(?!\[REDACTED_)[^\s,"'}\]]{8,}/giu,
+  /((?:authorization|api[_-]?key|access[_-]?token|oauth[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=]\s*["']?(?:Bearer\s+)?)(?!\[REDACTED_)[^\s,"'}\]]{8,}/giu,
 ];
 const LOCAL_PATH = /(?:[A-Za-z]:\\(?:[^\\\s"']+\\)*[^\\\s"']*|\/(?:Users|home|private|tmp|var\/folders)\/[^\s"']+)/gu;
 
@@ -315,11 +334,11 @@ function sanitizeValue(
   if (!isRecord(value)) return value;
   const output: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
-    if (HIDDEN_FIELDS.has(key.replaceAll(/[^a-z]/giu, "").toLowerCase())) {
+    if (HIDDEN_FIELDS.has(normalizeFieldName(key))) {
       increment(counts, "removed-field");
       continue;
     }
-    if (SECRET_FIELDS.test(key)) {
+    if (SECRET_FIELDS.has(normalizeFieldName(key))) {
       output[key] = "[REDACTED_SECRET]";
       increment(counts, "redacted-secret");
       continue;
@@ -499,7 +518,7 @@ function policyRecord(policy: PortableExportPolicy): Record<string, unknown> {
 
 function effectiveSensitiveValues(policy: PortableExportPolicy): string[] {
   const environment = Object.entries(process.env)
-    .filter(([key, value]) => value !== undefined && /(?:AUTH|CREDENTIAL|KEY|PASSWORD|SECRET|TOKEN)/iu.test(key) && value.length >= 8)
+    .filter(([, value]) => value !== undefined && value.length >= 8)
     .map(([, value]) => value!);
   return [...new Set([...(policy.sensitiveValues ?? []).filter((value) => value !== ""), ...environment])]
     .sort((left, right) => right.length - left.length);
@@ -564,6 +583,10 @@ function formatValidationErrors(errors: Array<{ artifact: string; field: string;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function normalizeFieldName(value: string): string {
+  return value.replaceAll(/[^a-z0-9]/giu, "").toLowerCase();
 }
 
 function resetPatterns(): void {

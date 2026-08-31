@@ -27,6 +27,11 @@ import {
 const fixtureRoot = resolve("test/fixtures/run-bundles/complete");
 const token = "ghp_abcdefghijklmnopqrstuvwxyz123456";
 const heuristicSecret = "unseeded-password-value-98765";
+const databaseUrl = "postgres://user:password@private.example/database";
+const clientSecret = "client-secret-value-12345";
+const privateKey = "private-key-value-12345";
+const secretAccessKey = "aws-secret-value-12345";
+const credentialsJson = "credential-json-value-12345";
 
 test("exports a sanitized public M2 bundle without mutating its source", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-export-"));
@@ -34,7 +39,9 @@ test("exports a sanitized public M2 bundle without mutating its source", async (
   const destination = join(root, "portable");
   const environmentSecret = "environment-secret-value-12345";
   const previousSecret = process.env.EBO_TEST_EXPORT_SECRET;
+  const previousDatabaseUrl = process.env.DATABASE_URL;
   process.env.EBO_TEST_EXPORT_SECRET = environmentSecret;
+  process.env.DATABASE_URL = databaseUrl;
 
   try {
     stageSource(source, {
@@ -49,6 +56,11 @@ test("exports a sanitized public M2 bundle without mutating its source", async (
         path: join(homedir(), "private", "result.txt"),
         thinking: "hidden chain of thought",
         environmentSecret,
+        note: databaseUrl,
+        client_secret: clientSecret,
+        private_key: privateKey,
+        secret_access_key: secretAccessKey,
+        credentialsJson,
       })}\n`,
       "hooks.jsonl": `${JSON.stringify({
         type: "PostToolUse",
@@ -56,7 +68,7 @@ test("exports a sanitized public M2 bundle without mutating its source", async (
         session_id: "session-complete-1",
       })}\n`,
       "telemetry/trace.json": `${JSON.stringify({ traceId: "trace-complete-1" })}\n`,
-      "workspace.patch": `${readFileSync(join(fixtureRoot, "workspace.patch"), "utf8")}+${homedir()}/private/result.txt ${userInfo().username} ${token} password=\"${heuristicSecret}\"\n`,
+      "workspace.patch": `${readFileSync(join(fixtureRoot, "workspace.patch"), "utf8")}+${homedir()}/private/result.txt ${userInfo().username} ${token} password=\"${heuristicSecret}\" client_secret=\"${clientSecret}\"\n`,
     });
     const sourceBefore = snapshot(source);
     const policy: PortableExportPolicy = {
@@ -83,6 +95,11 @@ test("exports a sanitized public M2 bundle without mutating its source", async (
       token,
       heuristicSecret,
       environmentSecret,
+      databaseUrl,
+      clientSecret,
+      privateKey,
+      secretAccessKey,
+      credentialsJson,
       homedir(),
       userInfo().username,
       "hidden chain of thought",
@@ -105,6 +122,8 @@ test("exports a sanitized public M2 bundle without mutating its source", async (
   } finally {
     if (previousSecret === undefined) delete process.env.EBO_TEST_EXPORT_SECRET;
     else process.env.EBO_TEST_EXPORT_SECRET = previousSecret;
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabaseUrl;
     rmSync(root, { recursive: true, force: true });
   }
 });
