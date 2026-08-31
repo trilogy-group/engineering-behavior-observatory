@@ -18,6 +18,76 @@ docs:
   default_visibility: public
   deny_private_links: true
 areas:
+  agent-sdk:
+    title: Agent Sdk
+    docs_target: docs/agent-sdk.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - agent sdk
+    - agent-sdk
+    source_refs:
+      linear_labels:
+      - area:agent-sdk
+      - area:capture
+      - area:evidence
+      - area:hooks
+      - area:opentelemetry
+      - area:outcomes
+      - area:quality
+      - area:runner
+      - area:sessions
+      linear_milestones:
+      - 'M2: Native Agent SDK Capture'
+  capture:
+    title: Capture
+    docs_target: docs/capture.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - capture
+    source_refs:
+      linear_labels:
+      - area:agent-sdk
+      - area:capture
+      - area:evidence
+      - area:hooks
+      - area:opentelemetry
+      - area:outcomes
+      - area:quality
+      - area:runner
+      - area:sessions
+      linear_milestones:
+      - 'M2: Native Agent SDK Capture'
+  evidence:
+    title: Evidence
+    docs_target: docs/evidence.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - evidence
+    source_refs:
+      linear_labels:
+      - area:evidence
+      - area:outcomes
+      linear_milestones:
+      - 'M2: Native Agent SDK Capture'
+  hooks:
+    title: Hooks
+    docs_target: docs/hooks.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - hooks
+    source_refs:
+      linear_labels:
+      - area:hooks
+      linear_milestones:
+      - 'M2: Native Agent SDK Capture'
   m2-native-agent-sdk-capture:
     title: M2 Native Agent Sdk Capture
     docs_target: docs/m2-native-agent-sdk-capture.md
@@ -30,6 +100,32 @@ areas:
     source_refs:
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
+  opentelemetry:
+    title: Opentelemetry
+    docs_target: docs/opentelemetry.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - opentelemetry
+    source_refs:
+      linear_labels:
+      - area:opentelemetry
+      linear_milestones:
+      - 'M2: Native Agent SDK Capture'
+  outcomes:
+    title: Outcomes
+    docs_target: docs/outcomes.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - outcomes
+    source_refs:
+      linear_labels:
+      - area:outcomes
+      linear_milestones:
+      - 'M2: Native Agent SDK Capture'
   quality:
     title: Quality
     docs_target: docs/quality.md
@@ -40,10 +136,19 @@ areas:
     - quality
     source_refs:
       linear_labels:
+      - area:agent-sdk
+      - area:capture
+      - area:evidence
+      - area:hooks
+      - area:opentelemetry
+      - area:outcomes
       - area:quality
       - area:repository
+      - area:runner
+      - area:sessions
       linear_milestones:
       - 'M0: Foundation And Evidence Contracts'
+      - 'M2: Native Agent SDK Capture'
   repository:
     title: Repository
     docs_target: docs/repository.md
@@ -54,8 +159,44 @@ areas:
     - repository
     source_refs:
       linear_labels:
+      - area:agent-sdk
+      - area:capture
+      - area:evidence
+      - area:hooks
+      - area:opentelemetry
+      - area:outcomes
+      - area:quality
       - area:repository
+      - area:runner
+      - area:sessions
       linear_milestones:
       - 'M0: Foundation And Evidence Contracts'
+      - 'M2: Native Agent SDK Capture'
+  runner:
+    title: Runner
+    docs_target: docs/runner.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - runner
+    source_refs:
+      linear_labels:
+      - area:runner
+      linear_milestones:
+      - 'M2: Native Agent SDK Capture'
+  sessions:
+    title: Sessions
+    docs_target: docs/sessions.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - sessions
+    source_refs:
+      linear_labels:
+      - area:sessions
+      linear_milestones:
+      - 'M2: Native Agent SDK Capture'
 redaction:
   deny_patterns: []

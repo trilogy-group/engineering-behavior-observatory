@@ -1,11 +1,11 @@
 ---
 type: topic-doc
-area: repository
+area: capture
 visibility: public
-last_memory_sync: 2026-08-26T03:34:35.394200+00:00
+last_memory_sync: 2026-08-31T12:24:56.271039+00:00
 ---
 
-# Repository
+# Capture
 
 <!-- BEGIN OPENSYMPHONY MANAGED MEMORY SYNC -->
 

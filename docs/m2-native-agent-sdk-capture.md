@@ -11,7 +11,11 @@ last_memory_sync: 2026-08-31T02:14:44.337765+00:00
 
 ## Current model
 
-- COE-589 contributed: PR #11: COE-589: simplify artifact publication and implementation surface (merge `24ecada`)
+- COE-568 contributed: PR #15: COE-570: capture TypeScript Agent SDK lifecycle hooks (merge `8ca6c62`)
+- COE-569 contributed: PR #15: COE-570: capture TypeScript Agent SDK lifecycle hooks (merge `8ca6c62`)
+- COE-570 contributed: PR #15: COE-570: capture TypeScript Agent SDK lifecycle hooks (merge `8ca6c62`)
+- COE-571 contributed: PR #13: COE-571: configure correlated Agent SDK OTLP receipt checks (merge `113490f`)
+- COE-572 contributed: PR #17: COE-572: assemble complete and partial run bundles (merge `affd9de`)
 
 ## Important invariants
 
@@ -28,10 +32,18 @@ last_memory_sync: 2026-08-31T02:14:44.337765+00:00
 
 ## Recent changes
 
-- COE-589: Simplify artifact publication and implementation surface
+- COE-568: Implement the Claude Agent SDK executor
+- COE-569: Capture Agent SDK streams and session identity
+- COE-570: Capture the supported TypeScript Agent SDK lifecycle hooks
+- COE-571: Configure Agent SDK OpenTelemetry correlation and receipt checks
+- COE-572: Package outcome and partial run evidence
 
 ## Source refs
 
-- COE-589
+- COE-568
+- COE-569
+- COE-570
+- COE-571
+- COE-572
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

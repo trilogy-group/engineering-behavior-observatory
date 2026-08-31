@@ -1,21 +1,17 @@
 ---
 type: topic-doc
-area: repository
+area: opentelemetry
 visibility: public
-last_memory_sync: 2026-08-26T03:34:35.394200+00:00
+last_memory_sync: 2026-08-31T12:29:52.140353+00:00
 ---
 
-# Repository
+# Opentelemetry
 
 <!-- BEGIN OPENSYMPHONY MANAGED MEMORY SYNC -->
 
 ## Current model
 
-- COE-568 contributed: PR #15: COE-570: capture TypeScript Agent SDK lifecycle hooks (merge `8ca6c62`)
-- COE-569 contributed: PR #15: COE-570: capture TypeScript Agent SDK lifecycle hooks (merge `8ca6c62`)
-- COE-570 contributed: PR #15: COE-570: capture TypeScript Agent SDK lifecycle hooks (merge `8ca6c62`)
 - COE-571 contributed: PR #13: COE-571: configure correlated Agent SDK OTLP receipt checks (merge `113490f`)
-- COE-572 contributed: PR #17: COE-572: assemble complete and partial run bundles (merge `affd9de`)
 
 ## Important invariants
 
@@ -32,18 +28,10 @@ last_memory_sync: 2026-08-26T03:34:35.394200+00:00
 
 ## Recent changes
 
-- COE-568: Implement the Claude Agent SDK executor
-- COE-569: Capture Agent SDK streams and session identity
-- COE-570: Capture the supported TypeScript Agent SDK lifecycle hooks
 - COE-571: Configure Agent SDK OpenTelemetry correlation and receipt checks
-- COE-572: Package outcome and partial run evidence
 
 ## Source refs
 
-- COE-568
-- COE-569
-- COE-570
 - COE-571
-- COE-572
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->
