@@ -98,9 +98,9 @@ priorities.
 - P0/P1 findings are blocking. A P2 blocks only when it demonstrates an
   acceptance-criteria failure, evidence loss or corruption, secret leakage, or
   a violation of the trust boundary above.
-- Require exactly three completed full-PR scans when automated review is active:
-  one automatic scan and two explicit re-triggers. Batch remediation between
-  scans; after scan 3, use exact-commit local review instead of scan 4.
+- Require exactly eight completed full-PR scans when automated review is active:
+  one automatic scan and seven explicit re-triggers. Batch remediation between
+  scans; after scan 8, use exact-commit local review instead of scan 9.
 - Do not request speculative hardening for hostile same-user races, trusted
   callback mutation, new archive dialects, or capabilities outside the issue.
 
