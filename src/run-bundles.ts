@@ -185,9 +185,15 @@ export type CaptureQualificationReport = {
   reasons: CaptureQualificationReason[];
 };
 
+export type AgentSdkQualificationEvidence = Pick<
+  ClaudeAgentSdkAttemptEvidence,
+  "capabilities" | "effectiveConfiguration"
+>;
+
 export type CaptureQualificationOptions = {
   startingWorkspacePath?: string;
   hookCapabilities?: Pick<ClaudeAgentSdkCapabilities, "sdkVersion" | "hooks" | "unsupportedHooks">;
+  agentSdkEvidence?: AgentSdkQualificationEvidence;
   expectedHooks?: readonly string[];
 };
 
@@ -367,9 +373,16 @@ export class RunBundleAssembler {
   public async finalize(input: {
     terminal: TerminalRecord;
     missingEvidence?: CaptureMissingEvidence[];
+    qualification?: CaptureQualificationOptions;
   }): Promise<RunManifest> {
     this.assertOpen();
-    await this.checkpoint(this.evidence, this.run, structuredClone(input.terminal), input.missingEvidence ?? []);
+    const terminal = structuredClone(input.terminal);
+    const missingEvidence = input.missingEvidence ?? [];
+    await this.checkpoint(this.evidence, this.run, terminal, missingEvidence, input.qualification);
+    if (input.qualification !== undefined) {
+      const structuralQualification = await qualifyRunBundle(this.bundleRoot, input.qualification);
+      await this.checkpoint(this.evidence, this.run, terminal, missingEvidence, input.qualification, structuralQualification);
+    }
     this.finalized = true;
     return this.currentManifest();
   }
@@ -384,11 +397,13 @@ export class RunBundleAssembler {
     run: RunBundleRun,
     terminal: TerminalRecord,
     missingEvidence: CaptureMissingEvidence[] = [],
+    qualification?: CaptureQualificationOptions,
+    structuralQualification?: CaptureQualificationReport,
   ): Promise<void> {
     const report = captureReport(this.bundleId, evidence, [
       ...this.captureMissing,
       ...missingEvidence,
-    ]);
+    ], qualification, structuralQualification);
     assertValid("capture-report", report);
     const reportPath = `capture/report-${String(this.revision).padStart(4, "0")}-${randomUUID()}.json`;
     const reportDigest = await writeMetadataAtomically(this.bundleRoot, reportPath, report, undefined, { overwrite: false });
@@ -722,7 +737,7 @@ function qualifyHooks(
   hooks: Array<{ hookNames?: string[] }>,
   options: CaptureQualificationOptions,
 ): void {
-  const capabilities = options.hookCapabilities;
+  const capabilities = options.hookCapabilities ?? options.agentSdkEvidence?.capabilities;
   if (capabilities === undefined) {
     addQualificationReason(report, "hooks", "gap", "HOOK_CAPABILITY_NOT_CHECKED", undefined, "Pinned TypeScript hook capabilities were not supplied.");
     return;
@@ -856,12 +871,20 @@ function captureReport(
   bundleId: string,
   evidence: RunBundleEvidenceDescriptor[],
   suppliedMissing: CaptureMissingEvidence[],
+  qualification?: CaptureQualificationOptions,
+  structuralQualification?: CaptureQualificationReport,
 ): {
   schemaVersion: "capture-report/v1";
   bundleId: string;
   qualification: "qualified" | "incomplete";
   capabilities: Record<"semantic" | "timingResource" | "outcome", { status: CapabilityStatus }>;
   missingEvidence: CaptureMissingEvidence[];
+  agentSdk?: {
+    capabilities: ClaudeAgentSdkCapabilities;
+    effectiveConfiguration: ClaudeAgentSdkAttemptEvidence["effectiveConfiguration"];
+    expectedHooks: string[];
+  };
+  structuralQualification?: Pick<CaptureQualificationReport, "status" | "semanticAnalysisUsable" | "dimensions" | "reasons">;
 } {
   const kinds = new Set(evidence.map((descriptor) => descriptor.kind));
   const missing = deduplicateMissing([
@@ -887,6 +910,21 @@ function captureReport(
       outcome: { status: outcome },
     },
     missingEvidence: missing,
+    ...(qualification?.agentSdkEvidence === undefined ? {} : {
+      agentSdk: {
+        capabilities: structuredClone(qualification.agentSdkEvidence.capabilities),
+        effectiveConfiguration: structuredClone(qualification.agentSdkEvidence.effectiveConfiguration),
+        expectedHooks: [...(qualification.expectedHooks ?? [])],
+      },
+    }),
+    ...(structuralQualification === undefined ? {} : {
+      structuralQualification: {
+        status: structuralQualification.status,
+        semanticAnalysisUsable: structuralQualification.semanticAnalysisUsable,
+        dimensions: structuredClone(structuralQualification.dimensions),
+        reasons: structuredClone(structuralQualification.reasons),
+      },
+    }),
   };
 }
 

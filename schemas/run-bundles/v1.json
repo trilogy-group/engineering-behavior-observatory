@@ -556,6 +556,45 @@
               }
             ]
           }
+        },
+        "agentSdk": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilities", "effectiveConfiguration", "expectedHooks"],
+          "properties": {
+            "capabilities": {
+              "type": "object",
+              "required": ["sdkVersion", "claudeCodeVersion", "hooks", "unsupportedHooks", "hookOccurrenceAuthority"],
+              "properties": {
+                "sdkVersion": { "$ref": "#/$defs/identifier" },
+                "claudeCodeVersion": { "$ref": "#/$defs/identifier" },
+                "hooks": { "type": "object" },
+                "unsupportedHooks": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": { "$ref": "#/$defs/identifier" }
+                },
+                "hookOccurrenceAuthority": { "const": "hooks.jsonl" }
+              }
+            },
+            "effectiveConfiguration": { "type": "object" },
+            "expectedHooks": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/identifier" }
+            }
+          }
+        },
+        "structuralQualification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "semanticAnalysisUsable", "dimensions", "reasons"],
+          "properties": {
+            "status": { "enum": ["qualified", "qualified-with-gaps", "unqualified"] },
+            "semanticAnalysisUsable": { "type": "boolean" },
+            "dimensions": { "type": "object" },
+            "reasons": { "type": "array" }
+          }
         }
       },
       "allOf": [

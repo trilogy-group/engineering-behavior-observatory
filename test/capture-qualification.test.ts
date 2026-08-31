@@ -13,6 +13,7 @@ import {
   type SDKResultMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
+  captureClaudeAgentSdkRun,
   createRunBundleAssembler,
   createRunIdentity,
   digestBytes,
@@ -409,6 +410,12 @@ test("approved live Agent SDK smoke records sanitized collector receipt", {
   assert.equal(process.env.ANTHROPIC_API_KEY, undefined, "unset stale API-key auth before the approved OAuth smoke");
   assert.equal(process.env.ANTHROPIC_AUTH_TOKEN, undefined, "unset stale auth-token override before the approved OAuth smoke");
   const root = mkdtempSync(join(tmpdir(), "ebo-live-agent-sdk-smoke-"));
+  const start = join(root, "start");
+  const final = join(root, "final");
+  const bundleRoot = join(root, "bundle");
+  mkdirSync(start);
+  writeFileSync(join(start, "fixture.txt"), "unchanged\n");
+  cpSync(start, final, { recursive: true, preserveTimestamps: true });
   const requests: Array<{ path: string; body: string }> = [];
   const receiver = createServer((request, response) => {
     const chunks: Buffer[] = [];
@@ -420,24 +427,36 @@ test("approved live Agent SDK smoke records sanitized collector receipt", {
   });
   await new Promise<void>((resolvePromise) => receiver.listen(0, "127.0.0.1", resolvePromise));
   const endpoint = `http://127.0.0.1:${(receiver.address() as AddressInfo).port}`;
-  const hookCapture = await openClaudeAgentSdkHookCapture(join(root, "hooks.jsonl"));
-  const streamCapture = await openClaudeAgentSdkStreamCapture(join(root, "session.jsonl"), {
-    ...noOpSink(), hook: hookCapture.hook, flush: hookCapture.flush,
-  });
   try {
-    const run = createRunIdentity({ id: "live-smoke", taskId: "live-smoke", modelId: "claude", harnessId: "agent-sdk" });
-    const result = await executeRunAttempt({
-      run,
-      attempt: { id: "live-smoke-attempt", number: 1 },
-      workspace: { setup: async () => ({ status: "ready", path: root, artifactId: "workspace", retained: true }) },
-      harness: (context) => executeClaudeAgentSdk(context, {
+    const model = process.env.EBO_LIVE_AGENT_SDK_MODEL ?? "sonnet";
+    const result = await captureClaudeAgentSdkRun({
+      definition: {
+        bundleRoot,
+        bundleId: "bundle-live-smoke",
+        run: {
+          id: "run-live-smoke",
+          task: { id: "task-live-smoke" },
+          fixture: { id: "fixture-live-smoke", digest: SHA("a") },
+          model: { provider: "anthropic", id: model },
+          harness: { id: "agent-sdk", version: capabilities.sdkVersion },
+          runtime: [{ source: "anthropic", name: "agent-sdk", version: capabilities.sdkVersion }],
+        },
+        attempt: { id: "attempt-live-smoke", number: 1 },
+        configuration: { digest: SHA("b"), budgetDigest: SHA("c"), toolPolicyDigest: SHA("d") },
+      },
+      startingWorkspacePath: start,
+      workspace: {
+        setup: async () => ({ status: "ready", path: final, artifactId: "workspace", retained: true }),
+        cleanup: async () => undefined,
+      },
+      configuration: {
         prompt: "Reply exactly OK. Do not use tools.",
-        model: process.env.EBO_LIVE_AGENT_SDK_MODEL ?? "sonnet",
+        model,
         tools: [],
         allowedTools: [],
         permissionMode: "dontAsk",
         maxTurns: 1,
-        maxBudgetUsd: 0.05,
+        maxBudgetUsd: 0.25,
         telemetry: {
           endpoint,
           protocol: "http/json",
@@ -455,31 +474,41 @@ test("approved live Agent SDK smoke records sanitized collector receipt", {
               : { status: "missing", signals, reason: "partial-receipt" };
           },
         },
-      }, streamCapture),
-      verifier: async () => ({ status: "passed" }),
-      evidence: streamCapture,
+      },
+      verifier: async (_context, workspace) => ({
+        schemaVersion: "verifier-result/v1",
+        bundleId: "bundle-live-smoke",
+        status: "passed",
+        exitCode: 0,
+        workspace: {
+          artifactId: workspace.descriptor.id,
+          digest: workspace.descriptor.digest,
+          fingerprint: workspace.fingerprint,
+        },
+        assertions: [{ id: "live-route", status: "passed" }],
+      }),
     });
-    await Promise.all([streamCapture.flush(), hookCapture.flush()]);
-    const evidence = result.record.harness?.evidence as ClaudeAgentSdkAttemptEvidence;
-    assert.equal(result.classification.kind, "completed", JSON.stringify({
-      classification: result.classification,
-      harnessStatus: result.record.harness?.status,
-      harnessReason: result.record.harness?.reason,
-      harnessError: sanitizedDiagnostic(result.record.harness?.error),
+    const evidence = result.attempt.record.harness?.evidence as ClaudeAgentSdkAttemptEvidence;
+    assert.equal(result.attempt.classification.kind, "completed", JSON.stringify({
+      classification: result.attempt.classification,
+      harnessStatus: result.attempt.record.harness?.status,
+      harnessReason: result.attempt.record.harness?.reason,
+      harnessError: sanitizedDiagnostic(result.attempt.record.harness?.error),
       receipt: evidence.telemetry?.receipt,
     }));
-    assert.equal(streamCapture.report().status, "complete");
+    assert.equal(result.stream.status, "complete");
+    assert.equal(result.qualification.status, "qualified", JSON.stringify(result.qualification.reasons));
     assert.deepEqual(evidence.telemetry?.receipt, { status: "received", signals: ["traces", "metrics", "logs"] });
     const structuralEvidence = {
-      classification: result.classification.kind,
-      messageRecords: readFileSync(streamCapture.path, "utf8").trim().split("\n").length,
-      hookRecords: readFileSync(hookCapture.path, "utf8").trim().split("\n").filter(Boolean).length,
+      classification: result.attempt.classification.kind,
+      qualification: result.qualification.status,
+      messageRecords: readFileSync(join(bundleRoot, "session.jsonl"), "utf8").trim().split("\n").length,
+      hookRecords: readFileSync(join(bundleRoot, "hooks.jsonl"), "utf8").trim().split("\n").filter(Boolean).length,
       collectorPaths: [...new Set(requests.map((request) => request.path))].sort(),
       receipt: evidence.telemetry?.receipt.status,
     };
     process.stdout.write(`live-agent-sdk-smoke ${JSON.stringify(structuralEvidence)}\n`);
   } finally {
-    await Promise.allSettled([streamCapture.close(), hookCapture.close()]);
     await new Promise<void>((resolvePromise, reject) => receiver.close((error) => error === undefined ? resolvePromise() : reject(error)));
     rmSync(root, { recursive: true, force: true });
   }

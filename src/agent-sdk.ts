@@ -213,8 +213,8 @@ export type ClaudeAgentSdkCapabilities = {
   missingEvidence: Array<{ capability: "detailed-beta-hook-span-timing"; reason: string }>;
 };
 
-type QueryHandle = AsyncIterable<SDKMessage> & { close: () => void };
-type QueryFunction = (input: { prompt: string; options?: Options }) => QueryHandle;
+export type ClaudeAgentSdkQueryHandle = AsyncIterable<SDKMessage> & { close: () => void };
+export type ClaudeAgentSdkQuery = (input: { prompt: string; options?: Options }) => ClaudeAgentSdkQueryHandle;
 
 export type ClaudeAgentSdkAttemptEvidence = {
   runtime: Array<{ source: "anthropic"; name: "agent-sdk" | "agent-cli"; version: string }>;
@@ -489,9 +489,9 @@ export async function executeClaudeAgentSdk(
   context: HarnessExecutionContext,
   configuration: ClaudeAgentSdkConfiguration,
   sink: ClaudeAgentSdkEvidenceSink,
-  queryFunction: QueryFunction = query,
+  queryFunction: ClaudeAgentSdkQuery = query,
 ): Promise<HarnessExecutionResult> {
-  let queryHandle: QueryHandle | undefined;
+  let queryHandle: ClaudeAgentSdkQueryHandle | undefined;
   let messageCount = 0;
   let lastResult: SDKResultMessage | undefined;
   const stderr = new BoundedDiagnosticCapture();
@@ -606,6 +606,11 @@ export async function executeClaudeAgentSdk(
     if (context.signal.aborted || controller.signal.aborted) {
       await emitLifecycle(sink, { type: "failed", at: new Date().toISOString(), messageCount, error: diagnostic });
       return withCaptureError({ status: "interrupted", reason: "Claude Agent SDK execution was aborted.", error: diagnostic, ...(evidence === undefined ? {} : { evidence }) }, evidence);
+    }
+    if (lastResult !== undefined && evidence !== undefined && (lastResult.is_error || lastResult.subtype !== "success")) {
+      const result = classifyResult(lastResult, diagnostic, evidence);
+      await emitLifecycle(sink, { type: "failed", at: new Date().toISOString(), messageCount, error: result.error ?? diagnostic });
+      return withCaptureError(result, evidence);
     }
     await emitLifecycle(sink, { type: "failed", at: new Date().toISOString(), messageCount, error: diagnostic });
     return withCaptureError({ status: "failed", failureClass: "infrastructure", reason: "Claude Agent SDK execution failed.", error: diagnostic, ...(evidence === undefined ? {} : { evidence }) }, evidence);

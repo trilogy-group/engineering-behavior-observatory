@@ -219,6 +219,32 @@ test("retains SDK stderr and classifies API failures as infrastructure", async (
   }
 });
 
+test("keeps a typed budget result authoritative when the SDK stream later fails", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-budget-result-"));
+  try {
+    const query: QueryFunction = () => ({
+      close: () => undefined,
+      async *[Symbol.asyncIterator]() {
+        yield sdkResult("error_max_budget_usd", ["Reached maximum budget"]);
+        throw new Error("transport failed after result");
+      },
+    });
+    const result = await executeRunAttempt({
+      run,
+      workspace: { setup: async () => ({ status: "ready", path: root, artifactId: "workspace-1", retained: true }) },
+      harness: (context) => executeClaudeAgentSdk(context, configuration, noOpSink, query),
+      evidence: { flush: () => undefined },
+    });
+
+    assert.equal(result.classification.kind, "budget-stop");
+    assert.equal(result.terminal.stopReason, "budget");
+    assert.match(result.record.harness?.error ?? "", /Reached maximum budget/);
+    assert.match(result.record.harness?.error ?? "", /transport failed after result/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("forwards abort through the SDK controller and closes the query", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-abort-"));
   try {
