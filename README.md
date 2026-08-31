@@ -71,6 +71,11 @@ node dist/src/cli.js task-packet status <bundle-root> <packet.json>
 node dist/src/cli.js matrix compile <experiment.json> <bundle-root> <queue.json> [--freeze-locator <task-id>=<path>]
 node dist/src/cli.js queue inspect <queue.json>
 node dist/src/cli.js queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
+node dist/src/cli.js corpus build <corpus-root> <index.jsonl>
+node dist/src/cli.js corpus query <index.jsonl> [--task <id>] [--model <id>] [--harness <id>]
+node dist/src/cli.js corpus validate <corpus-root> <index.jsonl>
+node dist/src/cli.js corpus pack <approved-export-root> <archive.tar.gz>
+node dist/src/cli.js corpus unpack <archive.tar.gz> <destination-root>
 # Optional approved OAuth smoke; provide OAuth auth, never API-key overrides.
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 EBO_LIVE_AGENT_SDK_SMOKE=1 node --test --test-name-pattern='approved live Agent SDK smoke' dist/test/capture-qualification.test.js
@@ -94,6 +99,20 @@ Safe M2 evidence export is a library boundary:
 `createPortableRunBundleExport` writes a separate partner/public derivative,
 and `readPortableRunBundleExport` performs the required schema, integrity,
 policy, and secret-scan readback. It does not publish or package a corpus.
+
+The corpus index is a deterministic, atomically rebuilt JSONL read model over
+run and export manifests. It records run-cell/trial and attempt identities
+separately, projects terminal, verifier, capture, and export facts, and retains
+validation issues instead of silently omitting missing evidence. Native
+manifests remain authoritative; delete and rebuild the index at any time.
+Queries use exact-match flags shown by `ebo --help` and do not index prompt or
+tool bodies.
+
+Portable archives accept only structurally valid `ready` or `exported`
+partner/public trees. Packing follows the export manifest allowlist, so an
+unlisted sibling file is not included. Unpacking applies bounded TAR parsing,
+requires an exact manifest/member match, verifies every digest, and refuses an
+existing destination. No database, service, or archive package is involved.
 
 The matrix compiler expands any valid experiment into a local, persisted run
 queue. Sequential, seeded-shuffle, and balanced/interleaved policies retain
