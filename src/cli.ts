@@ -15,7 +15,8 @@ import {
   writeCorpusIndex,
   type CorpusIndexQuery,
 } from "./corpus.js";
-import type { PortableExportPolicy } from "./exports.js";
+import { runAgentSdkQueueEntry } from "./agent-sdk-runner.js";
+import { createPortableRunBundleExport, type PortableExportPolicy } from "./exports.js";
 import {
   admitTaskPacket,
   formatErrors,
@@ -36,6 +37,8 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo matrix compile <experiment.json> <bundle-root> <queue.json> [--freeze-locator <task-id>=<path>]
        ebo queue inspect <queue.json>
        ebo queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
+       ebo agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
+       ebo export create <run-bundle-root> <policy.json> <export-root>
        ebo corpus build <corpus-root> <index.jsonl>
        ebo corpus query <index.jsonl> [--kind|--run|--attempt|--task|--model|--harness|--terminal|--failure-class|--verifier-status|--capture|--export-status|--sharing-class <value>]
        ebo corpus validate <corpus-root> <index.jsonl>
@@ -83,6 +86,14 @@ export function main(
 
   if (args[0] === "queue" && args[1] === "validate") {
     return validateQueue(args.slice(2), write);
+  }
+
+  if (args[0] === "agent-sdk" && args[1] === "run") {
+    return runAgentSdkCommand(args.slice(2), write);
+  }
+
+  if (args[0] === "export" && args[1] === "create") {
+    return createExportCommand(args.slice(2), write);
   }
 
   if (args[0] === "corpus") {
@@ -213,6 +224,68 @@ function parseCorpusQuery(args: string[]): CorpusIndexQuery {
     query[field] = value;
   }
   return query as CorpusIndexQuery;
+}
+
+async function runAgentSdkCommand(
+  args: string[],
+  write: (message: string) => void,
+): Promise<number> {
+  const agentSdkRunUsage = "Usage: ebo agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]\n";
+  const positional: string[] = [];
+  let workspaceRoot: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === "--workspace-root") {
+      const value = args[++index];
+      if (value === undefined || value.startsWith("--")) {
+        write(agentSdkRunUsage);
+        return 1;
+      }
+      workspaceRoot = value;
+    } else positional.push(args[index]!);
+  }
+  const [bundleRoot, queuePath, runId, outputRoot] = positional;
+  if (bundleRoot === undefined || queuePath === undefined || runId === undefined
+      || outputRoot === undefined || positional.length !== 4) {
+    write(agentSdkRunUsage);
+    return 1;
+  }
+  try {
+    const summary = await runAgentSdkQueueEntry({
+      bundleRoot,
+      queuePath,
+      runId,
+      outputRoot,
+      ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+    });
+    write(`${canonicalizeMetadata(summary)}\n`);
+    return 0;
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  }
+}
+
+async function createExportCommand(
+  args: string[],
+  write: (message: string) => void,
+): Promise<number> {
+  const [sourceRoot, policyPath, exportRoot] = args;
+  if (sourceRoot === undefined || policyPath === undefined || exportRoot === undefined || args.length !== 3) {
+    write("Usage: ebo export create <run-bundle-root> <policy.json> <export-root>\n");
+    return 1;
+  }
+  try {
+    const manifest = await createPortableRunBundleExport({
+      sourceRoot,
+      destinationRoot: exportRoot,
+      policy: readJson(policyPath) as PortableExportPolicy,
+    });
+    write(`Created ${manifest.sharingClass} portable export (${manifest.status}) for bundle ${manifest.bundleId} at ${exportRoot}.\n`);
+    return 0;
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  }
 }
 
 function compileQueue(

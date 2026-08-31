@@ -190,5 +190,24 @@ the compiler has no fixed task, model, harness, or trial count, subject to the
 bounded 100,000-entry local queue limit; larger matrices require a future
 streaming queue implementation.
 
+## Agent SDK run configuration
+
+`ebo.agent-sdk-config/v1` is the single discriminated contract behind the five
+digest-pinned configuration artifacts a queue entry already references. The
+`kind` values are `model`, `harness`, `native-limits`, `native-tool-policy`,
+and `capture-profile`; `ebo agent-sdk run` resolves each reference through the
+bundle resolver and validates the record before launching the Agent SDK. The
+model record's `model` must equal the queue entry's model ID, the harness
+adapter must be `claude-agent-sdk`, tool lists are arrays of unique nonempty
+Agent SDK tool names, and `bypassPermissions` is accepted only with an explicit
+`allowDangerouslySkipPermissions: true`. Duplicate JSON keys, unknown fields,
+unsafe numbers, wrong kinds, digest mismatches, and malformed UTF-8 or JSON
+fail before an attempt starts. Credentials and environment overrides are never
+read from these files; authentication stays in the process environment, and
+telemetry content flags default to false. A configured telemetry endpoint
+without a receipt checker remains explicit `not-checked` receipt evidence. The
+full runner specification is
+[agent-sdk-operational-runner.md](agent-sdk-operational-runner.md).
+
 Unknown schema versions and sharing classifications are invalid. Consumers must
 validate a document before materializing a workspace or scheduling a run.
