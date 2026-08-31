@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -195,6 +195,56 @@ test("reports unknown sharing independently without invalidating semantic analys
     assert.equal(report.semanticAnalysisUsable, true);
     assert.ok(reasonCodes(report).has("SHARING_CLASSIFICATION_UNKNOWN"));
     assert.equal(report.dimensions.sharing.status, "gap");
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("preserves explicit unsupported telemetry as a qualified dimension", async () => {
+  const fixture = await assembleScenario("success");
+  try {
+    const manifest = readManifest(fixture.bundleRoot);
+    const captureDescriptor = manifest.evidence.find((descriptor) => descriptor.kind === "capture-report")!;
+    const captureReport = JSON.parse(readFileSync(join(fixture.bundleRoot, captureDescriptor.relativePath), "utf8")) as {
+      qualification: string;
+      capabilities: { timingResource: { status: string } };
+      missingEvidence: unknown[];
+    };
+    captureReport.qualification = "qualified";
+    captureReport.capabilities.timingResource.status = "unsupported";
+    captureReport.missingEvidence = [{ kind: "telemetry", reason: "unsupported", affects: ["timing-resource"] }];
+    const bytes = Buffer.from(`${JSON.stringify(captureReport)}\n`);
+    writeFileSync(join(fixture.bundleRoot, captureDescriptor.relativePath), bytes);
+    captureDescriptor.digest = `sha256:${digestBytes(bytes).value}`;
+    captureDescriptor.sizeBytes = bytes.length;
+    manifest.evidence = manifest.evidence.filter((descriptor) => descriptor.kind !== "telemetry");
+    if (manifest.run.native !== undefined) delete manifest.run.native.traceId;
+    writeFileSync(join(fixture.bundleRoot, "manifest.json"), `${JSON.stringify(manifest)}\n`);
+
+    const report = await qualifyRunBundle(fixture.bundleRoot, {
+      startingWorkspacePath: fixture.start,
+      hookCapabilities: capabilities,
+      expectedHooks: fixture.expectedHooks,
+    });
+    assert.equal(report.status, "qualified", JSON.stringify(report.reasons));
+    assert.equal(report.dimensions.telemetry.status, "unsupported");
+    assert.ok(reasonCodes(report).has("TELEMETRY_UNSUPPORTED_BY_PINNED_RUNTIME"));
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("rejects native evidence above the documented qualification bound without reading it", async () => {
+  const fixture = await assembleScenario("success");
+  try {
+    truncateSync(join(fixture.bundleRoot, evidencePath(fixture.bundleRoot, "hooks")), 64 * 1024 * 1024 + 1);
+    const report = await qualifyRunBundle(fixture.bundleRoot, {
+      startingWorkspacePath: fixture.start,
+      hookCapabilities: capabilities,
+      expectedHooks: fixture.expectedHooks,
+    });
+    assert.equal(report.status, "unqualified");
+    assert.ok(reasonCodes(report).has("ARTIFACT_TOO_LARGE"));
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

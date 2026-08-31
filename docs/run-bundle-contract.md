@@ -124,6 +124,12 @@ timing gaps; missing or malformed semantic/outcome evidence, an unusable patch,
 or contradictory capture-report facts are unqualified. The report contains no
 behavioral or semantic-quality judgment.
 
+An explicit `unsupported` capture-report capability remains qualified and is
+reported as `unsupported`, not rewritten as missing evidence. Qualification
+caps every retained artifact read at 64 MiB; larger evidence is rejected with
+`ARTIFACT_TOO_LARGE` before whole-file parsing. Parsed session records and raw
+telemetry payloads are not retained in the qualification report.
+
 Qualification reuses manifest schema checks, descriptor digest/path readback,
 verifier-to-workspace terminal binding, and export-manifest validation. When a
 workspace patch is present, callers supply the admitted starting fixture so the

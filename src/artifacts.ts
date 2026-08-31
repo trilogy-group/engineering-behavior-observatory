@@ -944,7 +944,11 @@ export async function readVerifiedArtifact(
   artifactRoot: string,
   relativePath: string,
   expectedDigest: Digest,
+  maxBytes?: number,
 ): Promise<Buffer> {
+  if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 0)) {
+    throw new Error("Artifact byte limit must be a nonnegative safe integer.");
+  }
   const { root, path } = await resolveExistingArtifactPath(artifactRoot, relativePath);
   removeInterruptedPublicationLink(path, lstatSync(path));
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -955,6 +959,9 @@ export async function readVerifiedArtifact(
     if (!opened.isFile() || !(await isReadablePublishedArtifact(path, opened))
         || current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino) {
       throw new Error(`Artifact path "${relativePath}" is not an isolated regular file.`);
+    }
+    if (maxBytes !== undefined && opened.size > maxBytes) {
+      throw new Error(`Artifact "${relativePath}" exceeds the qualification byte limit of ${maxBytes}.`);
     }
     await assertExistingArtifactPath(root, relativePath);
     const bytes = await handle.readFile();

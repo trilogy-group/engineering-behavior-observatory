@@ -132,6 +132,7 @@ export type CaptureQualificationReasonCode =
   | "MANIFEST_INVALID"
   | "ATTEMPT_IDENTITY_INVALID"
   | "ARTIFACT_INTEGRITY_INVALID"
+  | "ARTIFACT_TOO_LARGE"
   | "NATIVE_JSON_EMPTY"
   | "NATIVE_JSON_MALFORMED"
   | "NATIVE_JSONL_EMPTY"
@@ -146,6 +147,7 @@ export type CaptureQualificationReasonCode =
   | "HOOK_CAPABILITY_CONTRADICTION"
   | "TELEMETRY_EVIDENCE_MISSING"
   | "TELEMETRY_RECEIPT_MISSING"
+  | "TELEMETRY_UNSUPPORTED_BY_PINNED_RUNTIME"
   | "OPTIONAL_BETA_TIMING_UNAVAILABLE"
   | "WORKSPACE_EVIDENCE_MISSING"
   | "WORKSPACE_PATCH_NOT_CHECKED"
@@ -174,7 +176,7 @@ export type CaptureQualificationReport = {
   attempt?: AttemptIdentity;
   terminal?: TerminalRecord;
   dimensions: Record<CaptureQualificationDimension, {
-    status: "qualified" | "gap" | "unqualified";
+    status: "qualified" | "unsupported" | "gap" | "unqualified";
     reasonCodes: CaptureQualificationReasonCode[];
   }>;
   reasons: CaptureQualificationReason[];
@@ -189,6 +191,8 @@ export type CaptureQualificationOptions = {
 const execFileAsync = promisify(execFile);
 const MAX_WORKSPACE_PATCH_BYTES = 64 * 1024 * 1024;
 const MAX_WORKSPACE_SNAPSHOT_BYTES = 64 * 1024 * 1024;
+const MAX_QUALIFICATION_ARTIFACT_BYTES = 64 * 1024 * 1024;
+const QUALIFICATION_DIMENSION_RANK = { qualified: 0, unsupported: 1, gap: 2, unqualified: 3 } as const;
 const TAR_COMMAND = process.platform === "win32" ? "tar" : "/usr/bin/tar";
 const PROVISIONAL_TERMINAL: TerminalRecord = {
   state: "interrupted",
@@ -460,7 +464,7 @@ export async function qualifyRunBundle(
   type ArtifactState = {
     descriptor: RunBundleEvidenceDescriptor;
     document?: unknown;
-    records?: Record<string, unknown>[];
+    hookNames?: string[];
     bytes?: Buffer;
     valid: boolean;
   };
@@ -469,12 +473,19 @@ export async function qualifyRunBundle(
     const state: ArtifactState = { descriptor, valid: true };
     states.set(descriptor.id, state);
     try {
-      state.bytes = await readVerifiedArtifact(bundleRoot, descriptor.relativePath, digestValue(descriptor.digest));
+      const bytes = await readVerifiedArtifact(
+        bundleRoot,
+        descriptor.relativePath,
+        digestValue(descriptor.digest),
+        MAX_QUALIFICATION_ARTIFACT_BYTES,
+      );
       if (descriptor.mediaType === "application/x-ndjson") {
-        state.records = parseNativeJsonl(state.bytes);
+        state.hookNames = parseNativeJsonl(bytes);
       } else if (descriptor.mediaType === "application/json") {
-        state.document = parseNativeJson(state.bytes);
+        const parsed = parseNativeJson(bytes);
+        state.document = descriptor.kind === "telemetry" ? telemetrySummary(parsed) : parsed;
       }
+      if (descriptor.kind === "workspace" && descriptor.mediaType === "text/x-diff") state.bytes = bytes;
     } catch (error) {
       state.valid = false;
       const { dimension, code } = artifactFailure(descriptor, error);
@@ -482,13 +493,15 @@ export async function qualifyRunBundle(
     }
   }
 
-  for (const error of validateRunManifestEvidence("manifest.json", manifest, bundleRoot)) {
-    const descriptor = descriptorFromValidationField(manifest, error.field);
-    const dimension = descriptor === undefined
-      ? error.field.startsWith("/terminal") ? "terminal" : "semanticEvidence"
-      : artifactFailure(descriptor, new Error(error.message)).dimension;
-    const code = dimension === "terminal" ? "TERMINAL_CLASSIFICATION_INVALID" : "ARTIFACT_INTEGRITY_INVALID";
-    addQualificationReason(report, dimension, "unqualified", code, descriptor?.id, `${error.field}: ${error.message}`);
+  if (!report.reasons.some((reason) => reason.code === "ARTIFACT_TOO_LARGE")) {
+    for (const error of validateRunManifestEvidence("manifest.json", manifest, bundleRoot)) {
+      const descriptor = descriptorFromValidationField(manifest, error.field);
+      const dimension = descriptor === undefined
+        ? error.field.startsWith("/terminal") ? "terminal" : "semanticEvidence"
+        : artifactFailure(descriptor, new Error(error.message)).dimension;
+      const code = dimension === "terminal" ? "TERMINAL_CLASSIFICATION_INVALID" : "ARTIFACT_INTEGRITY_INVALID";
+      addQualificationReason(report, dimension, "unqualified", code, descriptor?.id, `${error.field}: ${error.message}`);
+    }
   }
 
   const valid = (kind: RunBundleEvidenceDescriptor["kind"]): ArtifactState[] => [...states.values()].filter((state) =>
@@ -587,7 +600,7 @@ function emptyQualificationReport(): CaptureQualificationReport {
 function addQualificationReason(
   report: CaptureQualificationReport,
   dimension: CaptureQualificationDimension,
-  status: "gap" | "unqualified",
+  status: "unsupported" | "gap" | "unqualified",
   code: CaptureQualificationReasonCode,
   evidenceId: string | undefined,
   detail: string,
@@ -597,7 +610,7 @@ function addQualificationReason(
   report.reasons.push({ code, dimension, ...(evidenceId === undefined ? {} : { evidenceId }), detail });
   const target = report.dimensions[dimension];
   if (!target.reasonCodes.includes(code)) target.reasonCodes.push(code);
-  if (status === "unqualified" || target.status === "qualified") target.status = status;
+  if (QUALIFICATION_DIMENSION_RANK[status] > QUALIFICATION_DIMENSION_RANK[target.status]) target.status = status;
 }
 
 function finishQualificationReport(report: CaptureQualificationReport): CaptureQualificationReport {
@@ -620,7 +633,8 @@ function artifactFailure(
           : descriptor.kind === "verifier" || descriptor.kind === "diagnostic" ? "verifier"
             : descriptor.kind === "export-manifest" ? "sharing" : "semanticEvidence";
   const message = errorMessage(error);
-  const code: CaptureQualificationReasonCode = descriptor.kind === "capture-report" ? "CAPTURE_REPORT_INVALID"
+  const code: CaptureQualificationReasonCode = message.includes("qualification byte limit") ? "ARTIFACT_TOO_LARGE"
+    : descriptor.kind === "capture-report" ? "CAPTURE_REPORT_INVALID"
     : descriptor.kind === "export-manifest" ? "EXPORT_MANIFEST_INVALID"
       : descriptor.mediaType === "application/x-ndjson" && message.includes("empty") ? "NATIVE_JSONL_EMPTY"
         : descriptor.mediaType === "application/x-ndjson" ? "NATIVE_JSONL_MALFORMED"
@@ -644,17 +658,20 @@ function parseNativeJson(bytes: Buffer): unknown {
   return value;
 }
 
-function parseNativeJsonl(bytes: Buffer): Record<string, unknown>[] {
+function parseNativeJsonl(bytes: Buffer): string[] {
   if (bytes.length === 0) throw new Error("Native JSONL evidence is empty.");
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   const lines = text.split(/\r?\n/u).filter((line) => line.trim() !== "");
   if (lines.length === 0) throw new Error("Native JSONL evidence is empty.");
-  return lines.map((line, index) => {
+  return lines.flatMap((line, index) => {
     try {
       assertNoDuplicateJsonKeys(line);
       const value: unknown = JSON.parse(line);
       if (!isRecord(value) || Object.keys(value).length === 0) throw new Error("record is empty");
-      return value;
+      const hook = typeof value.hook === "string" ? value.hook
+        : typeof value.hook_event_name === "string" ? value.hook_event_name
+          : typeof value.type === "string" ? value.type : undefined;
+      return hook === undefined ? [] : [hook];
     } catch (error) {
       throw new Error(`Native JSONL evidence line ${index + 1} is malformed: ${errorMessage(error)}`);
     }
@@ -664,7 +681,7 @@ function parseNativeJsonl(bytes: Buffer): Record<string, unknown>[] {
 function qualifyHooks(
   report: CaptureQualificationReport,
   manifest: RunManifest,
-  hooks: Array<{ records?: Record<string, unknown>[] }>,
+  hooks: Array<{ hookNames?: string[] }>,
   options: CaptureQualificationOptions,
 ): void {
   const capabilities = options.hookCapabilities;
@@ -676,19 +693,14 @@ function qualifyHooks(
   if (runtimeVersion !== capabilities.sdkVersion) {
     addQualificationReason(report, "hooks", "unqualified", "HOOK_CAPABILITY_VERSION_MISMATCH", undefined, `Retained Agent SDK ${String(runtimeVersion)} does not match capability profile ${capabilities.sdkVersion}.`);
   }
-  const observed = new Set(hooks.flatMap(({ records }) => (records ?? []).flatMap((record) => {
-    const hook = typeof record.hook === "string" ? record.hook
-      : typeof record.hook_event_name === "string" ? record.hook_event_name
-        : typeof record.type === "string" ? record.type : undefined;
-    return hook === undefined ? [] : [hook];
-  })));
+  const observed = new Set(hooks.flatMap(({ hookNames }) => hookNames ?? []));
   const supported = new Set(Object.keys(capabilities.hooks));
   const unsupported = new Set(capabilities.unsupportedHooks);
   for (const hook of options.expectedHooks ?? []) {
     if (supported.has(hook) && !observed.has(hook)) {
       addQualificationReason(report, "hooks", "unqualified", "HOOK_SUPPORTED_BUT_MISSING", undefined, `Pinned SDK supports expected hook ${hook}, but no callback was retained.`);
     } else if (unsupported.has(hook)) {
-      addQualificationReason(report, "hooks", "gap", "HOOK_UNSUPPORTED_BY_PINNED_SDK", undefined, `Pinned SDK does not support expected hook ${hook}.`);
+      addQualificationReason(report, "hooks", "unsupported", "HOOK_UNSUPPORTED_BY_PINNED_SDK", undefined, `Pinned SDK does not support expected hook ${hook}.`);
     } else if (!supported.has(hook)) {
       addQualificationReason(report, "hooks", "unqualified", "HOOK_CAPABILITY_CONTRADICTION", undefined, `Expected hook ${hook} is absent from the pinned capability profile.`);
     }
@@ -707,11 +719,17 @@ function qualifyTelemetry(
 ): void {
   const optionalBeta = missing.some((entry) => entry.reason === "optional-beta-unavailable"
     && Array.isArray(entry.affects) && entry.affects.includes("timing-resource"));
+  const unsupported = missing.some((entry) => entry.reason === "unsupported"
+    && Array.isArray(entry.affects) && entry.affects.includes("timing-resource"));
   if (optionalBeta) {
     addQualificationReason(report, "telemetry", "gap", "OPTIONAL_BETA_TIMING_UNAVAILABLE", undefined, "Optional detailed-beta timing is unavailable; semantic hook evidence remains usable.");
   }
   if (telemetry.length === 0) {
-    if (!optionalBeta) addQualificationReason(report, "telemetry", "unqualified", "TELEMETRY_EVIDENCE_MISSING", undefined, "No valid telemetry evidence is retained.");
+    if (unsupported) {
+      addQualificationReason(report, "telemetry", "unsupported", "TELEMETRY_UNSUPPORTED_BY_PINNED_RUNTIME", undefined, "Pinned runtime explicitly does not support telemetry evidence.");
+    } else if (!optionalBeta) {
+      addQualificationReason(report, "telemetry", "unqualified", "TELEMETRY_EVIDENCE_MISSING", undefined, "No valid telemetry evidence is retained.");
+    }
     return;
   }
   for (const entry of telemetry) {
@@ -721,6 +739,11 @@ function qualifyTelemetry(
       addQualificationReason(report, "telemetry", "gap", "TELEMETRY_RECEIPT_MISSING", undefined, `Collector receipt status is ${String(receipt.status)}.`);
     }
   }
+}
+
+function telemetrySummary(value: unknown): unknown {
+  const receipt = isRecord(value) && isRecord(value.telemetry) ? value.telemetry.receipt : undefined;
+  return isRecord(receipt) ? { telemetry: { receipt: structuredClone(receipt) } } : {};
 }
 
 async function workspacePatchApplies(startingWorkspacePath: string, patch: Buffer): Promise<boolean> {
