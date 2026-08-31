@@ -254,17 +254,17 @@ export function resolveAgentSdkConfigurationRecord<Kind extends AgentSdkConfigur
 function validateConfigurationRecord(record: Record<string, unknown>, kind: AgentSdkConfigurationKind, reference: ArtifactReference): void {
   switch (kind) {
     case "model":
-      assertKeys(record, ["model"], ["model"], reference);
+      assertRecordKeys(record, ["model"], ["model"], reference);
       assertText(record.model, "model", reference);
       return;
     case "harness":
-      assertKeys(record, ["adapter"], ["adapter"], reference);
+      assertRecordKeys(record, ["adapter"], ["adapter"], reference);
       if (record.adapter !== "claude-agent-sdk") {
         throw configurationError(reference, 'must declare the "claude-agent-sdk" adapter');
       }
       return;
     case "native-limits":
-      assertKeys(record, ["maxTurns", "maxBudgetUsd"], [], reference);
+      assertRecordKeys(record, ["maxTurns", "maxBudgetUsd"], [], reference);
       if (record.maxTurns !== undefined && (!Number.isSafeInteger(record.maxTurns) || (record.maxTurns as number) < 1)) {
         throw configurationError(reference, "maxTurns must be a positive safe integer");
       }
@@ -274,7 +274,7 @@ function validateConfigurationRecord(record: Record<string, unknown>, kind: Agen
       }
       return;
     case "native-tool-policy": {
-      assertKeys(
+      assertRecordKeys(
         record,
         ["tools", "allowedTools", "disallowedTools", "permissionMode", "allowDangerouslySkipPermissions"],
         ["tools", "permissionMode"],
@@ -295,7 +295,7 @@ function validateConfigurationRecord(record: Record<string, unknown>, kind: Agen
       return;
     }
     case "capture-profile": {
-      assertKeys(record, ["telemetry"], [], reference);
+      assertRecordKeys(record, ["telemetry"], [], reference);
       if (record.telemetry === undefined) return;
       if (!isRecord(record.telemetry)) throw configurationError(reference, "telemetry must be an object");
       const telemetry = record.telemetry;
@@ -415,13 +415,23 @@ function reopenFinalManifest(bundleRoot: string): RunManifest {
   return manifest as RunManifest;
 }
 
+/** Allow the schemaVersion/kind envelope only on top-level configuration records. */
+function assertRecordKeys(
+  record: Record<string, unknown>,
+  allowed: readonly string[],
+  required: readonly string[],
+  reference: ArtifactReference,
+): void {
+  assertKeys(record, ["schemaVersion", "kind", ...allowed], required, reference);
+}
+
 function assertKeys(
   record: Record<string, unknown>,
   allowed: readonly string[],
   required: readonly string[],
   reference: ArtifactReference,
 ): void {
-  const permitted = new Set(["schemaVersion", "kind", ...allowed]);
+  const permitted = new Set(allowed);
   for (const key of Object.keys(record)) {
     if (!permitted.has(key)) throw configurationError(reference, `contains an unknown field "${key}"`);
   }

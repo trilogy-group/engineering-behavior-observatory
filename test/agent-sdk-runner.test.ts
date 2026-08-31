@@ -107,6 +107,17 @@ for (const invalid of [
     },
     message: /unknown field "env"/,
   },
+  {
+    name: "nested-envelope-field",
+    records: {
+      capture: {
+        schemaVersion: "ebo.agent-sdk-config/v1",
+        kind: "capture-profile",
+        telemetry: { endpoint: "http://127.0.0.1:4318", kind: "capture-profile" },
+      },
+    },
+    message: /unknown field "kind"/,
+  },
 ] as const) {
   test(`rejects an ${invalid.name} configuration before the SDK query without fabricating a bundle`, async () => {
     const fixture = createRunnerFixture({ records: invalid.records });
