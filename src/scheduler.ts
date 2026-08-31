@@ -271,7 +271,13 @@ export function readRunQueue(
   return queue as RunQueue;
 }
 
-export function readBoundedFile(path: string, label = "Artifact", afterOpen?: () => void): Buffer {
+export function readBoundedFile(
+  path: string,
+  label = "Artifact",
+  afterOpen?: () => void,
+  maxBytes = MAX_RUN_QUEUE_BYTES,
+): Buffer {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new Error(`${label} byte limit must be a nonnegative safe integer.`);
   let descriptor: number | undefined;
   try {
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -281,8 +287,8 @@ export function readBoundedFile(path: string, label = "Artifact", afterOpen?: ()
     if (!namedBefore.isFile() || !sameFileIdentity(namedBefore, opened)) {
       throw new Error(`${label} file "${path}" changed while being opened.`);
     }
-    if (!Number.isSafeInteger(opened.size) || opened.size > MAX_RUN_QUEUE_BYTES) {
-      throw new Error(`${label} file exceeds the local byte limit of ${MAX_RUN_QUEUE_BYTES}.`);
+    if (!Number.isSafeInteger(opened.size) || opened.size > maxBytes) {
+      throw new Error(`${label} file exceeds the local byte limit of ${maxBytes}.`);
     }
     const openedTimes = fstatSync(descriptor, { bigint: true });
     afterOpen?.();

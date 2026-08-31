@@ -74,7 +74,7 @@ node dist/src/cli.js queue validate <queue.json> [experiment.json] [--bundle-roo
 node dist/src/cli.js corpus build <corpus-root> <index.jsonl>
 node dist/src/cli.js corpus query <index.jsonl> [--task <id>] [--model <id>] [--harness <id>]
 node dist/src/cli.js corpus validate <corpus-root> <index.jsonl>
-node dist/src/cli.js corpus pack <approved-export-root> <archive.tar.gz>
+node dist/src/cli.js corpus pack <approved-export-root> <policy.json> <archive.tar.gz>
 node dist/src/cli.js corpus unpack <archive.tar.gz> <destination-root>
 # Optional approved OAuth smoke; provide OAuth auth, never API-key overrides.
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
@@ -108,11 +108,12 @@ manifests remain authoritative; delete and rebuild the index at any time.
 Queries use exact-match flags shown by `ebo --help` and do not index prompt or
 tool bodies.
 
-Portable archives accept only structurally valid `ready` or `exported`
-partner/public trees. Packing follows the export manifest allowlist, so an
-unlisted sibling file is not included. Unpacking applies bounded TAR parsing,
-requires an exact manifest/member match, verifies every digest, and refuses an
-existing destination. No database, service, or archive package is involved.
+Portable archives accept only `ready` or `exported` partner/public trees that
+pass the export pipeline's policy-bound readback and final secret scan.
+Packing follows the export manifest allowlist, so an unlisted sibling file is
+not included. Unpacking applies bounded TAR parsing, requires an exact
+manifest/member match, verifies every digest, and refuses an existing
+destination. No database, service, or archive package is involved.
 
 The matrix compiler expands any valid experiment into a local, persisted run
 queue. Sequential, seeded-shuffle, and balanced/interleaved policies retain

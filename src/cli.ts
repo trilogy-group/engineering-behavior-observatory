@@ -15,6 +15,7 @@ import {
   writeCorpusIndex,
   type CorpusIndexQuery,
 } from "./corpus.js";
+import type { PortableExportPolicy } from "./exports.js";
 import {
   admitTaskPacket,
   formatErrors,
@@ -38,7 +39,7 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo corpus build <corpus-root> <index.jsonl>
        ebo corpus query <index.jsonl> [--kind|--run|--attempt|--task|--model|--harness|--terminal|--failure-class|--verifier-status|--capture|--export-status|--sharing-class <value>]
        ebo corpus validate <corpus-root> <index.jsonl>
-       ebo corpus pack <export-root> <archive.tar.gz>
+       ebo corpus pack <export-root> <policy.json> <archive.tar.gz>
        ebo corpus unpack <archive.tar.gz> <destination-root>
 
 Engineering Behavior Observatory
@@ -51,7 +52,7 @@ export function main(
   write: (message: string) => void = (message) => {
     process.stdout.write(message);
   },
-): number {
+): number | Promise<number> {
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     write(usage);
     return 0;
@@ -145,8 +146,8 @@ export function main(
   return 1;
 }
 
-function runCorpusCommand(args: string[], write: (message: string) => void): number {
-  const [command, first, second] = args;
+function runCorpusCommand(args: string[], write: (message: string) => void): number | Promise<number> {
+  const [command, first, second, third] = args;
   try {
     if (command === "build" && first !== undefined && second !== undefined && args.length === 3) {
       const entries = buildCorpusIndex(first);
@@ -166,10 +167,14 @@ function runCorpusCommand(args: string[], write: (message: string) => void): num
       write("Corpus index is current and all indexed evidence is reachable.\n");
       return 0;
     }
-    if (command === "pack" && first !== undefined && second !== undefined && args.length === 3) {
-      const digest = packPortableExport(first, second);
-      write(`Packed portable export (${digest}).\n`);
-      return 0;
+    if (command === "pack" && first !== undefined && second !== undefined && third !== undefined && args.length === 4) {
+      return packPortableExport(first, third, readJson(second) as PortableExportPolicy).then((digest) => {
+        write(`Packed portable export (${digest}).\n`);
+        return 0;
+      }, (error: unknown) => {
+        write(`${errorMessage(error)}\n`);
+        return 1;
+      });
     }
     if (command === "unpack" && first !== undefined && second !== undefined && args.length === 3) {
       const manifest = unpackPortableExport(first, second);
@@ -381,5 +386,10 @@ function isDirectExecution(entryPath = process.argv[1]): boolean {
 }
 
 if (isDirectExecution()) {
-  process.exitCode = main();
+  Promise.resolve(main()).then((exitCode) => {
+    process.exitCode = exitCode;
+  }, (error: unknown) => {
+    process.stderr.write(`${errorMessage(error)}\n`);
+    process.exitCode = 1;
+  });
 }

@@ -24,7 +24,8 @@ import {
   validateRunManifestEvidence,
 } from "./artifacts.js";
 import { isSafeArtifactRelativePath, readTaskArchive, resolveBundleArtifact } from "./contracts.js";
-import type { PortableExportArtifact, PortableExportManifest } from "./exports.js";
+import { readPortableRunBundleExport } from "./exports.js";
+import type { PortableExportArtifact, PortableExportManifest, PortableExportPolicy } from "./exports.js";
 import type { RunBundleEvidenceDescriptor, RunManifest } from "./run-bundles.js";
 import { readBoundedFile } from "./scheduler.js";
 
@@ -163,7 +164,12 @@ export function validateCorpusIndex(
 }
 
 /** Package exactly one ready/exported derivative; unrelated sibling files are ignored. */
-export function packPortableExport(exportRoot: string, archivePath: string): DigestString {
+export async function packPortableExport(
+  exportRoot: string,
+  archivePath: string,
+  policy: PortableExportPolicy,
+): Promise<DigestString> {
+  await readPortableRunBundleExport(exportRoot, policy);
   const files = readApprovedPortableExport(exportRoot);
   const archive = gzipSync(createTar(files), { level: 9 });
   if (archive.length > MAX_PORTABLE_ARCHIVE_BYTES) throw new Error("Portable archive exceeds its byte limit.");
@@ -173,7 +179,7 @@ export function packPortableExport(exportRoot: string, archivePath: string): Dig
 
 /** Unpack a bounded archive only when its contents exactly match the approved export manifest. */
 export function unpackPortableExport(archivePath: string, destinationRoot: string): PortableExportManifest {
-  const archive = readBoundedFile(archivePath, "Portable archive");
+  const archive = readBoundedFile(archivePath, "Portable archive", undefined, MAX_PORTABLE_ARCHIVE_BYTES);
   const members = readTaskArchive(archive, {
     maxCompressedBytes: MAX_PORTABLE_ARCHIVE_BYTES,
     maxExpandedBytes: MAX_PORTABLE_ARCHIVE_BYTES,

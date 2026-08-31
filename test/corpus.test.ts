@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -18,6 +19,7 @@ import {
   type PortableExportPolicy,
 } from "../src/index.js";
 import { main } from "../src/cli.js";
+import { readBoundedFile } from "../src/scheduler.js";
 
 const fixtures = resolve("test/fixtures/run-bundles");
 const policy: PortableExportPolicy = {
@@ -83,6 +85,7 @@ test("portable archives are deterministic and contain only approved export files
   const portable = join(root, "portable");
   const firstArchive = join(root, "first.tar.gz");
   const secondArchive = join(root, "second.tar.gz");
+  const cliArchive = join(root, "cli.tar.gz");
   const unpacked = join(root, "unpacked");
   try {
     cpSync(join(fixtures, "complete"), source, { recursive: true });
@@ -95,9 +98,13 @@ test("portable archives are deterministic and contain only approved export files
     writeFileSync(join(portable, "manifest.json"), JSON.stringify(manifest));
     writeFileSync(join(portable, "restricted.txt"), "must not be packed");
 
-    packPortableExport(portable, firstArchive);
-    packPortableExport(portable, secondArchive);
+    await packPortableExport(portable, firstArchive, policy);
+    await packPortableExport(portable, secondArchive, policy);
     assert.deepEqual(readFileSync(firstArchive), readFileSync(secondArchive));
+    const policyPath = join(root, "policy.json");
+    writeFileSync(policyPath, JSON.stringify(policy));
+    assert.equal(await main(["corpus", "pack", portable, policyPath, cliArchive], () => undefined), 0);
+    assert.deepEqual(readFileSync(firstArchive), readFileSync(cliArchive));
     assert.match(execFileSync(process.platform === "win32" ? "tar" : "/usr/bin/tar", ["-tzf", firstArchive], { encoding: "utf8" }), /bundle\/manifest\.json/);
 
     unpackPortableExport(firstArchive, unpacked);
@@ -108,11 +115,34 @@ test("portable archives are deterministic and contain only approved export files
   }
 });
 
-test("portable archive packing rejects a blocked export manifest", () => {
+test("portable archive packing rejects a blocked export manifest", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-blocked-archive-"));
   try {
     cpSync(join(fixtures, "complete", "export"), root, { recursive: true });
-    assert.throws(() => packPortableExport(root, join(root, "blocked.tar.gz")), /ready or exported/i);
+    await assert.rejects(packPortableExport(root, join(root, "blocked.tar.gz"), policy), /not ready|ready or exported/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("portable archive packing reruns policy-bound secret scanning", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-tampered-export-"));
+  const source = join(root, "source");
+  const portable = join(root, "portable");
+  try {
+    cpSync(join(fixtures, "complete"), source, { recursive: true });
+    const manifest = await createPortableRunBundleExport({ sourceRoot: source, destinationRoot: portable, policy });
+    const artifact = manifest.artifacts.find(({ kind }) => kind === "session")!;
+    const bytes = Buffer.from('{"token":"ghp_abcdefghijklmnopqrstuvwxyz123456"}\n');
+    writeFileSync(join(portable, artifact.relativePath), bytes);
+    artifact.digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    artifact.sizeBytes = bytes.length;
+    writeFileSync(join(portable, "manifest.json"), JSON.stringify(manifest));
+
+    await assert.rejects(
+      packPortableExport(portable, join(root, "tampered.tar.gz"), policy),
+      /secret scan/i,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -134,6 +164,18 @@ test("corpus CLI builds, queries, and validates the local index", () => {
     output = "";
     assert.equal(main(["corpus", "validate", corpus, indexPath], write), 0);
     assert.match(output, /current/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bounded reads honor a caller-supplied archive limit", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-bounded-read-"));
+  const path = join(root, "archive.tar.gz");
+  try {
+    writeFileSync(path, "archive");
+    assert.equal(readBoundedFile(path, "Portable archive", undefined, 7).toString(), "archive");
+    assert.throws(() => readBoundedFile(path, "Portable archive", undefined, 6), /byte limit of 6/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
