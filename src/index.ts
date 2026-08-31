@@ -165,6 +165,14 @@ export {
   runProtocolProcess,
   spawnProtocolProcess,
 } from "./process-protocol.js";
+export { executeClaudeAgentSdk, probeClaudeAgentSdkCapabilities } from "./agent-sdk.js";
+export type {
+  ClaudeAgentSdkCapabilities,
+  ClaudeAgentSdkConfiguration,
+  ClaudeAgentSdkEvidenceSink,
+  ClaudeAgentSdkLifecycleEvent,
+  ClaudeAgentSdkAttemptEvidence,
+} from "./agent-sdk.js";
 export type {
   BoundedDiagnostic,
   JsonlEvidenceWriterOptions,
