@@ -189,13 +189,21 @@ export async function resolve(specifier, context, nextResolve) {
 `;
 
 export async function digestWorkspace(workspacePath: string): Promise<string> {
+  return digestWorkspaceEntries(workspacePath, true);
+}
+
+export async function digestWorkspaceTree(workspacePath: string): Promise<string> {
+  return digestWorkspaceEntries(workspacePath, false);
+}
+
+async function digestWorkspaceEntries(workspacePath: string, includeTimestamps: boolean): Promise<string> {
   const root = await realpath(workspacePath);
   const hash = createHash("sha256");
-  hash.update("ebo.workspace/v1\0");
+  hash.update(includeTimestamps ? "ebo.workspace/v1\0" : "ebo.workspace-tree/v1\0");
   const metadata = await lstat(root, { bigint: true });
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("Workspace root is not a directory.");
-  hash.update(`root\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0`);
-  await hashWorkspaceDirectory(root, "", hash);
+  hash.update(`root\0${metadata.mode & 0o7777n}\0${includeTimestamps ? `${workspaceTimestamp(metadata)}\0` : ""}`);
+  await hashWorkspaceDirectory(root, "", hash, includeTimestamps);
   return `sha256:${hash.digest("hex")}`;
 }
 
@@ -203,6 +211,7 @@ async function hashWorkspaceDirectory(
   directory: string,
   relativeDirectory: string,
   hash: ReturnType<typeof createHash>,
+  includeTimestamps: boolean,
 ): Promise<void> {
   const entries = await readdir(directory, { withFileTypes: true });
   entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
@@ -212,12 +221,12 @@ async function hashWorkspaceDirectory(
     const metadata = await lstat(path, { bigint: true });
     if (metadata.isSymbolicLink()) throw new Error(`Workspace contains a symbolic link at "${relativePath}".`);
     if (metadata.isDirectory()) {
-      hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0`);
-      await hashWorkspaceDirectory(path, relativePath, hash);
+      hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777n}\0${includeTimestamps ? `${workspaceTimestamp(metadata)}\0` : ""}`);
+      await hashWorkspaceDirectory(path, relativePath, hash, includeTimestamps);
     } else if (metadata.isFile()) {
       if (metadata.nlink > 1n) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
       const bytes = await readFile(path);
-      hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777n}\0${workspaceTimestamp(metadata)}\0${bytes.length}\0`);
+      hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777n}\0${includeTimestamps ? `${workspaceTimestamp(metadata)}\0` : ""}${bytes.length}\0`);
       hash.update(bytes);
     } else {
       throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
