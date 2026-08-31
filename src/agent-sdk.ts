@@ -13,7 +13,7 @@ import {
   type SDKResultMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { EvidenceSink, HarnessExecutionContext, HarnessExecutionResult } from "./lifecycle.js";
-import { BoundedDiagnosticCapture } from "./process-protocol.js";
+import { BoundedDiagnosticCapture, openJsonlEvidenceWriter } from "./process-protocol.js";
 
 export type ClaudeAgentSdkConfiguration = {
   prompt: string;
@@ -46,6 +46,37 @@ export type ClaudeAgentSdkEvidenceSink = EvidenceSink & {
   lifecycle: (event: ClaudeAgentSdkLifecycleEvent) => void | Promise<void>;
 };
 
+export type ClaudeAgentSdkHookRecord = {
+  schemaVersion: "ebo.claude-agent-hook/v1";
+  sequence: number;
+  callbackAt: string;
+  hook: HookEvent;
+  sessionId: string;
+  transcriptPath: string;
+  cwd: string;
+  promptId?: string;
+  toolUseId?: string;
+  agentId?: string;
+  agentType?: string;
+  signalAborted: boolean;
+  callbackOutput: Record<string, never>;
+  nativePayload: HookInput;
+};
+
+export type ClaudeAgentSdkHookCapture = {
+  path: string;
+  hook: ClaudeAgentSdkEvidenceSink["hook"];
+  flush: () => Promise<void>;
+  close: () => Promise<void>;
+};
+
+export type ClaudeAgentSdkCaptureWarnings = {
+  count: number;
+  diagnostic: string;
+  sizeBytes: number;
+  truncated: boolean;
+};
+
 export type ClaudeAgentSdkCapabilities = {
   sdkVersion: string;
   claudeCodeVersion: string;
@@ -54,9 +85,12 @@ export type ClaudeAgentSdkCapabilities = {
   stderr: { status: "available" };
   abort: { status: "available" };
   hookLifecycleMessages: { status: "available" };
-  hooks: Record<HookEvent, { status: "available" }>;
+  hooks: Record<HookEvent, { status: "available"; evidence: "callback" }>;
+  unsupportedHooks: string[];
+  hookOccurrenceAuthority: "hooks.jsonl";
   betaTelemetry: { status: "unsupported"; reason: string };
-  missingEvidence: Array<{ capability: "beta-telemetry"; reason: string }>;
+  detailedBetaHookSpanTiming: { status: "unsupported"; optional: true; reason: string };
+  missingEvidence: Array<{ capability: "beta-telemetry" | "detailed-beta-hook-span-timing"; reason: string }>;
 };
 
 type QueryHandle = AsyncIterable<SDKMessage> & { close: () => void };
@@ -75,10 +109,54 @@ export type ClaudeAgentSdkAttemptEvidence = {
     workingDirectory: "attempt-workspace";
   };
   capabilities: ClaudeAgentSdkCapabilities;
+  captureWarnings: ClaudeAgentSdkCaptureWarnings;
 };
 
 const PACKAGE_NAME = "@anthropic-ai/claude-agent-sdk";
 const BETA_TELEMETRY_REASON = "The pinned SDK exposes no typed telemetry callback; external telemetry capture is not emulated.";
+const DETAILED_BETA_HOOK_SPAN_REASON = "Optional detailed-beta hook spans are not required; hooks.jsonl is authoritative for hook occurrence.";
+
+export async function openClaudeAgentSdkHookCapture(
+  path: string,
+  now: () => string = () => new Date().toISOString(),
+): Promise<ClaudeAgentSdkHookCapture> {
+  const writer = await openJsonlEvidenceWriter(path, { exclusive: true });
+  let sequence = 0;
+  let failed = false;
+  let failure: unknown;
+  return {
+    path: writer.path,
+    hook: async (event, input, toolUseId, signal) => {
+      try {
+        await writer.append({
+          schemaVersion: "ebo.claude-agent-hook/v1",
+          sequence: ++sequence,
+          callbackAt: now(),
+          hook: event,
+          sessionId: input.session_id,
+          transcriptPath: input.transcript_path,
+          cwd: input.cwd,
+          ...(input.prompt_id === undefined ? {} : { promptId: input.prompt_id }),
+          ...(toolUseId === undefined ? {} : { toolUseId }),
+          ...(input.agent_id === undefined ? {} : { agentId: input.agent_id }),
+          ...(input.agent_type === undefined ? {} : { agentType: input.agent_type }),
+          signalAborted: signal.aborted,
+          callbackOutput: {},
+          nativePayload: input,
+        } satisfies ClaudeAgentSdkHookRecord);
+      } catch (error) {
+        if (!failed) failure = error;
+        failed = true;
+        throw error;
+      }
+    },
+    flush: async () => {
+      await writer.flush();
+      if (failed) throw failure;
+    },
+    close: () => writer.close(),
+  };
+}
 
 export function probeClaudeAgentSdkCapabilities(): ClaudeAgentSdkCapabilities {
   const { sdkVersion, claudeCodeVersion } = installedVersions();
@@ -90,9 +168,15 @@ export function probeClaudeAgentSdkCapabilities(): ClaudeAgentSdkCapabilities {
     stderr: { status: "available" },
     abort: { status: "available" },
     hookLifecycleMessages: { status: "available" },
-    hooks: Object.fromEntries(HOOK_EVENTS.map((event) => [event, { status: "available" }])) as Record<HookEvent, { status: "available" }>,
+    hooks: Object.fromEntries(HOOK_EVENTS.map((event) => [event, { status: "available", evidence: "callback" }])) as Record<HookEvent, { status: "available"; evidence: "callback" }>,
+    unsupportedHooks: [],
+    hookOccurrenceAuthority: "hooks.jsonl",
     betaTelemetry: { status: "unsupported", reason: BETA_TELEMETRY_REASON },
-    missingEvidence: [{ capability: "beta-telemetry", reason: BETA_TELEMETRY_REASON }],
+    detailedBetaHookSpanTiming: { status: "unsupported", optional: true, reason: DETAILED_BETA_HOOK_SPAN_REASON },
+    missingEvidence: [
+      { capability: "beta-telemetry", reason: BETA_TELEMETRY_REASON },
+      { capability: "detailed-beta-hook-span-timing", reason: DETAILED_BETA_HOOK_SPAN_REASON },
+    ],
   };
 }
 
@@ -148,7 +232,15 @@ export async function executeClaudeAgentSdk(
     validateConfiguration(configuration, context);
     const capabilities = probeClaudeAgentSdkCapabilities();
     evidence = executorEvidence(configuration, context, capabilities);
-    const hooks = passiveHooks(sink);
+    const hookWarningCapture = new BoundedDiagnosticCapture();
+    const hooks = passiveHooks(sink, (warning) => {
+      evidence!.captureWarnings.count += 1;
+      hookWarningCapture.write(Buffer.from(`${JSON.stringify(warning)}\n`));
+      const diagnostic = hookWarningCapture.result();
+      evidence!.captureWarnings.diagnostic = diagnostic.text;
+      evidence!.captureWarnings.sizeBytes = diagnostic.sizeBytes;
+      evidence!.captureWarnings.truncated = diagnostic.truncated;
+    });
     const options: Options = {
       abortController: controller,
       cwd: context.workspace!.path,
@@ -209,12 +301,33 @@ export async function executeClaudeAgentSdk(
   }
 }
 
-function passiveHooks(sink: ClaudeAgentSdkEvidenceSink): Partial<Record<HookEvent, HookCallbackMatcher[]>> {
+function passiveHooks(
+  sink: ClaudeAgentSdkEvidenceSink,
+  captureWarning: (warning: {
+    type: "hook-capture-warning";
+    at: string;
+    hook: HookEvent;
+    sessionId: string;
+    toolUseId?: string;
+    message: string;
+  }) => void,
+): Partial<Record<HookEvent, HookCallbackMatcher[]>> {
   const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = {};
   for (const event of HOOK_EVENTS) {
     hooks[event] = [{
       hooks: [async (input, toolUseId, { signal }) => {
-        await sink.hook?.(event, input, toolUseId, signal);
+        try {
+          await sink.hook?.(event, input, toolUseId, signal);
+        } catch (error) {
+          captureWarning({
+            type: "hook-capture-warning",
+            at: new Date().toISOString(),
+            hook: event,
+            sessionId: input.session_id,
+            ...(toolUseId === undefined ? {} : { toolUseId }),
+            message: errorMessage(error),
+          });
+        }
         return {};
       }],
     }];
@@ -287,6 +400,7 @@ function executorEvidence(
       workingDirectory: "attempt-workspace",
     },
     capabilities,
+    captureWarnings: { count: 0, diagnostic: "", sizeBytes: 0, truncated: false },
   };
 }
 
