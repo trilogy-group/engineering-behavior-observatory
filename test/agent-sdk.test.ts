@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,6 +13,7 @@ import {
   type SDKResultMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
+  buildClaudeAgentSdkEnvironment,
   createRunIdentity,
   executeClaudeAgentSdk,
   executeRunAttempt,
@@ -127,7 +130,9 @@ test("runs a typed SDK stream in the attempt workspace and records effective man
       budget: { wallClockMs: 5_000, maxTurns: 3, maxBudgetUsd: 1.25 },
       workingDirectory: "attempt-workspace",
     });
-    assert.equal(evidence.capabilities.betaTelemetry.status, "unsupported");
+    assert.equal(evidence.capabilities.telemetry.metrics.stability, "stable");
+    assert.equal(evidence.capabilities.telemetry.logs.stability, "stable");
+    assert.equal(evidence.capabilities.telemetry.traces.stability, "beta");
     assert.deepEqual(Object.keys(evidence.capabilities.hooks).sort(), [...HOOK_EVENTS].sort());
   } finally {
     if (previousParentSetting === undefined) delete process.env.EBO_PARENT_SETTING;
@@ -251,13 +256,191 @@ test("requires every native evidence callback before starting the SDK", async ()
   }
 });
 
-test("capability probe exposes every public hook and explicit missing telemetry", () => {
+test("capability probe exposes every public hook and native telemetry stability", () => {
   const capabilities = probeClaudeAgentSdkCapabilities();
   assert.equal(capabilities.sdkVersion, "0.3.251");
   assert.equal(capabilities.claudeCodeVersion, "2.1.251");
   assert.deepEqual(Object.keys(capabilities.hooks).sort(), [...HOOK_EVENTS].sort());
-  assert.equal(capabilities.betaTelemetry.status, "unsupported");
-  assert.deepEqual(capabilities.missingEvidence.map((entry) => entry.capability), ["beta-telemetry"]);
+  assert.equal(capabilities.telemetry.metrics.stability, "stable");
+  assert.equal(capabilities.telemetry.logs.stability, "stable");
+  assert.equal(capabilities.telemetry.traces.stability, "beta");
+  assert.equal(capabilities.telemetry.hookSpans.status, "optional");
+  assert.deepEqual(capabilities.missingEvidence, []);
+});
+
+test("builds a safe correlated telemetry environment without leaking secret settings", () => {
+  const built = buildClaudeAgentSdkEnvironment({
+    inherited: {
+      PATH: "/approved/bin",
+      KEEP_PARENT: "parent",
+      OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=test",
+      OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer collector-secret",
+      OTEL_LOG_USER_PROMPTS: "1",
+      OTEL_LOG_TOOL_DETAILS: "1",
+      OTEL_LOG_TOOL_CONTENT: "1",
+      OTEL_LOG_RAW_API_BODIES: "1",
+    },
+    overrides: { KEEP_PARENT: "overridden", KEEP_CHILD: "child" },
+    telemetry: { endpoint: "http://127.0.0.1:4318", protocol: "http/json" },
+    run,
+    attempt: { id: "attempt/one", number: 1 },
+  });
+
+  assert.equal(built.env.PATH, "/approved/bin");
+  assert.equal(built.env.KEEP_PARENT, "overridden");
+  assert.equal(built.env.KEEP_CHILD, "child");
+  assert.equal(built.env.CLAUDE_CODE_ENABLE_TELEMETRY, "1");
+  assert.equal(built.env.CLAUDE_CODE_ENHANCED_TELEMETRY_BETA, "1");
+  assert.equal(built.env.CLAUDE_CODE_OTEL_DIAG_STDERR, "1");
+  assert.equal(built.env.OTEL_TRACES_EXPORTER, "otlp");
+  assert.equal(built.env.OTEL_METRICS_EXPORTER, "otlp");
+  assert.equal(built.env.OTEL_LOGS_EXPORTER, "otlp");
+  assert.equal(built.env.OTEL_METRIC_EXPORT_INTERVAL, "1000");
+  assert.equal(built.env.OTEL_LOGS_EXPORT_INTERVAL, "1000");
+  assert.equal(built.env.OTEL_TRACES_EXPORT_INTERVAL, "1000");
+  assert.equal(built.env.OTEL_LOG_USER_PROMPTS, "0");
+  assert.equal(built.env.OTEL_LOG_TOOL_DETAILS, "0");
+  assert.equal(built.env.OTEL_LOG_TOOL_CONTENT, "0");
+  assert.equal(built.env.OTEL_LOG_RAW_API_BODIES, "0");
+  assert.equal(built.env.ENABLE_BETA_TRACING_DETAILED, undefined);
+  assert.equal(built.env.BETA_TRACING_ENDPOINT, undefined);
+  assert.equal(
+    built.env.OTEL_RESOURCE_ATTRIBUTES,
+    "deployment.environment=test,ebo.run.id=run-agent-sdk-1,ebo.attempt.id=attempt%2Fone,ebo.attempt.number=1",
+  );
+  assert.equal(built.telemetry?.effectiveSettings.secretHeadersConfigured, true);
+  assert.equal(built.telemetry?.correlation.inheritedResourceAttributesPreserved, true);
+  assert.equal(JSON.stringify(built.telemetry).includes("collector-secret"), false);
+
+  const detailed = buildClaudeAgentSdkEnvironment({
+    inherited: {},
+    telemetry: {
+      endpoint: "https://collector.example.test/otlp",
+      logUserPrompts: true,
+      logToolDetails: true,
+      logToolContent: true,
+      logRawApiBodies: true,
+      detailedHookSpans: { endpoint: "https://collector.example.test/detailed" },
+    },
+    run,
+    attempt: { id: "attempt-1", number: 1 },
+  });
+  assert.equal(detailed.env.OTEL_LOG_USER_PROMPTS, "1");
+  assert.equal(detailed.env.OTEL_LOG_TOOL_DETAILS, "1");
+  assert.equal(detailed.env.OTEL_LOG_TOOL_CONTENT, "1");
+  assert.equal(detailed.env.OTEL_LOG_RAW_API_BODIES, "1");
+  assert.equal(detailed.env.ENABLE_BETA_TRACING_DETAILED, "1");
+  assert.equal(detailed.env.BETA_TRACING_ENDPOINT, "https://collector.example.test/detailed");
+  assert.deepEqual(detailed.telemetry?.hookSpans, {
+    status: "enabled",
+    stability: "detailed-beta",
+    endpoint: "https://collector.example.test/detailed",
+  });
+});
+
+test("rejects a console exporter before opening the SDK protocol channel", () => {
+  assert.throws(
+    () => buildClaudeAgentSdkEnvironment({
+      inherited: { OTEL_LOGS_EXPORTER: "otlp, console" },
+      run,
+      attempt: { id: "attempt-1", number: 1 },
+    }),
+    /OTEL_LOGS_EXPORTER cannot use the console exporter/,
+  );
+});
+
+test("records correlated receipt for all three signals through a test HTTP receiver", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-telemetry-receipt-"));
+  const requests: Array<{ path: string; body: string }> = [];
+  const receiver = createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      requests.push({ path: request.url ?? "", body: Buffer.concat(chunks).toString("utf8") });
+      response.writeHead(200).end();
+    });
+  });
+  await new Promise<void>((resolvePromise) => receiver.listen(0, "127.0.0.1", resolvePromise));
+  const endpoint = `http://127.0.0.1:${(receiver.address() as AddressInfo).port}`;
+  try {
+    const telemetryConfiguration: ClaudeAgentSdkConfiguration = {
+      ...configuration,
+      telemetry: {
+        endpoint,
+        protocol: "http/json",
+        checkReceipt: (correlation) => {
+          const correlated = requests.every(({ body }) => Object.values(correlation.attributes).every((value) => body.includes(value)));
+          const signals = requests.flatMap(({ path }) => path === "/v1/traces" ? ["traces" as const]
+            : path === "/v1/metrics" ? ["metrics" as const]
+              : path === "/v1/logs" ? ["logs" as const] : []);
+          return correlated && signals.length === 3
+            ? { status: "received", signals }
+            : { status: "missing", signals, reason: "partial-receipt" };
+        },
+      },
+    };
+    const query: QueryFunction = (input) => stream([sdkResult("success")], async () => {
+      const attributes = input.options?.env?.OTEL_RESOURCE_ATTRIBUTES ?? "";
+      await Promise.all([
+        fetch(`${endpoint}/v1/traces`, { method: "POST", body: JSON.stringify({ attributes, spans: ["claude_code.interaction", "claude_code.llm_request", "claude_code.tool"] }) }),
+        fetch(`${endpoint}/v1/metrics`, { method: "POST", body: JSON.stringify({ attributes, metrics: ["claude_code.session.count"] }) }),
+        fetch(`${endpoint}/v1/logs`, { method: "POST", body: JSON.stringify({ attributes, events: ["claude_code.user_prompt", "claude_code.tool_result"] }) }),
+      ]);
+    });
+    const result = await executeRunAttempt({
+      run,
+      attempt: { id: "attempt-receipt", number: 1 },
+      workspace: { setup: async () => ({ status: "ready", path: root, artifactId: "workspace-1", retained: true }) },
+      harness: (context) => executeClaudeAgentSdk(context, telemetryConfiguration, noOpSink, query),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+
+    assert.equal(result.classification.kind, "completed");
+    const telemetry = (result.record.harness?.evidence as ClaudeAgentSdkAttemptEvidence).telemetry;
+    assert.deepEqual(telemetry?.receipt, { status: "received", signals: ["traces", "metrics", "logs"] });
+    assert.equal(requests.find(({ path }) => path === "/v1/traces")?.body.includes("claude_code.tool"), true);
+    assert.equal(requests.find(({ path }) => path === "/v1/logs")?.body.includes("claude_code.tool_result"), true);
+  } finally {
+    await new Promise<void>((resolvePromise, reject) => receiver.close((error) => error === undefined ? resolvePromise() : reject(error)));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("keeps a successful agent result when the collector receipt is missing", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-telemetry-gap-"));
+  try {
+    const stderr: string[] = [];
+    const sink = { ...noOpSink, stderr: (data: string) => { stderr.push(data); } };
+    const unreachableConfiguration: ClaudeAgentSdkConfiguration = {
+      ...configuration,
+      telemetry: {
+        endpoint: "http://127.0.0.1:1",
+        checkReceipt: () => ({ status: "missing", signals: [], reason: "collector-unreachable" }),
+      },
+    };
+    const query: QueryFunction = (input) => stream([sdkResult("success")], () => {
+      input.options?.stderr?.("[3P telemetry] export failed: connection refused");
+    });
+    const result = await executeRunAttempt({
+      run,
+      attempt: { id: "attempt-gap", number: 1 },
+      workspace: { setup: async () => ({ status: "ready", path: root, artifactId: "workspace-1", retained: true }) },
+      harness: (context) => executeClaudeAgentSdk(context, unreachableConfiguration, sink, query),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+
+    assert.equal(result.classification.kind, "completed");
+    assert.deepEqual((result.record.harness?.evidence as ClaudeAgentSdkAttemptEvidence).telemetry?.receipt, {
+      status: "missing",
+      signals: [],
+      reason: "collector-unreachable",
+    });
+    assert.match(stderr.join(""), /\[3P telemetry\].*connection refused/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 function stream(messages: SDKMessage[], before?: () => void | Promise<void>): QueryHandle {

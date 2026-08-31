@@ -165,13 +165,19 @@ export {
   runProtocolProcess,
   spawnProtocolProcess,
 } from "./process-protocol.js";
-export { executeClaudeAgentSdk, probeClaudeAgentSdkCapabilities } from "./agent-sdk.js";
+export { buildClaudeAgentSdkEnvironment, executeClaudeAgentSdk, probeClaudeAgentSdkCapabilities } from "./agent-sdk.js";
 export type {
+  ClaudeAgentSdkEnvironment,
   ClaudeAgentSdkCapabilities,
   ClaudeAgentSdkConfiguration,
   ClaudeAgentSdkEvidenceSink,
   ClaudeAgentSdkLifecycleEvent,
   ClaudeAgentSdkAttemptEvidence,
+  ClaudeAgentSdkTelemetryConfiguration,
+  ClaudeAgentSdkTelemetryCorrelation,
+  ClaudeAgentSdkTelemetryEvidence,
+  ClaudeAgentSdkTelemetryReceipt,
+  ClaudeAgentSdkTelemetrySignal,
 } from "./agent-sdk.js";
 export type {
   BoundedDiagnostic,
