@@ -130,6 +130,13 @@ caps every retained artifact read at 64 MiB; larger evidence is rejected with
 `ARTIFACT_TOO_LARGE` before whole-file parsing. Parsed session records and raw
 telemetry payloads are not retained in the qualification report.
 
+Session qualification requires the descriptor, manifest, and every observed
+native session identity to agree. Hook JSONL must contain at least one pinned
+callback in `hook`, `hook_event_name`, or a source-specific `type`; unrelated
+nonempty JSON does not count as hook evidence. A telemetry artifact without a
+collector receipt is a `TELEMETRY_RECEIPT_MISSING` gap, including the supported
+usage-only path.
+
 Qualification reuses manifest schema checks, descriptor digest/path readback,
 verifier-to-workspace terminal binding, and export-manifest validation. When a
 workspace patch is present, callers supply the admitted starting fixture so the

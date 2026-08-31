@@ -4,6 +4,7 @@ import { cp, lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { HOOK_EVENTS } from "@anthropic-ai/claude-agent-sdk";
 
 import {
   assertNoDuplicateJsonKeys,
@@ -139,7 +140,9 @@ export type CaptureQualificationReasonCode =
   | "NATIVE_JSONL_MALFORMED"
   | "SESSION_EVIDENCE_MISSING"
   | "SESSION_IDENTITY_MISSING"
+  | "SESSION_RECORD_IDENTITY_MISMATCH"
   | "HOOK_EVIDENCE_MISSING"
+  | "HOOK_RECORDS_MISSING"
   | "HOOK_CAPABILITY_NOT_CHECKED"
   | "HOOK_CAPABILITY_VERSION_MISMATCH"
   | "HOOK_SUPPORTED_BUT_MISSING"
@@ -193,6 +196,7 @@ const MAX_WORKSPACE_PATCH_BYTES = 64 * 1024 * 1024;
 const MAX_WORKSPACE_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const MAX_QUALIFICATION_ARTIFACT_BYTES = 64 * 1024 * 1024;
 const QUALIFICATION_DIMENSION_RANK = { qualified: 0, unsupported: 1, gap: 2, unqualified: 3 } as const;
+const PINNED_HOOK_EVENTS = new Set<string>(HOOK_EVENTS);
 const TAR_COMMAND = process.platform === "win32" ? "tar" : "/usr/bin/tar";
 const PROVISIONAL_TERMINAL: TerminalRecord = {
   state: "interrupted",
@@ -465,6 +469,7 @@ export async function qualifyRunBundle(
     descriptor: RunBundleEvidenceDescriptor;
     document?: unknown;
     hookNames?: string[];
+    sessionIds?: string[];
     bytes?: Buffer;
     valid: boolean;
   };
@@ -480,10 +485,14 @@ export async function qualifyRunBundle(
         MAX_QUALIFICATION_ARTIFACT_BYTES,
       );
       if (descriptor.mediaType === "application/x-ndjson") {
-        state.hookNames = parseNativeJsonl(bytes);
+        Object.assign(state, parseNativeJsonl(bytes));
       } else if (descriptor.mediaType === "application/json") {
         const parsed = parseNativeJson(bytes);
-        state.document = descriptor.kind === "telemetry" ? telemetrySummary(parsed) : parsed;
+        if (descriptor.kind === "session" || descriptor.kind === "hook") {
+          Object.assign(state, nativeRecordSummary([parsed]));
+        } else {
+          state.document = descriptor.kind === "telemetry" ? telemetrySummary(parsed) : parsed;
+        }
       }
       if (descriptor.kind === "workspace" && descriptor.mediaType === "text/x-diff") state.bytes = bytes;
     } catch (error) {
@@ -507,7 +516,8 @@ export async function qualifyRunBundle(
   const valid = (kind: RunBundleEvidenceDescriptor["kind"]): ArtifactState[] => [...states.values()].filter((state) =>
     state.descriptor.kind === kind && state.descriptor.sanitizedFrom === undefined && state.valid);
   const sessions = valid("session");
-  const hooks = valid("hook");
+  const hookArtifacts = valid("hook");
+  const hooks = hookArtifacts.filter(({ hookNames }) => (hookNames?.length ?? 0) > 0);
   const telemetry = valid("telemetry");
   const workspaces = valid("workspace");
   const verifiers = valid("verifier");
@@ -520,6 +530,13 @@ export async function qualifyRunBundle(
   if (typeof sessionId !== "string" || !sessions.some(({ descriptor }) =>
     descriptor.nativeReference?.type === "session" && descriptor.nativeReference.id === sessionId)) {
     addQualificationReason(report, "semanticEvidence", "unqualified", "SESSION_IDENTITY_MISSING", undefined, "Run session identity is not bound to retained session evidence.");
+  }
+  const nativeSessionIds = new Set(sessions.flatMap(({ sessionIds }) => sessionIds ?? []));
+  if (typeof sessionId === "string" && (nativeSessionIds.size !== 1 || !nativeSessionIds.has(sessionId))) {
+    addQualificationReason(report, "semanticEvidence", "unqualified", "SESSION_RECORD_IDENTITY_MISMATCH", undefined, "Retained native session records do not bind exclusively to the run session ID.");
+  }
+  for (const hook of hookArtifacts.filter(({ hookNames }) => hookNames?.length === 0)) {
+    addQualificationReason(report, "hooks", "unqualified", "HOOK_RECORDS_MISSING", hook.descriptor.id, "Hook evidence contains no recognized callback records.");
   }
   if (hooks.length === 0) {
     addQualificationReason(report, "semanticEvidence", "unqualified", "HOOK_EVIDENCE_MISSING", undefined, "No valid native hook evidence is retained.");
@@ -575,7 +592,7 @@ export async function qualifyRunBundle(
       semantic: sessions.length > 0 && hooks.length > 0,
       timingResource: telemetry.length > 0 && telemetry.every(({ document }) => {
         const receipt = isRecord(document) && isRecord(document.telemetry) ? document.telemetry.receipt : undefined;
-        return !isRecord(receipt) || receipt.status === "received";
+        return isRecord(receipt) && receipt.status === "received";
       }),
       outcome: workspaces.length > 0 && verifiers.length > 0,
     });
@@ -658,24 +675,41 @@ function parseNativeJson(bytes: Buffer): unknown {
   return value;
 }
 
-function parseNativeJsonl(bytes: Buffer): string[] {
+function parseNativeJsonl(bytes: Buffer): { hookNames: string[]; sessionIds: string[] } {
   if (bytes.length === 0) throw new Error("Native JSONL evidence is empty.");
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   const lines = text.split(/\r?\n/u).filter((line) => line.trim() !== "");
   if (lines.length === 0) throw new Error("Native JSONL evidence is empty.");
-  return lines.flatMap((line, index) => {
+  return nativeRecordSummary(lines.map((line, index) => {
     try {
       assertNoDuplicateJsonKeys(line);
       const value: unknown = JSON.parse(line);
       if (!isRecord(value) || Object.keys(value).length === 0) throw new Error("record is empty");
-      const hook = typeof value.hook === "string" ? value.hook
-        : typeof value.hook_event_name === "string" ? value.hook_event_name
-          : typeof value.type === "string" ? value.type : undefined;
-      return hook === undefined ? [] : [hook];
+      return value;
     } catch (error) {
       throw new Error(`Native JSONL evidence line ${index + 1} is malformed: ${errorMessage(error)}`);
     }
-  });
+  }));
+}
+
+function nativeRecordSummary(records: unknown[]): { hookNames: string[]; sessionIds: string[] } {
+  const hookNames: string[] = [];
+  const sessionIds: string[] = [];
+  for (const record of records) {
+    if (!isRecord(record)) continue;
+    const hook = typeof record.hook === "string" ? record.hook
+      : typeof record.hook_event_name === "string" ? record.hook_event_name
+        : typeof record.type === "string" ? record.type : undefined;
+    if (hook !== undefined && PINNED_HOOK_EVENTS.has(hook)) hookNames.push(hook);
+    for (const sessionId of [
+      record.sessionId,
+      record.session_id,
+      isRecord(record.message) ? record.message.session_id : undefined,
+    ]) {
+      if (typeof sessionId === "string") sessionIds.push(sessionId);
+    }
+  }
+  return { hookNames, sessionIds };
 }
 
 function qualifyHooks(
@@ -735,15 +769,15 @@ function qualifyTelemetry(
   for (const entry of telemetry) {
     const receipt = isRecord(entry.document) && isRecord(entry.document.telemetry)
       ? entry.document.telemetry.receipt : undefined;
-    if (isRecord(receipt) && receipt.status !== "received") {
-      addQualificationReason(report, "telemetry", "gap", "TELEMETRY_RECEIPT_MISSING", undefined, `Collector receipt status is ${String(receipt.status)}.`);
+    if (!isRecord(receipt) || receipt.status !== "received") {
+      addQualificationReason(report, "telemetry", "gap", "TELEMETRY_RECEIPT_MISSING", undefined, `Collector receipt status is ${String(isRecord(receipt) ? receipt.status : "absent")}.`);
     }
   }
 }
 
 function telemetrySummary(value: unknown): unknown {
   const receipt = isRecord(value) && isRecord(value.telemetry) ? value.telemetry.receipt : undefined;
-  return isRecord(receipt) ? { telemetry: { receipt: structuredClone(receipt) } } : {};
+  return { telemetry: { ...(isRecord(receipt) ? { receipt: structuredClone(receipt) } : {}) } };
 }
 
 async function workspacePatchApplies(startingWorkspacePath: string, patch: Buffer): Promise<boolean> {

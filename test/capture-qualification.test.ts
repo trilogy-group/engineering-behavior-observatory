@@ -180,6 +180,85 @@ test("rejects capture-report facts contradicted by retained evidence", async () 
   }
 });
 
+test("binds descriptor session identity to retained native records", async () => {
+  const fixture = await assembleScenario("success");
+  try {
+    const sessionPath = evidencePath(fixture.bundleRoot, "session");
+    const records = readFileSync(join(fixture.bundleRoot, sessionPath), "utf8").trim().split("\n").map((line) => {
+      const record = JSON.parse(line) as Record<string, unknown>;
+      if (record.message !== null && typeof record.message === "object") {
+        (record.message as Record<string, unknown>).session_id = "different-session";
+      }
+      return record;
+    });
+    rewriteEvidence(fixture.bundleRoot, "session", Buffer.from(`${records.map((record) => JSON.stringify(record)).join("\n")}\n`));
+    const report = await qualifyRunBundle(fixture.bundleRoot, {
+      startingWorkspacePath: fixture.start,
+      hookCapabilities: capabilities,
+      expectedHooks: fixture.expectedHooks,
+    });
+    assert.ok(reasonCodes(report).has("SESSION_RECORD_IDENTITY_MISMATCH"));
+    assert.equal(report.semanticAnalysisUsable, false);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("rejects syntactically valid hook JSONL without callback records", async () => {
+  const fixture = await assembleScenario("success");
+  try {
+    rewriteEvidence(fixture.bundleRoot, "hooks", Buffer.from('{"sequence":1,"sessionId":"session-smoke"}\n'));
+    const report = await qualifyRunBundle(fixture.bundleRoot, {
+      startingWorkspacePath: fixture.start,
+      hookCapabilities: capabilities,
+    });
+    assert.ok(reasonCodes(report).has("HOOK_RECORDS_MISSING"));
+    assert.equal(report.semanticAnalysisUsable, false);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("keeps a usage-only telemetry artifact as an explicit receipt gap", async () => {
+  const fixture = await assembleScenario("success");
+  try {
+    const manifest = readManifest(fixture.bundleRoot);
+    const telemetryDescriptor = manifest.evidence.find((descriptor) => descriptor.kind === "telemetry")!;
+    const telemetry = JSON.parse(readFileSync(join(fixture.bundleRoot, telemetryDescriptor.relativePath), "utf8")) as Record<string, unknown>;
+    delete telemetry.telemetry;
+    const telemetryBytes = Buffer.from(`${JSON.stringify(telemetry)}\n`);
+    writeFileSync(join(fixture.bundleRoot, telemetryDescriptor.relativePath), telemetryBytes);
+    telemetryDescriptor.digest = `sha256:${digestBytes(telemetryBytes).value}`;
+    telemetryDescriptor.sizeBytes = telemetryBytes.length;
+
+    const captureDescriptor = manifest.evidence.find((descriptor) => descriptor.kind === "capture-report")!;
+    const captureReport = JSON.parse(readFileSync(join(fixture.bundleRoot, captureDescriptor.relativePath), "utf8")) as {
+      qualification: string;
+      capabilities: { timingResource: { status: string } };
+      missingEvidence: unknown[];
+    };
+    captureReport.qualification = "incomplete";
+    captureReport.capabilities.timingResource.status = "missing";
+    captureReport.missingEvidence = [{ kind: "telemetry", reason: "not-collected", affects: ["timing-resource"] }];
+    const captureBytes = Buffer.from(`${JSON.stringify(captureReport)}\n`);
+    writeFileSync(join(fixture.bundleRoot, captureDescriptor.relativePath), captureBytes);
+    captureDescriptor.digest = `sha256:${digestBytes(captureBytes).value}`;
+    captureDescriptor.sizeBytes = captureBytes.length;
+    writeFileSync(join(fixture.bundleRoot, "manifest.json"), `${JSON.stringify(manifest)}\n`);
+
+    const report = await qualifyRunBundle(fixture.bundleRoot, {
+      startingWorkspacePath: fixture.start,
+      hookCapabilities: capabilities,
+      expectedHooks: fixture.expectedHooks,
+    });
+    assert.equal(report.status, "qualified-with-gaps", JSON.stringify(report.reasons));
+    assert.ok(reasonCodes(report).has("TELEMETRY_RECEIPT_MISSING"));
+    assert.equal(reasonCodes(report).has("CAPTURE_REPORT_CONTRADICTS_SOURCE"), false);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("reports unknown sharing independently without invalidating semantic analysis", async () => {
   const fixture = await assembleScenario("success");
   try {
