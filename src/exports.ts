@@ -45,6 +45,7 @@ export type PortableExportArtifact = {
   sizeBytes: number;
   relativePath: string;
   sourceDigest: DigestString;
+  diagnosticSource?: { verifierId: string; stream: "stdout" | "stderr" };
 };
 
 export type PortableExportManifest = {
@@ -72,6 +73,16 @@ export type CreatePortableRunBundleExportOptions = {
   destinationRoot: string;
   policy: PortableExportPolicy;
 };
+
+type SourceDiagnostic = {
+  stream: "stdout" | "stderr";
+  locator: string;
+  digest: DigestString;
+  sizeBytes: number;
+  truncated: boolean;
+};
+
+type PortableDiagnosticOutput = { artifact: PortableExportArtifact; truncated: boolean };
 
 const MAX_SOURCE_ARTIFACT_BYTES = 64 * 1024 * 1024;
 const HIDDEN_FIELDS = new Set([
@@ -105,6 +116,7 @@ const SECRET_FIELDS = new Set([
   "token",
 ]);
 const CORRELATION_FIELDS = new Set(["attemptid", "bundleid", "id", "runid", "sessionid", "traceid"]);
+const LOCAL_IDENTIFIER_FIELDS = new Set(["login", "owner", "user", "username"]);
 const TRUNCATABLE_FIELDS = new Set([
   "body",
   "commandoutput",
@@ -122,11 +134,17 @@ const TRUNCATABLE_FIELDS = new Set([
   "toolresult",
 ]);
 const SECRET_PATTERNS = [
-  /()(?:-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----|$))()/gu,
+  /()(?:-----BEGIN (?:(?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----[\s\S]*?(?:-----END (?:(?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----|$))()/gu,
   /()(?:\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{12,}|AKIA[0-9A-Z]{16})\b)()/gu,
+  /((?:authorization)\s*[:=])(?!(?:\s*)\[REDACTED_)\s*[^\r\n]+()/giu,
   /((?:authorization|api[_-]?key|(?:access|oauth|refresh|id)?[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=]\s*")(?!\[REDACTED_SECRET\]")(?:\\.|[^"\\])*(")/giu,
   /((?:authorization|api[_-]?key|(?:access|oauth|refresh|id)?[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=]\s*')(?!\[REDACTED_SECRET\]')(?:\\.|[^'\\])*(')/giu,
-  /((?:authorization|api[_-]?key|(?:access|oauth|refresh|id)?[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=]\s*(?:Bearer\s+)?)(?!\[REDACTED_)[^\s,"'}\]]{8,}()/giu,
+  /((?:authorization|api[_-]?key|(?:access|oauth|refresh|id)?[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=])(?!(?:\s*(?:Bearer\s+)?)\[REDACTED_)\s*(?:Bearer\s+)?[^\s,"'}\]]{8,}()/giu,
+];
+const LOCAL_IDENTIFIER_PATTERNS = [
+  /((?:user(?:name)?|owner|login)\s*[:=]\s*")(?!\[LOCAL_USER\]")(?:\\.|[^"\\])*(")/giu,
+  /((?:user(?:name)?|owner|login)\s*[:=]\s*')(?!\[LOCAL_USER\]')(?:\\.|[^'\\])*(')/giu,
+  /((?:user(?:name)?|owner|login)\s*[:=])(?!(?:\s*)\[LOCAL_USER\])\s*[^\s,"'}\]]+()/giu,
 ];
 const LOCAL_PATH = /(^|[\s"'=:(+\-])(?:[A-Za-z]:\\(?:[^\\\s"']+\\)*[^\\\s"']*|\/(?!\/)[^\s"']+)/gu;
 
@@ -169,6 +187,52 @@ export async function createPortableRunBundleExport(
   await mkdir(dirname(destinationRoot), { recursive: true, mode: 0o700 });
   await mkdir(destinationRoot, { mode: 0o700 });
   try {
+    const portableDiagnostics = new Map<string, PortableDiagnosticOutput>();
+    let diagnosticIndex = sourceManifest.evidence.length;
+    for (const verifier of sourceManifest.evidence.filter(({ kind }) => kind === "verifier")) {
+      const verifierBytes = await readVerifiedArtifact(
+        sourceRoot, verifier.relativePath, digestValue(verifier.digest), MAX_SOURCE_ARTIFACT_BYTES,
+      );
+      for (const [index, diagnostic] of sourceDiagnostics(parseJson(verifierBytes, "Verifier evidence")).entries()) {
+        if (portableDiagnostics.has(diagnostic.locator)) {
+          throw new Error(`Verifier diagnostic ${diagnostic.locator} is referenced more than once.`);
+        }
+        const sourceBytes = await readVerifiedArtifact(
+          sourceRoot, diagnostic.locator, digestValue(diagnostic.digest), MAX_SOURCE_ARTIFACT_BYTES,
+        );
+        if (sourceBytes.length !== diagnostic.sizeBytes) {
+          throw new Error(`Verifier diagnostic ${diagnostic.locator} size does not match its source reference.`);
+        }
+        const id = `diagnostic-${createHash("sha256").update(`${verifier.id}\0${String(index)}\0${diagnostic.locator}`).digest("hex").slice(0, 24)}`;
+        const relativePath = `evidence/${String(diagnosticIndex++).padStart(4, "0")}.txt`;
+        const counts = new Map<TransformationAction, number>([["sanitized", 1]]);
+        const outputBytes = sanitizeArtifact(
+          sourceBytes,
+          "text/plain",
+          options.policy,
+          replacements,
+          sensitiveValues,
+          localIdentifiers,
+          counts,
+        );
+        const digest = await writeArtifactAtomically(destinationRoot, relativePath, outputBytes, undefined, { overwrite: false });
+        const artifact: PortableExportArtifact = {
+          id,
+          sourceArtifactId: id,
+          kind: "diagnostic",
+          mediaType: "text/plain",
+          digest: digestString(digest),
+          sizeBytes: outputBytes.length,
+          relativePath,
+          sourceDigest: diagnostic.digest,
+          diagnosticSource: { verifierId: verifier.id, stream: diagnostic.stream },
+        };
+        artifacts.push(artifact);
+        transformations.push(...[...counts.entries()].map(([action, count]) => ({ artifactId: id, action, count })));
+        portableDiagnostics.set(diagnostic.locator, { artifact, truncated: diagnostic.truncated || counts.has("truncated") });
+      }
+    }
+
     for (const [index, descriptor] of sourceManifest.evidence.entries()) {
       if (descriptor.kind === "export-manifest") {
         excludedArtifacts.push({ artifactId: descriptor.id, reason: "source-export-manifest" });
@@ -193,6 +257,7 @@ export async function createPortableRunBundleExport(
         sensitiveValues,
         localIdentifiers,
         counts,
+        portableDiagnostics,
       );
       const relativePath = `evidence/${String(index).padStart(4, "0")}${extensionFor(descriptor.mediaType)}`;
       const digest = await writeArtifactAtomically(destinationRoot, relativePath, outputBytes, undefined, { overwrite: false });
@@ -283,11 +348,11 @@ export async function readPortableRunBundleExport(
     parseSanitizedArtifact(bytes, artifact.mediaType);
     artifactBytes.push(bytes);
   }
+  validatePortableDiagnosticReferences(manifest, artifactBytes);
   if (sourceManifest !== undefined) validateSourceReferences(manifest, sourceManifest);
   scanPortableTree(
     [manifestBytes, ...artifactBytes],
     effectiveSensitiveValues(policy),
-    [homedir(), userInfo().username],
     sourceManifest === undefined ? [] : sourceCorrelationValues(sourceManifest),
   );
   return structuredClone(manifest);
@@ -314,11 +379,17 @@ function sanitizeArtifact(
   sensitiveValues: readonly string[],
   localIdentifiers: readonly string[],
   counts: Map<TransformationAction, number>,
+  portableDiagnostics: ReadonlyMap<string, PortableDiagnosticOutput> = new Map(),
 ): Buffer {
   if (mediaType === "application/json") {
     increment(counts, "canonicalized");
     const output = Buffer.from(canonicalizeMetadata(sanitizeValue(
-      parseJson(bytes, "JSON evidence"), policy, replacements, sensitiveValues, localIdentifiers, counts,
+      rewriteVerifierDiagnosticReferences(parseJson(bytes, "JSON evidence"), portableDiagnostics),
+      policy,
+      replacements,
+      sensitiveValues,
+      localIdentifiers,
+      counts,
     )));
     if (output.length > policy.maxArtifactBytes) throw new Error("Sanitized JSON evidence exceeds the configured artifact limit.");
     return output;
@@ -347,6 +418,46 @@ function sanitizeArtifact(
   return Buffer.from(bounded);
 }
 
+function sourceDiagnostics(value: unknown): SourceDiagnostic[] {
+  if (!isRecord(value) || value.diagnostics === undefined) return [];
+  if (!Array.isArray(value.diagnostics)) throw new Error("Verifier diagnostics must be an array.");
+  return value.diagnostics.map((entry) => {
+    if (!isRecord(entry) || !["stdout", "stderr"].includes(String(entry.stream))
+        || typeof entry.locator !== "string" || typeof entry.digest !== "string"
+        || !Number.isSafeInteger(entry.sizeBytes) || typeof entry.truncated !== "boolean") {
+      throw new Error("Verifier diagnostic reference is invalid.");
+    }
+    return {
+      stream: entry.stream as SourceDiagnostic["stream"],
+      locator: entry.locator,
+      digest: entry.digest as DigestString,
+      sizeBytes: entry.sizeBytes as number,
+      truncated: entry.truncated,
+    };
+  });
+}
+
+function rewriteVerifierDiagnosticReferences(
+  value: unknown,
+  diagnostics: ReadonlyMap<string, PortableDiagnosticOutput>,
+): unknown {
+  if (diagnostics.size === 0 || !isRecord(value) || !Array.isArray(value.diagnostics)) return value;
+  const output = structuredClone(value);
+  for (const diagnostic of output.diagnostics as unknown[]) {
+    if (!isRecord(diagnostic) || typeof diagnostic.locator !== "string") {
+      throw new Error("Verifier diagnostic reference is invalid.");
+    }
+    const portable = diagnostics.get(diagnostic.locator);
+    if (portable === undefined) throw new Error(`Verifier diagnostic ${diagnostic.locator} was not exported.`);
+    diagnostic.locator = portable.artifact.relativePath;
+    diagnostic.digest = portable.artifact.digest;
+    diagnostic.sizeBytes = portable.artifact.sizeBytes;
+    diagnostic.truncated = portable.truncated;
+    delete diagnostic.source;
+  }
+  return output;
+}
+
 function sanitizeValue(
   value: unknown,
   policy: PortableExportPolicy,
@@ -368,6 +479,8 @@ function sanitizeValue(
       counts,
       normalizedField !== undefined && CORRELATION_FIELDS.has(normalizedField),
       truncatable,
+      false,
+      normalizedField !== undefined && LOCAL_IDENTIFIER_FIELDS.has(normalizedField),
     );
   }
   if (Array.isArray(value)) {
@@ -376,6 +489,7 @@ function sanitizeValue(
     ));
   }
   if (!isRecord(value)) return value;
+  const sourceFieldCount = Object.keys(value).length;
   const output: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
     if (HIDDEN_FIELDS.has(normalizeFieldName(key))) {
@@ -398,7 +512,9 @@ function sanitizeValue(
       truncatable || TRUNCATABLE_FIELDS.has(normalizeFieldName(key)),
     );
   }
-  if (Object.keys(output).length === 0) throw new Error("Sanitization removed every field from an evidence record.");
+  if (sourceFieldCount > 0 && Object.keys(output).length === 0) {
+    throw new Error("Sanitization removed every field from an evidence record.");
+  }
   return output;
 }
 
@@ -412,6 +528,7 @@ function rewriteString(
   rewriteCorrelation: boolean,
   truncateContent: boolean,
   rewriteTextCorrelations = false,
+  rewriteLocalIdentifier = false,
 ): string {
   let output = input;
   const correlation = rewriteCorrelation ? replacements.get(output) : undefined;
@@ -446,11 +563,18 @@ function rewriteString(
     increment(counts, "redacted-local-identifier");
     return `${typeof prefix === "string" ? prefix : ""}[LOCAL_PATH]`;
   });
-  for (const identifier of localIdentifiers.filter((value) => value !== homedir())) {
-    const occurrences = countOccurrences(output, identifier);
-    if (occurrences > 0) {
-      output = output.replaceAll(identifier, "[LOCAL_USER]");
-      increment(counts, "redacted-local-identifier", occurrences);
+  for (const pattern of LOCAL_IDENTIFIER_PATTERNS) {
+    output = output.replace(pattern, (_match, prefix: unknown, suffix: unknown) => {
+      increment(counts, "redacted-local-identifier");
+      return `${typeof prefix === "string" ? prefix : ""}[LOCAL_USER]${typeof suffix === "string" ? suffix : ""}`;
+    });
+  }
+  if (rewriteLocalIdentifier) {
+    for (const identifier of localIdentifiers.filter((value) => value !== homedir())) {
+      if (output === identifier) {
+        output = "[LOCAL_USER]";
+        increment(counts, "redacted-local-identifier");
+      }
     }
   }
   if (!truncateContent) return output;
@@ -462,19 +586,22 @@ function rewriteString(
 function scanPortableTree(
   buffers: readonly Buffer[],
   sensitiveValues: readonly string[],
-  localIdentifiers: readonly string[],
   sourceCorrelations: readonly string[],
 ): void {
   for (const bytes of buffers) {
     const text = decode(bytes, "portable export");
-    if (sensitiveValues.some((value) => text.includes(value))
-        || SECRET_PATTERNS.some((pattern) => pattern.test(text))
-        || LOCAL_PATH.test(text)
-        || localIdentifiers.filter((value) => value.length > 1).some((value) => text.includes(value))
-        || sourceCorrelations.filter((value) => value.length >= 8).some((value) => text.includes(value))
-        || /"(?:chain[_-]?of[_-]?thought|extended[_-]?thinking|hidden[_-]?reasoning|reasoning|thinking|raw[_-]?(?:api|request|response)[_-]?body)"\s*:/iu.test(text)) {
+    const secretPatternIndex = SECRET_PATTERNS.findIndex((pattern) => pattern.test(text));
+    const failure = [
+      ["known sensitive value", sensitiveValues.some((value) => text.includes(value))],
+      ["secret pattern", secretPatternIndex >= 0],
+      ["absolute path", LOCAL_PATH.test(text)],
+      ["local identifier", LOCAL_IDENTIFIER_PATTERNS.some((pattern) => pattern.test(text))],
+      ["source correlation", sourceCorrelations.filter((value) => value.length >= 8).some((value) => text.includes(value))],
+      ["hidden content field", /"(?:chain[_-]?of[_-]?thought|extended[_-]?thinking|hidden[_-]?reasoning|reasoning|thinking|raw[_-]?(?:api|request|response)[_-]?body)"\s*:/iu.test(text)],
+    ].find(([, matched]) => matched);
+    if (failure !== undefined) {
       resetPatterns();
-      throw new Error("Portable export failed the final secret scan.");
+      throw new Error(`Portable export failed the final secret scan: ${String(failure[0])}.`);
     }
     resetPatterns();
   }
@@ -484,6 +611,13 @@ function validateSourceReferences(manifest: PortableExportManifest, source: RunM
   const sourceById = new Map(source.evidence.map((descriptor) => [descriptor.id, descriptor]));
   if (manifest.sourceManifestDigest === undefined) throw new Error("Portable export omits its source-manifest digest.");
   for (const artifact of manifest.artifacts) {
+    if (artifact.kind === "diagnostic") {
+      if (artifact.diagnosticSource === undefined
+          || sourceById.get(artifact.diagnosticSource.verifierId)?.kind !== "verifier") {
+        throw new Error(`Portable diagnostic ${artifact.id} does not reference a source verifier.`);
+      }
+      continue;
+    }
     const descriptor = sourceById.get(artifact.sourceArtifactId);
     if (descriptor === undefined || descriptor.digest !== artifact.sourceDigest
         || descriptor.kind !== artifact.kind || descriptor.mediaType !== artifact.mediaType) {
@@ -501,6 +635,41 @@ function validateSourceReferences(manifest: PortableExportManifest, source: RunM
   ]);
   if (source.evidence.some(({ id }) => !represented.has(id))) {
     throw new Error("Portable export does not account for every source artifact.");
+  }
+}
+
+function validatePortableDiagnosticReferences(
+  manifest: PortableExportManifest,
+  artifactBytes: readonly Buffer[],
+): void {
+  const artifactsByPath = new Map(manifest.artifacts.map((artifact) => [artifact.relativePath, artifact]));
+  const artifactsById = new Map(manifest.artifacts.map((artifact) => [artifact.id, artifact]));
+  const referencedDiagnostics = new Set<string>();
+  for (const [index, verifier] of manifest.artifacts.entries()) {
+    if (verifier.kind !== "verifier") continue;
+    const document = parseJson(artifactBytes[index]!, `Portable verifier ${verifier.id}`);
+    if (!isRecord(document) || document.diagnostics === undefined) continue;
+    if (!Array.isArray(document.diagnostics)) throw new Error(`Portable verifier ${verifier.id} diagnostics are invalid.`);
+    for (const diagnostic of document.diagnostics) {
+      if (!isRecord(diagnostic) || typeof diagnostic.locator !== "string") {
+        throw new Error(`Portable verifier ${verifier.id} diagnostic reference is invalid.`);
+      }
+      const sidecar = artifactsByPath.get(diagnostic.locator);
+      if (sidecar?.kind !== "diagnostic" || sidecar.digest !== diagnostic.digest
+          || sidecar.sizeBytes !== diagnostic.sizeBytes
+          || sidecar.diagnosticSource?.verifierId !== verifier.id
+          || sidecar.diagnosticSource?.stream !== diagnostic.stream) {
+        throw new Error(`Portable verifier ${verifier.id} diagnostic reference is not bound to its sidecar.`);
+      }
+      referencedDiagnostics.add(sidecar.id);
+    }
+  }
+  for (const diagnostic of manifest.artifacts.filter(({ kind }) => kind === "diagnostic")) {
+    if (diagnostic.diagnosticSource === undefined
+        || artifactsById.get(diagnostic.diagnosticSource.verifierId)?.kind !== "verifier"
+        || !referencedDiagnostics.has(diagnostic.id)) {
+      throw new Error(`Portable diagnostic ${diagnostic.id} is not referenced by its verifier.`);
+    }
   }
 }
 
@@ -595,7 +764,8 @@ function policyRecord(policy: PortableExportPolicy): Record<string, unknown> {
 
 function effectiveSensitiveValues(policy: PortableExportPolicy): string[] {
   const environment = Object.entries(process.env)
-    .filter(([, value]) => value !== undefined && value.length >= 8)
+    .filter(([key, value]) => value !== undefined && value.length >= 8
+      && !["logname", "user", "username"].includes(normalizeFieldName(key)))
     .map(([, value]) => value!);
   return [...new Set([...(policy.sensitiveValues ?? []).filter((value) => value !== ""), ...environment])]
     .sort((left, right) => right.length - left.length);
@@ -665,6 +835,7 @@ function normalizeFieldName(value: string): string {
 function resetPatterns(): void {
   LOCAL_PATH.lastIndex = 0;
   for (const pattern of SECRET_PATTERNS) pattern.lastIndex = 0;
+  for (const pattern of LOCAL_IDENTIFIER_PATTERNS) pattern.lastIndex = 0;
 }
 
 function errorMessage(error: unknown): string {

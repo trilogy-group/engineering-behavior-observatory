@@ -882,7 +882,16 @@
         "digest": { "$ref": "#/$defs/digest" },
         "sizeBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
         "relativePath": { "$ref": "#/$defs/relativePath" },
-        "sourceDigest": { "$ref": "#/$defs/digest" }
+        "sourceDigest": { "$ref": "#/$defs/digest" },
+        "diagnosticSource": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["verifierId", "stream"],
+          "properties": {
+            "verifierId": { "$ref": "#/$defs/identifier" },
+            "stream": { "enum": ["stdout", "stderr"] }
+          }
+        }
       }
     },
     "exportTransformation": {

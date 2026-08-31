@@ -35,6 +35,8 @@ const secretAccessKey = "aws-secret-value-12345";
 const credentialsJson = "credential-json-value-12345";
 const genericToken = "generic-token-value-12345";
 const privateKeyBlock = "-----BEGIN PRIVATE KEY-----\ncHJpdmF0ZS1rZXktbWF0ZXJpYWw=\n-----END PRIVATE KEY-----";
+const encryptedPrivateKeyBlock = "-----BEGIN ENCRYPTED PRIVATE KEY-----\nZW5jcnlwdGVkLWtleS1tYXRlcmlhbA==\n-----END ENCRYPTED PRIVATE KEY-----";
+const pgpPrivateKeyBlock = "-----BEGIN PGP PRIVATE KEY BLOCK-----\ncGdwLWtleS1tYXRlcmlhbA==\n-----END PGP PRIVATE KEY BLOCK-----";
 
 test("exports a sanitized public M2 bundle without mutating its source", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-export-"));
@@ -58,6 +60,9 @@ test("exports a sanitized public M2 bundle without mutating its source", async (
         tool_result: "x".repeat(200),
         apiKey: token,
         path: join(homedir(), "private", "result.txt"),
+        user: userInfo().username,
+        metadata: {},
+        input: {},
         thinking: "hidden chain of thought",
         environmentSecret,
         note: databaseUrl,
@@ -72,7 +77,7 @@ test("exports a sanitized public M2 bundle without mutating its source", async (
         session_id: "session-complete-1",
       })}\n`,
       "telemetry/trace.json": `${JSON.stringify({ traceId: "trace-complete-1" })}\n`,
-      "workspace.patch": `${readFileSync(join(fixtureRoot, "workspace.patch"), "utf8")}+${homedir()}/private/result.txt /workspace/acme/private-repo /mnt/builds/customer ${userInfo().username} ${token} password=\"${heuristicSecret}\" client_secret=\"${clientSecret}\"\n`,
+      "workspace.patch": `${readFileSync(join(fixtureRoot, "workspace.patch"), "utf8")}+${homedir()}/private/result.txt /workspace/acme/private-repo /mnt/builds/customer username=${userInfo().username} ${token} password=\"${heuristicSecret}\" client_secret=\"${clientSecret}\"\n`,
     });
     const sourceManifest = JSON.parse(readFileSync(join(source, "manifest.json"), "utf8")) as SourceManifest;
     sourceManifest.attempt.id = "a";
@@ -127,6 +132,9 @@ test("exports a sanitized public M2 bundle without mutating its source", async (
     assert.equal(session.attemptId, manifest.correlations.attemptId);
     assert.equal(session.status, "available");
     assert.equal(String(session.tool_result).length, 8);
+    assert.equal(session.user, "[LOCAL_USER]");
+    assert.deepEqual(session.metadata, {});
+    assert.deepEqual(session.input, {});
     assert.equal(session.session_id, manifest.correlations.sessionId);
     assert.equal(hook.session_id, manifest.correlations.sessionId);
     assert.equal(telemetry.traceId, manifest.correlations.traceId);
@@ -189,7 +197,10 @@ test("sanitizes untruncated text evidence and preserves pre-existing destination
 +token="${genericToken}"
 +refresh_token=${genericToken}
 +id_token='${genericToken}'
++Authorization: Basic dXNlcjpwYXNzd29yZA==
 +${privateKeyBlock}
++${encryptedPrivateKeyBlock}
++${pgpPrivateKeyBlock}
 `,
       });
       const exportPolicy = policy({ maxArtifactBytes: 16_384, maxStringBytes: 8192 });
@@ -205,6 +216,9 @@ test("sanitizes untruncated text evidence and preserves pre-existing destination
         "cHJpdmF0ZS1rZXktbWF0ZXJpYWw=",
         "BEGIN PRIVATE KEY",
         "END PRIVATE KEY",
+        "ZW5jcnlwdGVkLWtleS1tYXRlcmlhbA==",
+        "cGdwLWtleS1tYXRlcmlhbA==",
+        "dXNlcjpwYXNzd29yZA==",
       ]) assert.equal(text.includes(forbidden), false, `portable text leaked ${forbidden}`);
       assert.ok(text.includes(String(manifest.correlations.sessionId)));
       assert.ok(text.includes("[REDACTED_SECRET]"));
@@ -233,6 +247,53 @@ test("sanitizes untruncated text evidence and preserves pre-existing destination
       rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+test("exports verifier diagnostic sidecars with portable references", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-export-diagnostic-"));
+  const source = join(root, "source");
+  const destination = join(root, "portable");
+  const exportPolicy = policy({ maxArtifactBytes: 16_384, maxStringBytes: 8192 });
+  try {
+    stageSource(source);
+    const sourceManifest = JSON.parse(readFileSync(join(source, "manifest.json"), "utf8")) as SourceManifest;
+    const diagnosticPath = "diagnostics/verifier.stderr.txt";
+    const diagnosticBytes = Buffer.from(`password="${heuristicSecret}"\nuseful diagnostic\n`);
+    mkdirSync(join(source, "diagnostics"));
+    writeFileSync(join(source, diagnosticPath), diagnosticBytes);
+    const verifier = JSON.parse(readFileSync(join(source, "verifier.json"), "utf8")) as Record<string, unknown>;
+    verifier.diagnostics = [{
+      stream: "stderr",
+      locator: diagnosticPath,
+      digest: `sha256:${createHash("sha256").update(diagnosticBytes).digest("hex")}`,
+      sizeBytes: diagnosticBytes.length,
+      truncated: false,
+    }];
+    replaceArtifact(source, sourceManifest, "verifier.json", Buffer.from(`${JSON.stringify(verifier)}\n`));
+    writeFileSync(join(source, "manifest.json"), `${JSON.stringify(sourceManifest)}\n`);
+
+    const manifest = await createPortableRunBundleExport({ sourceRoot: source, destinationRoot: destination, policy: exportPolicy });
+    const verifierArtifact = manifest.artifacts.find(({ kind }) => kind === "verifier")!;
+    const diagnosticArtifact = manifest.artifacts.find(({ kind }) => kind === "diagnostic")!;
+    const portableVerifier = jsonArtifact(destination, manifest, "verifier");
+    const diagnostic = (portableVerifier.diagnostics as Array<Record<string, unknown>>)[0]!;
+
+    assert.equal(diagnostic.locator, diagnosticArtifact.relativePath);
+    assert.equal(diagnostic.digest, diagnosticArtifact.digest);
+    assert.equal(diagnostic.sizeBytes, diagnosticArtifact.sizeBytes);
+    assert.deepEqual(diagnosticArtifact.diagnosticSource, { verifierId: verifierArtifact.id, stream: "stderr" });
+    assert.equal(readFileSync(join(destination, diagnosticArtifact.relativePath), "utf8").includes(heuristicSecret), false);
+
+    diagnostic.locator = "missing/diagnostic.txt";
+    const tamperedBytes = Buffer.from(JSON.stringify(portableVerifier));
+    writeFileSync(join(destination, verifierArtifact.relativePath), tamperedBytes);
+    verifierArtifact.digest = `sha256:${createHash("sha256").update(tamperedBytes).digest("hex")}`;
+    verifierArtifact.sizeBytes = tamperedBytes.length;
+    writeFileSync(join(destination, "manifest.json"), JSON.stringify(manifest));
+    await assert.rejects(readPortableRunBundleExport(destination, exportPolicy), /diagnostic reference/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("readback rejects a corrupted portable artifact and source reference", async () => {
