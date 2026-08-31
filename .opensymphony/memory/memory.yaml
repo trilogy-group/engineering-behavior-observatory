@@ -31,15 +31,19 @@ areas:
       linear_labels:
       - area:agent-sdk
       - area:capture
+      - area:corpus
       - area:evidence
+      - area:export
       - area:hooks
       - area:opentelemetry
       - area:outcomes
       - area:quality
       - area:runner
+      - area:security
       - area:sessions
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
+      - 'M3: Safe Export And Corpus Access'
   capture:
     title: Capture
     docs_target: docs/capture.md
@@ -52,15 +56,34 @@ areas:
       linear_labels:
       - area:agent-sdk
       - area:capture
+      - area:corpus
       - area:evidence
+      - area:export
       - area:hooks
       - area:opentelemetry
       - area:outcomes
       - area:quality
       - area:runner
+      - area:security
       - area:sessions
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
+      - 'M3: Safe Export And Corpus Access'
+  corpus:
+    title: Corpus
+    docs_target: docs/corpus.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - corpus
+    source_refs:
+      linear_labels:
+      - area:corpus
+      - area:evidence
+      - area:export
+      linear_milestones:
+      - 'M3: Safe Export And Corpus Access'
   evidence:
     title: Evidence
     docs_target: docs/evidence.md
@@ -73,12 +96,32 @@ areas:
       linear_labels:
       - area:agent-sdk
       - area:capture
+      - area:corpus
       - area:evidence
+      - area:export
       - area:outcomes
       - area:quality
       - area:runner
+      - area:security
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
+      - 'M3: Safe Export And Corpus Access'
+  export:
+    title: Export
+    docs_target: docs/export.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - export
+    source_refs:
+      linear_labels:
+      - area:corpus
+      - area:evidence
+      - area:export
+      - area:security
+      linear_milestones:
+      - 'M3: Safe Export And Corpus Access'
   hooks:
     title: Hooks
     docs_target: docs/hooks.md
@@ -91,11 +134,16 @@ areas:
       linear_labels:
       - area:agent-sdk
       - area:capture
+      - area:corpus
+      - area:evidence
+      - area:export
       - area:hooks
       - area:quality
       - area:runner
+      - area:security
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
+      - 'M3: Safe Export And Corpus Access'
   m2-native-agent-sdk-capture:
     title: M2 Native Agent Sdk Capture
     docs_target: docs/m2-native-agent-sdk-capture.md
@@ -120,11 +168,16 @@ areas:
       linear_labels:
       - area:agent-sdk
       - area:capture
+      - area:corpus
+      - area:evidence
+      - area:export
       - area:opentelemetry
       - area:quality
       - area:runner
+      - area:security
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
+      - 'M3: Safe Export And Corpus Access'
   outcomes:
     title: Outcomes
     docs_target: docs/outcomes.md
@@ -137,11 +190,16 @@ areas:
       linear_labels:
       - area:agent-sdk
       - area:capture
+      - area:corpus
+      - area:evidence
+      - area:export
       - area:outcomes
       - area:quality
       - area:runner
+      - area:security
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
+      - 'M3: Safe Export And Corpus Access'
   quality:
     title: Quality
     docs_target: docs/quality.md
@@ -154,17 +212,21 @@ areas:
       linear_labels:
       - area:agent-sdk
       - area:capture
+      - area:corpus
       - area:evidence
+      - area:export
       - area:hooks
       - area:opentelemetry
       - area:outcomes
       - area:quality
       - area:repository
       - area:runner
+      - area:security
       - area:sessions
       linear_milestones:
       - 'M0: Foundation And Evidence Contracts'
       - 'M2: Native Agent SDK Capture'
+      - 'M3: Safe Export And Corpus Access'
   repository:
     title: Repository
     docs_target: docs/repository.md
@@ -177,17 +239,21 @@ areas:
       linear_labels:
       - area:agent-sdk
       - area:capture
+      - area:corpus
       - area:evidence
+      - area:export
       - area:hooks
       - area:opentelemetry
       - area:outcomes
       - area:quality
       - area:repository
       - area:runner
+      - area:security
       - area:sessions
       linear_milestones:
       - 'M0: Foundation And Evidence Contracts'
       - 'M2: Native Agent SDK Capture'
+      - 'M3: Safe Export And Corpus Access'
   runner:
     title: Runner
     docs_target: docs/runner.md
@@ -200,10 +266,28 @@ areas:
       linear_labels:
       - area:agent-sdk
       - area:capture
+      - area:corpus
+      - area:evidence
+      - area:export
       - area:quality
       - area:runner
+      - area:security
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
+      - 'M3: Safe Export And Corpus Access'
+  security:
+    title: Security
+    docs_target: docs/security.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - security
+    source_refs:
+      linear_labels:
+      - area:security
+      linear_milestones:
+      - 'M3: Safe Export And Corpus Access'
   sessions:
     title: Sessions
     docs_target: docs/sessions.md
@@ -216,10 +300,15 @@ areas:
       linear_labels:
       - area:agent-sdk
       - area:capture
+      - area:corpus
+      - area:evidence
+      - area:export
       - area:quality
       - area:runner
+      - area:security
       - area:sessions
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
+      - 'M3: Safe Export And Corpus Access'
 redaction:
   deny_patterns: []

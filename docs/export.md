@@ -1,11 +1,11 @@
 ---
 type: topic-doc
-area: quality
+area: export
 visibility: public
-last_memory_sync: 2026-08-26T03:34:35.394130+00:00
+last_memory_sync: 2026-08-31T17:10:33.049054+00:00
 ---
 
-# Quality
+# Export
 
 <!-- BEGIN OPENSYMPHONY MANAGED MEMORY SYNC -->
 
