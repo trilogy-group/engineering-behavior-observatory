@@ -1,11 +1,11 @@
 ---
 type: topic-doc
-area: quality
+area: hooks
 visibility: public
-last_memory_sync: 2026-08-26T03:34:35.394130+00:00
+last_memory_sync: 2026-08-31T12:29:52.140252+00:00
 ---
 
-# Quality
+# Hooks
 
 <!-- BEGIN OPENSYMPHONY MANAGED MEMORY SYNC -->
 

@@ -1,16 +1,10 @@
 import {
   closeSync,
-  constants,
   fstatSync,
-  fsyncSync,
-  linkSync,
   lstatSync,
-  openSync,
-  opendirSync,
   readSync,
-  realpathSync,
 } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import {
   assertNoDuplicateJsonKeys,
@@ -23,9 +17,6 @@ import {
 import {
   isSafeArtifactRelativePath,
   openBundleRegularFile,
-  isPublicationOwnershipCurrent,
-  readPublicationOwnership,
-  readPublicationStagingPath,
   MAX_CONFIGURATION_BYTES,
   resolveBundleArtifact,
   resolveBundleArtifactDigest,
@@ -36,7 +27,6 @@ import {
   type ArtifactReference,
   type BundleRootHandle,
   type Digest,
-  type PublicationOwnership,
 } from "./contracts.js";
 
 export type TaskPacket = {
@@ -128,12 +118,8 @@ export type TaskPacketStatus = {
 
 export const TASK_PACKET_FREEZE_SCHEMA_VERSION = "ebo.task-packet-freeze/v1";
 export const MAX_TASK_PACKET_METADATA_BYTES = MAX_CONFIGURATION_BYTES;
-const MAX_TRANSIENT_LINK_READ_RETRIES = 20;
-const MAX_FREEZE_RECOVERY_ENTRIES = 4096;
-const TEMPORARY_FREEZE_LINK_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
 const TASK_PACKET_SCHEMA_VERSION = "ebo.task-packet/v1";
 const FREEZE_LOCATOR_SUFFIX = ".freeze.json";
-const FREEZE_QUARANTINE_SUFFIX = ".quarantine.marker.binding.tmp";
 
 export function inspectTaskPacket(bundleRoot: string, packetLocator: string): TaskPacketInspection {
   let root: BundleRootHandle | undefined;
@@ -303,44 +289,16 @@ export function defaultFreezeLocator(packetLocator: string): string {
 }
 
 function readRetainedFreezeRecord(root: BundleRootHandle, freezeLocator: string): TaskPacketFreezeRecord | undefined {
-  const destination = resolve(root.path, freezeLocator);
-  const parent = dirname(destination);
-  const quarantine = `${destination}.quarantine`;
-  let descriptor: number | undefined;
+  let value: unknown | undefined;
   try {
-    assertBundleRoot(root.path, root.descriptor, freezeLocator);
-    assertFreezeParentPath(root.path, parent, freezeLocator);
-    const quarantinePath = lstatSync(quarantine);
-    if (!quarantinePath.isFile() || (quarantinePath.mode & 0o777) !== 0o600
-        || !Number.isSafeInteger(quarantinePath.size) || quarantinePath.size > MAX_TASK_PACKET_METADATA_BYTES) return undefined;
-    if (readPublicationOwnership(destination, quarantinePath, freezeLocator) === undefined) return undefined;
-    descriptor = openSync(quarantine, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    const opened = fstatSync(descriptor);
-    if (!opened.isFile() || (opened.mode & 0o777) !== 0o600
-        || !sameFileIdentity(opened, quarantinePath) || opened.size !== quarantinePath.size) return undefined;
-    const bytes = Buffer.alloc(opened.size);
-    for (let offset = 0; offset < opened.size;) {
-      const read = readSync(descriptor, bytes, offset, opened.size - offset, offset);
-      if (read === 0) return undefined;
-      offset += read;
-    }
-    const trailing = Buffer.allocUnsafe(1);
-    if (readSync(descriptor, trailing, 0, 1, opened.size) !== 0) return undefined;
-    const completed = fstatSync(descriptor);
-    if (!sameFileIdentity(opened, completed) || completed.size !== opened.size
-        || !sameFileIdentity(completed, lstatSync(quarantine))) return undefined;
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    assertNoDuplicateJsonKeys(text);
-    const value = JSON.parse(text) as unknown;
-    const errors = validateFreezeRecord(freezeLocator, value);
-    if (errors.length > 0 || !isRecord(value) || !sameDigest(digestMetadata(value), digestBytes(bytes))) return undefined;
-    return value as TaskPacketFreezeRecord;
+    value = readOptionalJson(root.path, freezeLocator, root);
   } catch (error) {
-    if (isErrno(error, "ENOENT")) return undefined;
-    return undefined;
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
+    if (["ELOOP", "ENOTDIR"].some((code) => isErrno(error, code))) return undefined;
+    throw error;
   }
+  if (value === undefined) return undefined;
+  const errors = validateFreezeRecord(freezeLocator, value);
+  return errors.length === 0 && isRecord(value) ? value as TaskPacketFreezeRecord : undefined;
 }
 
 export function freezeTaskPacket(
@@ -378,7 +336,7 @@ export function freezeTaskPacket(
         throw new Error(`Task packet changed before freeze publication: ${mismatches.join(", ")}.`);
       }
       validatedInspection = inspection;
-      const published = readOptionalJson(root.path, freezeLocator, true, root);
+      const published = readOptionalJson(root.path, freezeLocator, root);
       if (published === undefined) return;
       const publishedErrors = validateFreezeRecord(freezeLocator, published);
       if (publishedErrors.length > 0) throw new Error(formatErrors(publishedErrors));
@@ -400,13 +358,13 @@ export function freezeTaskPacket(
       validatePublication,
     );
     if (!write.created) {
-      const winner = readOptionalJson(bundleRoot, freezeLocator, true, root);
+      const winner = readOptionalJson(bundleRoot, freezeLocator, root);
       if (winner === undefined) throw new Error("Freeze record disappeared after concurrent creation.");
       const errors = validateFreezeRecord(freezeLocator, winner);
       if (errors.length > 0) throw new Error(formatErrors(errors));
       const winnerDigest = digestMetadata(winner);
       const finalInspection = assertTaskPacketAdmittedWithRoot(bundleRoot, packetLocator, root);
-      const finalWinner = readOptionalJson(bundleRoot, freezeLocator, true, root);
+      const finalWinner = readOptionalJson(bundleRoot, freezeLocator, root);
       if (finalWinner === undefined) throw new Error("Freeze record disappeared after final inspection.");
       const finalWinnerErrors = validateFreezeRecord(freezeLocator, finalWinner);
       if (finalWinnerErrors.length > 0) throw new Error(formatErrors(finalWinnerErrors));
@@ -451,7 +409,7 @@ function statusTaskPacketWithRoot(
   const packetDigest = inspection.packetDigest;
   let freeze: unknown | undefined;
   try {
-    freeze = readOptionalJson(bundleRoot, freezeLocator, true, root);
+    freeze = readOptionalJson(bundleRoot, freezeLocator, root);
   } catch (error) {
     return {
       status: "invalid",
@@ -527,7 +485,7 @@ function statusTaskPacketWithRoot(
 
       let nextFreeze: unknown | undefined;
       try {
-        nextFreeze = readOptionalJson(bundleRoot, freezeLocator, true, root);
+        nextFreeze = readOptionalJson(bundleRoot, freezeLocator, root);
       } catch (error) {
         return {
           status: "invalid",
@@ -618,6 +576,22 @@ export function formatErrors(errors: readonly ArtifactValidationError[]): string
   return errors.map((error) => `${error.artifact} [${error.schemaVersion}] ${error.field}: ${error.message}`).join("\n");
 }
 
+export function assertTaskPacketFreezeRecord(record: TaskPacketFreezeRecord): void {
+  const errors = validateFreezeRecord(record.packetLocator, record);
+  if (errors.length > 0) throw new Error(formatErrors(errors));
+  const expectedAggregate = aggregateDigest(
+    record.packetId,
+    record.packetLocator,
+    record.preAdmissionDigest,
+    record.packetDigest,
+    record.components,
+    record.frozenAt,
+  );
+  if (!sameDigest(record.aggregateDigest, expectedAggregate)) {
+    throw new Error("Freeze record aggregate digest does not match its components.");
+  }
+}
+
 function resolveComponent(
   bundleRoot: string,
   reference: ArtifactReference,
@@ -696,11 +670,10 @@ function freezeCandidate(packetLocator: string, inspection: TaskPacketInspection
   };
 }
 
-function assertFreezeLocatorPathWithinLimits(freezeLocator: string, packetLocator: string): void {
+export function assertFreezeLocatorPathWithinLimits(freezeLocator: string, packetLocator: string): void {
   const leafLength = freezeLocator.slice(freezeLocator.lastIndexOf("/") + 1).length;
-  if (freezeLocator.length + FREEZE_QUARANTINE_SUFFIX.length > 960
-      || leafLength + FREEZE_QUARANTINE_SUFFIX.length > 255) {
-    throw new Error(`Freeze locator "${freezeLocator}" for packet "${packetLocator}" exceeds safe path limits including quarantine.`);
+  if (freezeLocator.length > 960 || leafLength > 255) {
+    throw new Error(`Freeze locator "${freezeLocator}" for packet "${packetLocator}" exceeds safe path limits.`);
   }
 }
 
@@ -795,121 +768,14 @@ function sameComponent(left: TaskPacketComponent, right: TaskPacketComponent): b
 function readOptionalJson(
   bundleRoot: string,
   locator: string,
-  retryTransientLink = false,
   rootHandle?: BundleRootHandle,
 ): unknown | undefined {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      const text = new TextDecoder("utf-8", { fatal: true }).decode(readBundleFile(bundleRoot, locator, rootHandle, true));
-      assertNoDuplicateJsonKeys(text);
-      return JSON.parse(text);
-    } catch (error) {
-      if (isErrno(error, "ENOENT")) return undefined;
-      if (!retryTransientLink || attempt >= MAX_TRANSIENT_LINK_READ_RETRIES || !(error instanceof Error)
-          || !error.message.includes("not an isolated regular file")) throw error;
-      if (removeTemporaryFreezeLinks(bundleRoot, locator, rootHandle)) continue;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
-    }
-  }
-}
-
-function removeTemporaryFreezeLinks(bundleRoot: string, locator: string, rootHandle?: BundleRootHandle): boolean {
-  const rootIdentity = rootHandle ?? openBundleRoot(bundleRoot);
-  const ownsRoot = rootHandle === undefined;
-  const root = rootIdentity.path;
-  const rootDescriptor = rootIdentity.descriptor;
-  let removed = false;
   try {
-    assertBundleRoot(root, rootDescriptor, locator);
-    const destination = assertBundlePathWithoutLinks(root, locator);
-    const parent = dirname(destination);
-    const parentDescriptor = openFreezeParent(root, parent, locator, rootDescriptor);
-    const originalCwd = process.cwd();
-    let changedCwd = false;
-    try {
-      process.chdir(parent);
-      changedCwd = true;
-      assertBundleRoot(root, rootDescriptor, locator);
-      assertFreezeParent(root, parent, parentDescriptor, locator);
-      if (hasAlias(`${relative(parent, destination)}.quarantine`, lstatSync(relative(parent, destination)))) return false;
-      const destinationStat = lstatSync(relative(parent, destination));
-      const ownership = readPublicationOwnership(destination, destinationStat, locator);
-      if (ownership === undefined || !isPublicationOwnershipCurrent(destination, ownership, locator)) return false;
-      const stagingName = ownership.marker.stagingPath;
-      if (typeof stagingName !== "string") return false;
-
-      const directory = opendirSync(".");
-      let scanned = 0;
-      try {
-        for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
-          scanned += 1;
-          if (scanned > MAX_FREEZE_RECOVERY_ENTRIES) {
-            throw new Error("Freeze recovery directory exceeds its entry limit.");
-          }
-          const name = entry.name;
-          if (name !== stagingName) continue;
-          try {
-            const temporaryStat = lstatSync(name);
-            if (temporaryStat.isFile() && TEMPORARY_FREEZE_LINK_PATTERN.test(name)
-                && temporaryStat.dev === destinationStat.dev && temporaryStat.ino === destinationStat.ino) {
-              const targetDescriptor = openSync(name, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-              try {
-                const openedTarget = fstatSync(targetDescriptor);
-                if (!openedTarget.isFile() || openedTarget.nlink < 2
-                    || openedTarget.dev !== destinationStat.dev || openedTarget.ino !== destinationStat.ino) continue;
-                assertFreezeParent(root, parent, parentDescriptor, locator);
-                const currentDestination = lstatSync(relative(parent, destination));
-                const currentTemporary = lstatSync(name);
-                if (!sameFileIdentity(currentDestination, currentTemporary)
-                    || !sameFileIdentity(openedTarget, currentTemporary)) continue;
-                if (preserveRecoveredTemporaryLink(name, destination, targetDescriptor)) removed = true;
-                assertFreezeParent(root, parent, parentDescriptor, locator);
-              } finally {
-                closeSync(targetDescriptor);
-              }
-            }
-          } catch (error) {
-            if (!isErrno(error, "ENOENT")) throw error;
-          }
-        }
-      } finally {
-        directory.closeSync();
-      }
-
-      if (removed) fsyncSync(parentDescriptor);
-    } finally {
-      if (changedCwd) process.chdir(originalCwd);
-      closeSync(parentDescriptor);
-    }
-  } finally {
-    if (ownsRoot) closeBundleRoot(rootIdentity);
-  }
-  return removed;
-}
-
-function preserveRecoveredTemporaryLink(name: string, destination: string, descriptor: number): boolean {
-  const expected = fstatSync(descriptor);
-  const recoveryName = `${destination}.recovered`;
-  try {
-    lstatSync(recoveryName);
-    return false;
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(readBundleFile(bundleRoot, locator, rootHandle));
+    assertNoDuplicateJsonKeys(text);
+    return JSON.parse(text);
   } catch (error) {
-    if (!isErrno(error, "ENOENT")) throw error;
-  }
-  try {
-    const current = lstatSync(name);
-    if (!sameFileIdentity(expected, current)) return false;
-    linkSync(name, recoveryName);
-    const linked = lstatSync(recoveryName);
-    if (!sameFileIdentity(expected, linked)) {
-      // Keep the unexpected recovery alias: Node has no descriptor-bound
-      // unlink, and removing it by pathname could delete a replacement.
-      return false;
-    }
-    return true;
-  } catch (error) {
-    if (isErrno(error, "EEXIST")) return false;
-    if (isErrno(error, "ENOENT")) return false;
+    if (isErrno(error, "ENOENT")) return undefined;
     throw error;
   }
 }
@@ -918,7 +784,6 @@ function readBundleFile(
   bundleRoot: string,
   locator: string,
   rootHandle?: BundleRootHandle,
-  allowPublicationAliases = false,
 ): Buffer {
   if (!isSafeArtifactRelativePath(locator)) throw new Error(`Artifact path "${locator}" is unsafe.`);
   const rootIdentity = rootHandle ?? openBundleRoot(bundleRoot);
@@ -926,12 +791,11 @@ function readBundleFile(
   const root = rootIdentity.path;
   const rootDescriptor = rootIdentity.descriptor;
   try {
-    const path = resolve(root, locator);
     const descriptor = openBundleRegularFile(bundleRoot, locator, "Artifact path", rootIdentity);
     try {
       const opened = fstatSync(descriptor);
       const openedTimes = fstatSync(descriptor, { bigint: true });
-      if (!opened.isFile() || (opened.nlink > 1 && (!allowPublicationAliases || !hasPublicationAliases(path, locator, opened)))) {
+      if (!opened.isFile()) {
         throw new Error(`Artifact path "${locator}" is not an isolated regular file.`);
       }
       if (!Number.isSafeInteger(opened.size) || opened.size > MAX_TASK_PACKET_METADATA_BYTES) {
@@ -954,8 +818,7 @@ function readBundleFile(
       }
       const completed = fstatSync(descriptor);
       const completedTimes = fstatSync(descriptor, { bigint: true });
-      if (!completed.isFile() || (completed.nlink > 1 && (!allowPublicationAliases || !hasPublicationAliases(path, locator, completed)))
-          || completed.dev !== opened.dev || completed.ino !== opened.ino
+      if (!completed.isFile() || completed.dev !== opened.dev || completed.ino !== opened.ino
           || completed.size !== opened.size || completedTimes.mtimeNs !== openedTimes.mtimeNs
           || completedTimes.ctimeNs !== openedTimes.ctimeNs
           || completed.size > MAX_TASK_PACKET_METADATA_BYTES || bytes.length !== opened.size) {
@@ -975,75 +838,6 @@ function readBundleFile(
   }
 }
 
-function hasPublicationAliases(path: string, locator: string, target: { dev: number; ino: number; nlink: number }): boolean {
-  const ownership = readPublicationOwnership(path, target, locator);
-  if (ownership === undefined) return false;
-  const openedTarget = aliasIdentity(path, target);
-  const quarantine = aliasIdentity(`${path}.quarantine`, target);
-  const recovered = aliasIdentity(`${path}.recovered`, target);
-  const staging = hasStagingAlias(path, target, ownership);
-  if (openedTarget === undefined || (staging !== undefined && quarantine === undefined && recovered === undefined)) return false;
-  const accounted = Number(quarantine !== undefined) + Number(recovered !== undefined) + Number(staging !== undefined);
-  if (accounted === 0 || !isPublicationOwnershipCurrent(path, ownership, locator)) return false;
-  const currentTarget = aliasIdentity(path, target);
-  const currentQuarantine = aliasIdentity(`${path}.quarantine`, target);
-  const currentRecovered = aliasIdentity(`${path}.recovered`, target);
-  const currentStaging = hasStagingAlias(path, target, ownership);
-  return currentTarget !== undefined && sameFileIdentity(openedTarget, currentTarget)
-    && sameOptionalIdentity(quarantine, currentQuarantine)
-    && sameOptionalIdentity(recovered, currentRecovered)
-    && sameOptionalIdentity(staging, currentStaging)
-    && isPublicationOwnershipCurrent(path, ownership, locator)
-    && currentTarget.nlink === 1 + accounted;
-}
-
-function hasStagingAlias(
-  path: string,
-  target: { dev: number; ino: number },
-  ownership: PublicationOwnership,
-): FileIdentity | undefined {
-  const stagingPath = ownership.marker.stagingPath;
-  if (typeof stagingPath !== "string") return undefined;
-  try {
-    const staging = lstatSync(resolve(dirname(path), stagingPath));
-    return sameFileIdentity(target, staging) ? staging : undefined;
-  } catch (error) {
-    if (isErrno(error, "ENOENT")) return undefined;
-    throw error;
-  }
-}
-
-function readStagingPath(path: string, locator: string): string | undefined {
-  const markerSuffix = ".quarantine.marker";
-  return path.endsWith(markerSuffix)
-    ? readPublicationStagingPath(path.slice(0, -markerSuffix.length), locator)
-    : undefined;
-}
-
-function hasAlias(path: string, target: { dev: number; ino: number }): boolean {
-  try {
-    return sameFileIdentity(target, lstatSync(path));
-  } catch (error) {
-    if (isErrno(error, "ENOENT")) return false;
-    throw error;
-  }
-}
-
-type FileIdentity = { dev: number; ino: number; nlink?: number };
-
-function aliasIdentity(path: string, target: FileIdentity): FileIdentity | undefined {
-  try {
-    const alias = lstatSync(path);
-    return sameFileIdentity(target, alias) ? alias : undefined;
-  } catch (error) {
-    if (isErrno(error, "ENOENT")) return undefined;
-    throw error;
-  }
-}
-
-function sameOptionalIdentity(left: FileIdentity | undefined, right: FileIdentity | undefined): boolean {
-  return left === undefined ? right === undefined : right !== undefined && sameFileIdentity(left, right);
-}
 
 function assertBundlePathWithoutLinks(bundleRoot: string, locator: string): string {
   let path = bundleRoot;
@@ -1069,53 +863,6 @@ function assertBundleRoot(root: string, descriptor: number, locator: string): vo
   }
 }
 
-function openFreezeParent(root: string, parent: string, locator: string, rootDescriptor: number): number {
-  assertBundleRoot(root, rootDescriptor, locator);
-  assertFreezeParentPath(root, parent, locator);
-
-  const descriptor = openSync(parent, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    const opened = fstatSync(descriptor);
-    const currentStat = lstatSync(parent);
-    if (!opened.isDirectory() || currentStat.isSymbolicLink()
-        || opened.dev !== currentStat.dev || opened.ino !== currentStat.ino) {
-      throw new Error(`Artifact path "${locator}" parent changed during recovery.`);
-    }
-    return descriptor;
-  } catch (error) {
-    closeSync(descriptor);
-    throw error;
-  }
-}
-
-function assertFreezeParent(root: string, parent: string, descriptor: number, locator: string): void {
-  assertFreezeParentPath(root, parent, locator);
-  const opened = fstatSync(descriptor);
-  const current = lstatSync(parent);
-  const cwd = lstatSync(".");
-  if (!opened.isDirectory() || current.isSymbolicLink() || cwd.isSymbolicLink()
-      || opened.dev !== current.dev || opened.ino !== current.ino
-      || opened.dev !== cwd.dev || opened.ino !== cwd.ino) {
-    throw new Error(`Artifact path "${locator}" parent changed during recovery.`);
-  }
-}
-
-function assertFreezeParentPath(root: string, parent: string, locator: string): void {
-  if (!isContained(root, parent)) throw new Error(`Artifact path "${locator}" escapes its declared root.`);
-  let current = root;
-  const segments = relative(root, parent) === "" ? [] : relative(root, parent).split(sep);
-  for (const segment of segments) {
-    current = resolve(current, segment);
-    const entry = lstatSync(current);
-    if (!entry.isDirectory() || entry.isSymbolicLink()) {
-      throw new Error(`Artifact path "${locator}" crosses a symbolic link.`);
-    }
-  }
-}
-
-function sameFileIdentity(left: { dev: number; ino: number }, right: { dev: number; ino: number }): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
-}
 
 function packetError(artifact: string, field: string, message: string): ArtifactValidationError {
   return { artifact, schemaVersion: "ebo.task-packet/v1", field, message };

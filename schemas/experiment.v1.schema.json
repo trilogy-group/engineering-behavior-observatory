@@ -104,37 +104,75 @@
       "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" }
     },
     "ordering": {
-      "oneOf": [
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seed", "strategy"],
+      "properties": {
+        "seed": { "type": "string", "minLength": 1 },
+        "strategy": {
+          "enum": [
+            "declared",
+            "sequential",
+            "permuted",
+            "seeded-shuffle",
+            "balanced",
+            "balanced-interleaved",
+            "interleaved"
+          ]
+        },
+        "declaredOrder": { "$ref": "#/$defs/declaredOrder" },
+        "permutationAlgorithmRef": { "$ref": "#/$defs/configurationReference" },
+        "balanceBy": { "enum": ["task", "model", "harness"] }
+      },
+      "allOf": [
         {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["seed", "strategy", "permutationAlgorithmRef"],
-          "properties": {
-            "seed": { "type": "string", "minLength": 1 },
-            "strategy": { "const": "permuted" },
-            "permutationAlgorithmRef": { "$ref": "#/$defs/configurationReference" }
+          "if": {
+            "properties": { "strategy": { "const": "declared" } }
+          },
+          "then": { "required": ["declaredOrder"] }
+        },
+        {
+          "if": {
+            "properties": { "strategy": { "enum": ["permuted"] } }
+          },
+          "then": { "required": ["permutationAlgorithmRef"] }
+        },
+        {
+          "if": {
+            "properties": { "strategy": { "enum": ["declared", "sequential"] } }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["permutationAlgorithmRef"] },
+                { "required": ["balanceBy"] }
+              ]
+            }
           }
         },
         {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["seed", "strategy", "declaredOrder"],
-          "properties": {
-            "seed": { "type": "string", "minLength": 1 },
-            "strategy": { "const": "declared" },
-            "declaredOrder": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["taskIds", "modelIds", "harnessIds"],
-              "properties": {
-                "taskIds": { "$ref": "#/$defs/conditionIdList" },
-                "modelIds": { "$ref": "#/$defs/conditionIdList" },
-                "harnessIds": { "$ref": "#/$defs/conditionIdList" }
-              }
-            }
-          }
+          "if": {
+            "properties": { "strategy": { "enum": ["balanced", "balanced-interleaved", "interleaved"] } }
+          },
+          "then": { "not": { "required": ["permutationAlgorithmRef"] } }
+        },
+        {
+          "if": {
+            "properties": { "strategy": { "enum": ["permuted", "seeded-shuffle"] } }
+          },
+          "then": { "not": { "required": ["balanceBy"] } }
         }
       ]
+    },
+    "declaredOrder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskIds", "modelIds", "harnessIds"],
+      "properties": {
+        "taskIds": { "$ref": "#/$defs/conditionIdList" },
+        "modelIds": { "$ref": "#/$defs/conditionIdList" },
+        "harnessIds": { "$ref": "#/$defs/conditionIdList" }
+      }
     },
     "harnessCondition": {
       "type": "object",

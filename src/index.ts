@@ -4,14 +4,15 @@ export {
   canonicalizeMetadata,
   digestBytes,
   digestMetadata,
+  inspectRetainedArtifact,
   readVerifiedArtifact,
   SUPPORTED_ARTIFACT_SCHEMA_VERSIONS,
   validateArtifact,
   validateExportManifest,
   validateRunManifestEvidence,
   verifyDigest,
+  writeArtifactAtomically,
   writeMetadataAtomically,
-  writeMetadataAtomicallyIfAbsentSync,
 } from "./artifacts.js";
 export type { ArtifactIdentity, ArtifactValidationError } from "./artifacts.js";
 export {
@@ -28,10 +29,12 @@ export {
   resolveBundleArtifact,
   resolveBundleArtifactDigest,
   resolveTaskArchive,
+  readTaskArchive,
   validateTaskArchive,
 } from "./contracts.js";
 export {
   admitTaskPacket,
+  assertTaskPacketFreezeRecord,
   assertTaskPacketAdmitted,
   defaultFreezeLocator,
   formatErrors,
@@ -53,13 +56,40 @@ export type {
   DeclaredMatrixCell,
   Digest,
   ExperimentConfiguration,
+  ExperimentOrdering,
   ReferenceSolutionDeclaration,
   ResolvedTaskPacket,
   TaskCondition,
   TaskConditionSet,
+  TaskArchiveEntry,
 } from "./contracts.js";
 export {
+  assertValidRunQueue,
+  compileRunQueue,
+  expandMatrixCells,
+  inspectRunQueue,
+  LocalRunQueue,
+  MAX_RUN_QUEUE_BYTES,
+  MAX_RUN_QUEUE_ENTRIES,
+  readRunQueue,
+  validateRunQueue,
+  writeRunQueue,
+} from "./scheduler.js";
+export type {
+  CompileRunQueueOptions,
+  FrozenTaskIdentity,
+  FrozenTaskInput,
+  PermutationAlgorithm,
+  QueueOrderingStrategy,
+  RunQueue,
+  RunQueueEntry,
+  RunQueueInspection,
+  RunQueueMatrix,
+  ValidateRunQueueOptions,
+} from "./scheduler.js";
+export {
   digestWorkspace,
+  digestWorkspaceTree,
   executeVerifier,
   serializeVerifierResult,
   writeVerifierResult,
@@ -82,3 +112,153 @@ export type {
   VerifierRunResult,
   VerifierWorkspace,
 } from "./verifiers.js";
+export { cleanupWorkspace, materializeWorkspace } from "./workspaces.js";
+export type {
+  WorkspaceMaterialization,
+  WorkspaceMaterializationOptions,
+  WorkspaceSetupContext,
+  WorkspaceSetupStep,
+} from "./workspaces.js";
+export {
+  createAttemptIdentity,
+  createRunIdentity,
+  executeRunAttempt,
+  InvalidLifecycleTransitionError,
+  LifecycleController,
+  retryAttempt,
+  readAttemptRecord,
+  writeAttemptRecord,
+} from "./lifecycle.js";
+export type {
+  AttemptClassification,
+  AttemptClassificationKind,
+  AttemptIdentity,
+  AttemptRecord,
+  EvidenceSink,
+  FailureClass,
+  HarnessExecutionContext,
+  HarnessExecutionResult,
+  HarnessExecutor,
+  HarnessShutdownResult,
+  LifecycleSnapshot,
+  LifecycleState,
+  LifecycleTransition,
+  RunAttemptOptions,
+  RunAttemptResult,
+  RunIdentity,
+  StopReason,
+  TerminalRecord,
+  TerminalState,
+  VerifierExecutionContext,
+  VerifierExecutionResult,
+  VerifierExecutor,
+  VerifierShutdownResult,
+  WorkspaceCleanupContext,
+  WorkspaceCoordinator,
+  WorkspaceExecutionResult,
+  WorkspaceShutdownResult,
+  WorkspaceSetupContext as LifecycleWorkspaceSetupContext,
+} from "./lifecycle.js";
+export {
+  createRunBundleAssembler,
+  qualifyRunBundle,
+  RunBundleAssembler,
+} from "./run-bundles.js";
+export type {
+  AgentSdkQualificationEvidence,
+  CaptureQualificationDimension,
+  CaptureQualificationOptions,
+  CaptureQualificationReason,
+  CaptureQualificationReasonCode,
+  CaptureQualificationReport,
+  CaptureQualificationStatus,
+  CapturedWorkspaceOutcome,
+  CaptureMissingEvidence,
+  CaptureWorkspaceOutcomeOptions,
+  RegisterRunBundleArtifact,
+  RunBundleConfiguration,
+  RunBundleDefinition,
+  RunBundleEvidenceDescriptor,
+  RunBundleRun,
+  RunBundleRuntimeComponent,
+  RunManifest,
+} from "./run-bundles.js";
+export { createPortableRunBundleExport, readPortableRunBundleExport } from "./exports.js";
+export type {
+  CreatePortableRunBundleExportOptions,
+  PortableExportArtifact,
+  PortableExportManifest,
+  PortableExportPolicy,
+} from "./exports.js";
+export {
+  buildCorpusIndex,
+  packPortableExport,
+  queryCorpusIndex,
+  readCorpusIndex,
+  unpackPortableExport,
+  validateCorpusIndex,
+  writeCorpusIndex,
+} from "./corpus.js";
+export type {
+  CorpusIndexEntry,
+  CorpusIndexQuery,
+  CorpusIndexValidationIssue,
+  CorpusSourceIssue,
+} from "./corpus.js";
+export {
+  BoundedDiagnosticCapture,
+  JsonlEvidenceWriter,
+  openJsonlEvidenceWriter,
+  ProtocolEvidenceRecorder,
+  ProtocolProcess,
+  runProtocolProcess,
+  spawnProtocolProcess,
+} from "./process-protocol.js";
+export {
+  buildClaudeAgentSdkEnvironment,
+  executeClaudeAgentSdk,
+  openClaudeAgentSdkHookCapture,
+  openClaudeAgentSdkStreamCapture,
+  probeClaudeAgentSdkCapabilities,
+} from "./agent-sdk.js";
+export type {
+  ClaudeAgentSdkQuery,
+  ClaudeAgentSdkQueryHandle,
+  ClaudeAgentSdkEnvironment,
+  ClaudeAgentSdkCaptureWarnings,
+  ClaudeAgentSdkCaptureReport,
+  ClaudeAgentSdkCapabilities,
+  ClaudeAgentSdkConfiguration,
+  ClaudeAgentSdkEvidenceSink,
+  ClaudeAgentSdkHookCapture,
+  ClaudeAgentSdkHookRecord,
+  ClaudeAgentSdkLifecycleEvent,
+  ClaudeAgentSdkMessageDiagnostic,
+  ClaudeAgentSdkMessageRecord,
+  ClaudeAgentSdkStreamCapture,
+  ClaudeAgentSdkAttemptEvidence,
+  ClaudeAgentSdkTelemetryConfiguration,
+  ClaudeAgentSdkTelemetryCorrelation,
+  ClaudeAgentSdkTelemetryEvidence,
+  ClaudeAgentSdkTelemetryReceipt,
+  ClaudeAgentSdkTelemetrySignal,
+} from "./agent-sdk.js";
+export { captureClaudeAgentSdkRun } from "./agent-sdk-run.js";
+export type {
+  CaptureClaudeAgentSdkRunOptions,
+  CaptureClaudeAgentSdkRunResult,
+  CaptureClaudeAgentSdkVerifier,
+} from "./agent-sdk-run.js";
+export type {
+  BoundedDiagnostic,
+  JsonlEvidenceWriterOptions,
+  ProcessTermination,
+  ProtocolCapability,
+  ProtocolCompletionEvidence,
+  ProtocolIdentity,
+  ProtocolObservation,
+  ProtocolObservationInput,
+  ProtocolObservationKind,
+  ProtocolProcessOptions,
+  ProtocolProcessResult,
+} from "./process-protocol.js";

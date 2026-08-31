@@ -11,8 +11,12 @@ and the local Behavior Atlas build on capture-qualified bundles afterward.
 
 ## Status
 
-The TypeScript/Node bootstrap is present. The implementation backlog is
-maintained separately in:
+M2 native Agent SDK capture is available through the public
+`captureClaudeAgentSdkRun` library entry point. It executes one caller-supplied
+attempt and retains its native stream, hooks, telemetry receipt, workspace,
+verifier result, capability profile, and structural qualification. Queue-wide
+study execution remains an operational caller concern. The implementation
+backlog is maintained separately in:
 
 `/Users/magos/dev/trilogy/benchmarking/Anthropic-evals/plans`
 
@@ -64,16 +68,57 @@ node dist/src/cli.js task-packet validate <bundle-root> <packet.json>
 node dist/src/cli.js task-packet admit <bundle-root> <packet.json>
 node dist/src/cli.js task-packet freeze <bundle-root> <packet.json>
 node dist/src/cli.js task-packet status <bundle-root> <packet.json>
+node dist/src/cli.js matrix compile <experiment.json> <bundle-root> <queue.json> [--freeze-locator <task-id>=<path>]
+node dist/src/cli.js queue inspect <queue.json>
+node dist/src/cli.js queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
+node dist/src/cli.js corpus build <corpus-root> <index.jsonl>
+node dist/src/cli.js corpus query <index.jsonl> [--task <id>] [--model <id>] [--harness <id>]
+node dist/src/cli.js corpus validate <corpus-root> <index.jsonl>
+node dist/src/cli.js corpus pack <approved-export-root> <policy.json> <archive.tar.gz>
+node dist/src/cli.js corpus unpack <archive.tar.gz> <destination-root>
+# Optional approved OAuth smoke; provide OAuth auth, never API-key overrides.
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+EBO_LIVE_AGENT_SDK_SMOKE=1 node --test --test-name-pattern='approved live Agent SDK smoke' dist/test/capture-qualification.test.js
 ```
+
+`captureClaudeAgentSdkRun` is intentionally a library API rather than another
+configuration dialect: callers provide an already-resolved run definition,
+workspace coordinator, Agent SDK configuration, and verifier. It does not
+schedule or retry attempts.
 
 `ebo validate` checks the supported task-packet, experiment, and run-bundle
 artifact versions. On failure it identifies the artifact, schema version, and
-failing JSON field. Capture, runner, adapter, evaluation, and Atlas behavior
-are introduced by their separately scoped tasks.
+failing JSON field. Adapter, evaluation, and Atlas behavior are introduced by
+their separately scoped tasks.
 
 Task-packet commands validate externally authored packets, enforce their
 recorded admission decision, persist a digest-based freeze record, and report
 component changes. They do not generate tasks or perform human review.
+
+Safe M2 evidence export is a library boundary:
+`createPortableRunBundleExport` writes a separate partner/public derivative,
+and `readPortableRunBundleExport` performs the required schema, integrity,
+policy, and secret-scan readback. It does not publish or package a corpus.
+
+The corpus index is a deterministic, atomically rebuilt JSONL read model over
+run and export manifests. It records run-cell/trial and attempt identities
+separately, projects terminal, verifier, capture, and export facts, and retains
+validation issues instead of silently omitting missing evidence. Native
+manifests remain authoritative; delete and rebuild the index at any time.
+Queries use exact-match flags shown by `ebo --help` and do not index prompt or
+tool bodies.
+
+Portable archives accept only `ready` or `exported` partner/public trees that
+pass the export pipeline's policy-bound readback and final secret scan.
+Packing follows the export manifest allowlist, so an unlisted sibling file is
+not included. Unpacking applies bounded TAR parsing, requires an exact
+manifest/member match, verifies every digest, and refuses an existing
+destination. No database, service, or archive package is involved.
+
+The matrix compiler expands any valid experiment into a local, persisted run
+queue. Sequential, seeded-shuffle, and balanced/interleaved policies retain
+the seed and every frozen task, model, harness, configuration, and trial
+identity; they do not start execution or add distributed scheduling.
 
 Start with [AGENTS.md](AGENTS.md) and the assigned Linear issue. `WORKFLOW.md`
 contains OpenSymphony orchestration configuration and should not be treated as
@@ -81,3 +126,6 @@ the EBO product specification.
 
 The versioned task-packet and experiment contract surfaces are documented in
 [docs/contracts.md](docs/contracts.md).
+
+Run and attempt lifecycle plus the narrow process-protocol boundary are
+documented in [docs/run-lifecycle.md](docs/run-lifecycle.md).

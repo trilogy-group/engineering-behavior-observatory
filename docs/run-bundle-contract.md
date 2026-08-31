@@ -25,6 +25,21 @@ source provides one—native type and identity. Native content stays in the
 referenced file. Artifact IDs are unique within a bundle, and every bundle
 retains exactly one capture-report descriptor.
 
+For TypeScript Agent SDK runs, `openClaudeAgentSdkHookCapture` creates the
+no-clobber `hooks.jsonl` sink. Each source-specific record retains the complete
+typed callback input, callback time, empty neutral callback output, abort-signal
+state, and only the session, prompt, tool-use, agent, transcript, and working
+directory identities the callback exposed. Because the native payload can
+contain prompts, tool inputs, and local paths, the resulting artifact is
+restricted evidence; later export policy must not treat the source file as a
+sanitized derivative.
+
+`hooks.jsonl` is authoritative for callback occurrence. Optional detailed-beta
+hook spans are a separate timing capability and are not required to infer or
+confirm an occurrence. If a hook append fails, the executor returns the neutral
+empty hook output, keeps the agent operation running, and retains a bounded
+capture warning in the attempt evidence.
+
 All paths are bundle-relative. The schema rejects absolute and parent-traversal
 paths; the shared artifact utilities will also resolve symlinks and verify
 digests before use. Each retained path appears exactly once under a
@@ -97,6 +112,74 @@ capability status.
 An artifact may retain `sharingClass: unknown` when capture cannot classify it.
 Exports fail closed: unknown artifacts and unknown export classes are never
 ready or exported.
+
+The final capture report for a direct Agent SDK attempt also retains the exact
+SDK/CLI capability profile, effective model/tool/permission/budget
+configuration, and expected hook set used for qualification. Its
+`structuralQualification` field preserves the resulting dimension statuses and
+reason codes. These are capture facts, not behavioral judgments, and remain
+internal until the M3 export policy produces an approved derivative.
+
+`captureClaudeAgentSdkRun` is the single-run production composition boundary.
+It reuses the existing lifecycle, caller-supplied workspace coordinator,
+passive Agent SDK sinks, verifier result, assembler, and qualifier. It neither
+reads a run queue nor retries an attempt; an operational runner may call it once
+for each already-resolved queue entry.
+
+`qualifyRunBundle` performs the post-capture structural check without adding a
+new artifact dialect. Its report evaluates attempt identity, session evidence,
+pinned hook capability versus observed callbacks, telemetry receipt and
+optional timing, workspace outcome, verifier result, terminal classification,
+and sharing classification independently. The overall result is `qualified`,
+`qualified-with-gaps`, or `unqualified`, with stable reason codes and the named
+evidence ID. Optional detailed-beta timing and a missing collector receipt are
+timing gaps; missing or malformed semantic/outcome evidence, an unusable patch,
+or contradictory capture-report facts are unqualified. The report contains no
+behavioral or semantic-quality judgment.
+
+An explicit `unsupported` capture-report capability remains qualified and is
+reported as `unsupported`, not rewritten as missing evidence. Qualification
+caps every retained artifact read at 64 MiB; larger evidence is rejected with
+`ARTIFACT_TOO_LARGE` before whole-file parsing. Parsed session records and raw
+telemetry payloads are not retained in the qualification report.
+
+Session qualification requires the descriptor, manifest, and every observed
+native session identity to agree. Hook JSONL must contain at least one pinned
+callback in `hook`, `hook_event_name`, or a source-specific `type`; unrelated
+nonempty JSON does not count as hook evidence. A telemetry artifact without a
+collector receipt is a `TELEMETRY_RECEIPT_MISSING` gap, including the supported
+usage-only path.
+
+Qualification reuses manifest schema checks, descriptor digest/path readback,
+verifier-to-workspace terminal binding, and export-manifest validation. When a
+workspace patch is present, callers supply the admitted starting fixture so the
+patch can be checked with `git apply --check`; omission leaves an explicit
+`WORKSPACE_PATCH_NOT_CHECKED` gap.
+
+## Portable export
+
+`createPortableRunBundleExport` reads a qualified M2 bundle without changing
+it and creates a separate partner or public derivative tree. Its policy fixes
+the artifact and string byte limits plus caller-supplied sensitive values. The
+exporter also removes credential-bearing environment values, local paths and
+usernames, hidden-reasoning fields, and disallowed raw API bodies. Run,
+attempt, bundle, session, and trace identities are replaced consistently so
+cross-artifact correlation survives without exposing native identifiers.
+
+The M2 allowlist is deliberately small: JSONL session/hooks, JSON telemetry,
+text workspace patches, JSON verifier/capture reports, and text verifier
+diagnostics. Unknown classifications and unrecognized kind/media pairs stop
+the export. Workspace snapshots are not exported until a later issue defines a
+safe archive-content policy. Existing source export manifests are excluded and
+recorded rather than recursively exported.
+
+The derivative `export-manifest/v1` records each portable artifact's source
+digest, every applied transformation, each exclusion, the effective policy
+digest, and rewritten correlations. Creation reports success only after
+`readPortableRunBundleExport` rechecks schema, paths, digests, sizes,
+references, policy, JSON/JSONL structure, and a final secret scan. A failed
+creation removes its newly-created destination tree; an existing destination
+is never replaced.
 
 Verifier results cannot contradict their assertions: passed results have no
 failed assertion, while failed results retain at least one failed assertion.

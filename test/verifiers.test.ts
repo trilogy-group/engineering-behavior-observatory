@@ -9,6 +9,7 @@ import test from "node:test";
 import {
   digestBytes,
   digestWorkspace,
+  digestWorkspaceTree,
   executeVerifier,
   readVerifiedArtifact,
   serializeVerifierResult,
@@ -106,16 +107,21 @@ test("includes executable modes in workspace fingerprints", async () => {
   try {
     await writeFile(executable, "#!/bin/sh\n");
     const readableFingerprint = await digestWorkspace(root.workspace);
+    const readableTree = await digestWorkspaceTree(root.workspace);
     await chmod(executable, 0o755);
     const executableFingerprint = await digestWorkspace(root.workspace);
+    const executableTree = await digestWorkspaceTree(root.workspace);
     const timestamp = new Date(Date.now() - 60_000);
     await utimes(executable, timestamp, timestamp);
     const timestampFingerprint = await digestWorkspace(root.workspace);
+    const timestampTree = await digestWorkspaceTree(root.workspace);
     await chmod(root.workspace, 0o555);
     const rootModeFingerprint = await digestWorkspace(root.workspace);
 
     assert.notEqual(executableFingerprint, readableFingerprint);
+    assert.notEqual(executableTree, readableTree);
     assert.notEqual(timestampFingerprint, executableFingerprint);
+    assert.equal(timestampTree, executableTree);
     assert.notEqual(rootModeFingerprint, executableFingerprint);
   } finally {
     await chmod(root.workspace, 0o755);
@@ -496,7 +502,7 @@ test("classifies timeout, crash, and malformed output as verifier errors", async
       name: "malformed output",
       source: `process.stdout.write("not-json");`,
       options: {},
-      check: async (result: CompleteVerifierResult, root: Roots) => assert.match(
+      check: async (result: CompleteVerifierResult) => assert.match(
         result.error ?? "",
         /invalid|Unexpected token/i,
       ),

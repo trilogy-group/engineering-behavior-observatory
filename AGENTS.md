@@ -49,6 +49,16 @@ or implement beyond the assigned issue.
   Atlas, Python/TypeScript capture shim, or Rust component without a later issue
   backed by measured need.
 
+## Trust boundary
+
+- Treat task archives before validation, candidate workspaces, SDK messages,
+  subprocess output, and external responses as untrusted input.
+- Treat EBO configuration, admitted digest-pinned verifier code, and in-process
+  adapter callbacks as trusted implementation inputs.
+- EBO does not defend its private files from a hostile same-user process.
+  Untrusted verifier containment requires an OS or container sandbox; do not
+  approximate either boundary with additional JavaScript filesystem races.
+
 ## Implementation defaults
 
 - Prefer Node standard-library APIs for files, paths, subprocesses, streams,
@@ -77,12 +87,21 @@ are `npm ci`, `npm run build`, `npm run typecheck`, `npm test`, and
 `node dist/src/cli.js --help`. Keep this list and `README.md` current as the
 project gains only issue-backed commands.
 
-## Review priorities
+## Code Review Rules
 
 Review evidence loss, invented normalization, unsafe export, overwritten partial
 attempts, protocol-channel corruption, and untested failure paths before style.
 Treat behavior changes without a runnable check as incomplete. Keep the durable
 review guide in `.agents/skills/custom-codereview-guide.md` aligned with these
 priorities.
+
+- P0/P1 findings are blocking. A P2 blocks only when it demonstrates an
+  acceptance-criteria failure, evidence loss or corruption, secret leakage, or
+  a violation of the trust boundary above.
+- Require exactly three completed full-PR scans when automated review is active:
+  one automatic scan and two explicit re-triggers. Batch remediation between
+  scans; after scan 3, use exact-commit local review instead of scan 4.
+- Do not request speculative hardening for hostile same-user races, trusted
+  callback mutation, new archive dialects, or capabilities outside the issue.
 
 Use semantic branch prefixes such as `feat/`, `fix/`, `docs/`, `chore/`, `refactor/`, or `test/`.
