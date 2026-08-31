@@ -485,11 +485,15 @@ export async function qualifyRunBundle(
         MAX_QUALIFICATION_ARTIFACT_BYTES,
       );
       if (descriptor.mediaType === "application/x-ndjson") {
-        Object.assign(state, parseNativeJsonl(bytes));
+        const summary = parseNativeJsonl(bytes);
+        state.hookNames = summary.hookNames;
+        state.sessionIds = summary.sessionIds;
       } else if (descriptor.mediaType === "application/json") {
         const parsed = parseNativeJson(bytes);
         if (descriptor.kind === "session" || descriptor.kind === "hook") {
-          Object.assign(state, nativeRecordSummary([parsed]));
+          const summary = nativeRecordSummary([parsed]);
+          state.hookNames = summary.hookNames;
+          state.sessionIds = summary.sessionIds;
         } else {
           state.document = descriptor.kind === "telemetry" ? telemetrySummary(parsed) : parsed;
         }
