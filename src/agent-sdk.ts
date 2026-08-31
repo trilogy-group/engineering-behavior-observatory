@@ -122,38 +122,27 @@ export async function openClaudeAgentSdkHookCapture(
 ): Promise<ClaudeAgentSdkHookCapture> {
   const writer = await openJsonlEvidenceWriter(path, { exclusive: true });
   let sequence = 0;
-  let failed = false;
-  let failure: unknown;
   return {
     path: writer.path,
     hook: async (event, input, toolUseId, signal) => {
-      try {
-        await writer.append({
-          schemaVersion: "ebo.claude-agent-hook/v1",
-          sequence: ++sequence,
-          callbackAt: now(),
-          hook: event,
-          sessionId: input.session_id,
-          transcriptPath: input.transcript_path,
-          cwd: input.cwd,
-          ...(input.prompt_id === undefined ? {} : { promptId: input.prompt_id }),
-          ...(toolUseId === undefined ? {} : { toolUseId }),
-          ...(input.agent_id === undefined ? {} : { agentId: input.agent_id }),
-          ...(input.agent_type === undefined ? {} : { agentType: input.agent_type }),
-          signalAborted: signal.aborted,
-          callbackOutput: {},
-          nativePayload: input,
-        } satisfies ClaudeAgentSdkHookRecord);
-      } catch (error) {
-        if (!failed) failure = error;
-        failed = true;
-        throw error;
-      }
+      await writer.append({
+        schemaVersion: "ebo.claude-agent-hook/v1",
+        sequence: ++sequence,
+        callbackAt: now(),
+        hook: event,
+        sessionId: input.session_id,
+        transcriptPath: input.transcript_path,
+        cwd: input.cwd,
+        ...(input.prompt_id === undefined ? {} : { promptId: input.prompt_id }),
+        ...(toolUseId === undefined ? {} : { toolUseId }),
+        ...(input.agent_id === undefined ? {} : { agentId: input.agent_id }),
+        ...(input.agent_type === undefined ? {} : { agentType: input.agent_type }),
+        signalAborted: signal.aborted,
+        callbackOutput: {},
+        nativePayload: input,
+      } satisfies ClaudeAgentSdkHookRecord);
     },
-    flush: async () => {
-      await writer.flush();
-      if (failed) throw failure;
-    },
+    flush: () => writer.flush(),
     close: () => writer.close(),
   };
 }
@@ -275,22 +264,22 @@ export async function executeClaudeAgentSdk(
     if (context.signal.aborted || controller.signal.aborted && lastResult === undefined) {
       const reason = "Claude Agent SDK execution was aborted.";
       await emitLifecycle(sink, { type: "failed", at: new Date().toISOString(), messageCount, error: reason });
-      return { status: "interrupted", reason, evidence };
+      return withCaptureError({ status: "interrupted", reason, evidence }, evidence);
     }
     const result = classifyResult(lastResult, diagnosticText(stderr), evidence);
     await emitLifecycle(sink, result.status === "completed"
       ? { type: "completed", at: new Date().toISOString(), messageCount }
       : { type: "failed", at: new Date().toISOString(), messageCount, error: result.error ?? result.reason ?? "Claude Agent SDK failed." });
-    return result;
+    return withCaptureError(result, evidence);
   } catch (error) {
     await abortEvent;
     const diagnostic = joinDiagnostics(errorMessage(error), closeError, diagnosticText(stderr));
     if (context.signal.aborted || controller.signal.aborted) {
       await emitLifecycle(sink, { type: "failed", at: new Date().toISOString(), messageCount, error: diagnostic });
-      return { status: "interrupted", reason: "Claude Agent SDK execution was aborted.", error: diagnostic, ...(evidence === undefined ? {} : { evidence }) };
+      return withCaptureError({ status: "interrupted", reason: "Claude Agent SDK execution was aborted.", error: diagnostic, ...(evidence === undefined ? {} : { evidence }) }, evidence);
     }
     await emitLifecycle(sink, { type: "failed", at: new Date().toISOString(), messageCount, error: diagnostic });
-    return { status: "failed", failureClass: "infrastructure", reason: "Claude Agent SDK execution failed.", error: diagnostic, ...(evidence === undefined ? {} : { evidence }) };
+    return withCaptureError({ status: "failed", failureClass: "infrastructure", reason: "Claude Agent SDK execution failed.", error: diagnostic, ...(evidence === undefined ? {} : { evidence }) }, evidence);
   } finally {
     context.signal.removeEventListener("abort", abort);
   }
@@ -333,6 +322,16 @@ function passiveHooks(
     }];
   }
   return hooks;
+}
+
+function withCaptureError(
+  result: HarnessExecutionResult,
+  evidence: ClaudeAgentSdkAttemptEvidence | undefined,
+): HarnessExecutionResult {
+  const count = evidence?.captureWarnings.count ?? 0;
+  return count === 0
+    ? result
+    : { ...result, captureError: `Claude Agent SDK hook capture reported ${count} warning${count === 1 ? "" : "s"}.` };
 }
 
 function classifyResult(

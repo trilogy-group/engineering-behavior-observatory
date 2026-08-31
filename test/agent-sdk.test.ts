@@ -374,7 +374,7 @@ test("contains hook sink failure as a capture warning while returning neutral ou
   await capture.close();
   try {
     let callbackOutput: unknown;
-    const sink: ClaudeAgentSdkEvidenceSink = { ...noOpSink, flush: capture.flush, hook: capture.hook };
+    const sink: ClaudeAgentSdkEvidenceSink = { ...noOpSink, flush: () => undefined, hook: capture.hook };
     const query: QueryFunction = (input) => stream([sdkResult("success")], async () => {
       callbackOutput = await input.options?.hooks?.PreToolUse?.[0]?.hooks[0]?.(
         hookFixtures.PreToolUse,
@@ -393,6 +393,7 @@ test("contains hook sink failure as a capture warning while returning neutral ou
     assert.equal(result.classification.kind, "capture-incomplete");
     assert.equal(result.classification.underlying, "completed");
     assert.equal(result.record.harness?.status, "completed");
+    assert.match(result.record.harness?.captureError ?? "", /hook capture reported 1 warning/);
     assert.equal(result.record.capture?.status, "incomplete");
     assert.deepEqual(callbackOutput, {});
     const warnings = (result.record.harness?.evidence as ClaudeAgentSdkAttemptEvidence).captureWarnings;
