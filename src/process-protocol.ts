@@ -235,7 +235,7 @@ export class JsonlEvidenceWriter {
     let lockFd: number | undefined;
     try {
       lockFd = openSync(lockPath, "wx", 0o600);
-      writeSync(lockFd, `${process.pid}\n`, undefined, "utf8");
+      writeSyncFully(lockFd, Buffer.from(`${process.pid}\n`, "utf8"), "Protocol lock");
       fsyncSync(lockFd);
       syncDirectory(dirname(lockPath));
       this.prepareForClaim();
@@ -627,6 +627,7 @@ export class ProtocolProcess {
   private readonly cwd: string;
   private readonly args: string[];
   private readonly onFrame: ProtocolProcessOptions["onFrame"];
+  private readonly signal: AbortSignal | undefined;
   private lineCount = 0;
   private nextLineNumber = 1;
   private frameCount = 0;
@@ -665,6 +666,7 @@ export class ProtocolProcess {
     this.cwd = resolve(options.cwd ?? process.cwd());
     this.args = [...(options.args ?? [])];
     this.onFrame = options.onFrame;
+    this.signal = options.signal;
     let writer: JsonlEvidenceWriter;
     if (options.writer !== undefined) {
       writer = options.writer;
@@ -725,8 +727,8 @@ export class ProtocolProcess {
       void this.interrupt();
     };
     this.abortListener = abort;
-    if (this.options.signal?.aborted) abort();
-    else this.options.signal?.addEventListener("abort", abort, { once: true });
+    if (this.signal?.aborted) abort();
+    else this.signal?.addEventListener("abort", abort, { once: true });
     if (this.childError !== undefined) void this.recorder.recordError(this.childError, undefined, INTERNAL_RECORDER_TOKEN);
   }
 
@@ -994,8 +996,8 @@ export class ProtocolProcess {
     } catch (error) {
       this.childError ??= `Protocol evidence could not be persisted: ${errorMessage(error)}`;
     }
-    if (this.options.signal !== undefined && this.abortListener !== undefined) {
-      this.options.signal.removeEventListener("abort", this.abortListener);
+    if (this.signal !== undefined && this.abortListener !== undefined) {
+      this.signal.removeEventListener("abort", this.abortListener);
     }
     const stderr = this.stderrCapture.result();
     if (this.stderrPath !== undefined) {
@@ -1088,6 +1090,15 @@ function syncDirectory(path: string): void {
     fsyncSync(descriptor);
   } finally {
     closeSync(descriptor);
+  }
+}
+
+function writeSyncFully(descriptor: number, bytes: Uint8Array, label: string): void {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const bytesWritten = writeSync(descriptor, bytes, offset, bytes.length - offset);
+    if (bytesWritten <= 0) throw new Error(`${label} write made no progress.`);
+    offset += bytesWritten;
   }
 }
 
@@ -1237,6 +1248,11 @@ function parseRecoveredObservation(line: string, lineNumber: number): Record<str
 }
 
 function assertRecoveredObservation(value: Record<string, unknown>, line: number): void {
+  try {
+    assertJsonValue(value, `Existing JSONL evidence line ${line}`, new Set<object>());
+  } catch (error) {
+    throw new Error(`Existing JSONL evidence line ${line} is not JSON-compatible: ${errorMessage(error)}`);
+  }
   if (typeof value.observedAt !== "string" || value.observedAt.trim() === "") {
     throw new Error(`Existing JSONL evidence line ${line} has no valid observation timestamp.`);
   }
