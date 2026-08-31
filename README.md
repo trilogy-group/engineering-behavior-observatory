@@ -11,8 +11,12 @@ and the local Behavior Atlas build on capture-qualified bundles afterward.
 
 ## Status
 
-The TypeScript/Node bootstrap is present. The implementation backlog is
-maintained separately in:
+M2 native Agent SDK capture is available through the public
+`captureClaudeAgentSdkRun` library entry point. It executes one caller-supplied
+attempt and retains its native stream, hooks, telemetry receipt, workspace,
+verifier result, capability profile, and structural qualification. Queue-wide
+study execution remains an operational caller concern. The implementation
+backlog is maintained separately in:
 
 `/Users/magos/dev/trilogy/benchmarking/Anthropic-evals/plans`
 
@@ -72,10 +76,15 @@ unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 EBO_LIVE_AGENT_SDK_SMOKE=1 node --test --test-name-pattern='approved live Agent SDK smoke' dist/test/capture-qualification.test.js
 ```
 
+`captureClaudeAgentSdkRun` is intentionally a library API rather than another
+configuration dialect: callers provide an already-resolved run definition,
+workspace coordinator, Agent SDK configuration, and verifier. It does not
+schedule or retry attempts.
+
 `ebo validate` checks the supported task-packet, experiment, and run-bundle
 artifact versions. On failure it identifies the artifact, schema version, and
-failing JSON field. Capture, runner, adapter, evaluation, and Atlas behavior
-are introduced by their separately scoped tasks.
+failing JSON field. Export, adapter, evaluation, and Atlas behavior are
+introduced by their separately scoped tasks.
 
 Task-packet commands validate externally authored packets, enforce their
 recorded admission decision, persist a digest-based freeze record, and report

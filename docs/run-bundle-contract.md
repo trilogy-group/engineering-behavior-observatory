@@ -113,6 +113,19 @@ An artifact may retain `sharingClass: unknown` when capture cannot classify it.
 Exports fail closed: unknown artifacts and unknown export classes are never
 ready or exported.
 
+The final capture report for a direct Agent SDK attempt also retains the exact
+SDK/CLI capability profile, effective model/tool/permission/budget
+configuration, and expected hook set used for qualification. Its
+`structuralQualification` field preserves the resulting dimension statuses and
+reason codes. These are capture facts, not behavioral judgments, and remain
+internal until the M3 export policy produces an approved derivative.
+
+`captureClaudeAgentSdkRun` is the single-run production composition boundary.
+It reuses the existing lifecycle, caller-supplied workspace coordinator,
+passive Agent SDK sinks, verifier result, assembler, and qualifier. It neither
+reads a run queue nor retries an attempt; an operational runner may call it once
+for each already-resolved queue entry.
+
 `qualifyRunBundle` performs the post-capture structural check without adding a
 new artifact dialect. Its report evaluates attempt identity, session evidence,
 pinned hook capability versus observed callbacks, telemetry receipt and

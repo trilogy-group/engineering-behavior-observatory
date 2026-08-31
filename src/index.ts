@@ -165,6 +165,7 @@ export {
   RunBundleAssembler,
 } from "./run-bundles.js";
 export type {
+  AgentSdkQualificationEvidence,
   CaptureQualificationDimension,
   CaptureQualificationOptions,
   CaptureQualificationReason,
@@ -199,6 +200,8 @@ export {
   probeClaudeAgentSdkCapabilities,
 } from "./agent-sdk.js";
 export type {
+  ClaudeAgentSdkQuery,
+  ClaudeAgentSdkQueryHandle,
   ClaudeAgentSdkEnvironment,
   ClaudeAgentSdkCaptureWarnings,
   ClaudeAgentSdkCaptureReport,
@@ -218,6 +221,12 @@ export type {
   ClaudeAgentSdkTelemetryReceipt,
   ClaudeAgentSdkTelemetrySignal,
 } from "./agent-sdk.js";
+export { captureClaudeAgentSdkRun } from "./agent-sdk-run.js";
+export type {
+  CaptureClaudeAgentSdkRunOptions,
+  CaptureClaudeAgentSdkRunResult,
+  CaptureClaudeAgentSdkVerifier,
+} from "./agent-sdk-run.js";
 export type {
   BoundedDiagnostic,
   JsonlEvidenceWriterOptions,
