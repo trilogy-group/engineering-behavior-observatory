@@ -161,9 +161,16 @@ export type {
 } from "./lifecycle.js";
 export {
   createRunBundleAssembler,
+  qualifyRunBundle,
   RunBundleAssembler,
 } from "./run-bundles.js";
 export type {
+  CaptureQualificationDimension,
+  CaptureQualificationOptions,
+  CaptureQualificationReason,
+  CaptureQualificationReasonCode,
+  CaptureQualificationReport,
+  CaptureQualificationStatus,
   CapturedWorkspaceOutcome,
   CaptureMissingEvidence,
   CaptureWorkspaceOutcomeOptions,

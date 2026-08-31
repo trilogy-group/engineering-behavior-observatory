@@ -113,6 +113,36 @@ An artifact may retain `sharingClass: unknown` when capture cannot classify it.
 Exports fail closed: unknown artifacts and unknown export classes are never
 ready or exported.
 
+`qualifyRunBundle` performs the post-capture structural check without adding a
+new artifact dialect. Its report evaluates attempt identity, session evidence,
+pinned hook capability versus observed callbacks, telemetry receipt and
+optional timing, workspace outcome, verifier result, terminal classification,
+and sharing classification independently. The overall result is `qualified`,
+`qualified-with-gaps`, or `unqualified`, with stable reason codes and the named
+evidence ID. Optional detailed-beta timing and a missing collector receipt are
+timing gaps; missing or malformed semantic/outcome evidence, an unusable patch,
+or contradictory capture-report facts are unqualified. The report contains no
+behavioral or semantic-quality judgment.
+
+An explicit `unsupported` capture-report capability remains qualified and is
+reported as `unsupported`, not rewritten as missing evidence. Qualification
+caps every retained artifact read at 64 MiB; larger evidence is rejected with
+`ARTIFACT_TOO_LARGE` before whole-file parsing. Parsed session records and raw
+telemetry payloads are not retained in the qualification report.
+
+Session qualification requires the descriptor, manifest, and every observed
+native session identity to agree. Hook JSONL must contain at least one pinned
+callback in `hook`, `hook_event_name`, or a source-specific `type`; unrelated
+nonempty JSON does not count as hook evidence. A telemetry artifact without a
+collector receipt is a `TELEMETRY_RECEIPT_MISSING` gap, including the supported
+usage-only path.
+
+Qualification reuses manifest schema checks, descriptor digest/path readback,
+verifier-to-workspace terminal binding, and export-manifest validation. When a
+workspace patch is present, callers supply the admitted starting fixture so the
+patch can be checked with `git apply --check`; omission leaves an explicit
+`WORKSPACE_PATCH_NOT_CHECKED` gap.
+
 Verifier results cannot contradict their assertions: passed results have no
 failed assertion, while failed results retain at least one failed assertion.
 Assertion IDs are unique, and a retained verifier result names the containing

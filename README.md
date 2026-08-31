@@ -67,6 +67,9 @@ node dist/src/cli.js task-packet status <bundle-root> <packet.json>
 node dist/src/cli.js matrix compile <experiment.json> <bundle-root> <queue.json> [--freeze-locator <task-id>=<path>]
 node dist/src/cli.js queue inspect <queue.json>
 node dist/src/cli.js queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
+# Optional approved OAuth smoke; provide OAuth auth, never API-key overrides.
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+EBO_LIVE_AGENT_SDK_SMOKE=1 node --test --test-name-pattern='approved live Agent SDK smoke' dist/test/capture-qualification.test.js
 ```
 
 `ebo validate` checks the supported task-packet, experiment, and run-bundle

@@ -4,20 +4,25 @@ import { cp, lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { HOOK_EVENTS } from "@anthropic-ai/claude-agent-sdk";
 
 import {
+  assertNoDuplicateJsonKeys,
   assertUniqueArtifactIdentities,
   canonicalizeMetadata,
   inspectRetainedArtifact,
+  readVerifiedArtifact,
   validateArtifact,
+  validateExportManifest,
   validateRunManifestEvidence,
   writeArtifactAtomically,
   writeMetadataAtomically,
 } from "./artifacts.js";
 import { isSafeArtifactRelativePath } from "./contracts.js";
 import { digestWorkspace, digestWorkspaceTree } from "./verifiers.js";
-import type { ClaudeAgentSdkAttemptEvidence } from "./agent-sdk.js";
+import type { ClaudeAgentSdkAttemptEvidence, ClaudeAgentSdkCapabilities } from "./agent-sdk.js";
 import type { AttemptIdentity, TerminalRecord } from "./lifecycle.js";
+import { readBoundedFile } from "./scheduler.js";
 
 type DigestString = `sha256:${string}`;
 type SharingClass = "unknown" | "restricted" | "internal" | "partner" | "public";
@@ -51,8 +56,8 @@ export type RunBundleConfiguration = {
 export type RunBundleEvidenceDescriptor = {
   id: string;
   source: string;
-  kind: EvidenceKind | "capture-report";
-  authority: EvidenceAuthority | "capture";
+  kind: EvidenceKind | "diagnostic" | "capture-report" | "export-manifest";
+  authority: EvidenceAuthority | "capture" | "export";
   mediaType: string;
   digest: DigestString;
   sizeBytes: number;
@@ -60,6 +65,7 @@ export type RunBundleEvidenceDescriptor = {
   relativePath: string;
   fingerprint?: DigestString;
   nativeReference?: { type: string; id: string };
+  sanitizedFrom?: { artifactId: string; digest: DigestString };
 };
 
 export type RunManifest = {
@@ -113,9 +119,84 @@ export type CapturedWorkspaceOutcome = {
   format: "patch" | "snapshot";
 };
 
+export type CaptureQualificationStatus = "qualified" | "qualified-with-gaps" | "unqualified";
+export type CaptureQualificationDimension =
+  | "attemptIdentity"
+  | "semanticEvidence"
+  | "hooks"
+  | "telemetry"
+  | "workspace"
+  | "verifier"
+  | "terminal"
+  | "sharing";
+export type CaptureQualificationReasonCode =
+  | "MANIFEST_INVALID"
+  | "ATTEMPT_IDENTITY_INVALID"
+  | "ARTIFACT_INTEGRITY_INVALID"
+  | "ARTIFACT_TOO_LARGE"
+  | "NATIVE_JSON_EMPTY"
+  | "NATIVE_JSON_MALFORMED"
+  | "NATIVE_JSONL_EMPTY"
+  | "NATIVE_JSONL_MALFORMED"
+  | "SESSION_EVIDENCE_MISSING"
+  | "SESSION_IDENTITY_MISSING"
+  | "SESSION_RECORD_IDENTITY_MISMATCH"
+  | "HOOK_EVIDENCE_MISSING"
+  | "HOOK_RECORDS_MISSING"
+  | "HOOK_CAPABILITY_NOT_CHECKED"
+  | "HOOK_CAPABILITY_VERSION_MISMATCH"
+  | "HOOK_SUPPORTED_BUT_MISSING"
+  | "HOOK_UNSUPPORTED_BY_PINNED_SDK"
+  | "HOOK_CAPABILITY_CONTRADICTION"
+  | "TELEMETRY_EVIDENCE_MISSING"
+  | "TELEMETRY_RECEIPT_MISSING"
+  | "TELEMETRY_UNSUPPORTED_BY_PINNED_RUNTIME"
+  | "OPTIONAL_BETA_TIMING_UNAVAILABLE"
+  | "WORKSPACE_EVIDENCE_MISSING"
+  | "WORKSPACE_PATCH_NOT_CHECKED"
+  | "WORKSPACE_PATCH_UNUSABLE"
+  | "VERIFIER_EVIDENCE_MISSING"
+  | "VERIFIER_RESULT_ERROR"
+  | "VERIFIER_RESULT_NOT_RUN"
+  | "TERMINAL_CLASSIFICATION_INVALID"
+  | "INFRASTRUCTURE_FAILURE_MISCLASSIFIED_AS_TASK"
+  | "SHARING_CLASSIFICATION_UNKNOWN"
+  | "CAPTURE_REPORT_MISSING"
+  | "CAPTURE_REPORT_INVALID"
+  | "CAPTURE_REPORT_CONTRADICTS_SOURCE"
+  | "EXPORT_MANIFEST_INVALID";
+
+export type CaptureQualificationReason = {
+  code: CaptureQualificationReasonCode;
+  dimension: CaptureQualificationDimension;
+  evidenceId?: string;
+  detail: string;
+};
+
+export type CaptureQualificationReport = {
+  status: CaptureQualificationStatus;
+  semanticAnalysisUsable: boolean;
+  attempt?: AttemptIdentity;
+  terminal?: TerminalRecord;
+  dimensions: Record<CaptureQualificationDimension, {
+    status: "qualified" | "unsupported" | "gap" | "unqualified";
+    reasonCodes: CaptureQualificationReasonCode[];
+  }>;
+  reasons: CaptureQualificationReason[];
+};
+
+export type CaptureQualificationOptions = {
+  startingWorkspacePath?: string;
+  hookCapabilities?: Pick<ClaudeAgentSdkCapabilities, "sdkVersion" | "hooks" | "unsupportedHooks">;
+  expectedHooks?: readonly string[];
+};
+
 const execFileAsync = promisify(execFile);
 const MAX_WORKSPACE_PATCH_BYTES = 64 * 1024 * 1024;
 const MAX_WORKSPACE_SNAPSHOT_BYTES = 64 * 1024 * 1024;
+const MAX_QUALIFICATION_ARTIFACT_BYTES = 64 * 1024 * 1024;
+const QUALIFICATION_DIMENSION_RANK = { qualified: 0, unsupported: 1, gap: 2, unqualified: 3 } as const;
+const PINNED_HOOK_EVENTS = new Set<string>(HOOK_EVENTS);
 const TAR_COMMAND = process.platform === "win32" ? "tar" : "/usr/bin/tar";
 const PROVISIONAL_TERMINAL: TerminalRecord = {
   state: "interrupted",
@@ -342,6 +423,433 @@ export class RunBundleAssembler {
     this.manifest = structuredClone(manifest);
     this.revision += 1;
   }
+}
+
+/** Structurally qualify one retained run bundle without normalizing native evidence. */
+export async function qualifyRunBundle(
+  bundleRoot: string,
+  options: CaptureQualificationOptions = {},
+): Promise<CaptureQualificationReport> {
+  const report = emptyQualificationReport();
+  let document: unknown;
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(readBoundedFile(join(resolve(bundleRoot), "manifest.json"), "Run manifest"));
+    assertNoDuplicateJsonKeys(text);
+    document = JSON.parse(text);
+  } catch (error) {
+    addQualificationReason(report, "attemptIdentity", "unqualified", "MANIFEST_INVALID", undefined, errorMessage(error));
+    return finishQualificationReport(report);
+  }
+  if (!isRecord(document) || !Array.isArray(document.evidence)) {
+    addQualificationReason(report, "attemptIdentity", "unqualified", "MANIFEST_INVALID", undefined, "Run manifest is not a record with evidence.");
+    return finishQualificationReport(report);
+  }
+  const manifest = document as unknown as RunManifest;
+  report.attempt = structuredClone(manifest.attempt);
+  report.terminal = structuredClone(manifest.terminal);
+
+  const manifestErrors = validateArtifact("manifest.json", manifest);
+  for (const error of manifestErrors) {
+    const dimension = error.field.startsWith("/attempt") ? "attemptIdentity"
+      : error.field.startsWith("/terminal") ? "terminal"
+        : "semanticEvidence";
+    addQualificationReason(
+      report,
+      dimension,
+      "unqualified",
+      dimension === "attemptIdentity" ? "ATTEMPT_IDENTITY_INVALID"
+        : dimension === "terminal" ? "TERMINAL_CLASSIFICATION_INVALID" : "MANIFEST_INVALID",
+      undefined,
+      `${error.field}: ${error.message}`,
+    );
+  }
+  if (manifestErrors.length > 0) return finishQualificationReport(report);
+
+  type ArtifactState = {
+    descriptor: RunBundleEvidenceDescriptor;
+    document?: unknown;
+    hookNames?: string[];
+    sessionIds?: string[];
+    bytes?: Buffer;
+    valid: boolean;
+  };
+  const states = new Map<string, ArtifactState>();
+  for (const descriptor of manifest.evidence) {
+    const state: ArtifactState = { descriptor, valid: true };
+    states.set(descriptor.id, state);
+    try {
+      const bytes = await readVerifiedArtifact(
+        bundleRoot,
+        descriptor.relativePath,
+        digestValue(descriptor.digest),
+        MAX_QUALIFICATION_ARTIFACT_BYTES,
+      );
+      if (descriptor.mediaType === "application/x-ndjson") {
+        const summary = parseNativeJsonl(bytes);
+        state.hookNames = summary.hookNames;
+        state.sessionIds = summary.sessionIds;
+      } else if (descriptor.mediaType === "application/json") {
+        const parsed = parseNativeJson(bytes);
+        if (descriptor.kind === "session" || descriptor.kind === "hook") {
+          const summary = nativeRecordSummary([parsed]);
+          state.hookNames = summary.hookNames;
+          state.sessionIds = summary.sessionIds;
+        } else {
+          state.document = descriptor.kind === "telemetry" ? telemetrySummary(parsed) : parsed;
+        }
+      }
+      if (descriptor.kind === "workspace" && descriptor.mediaType === "text/x-diff") state.bytes = bytes;
+    } catch (error) {
+      state.valid = false;
+      const { dimension, code } = artifactFailure(descriptor, error);
+      addQualificationReason(report, dimension, "unqualified", code, descriptor.id, errorMessage(error));
+    }
+  }
+
+  if (!report.reasons.some((reason) => reason.code === "ARTIFACT_TOO_LARGE")) {
+    for (const error of validateRunManifestEvidence("manifest.json", manifest, bundleRoot)) {
+      const descriptor = descriptorFromValidationField(manifest, error.field);
+      const dimension = descriptor === undefined
+        ? error.field.startsWith("/terminal") ? "terminal" : "semanticEvidence"
+        : artifactFailure(descriptor, new Error(error.message)).dimension;
+      const code = dimension === "terminal" ? "TERMINAL_CLASSIFICATION_INVALID" : "ARTIFACT_INTEGRITY_INVALID";
+      addQualificationReason(report, dimension, "unqualified", code, descriptor?.id, `${error.field}: ${error.message}`);
+    }
+  }
+
+  const valid = (kind: RunBundleEvidenceDescriptor["kind"]): ArtifactState[] => [...states.values()].filter((state) =>
+    state.descriptor.kind === kind && state.descriptor.sanitizedFrom === undefined && state.valid);
+  const sessions = valid("session");
+  const hookArtifacts = valid("hook");
+  const hooks = hookArtifacts.filter(({ hookNames }) => (hookNames?.length ?? 0) > 0);
+  const telemetry = valid("telemetry");
+  const workspaces = valid("workspace");
+  const verifiers = valid("verifier");
+  const captureReports = valid("capture-report");
+
+  if (sessions.length === 0) {
+    addQualificationReason(report, "semanticEvidence", "unqualified", "SESSION_EVIDENCE_MISSING", undefined, "No valid native session evidence is retained.");
+  }
+  const sessionId = manifest.run?.native?.sessionId;
+  if (typeof sessionId !== "string" || !sessions.some(({ descriptor }) =>
+    descriptor.nativeReference?.type === "session" && descriptor.nativeReference.id === sessionId)) {
+    addQualificationReason(report, "semanticEvidence", "unqualified", "SESSION_IDENTITY_MISSING", undefined, "Run session identity is not bound to retained session evidence.");
+  }
+  const nativeSessionIds = new Set(sessions.flatMap(({ sessionIds }) => sessionIds ?? []));
+  if (typeof sessionId === "string" && (nativeSessionIds.size !== 1 || !nativeSessionIds.has(sessionId))) {
+    addQualificationReason(report, "semanticEvidence", "unqualified", "SESSION_RECORD_IDENTITY_MISMATCH", undefined, "Retained native session records do not bind exclusively to the run session ID.");
+  }
+  for (const hook of hookArtifacts.filter(({ hookNames }) => hookNames?.length === 0)) {
+    addQualificationReason(report, "hooks", "unqualified", "HOOK_RECORDS_MISSING", hook.descriptor.id, "Hook evidence contains no recognized callback records.");
+  }
+  if (hooks.length === 0) {
+    addQualificationReason(report, "semanticEvidence", "unqualified", "HOOK_EVIDENCE_MISSING", undefined, "No valid native hook evidence is retained.");
+  }
+  qualifyHooks(report, manifest, hooks, options);
+
+  const captureReport = captureReports[0]?.document;
+  qualifyTelemetry(report, telemetry, captureMissingEvidence(captureReport));
+
+  if (workspaces.length === 0) {
+    addQualificationReason(report, "workspace", "unqualified", "WORKSPACE_EVIDENCE_MISSING", undefined, "No valid workspace outcome is retained.");
+  }
+  for (const workspace of workspaces.filter(({ descriptor }) => descriptor.mediaType === "text/x-diff")) {
+    if (options.startingWorkspacePath === undefined) {
+      addQualificationReason(report, "workspace", "gap", "WORKSPACE_PATCH_NOT_CHECKED", workspace.descriptor.id, "Workspace patch applicability was not checked against its starting fixture.");
+    } else if (!await workspacePatchApplies(options.startingWorkspacePath, workspace.bytes!)) {
+      addQualificationReason(report, "workspace", "unqualified", "WORKSPACE_PATCH_UNUSABLE", workspace.descriptor.id, "Workspace patch does not reproduce the retained outcome.");
+    }
+  }
+
+  if (verifiers.length === 0) {
+    addQualificationReason(report, "verifier", "unqualified", "VERIFIER_EVIDENCE_MISSING", undefined, "No valid verifier result is retained.");
+  }
+  for (const verifier of verifiers) {
+    const status = isRecord(verifier.document) ? verifier.document.status : undefined;
+    if (status === "error") {
+      addQualificationReason(report, "verifier", "unqualified", "VERIFIER_RESULT_ERROR", verifier.descriptor.id, "Verifier infrastructure returned an error result.");
+      if (manifest.terminal?.failureClass === "task") {
+        addQualificationReason(report, "terminal", "unqualified", "INFRASTRUCTURE_FAILURE_MISCLASSIFIED_AS_TASK", verifier.descriptor.id, "Verifier infrastructure error cannot be a model task failure.");
+      }
+    } else if (status === "not-run") {
+      addQualificationReason(report, "verifier", "unqualified", "VERIFIER_RESULT_NOT_RUN", verifier.descriptor.id, "Verifier was not run.");
+    }
+  }
+
+  if (manifest.evidence.some((descriptor) => descriptor.sharingClass === "unknown")) {
+    addQualificationReason(report, "sharing", "gap", "SHARING_CLASSIFICATION_UNKNOWN", undefined, "At least one retained artifact has unknown sharing classification.");
+  }
+  for (const exportState of valid("export-manifest")) {
+    const errors = validateExportManifest(exportState.descriptor.relativePath, exportState.document, manifest, bundleRoot);
+    for (const error of errors) {
+      addQualificationReason(report, "sharing", "unqualified", "EXPORT_MANIFEST_INVALID", exportState.descriptor.id, `${error.field}: ${error.message}`);
+    }
+  }
+
+  if (captureReports.length === 0) {
+    addQualificationReason(report, "semanticEvidence", "unqualified", "CAPTURE_REPORT_MISSING", undefined, "No valid capture report is retained.");
+  } else {
+    for (const error of validateArtifact(captureReports[0]!.descriptor.relativePath, captureReport)) {
+      addQualificationReason(report, "semanticEvidence", "unqualified", "CAPTURE_REPORT_INVALID", captureReports[0]!.descriptor.id, `${error.field}: ${error.message}`);
+    }
+    crossCheckCaptureReport(report, captureReports[0]!.descriptor.id, captureReport, {
+      semantic: sessions.length > 0 && hooks.length > 0,
+      timingResource: telemetry.length > 0 && telemetry.every(({ document }) => {
+        const receipt = isRecord(document) && isRecord(document.telemetry) ? document.telemetry.receipt : undefined;
+        return isRecord(receipt) && receipt.status === "received";
+      }),
+      outcome: workspaces.length > 0 && verifiers.length > 0,
+    });
+  }
+
+  return finishQualificationReport(report);
+}
+
+function emptyQualificationReport(): CaptureQualificationReport {
+  const dimension = () => ({ status: "qualified" as const, reasonCodes: [] as CaptureQualificationReasonCode[] });
+  return {
+    status: "qualified",
+    semanticAnalysisUsable: true,
+    dimensions: {
+      attemptIdentity: dimension(), semanticEvidence: dimension(), hooks: dimension(), telemetry: dimension(),
+      workspace: dimension(), verifier: dimension(), terminal: dimension(), sharing: dimension(),
+    },
+    reasons: [],
+  };
+}
+
+function addQualificationReason(
+  report: CaptureQualificationReport,
+  dimension: CaptureQualificationDimension,
+  status: "unsupported" | "gap" | "unqualified",
+  code: CaptureQualificationReasonCode,
+  evidenceId: string | undefined,
+  detail: string,
+): void {
+  if (report.reasons.some((reason) => reason.code === code && reason.dimension === dimension
+      && reason.evidenceId === evidenceId && reason.detail === detail)) return;
+  report.reasons.push({ code, dimension, ...(evidenceId === undefined ? {} : { evidenceId }), detail });
+  const target = report.dimensions[dimension];
+  if (!target.reasonCodes.includes(code)) target.reasonCodes.push(code);
+  if (QUALIFICATION_DIMENSION_RANK[status] > QUALIFICATION_DIMENSION_RANK[target.status]) target.status = status;
+}
+
+function finishQualificationReport(report: CaptureQualificationReport): CaptureQualificationReport {
+  const statuses = Object.values(report.dimensions).map((dimension) => dimension.status);
+  report.status = statuses.includes("unqualified") ? "unqualified" : statuses.includes("gap") ? "qualified-with-gaps" : "qualified";
+  report.semanticAnalysisUsable = report.dimensions.attemptIdentity.status !== "unqualified"
+    && report.dimensions.semanticEvidence.status !== "unqualified"
+    && report.dimensions.hooks.status !== "unqualified";
+  return report;
+}
+
+function artifactFailure(
+  descriptor: RunBundleEvidenceDescriptor,
+  error: unknown,
+): { dimension: CaptureQualificationDimension; code: CaptureQualificationReasonCode } {
+  const dimension: CaptureQualificationDimension = descriptor.kind === "session" ? "semanticEvidence"
+    : descriptor.kind === "hook" ? "hooks"
+      : descriptor.kind === "telemetry" ? "telemetry"
+        : descriptor.kind === "workspace" ? "workspace"
+          : descriptor.kind === "verifier" || descriptor.kind === "diagnostic" ? "verifier"
+            : descriptor.kind === "export-manifest" ? "sharing" : "semanticEvidence";
+  const message = errorMessage(error);
+  const code: CaptureQualificationReasonCode = message.includes("qualification byte limit") ? "ARTIFACT_TOO_LARGE"
+    : descriptor.kind === "capture-report" ? "CAPTURE_REPORT_INVALID"
+    : descriptor.kind === "export-manifest" ? "EXPORT_MANIFEST_INVALID"
+      : descriptor.mediaType === "application/x-ndjson" && message.includes("empty") ? "NATIVE_JSONL_EMPTY"
+        : descriptor.mediaType === "application/x-ndjson" ? "NATIVE_JSONL_MALFORMED"
+          : descriptor.mediaType === "application/json" && ["session", "hook", "telemetry"].includes(descriptor.kind) && message.includes("empty") ? "NATIVE_JSON_EMPTY"
+            : descriptor.mediaType === "application/json" && ["session", "hook", "telemetry"].includes(descriptor.kind) ? "NATIVE_JSON_MALFORMED"
+              : "ARTIFACT_INTEGRITY_INVALID";
+  return { dimension, code };
+}
+
+function parseNativeJson(bytes: Buffer): unknown {
+  if (bytes.length === 0) throw new Error("Native JSON evidence is empty.");
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  assertNoDuplicateJsonKeys(text);
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`Native JSON evidence is malformed: ${errorMessage(error)}`);
+  }
+  if (!isRecord(value) || Object.keys(value).length === 0) throw new Error("Native JSON evidence is empty.");
+  return value;
+}
+
+function parseNativeJsonl(bytes: Buffer): { hookNames: string[]; sessionIds: string[] } {
+  if (bytes.length === 0) throw new Error("Native JSONL evidence is empty.");
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  const lines = text.split(/\r?\n/u).filter((line) => line.trim() !== "");
+  if (lines.length === 0) throw new Error("Native JSONL evidence is empty.");
+  return nativeRecordSummary(lines.map((line, index) => {
+    try {
+      assertNoDuplicateJsonKeys(line);
+      const value: unknown = JSON.parse(line);
+      if (!isRecord(value) || Object.keys(value).length === 0) throw new Error("record is empty");
+      return value;
+    } catch (error) {
+      throw new Error(`Native JSONL evidence line ${index + 1} is malformed: ${errorMessage(error)}`);
+    }
+  }));
+}
+
+function nativeRecordSummary(records: unknown[]): { hookNames: string[]; sessionIds: string[] } {
+  const hookNames: string[] = [];
+  const sessionIds: string[] = [];
+  for (const record of records) {
+    if (!isRecord(record)) continue;
+    const hook = typeof record.hook === "string" ? record.hook
+      : typeof record.hook_event_name === "string" ? record.hook_event_name
+        : typeof record.type === "string" ? record.type : undefined;
+    if (hook !== undefined && PINNED_HOOK_EVENTS.has(hook)) hookNames.push(hook);
+    for (const sessionId of [
+      record.sessionId,
+      record.session_id,
+      isRecord(record.message) ? record.message.session_id : undefined,
+    ]) {
+      if (typeof sessionId === "string") sessionIds.push(sessionId);
+    }
+  }
+  return { hookNames, sessionIds };
+}
+
+function qualifyHooks(
+  report: CaptureQualificationReport,
+  manifest: RunManifest,
+  hooks: Array<{ hookNames?: string[] }>,
+  options: CaptureQualificationOptions,
+): void {
+  const capabilities = options.hookCapabilities;
+  if (capabilities === undefined) {
+    addQualificationReason(report, "hooks", "gap", "HOOK_CAPABILITY_NOT_CHECKED", undefined, "Pinned TypeScript hook capabilities were not supplied.");
+    return;
+  }
+  const runtimeVersion = manifest.run.runtime.find((component) => component.name === "agent-sdk")?.version;
+  if (runtimeVersion !== capabilities.sdkVersion) {
+    addQualificationReason(report, "hooks", "unqualified", "HOOK_CAPABILITY_VERSION_MISMATCH", undefined, `Retained Agent SDK ${String(runtimeVersion)} does not match capability profile ${capabilities.sdkVersion}.`);
+  }
+  const observed = new Set(hooks.flatMap(({ hookNames }) => hookNames ?? []));
+  const supported = new Set(Object.keys(capabilities.hooks));
+  const unsupported = new Set(capabilities.unsupportedHooks);
+  for (const hook of options.expectedHooks ?? []) {
+    if (supported.has(hook) && !observed.has(hook)) {
+      addQualificationReason(report, "hooks", "unqualified", "HOOK_SUPPORTED_BUT_MISSING", undefined, `Pinned SDK supports expected hook ${hook}, but no callback was retained.`);
+    } else if (unsupported.has(hook)) {
+      addQualificationReason(report, "hooks", "unsupported", "HOOK_UNSUPPORTED_BY_PINNED_SDK", undefined, `Pinned SDK does not support expected hook ${hook}.`);
+    } else if (!supported.has(hook)) {
+      addQualificationReason(report, "hooks", "unqualified", "HOOK_CAPABILITY_CONTRADICTION", undefined, `Expected hook ${hook} is absent from the pinned capability profile.`);
+    }
+  }
+  for (const hook of observed) {
+    if (unsupported.has(hook)) {
+      addQualificationReason(report, "hooks", "unqualified", "HOOK_CAPABILITY_CONTRADICTION", undefined, `Hook ${hook} was observed although the pinned profile declares it unsupported.`);
+    }
+  }
+}
+
+function qualifyTelemetry(
+  report: CaptureQualificationReport,
+  telemetry: Array<{ document?: unknown }>,
+  missing: Array<Record<string, unknown>>,
+): void {
+  const optionalBeta = missing.some((entry) => entry.reason === "optional-beta-unavailable"
+    && Array.isArray(entry.affects) && entry.affects.includes("timing-resource"));
+  const unsupported = missing.some((entry) => entry.reason === "unsupported"
+    && Array.isArray(entry.affects) && entry.affects.includes("timing-resource"));
+  if (optionalBeta) {
+    addQualificationReason(report, "telemetry", "gap", "OPTIONAL_BETA_TIMING_UNAVAILABLE", undefined, "Optional detailed-beta timing is unavailable; semantic hook evidence remains usable.");
+  }
+  if (telemetry.length === 0) {
+    if (unsupported) {
+      addQualificationReason(report, "telemetry", "unsupported", "TELEMETRY_UNSUPPORTED_BY_PINNED_RUNTIME", undefined, "Pinned runtime explicitly does not support telemetry evidence.");
+    } else if (!optionalBeta) {
+      addQualificationReason(report, "telemetry", "unqualified", "TELEMETRY_EVIDENCE_MISSING", undefined, "No valid telemetry evidence is retained.");
+    }
+    return;
+  }
+  for (const entry of telemetry) {
+    const receipt = isRecord(entry.document) && isRecord(entry.document.telemetry)
+      ? entry.document.telemetry.receipt : undefined;
+    if (!isRecord(receipt) || receipt.status !== "received") {
+      addQualificationReason(report, "telemetry", "gap", "TELEMETRY_RECEIPT_MISSING", undefined, `Collector receipt status is ${String(isRecord(receipt) ? receipt.status : "absent")}.`);
+    }
+  }
+}
+
+function telemetrySummary(value: unknown): unknown {
+  const receipt = isRecord(value) && isRecord(value.telemetry) ? value.telemetry.receipt : undefined;
+  return { telemetry: { ...(isRecord(receipt) ? { receipt: structuredClone(receipt) } : {}) } };
+}
+
+async function workspacePatchApplies(startingWorkspacePath: string, patch: Buffer): Promise<boolean> {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "ebo-qualification-patch-"));
+  const applied = join(temporaryRoot, "workspace");
+  const patchPath = join(temporaryRoot, "workspace.patch");
+  try {
+    await cp(resolve(startingWorkspacePath), applied, { recursive: true, preserveTimestamps: true, force: false });
+    if (patch.length > 0) {
+      await writeFile(patchPath, patch, { flag: "wx", mode: 0o600 });
+      await execFileAsync("git", ["apply", "--check", "--binary", patchPath], { cwd: applied });
+      await execFileAsync("git", ["apply", "--binary", patchPath], { cwd: applied });
+    }
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
+function crossCheckCaptureReport(
+  report: CaptureQualificationReport,
+  evidenceId: string,
+  value: unknown,
+  actual: Record<"semantic" | "timingResource" | "outcome", boolean>,
+): void {
+  if (!isRecord(value) || !isRecord(value.capabilities)) return;
+  for (const [area, available] of Object.entries(actual) as Array<[keyof typeof actual, boolean]>) {
+    const capability = value.capabilities[area];
+    const claimsAvailable = isRecord(capability) && capability.status === "available";
+    if (claimsAvailable !== available) {
+      const dimension = area === "semantic" ? "semanticEvidence" : area === "timingResource" ? "telemetry" : "workspace";
+      addQualificationReason(report, dimension, "unqualified", "CAPTURE_REPORT_CONTRADICTS_SOURCE", evidenceId, `Capture report ${area}=${String(isRecord(capability) ? capability.status : undefined)} contradicts retained source evidence.`);
+    }
+  }
+  const retainedKinds = new Set<unknown>(Object.entries(actual).filter(([, available]) => available).flatMap(([area]) =>
+    area === "semantic" ? ["session", "hook"] : area === "timingResource" ? ["telemetry"] : ["workspace", "verifier"]));
+  for (const entry of captureMissingEvidence(value)) {
+    if (retainedKinds.has(entry.kind) && entry.reason !== "optional-beta-unavailable") {
+      const dimension = entry.kind === "telemetry" ? "telemetry" : ["workspace", "verifier"].includes(String(entry.kind)) ? "workspace" : "semanticEvidence";
+      addQualificationReason(report, dimension, "unqualified", "CAPTURE_REPORT_CONTRADICTS_SOURCE", evidenceId, `Capture report marks retained ${String(entry.kind)} evidence as missing.`);
+    }
+  }
+}
+
+function captureMissingEvidence(value: unknown): Array<Record<string, unknown>> {
+  return isRecord(value) && Array.isArray(value.missingEvidence)
+    ? value.missingEvidence.filter(isRecord)
+    : [];
+}
+
+function descriptorFromValidationField(manifest: RunManifest, field: string): RunBundleEvidenceDescriptor | undefined {
+  if (!field.startsWith("/evidence/")) return undefined;
+  const id = field.slice("/evidence/".length).split("/")[0]?.replaceAll("~1", "/").replaceAll("~0", "~");
+  return manifest.evidence.find((descriptor) => descriptor.id === id);
+}
+
+function digestValue(value: DigestString): { algorithm: "sha256"; value: string } {
+  return { algorithm: "sha256", value: value.slice("sha256:".length) };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function captureReport(
