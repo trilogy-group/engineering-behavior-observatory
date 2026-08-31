@@ -191,6 +191,21 @@ export type {
   PortableExportPolicy,
 } from "./exports.js";
 export {
+  buildCorpusIndex,
+  packPortableExport,
+  queryCorpusIndex,
+  readCorpusIndex,
+  unpackPortableExport,
+  validateCorpusIndex,
+  writeCorpusIndex,
+} from "./corpus.js";
+export type {
+  CorpusIndexEntry,
+  CorpusIndexQuery,
+  CorpusIndexValidationIssue,
+  CorpusSourceIssue,
+} from "./corpus.js";
+export {
   BoundedDiagnosticCapture,
   JsonlEvidenceWriter,
   openJsonlEvidenceWriter,

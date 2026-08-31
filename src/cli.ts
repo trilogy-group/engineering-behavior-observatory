@@ -4,7 +4,18 @@ import { realpathSync } from "node:fs";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { assertNoDuplicateJsonKeys, validateArtifact, validateExportManifest, validateRunManifestEvidence } from "./artifacts.js";
+import { assertNoDuplicateJsonKeys, canonicalizeMetadata, validateArtifact, validateExportManifest, validateRunManifestEvidence } from "./artifacts.js";
+import {
+  buildCorpusIndex,
+  packPortableExport,
+  queryCorpusIndex,
+  readCorpusIndex,
+  unpackPortableExport,
+  validateCorpusIndex,
+  writeCorpusIndex,
+  type CorpusIndexQuery,
+} from "./corpus.js";
+import type { PortableExportPolicy } from "./exports.js";
 import {
   admitTaskPacket,
   formatErrors,
@@ -25,6 +36,11 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo matrix compile <experiment.json> <bundle-root> <queue.json> [--freeze-locator <task-id>=<path>]
        ebo queue inspect <queue.json>
        ebo queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
+       ebo corpus build <corpus-root> <index.jsonl>
+       ebo corpus query <index.jsonl> [--kind|--run|--attempt|--task|--model|--harness|--terminal|--failure-class|--verifier-status|--capture|--export-status|--sharing-class <value>]
+       ebo corpus validate <corpus-root> <index.jsonl>
+       ebo corpus pack <export-root> <policy.json> <archive.tar.gz>
+       ebo corpus unpack <archive.tar.gz> <destination-root>
 
 Engineering Behavior Observatory
 `;
@@ -36,7 +52,7 @@ export function main(
   write: (message: string) => void = (message) => {
     process.stdout.write(message);
   },
-): number {
+): number | Promise<number> {
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     write(usage);
     return 0;
@@ -67,6 +83,10 @@ export function main(
 
   if (args[0] === "queue" && args[1] === "validate") {
     return validateQueue(args.slice(2), write);
+  }
+
+  if (args[0] === "corpus") {
+    return runCorpusCommand(args.slice(1), write);
   }
 
   if (args[0] === "validate") {
@@ -124,6 +144,75 @@ export function main(
 
   process.stderr.write(`Unknown argument: ${args[0]}\n`);
   return 1;
+}
+
+function runCorpusCommand(args: string[], write: (message: string) => void): number | Promise<number> {
+  const [command, first, second, third] = args;
+  try {
+    if (command === "build" && first !== undefined && second !== undefined && args.length === 3) {
+      const entries = buildCorpusIndex(first);
+      writeCorpusIndex(second, entries);
+      write(`Built ${entries.length} corpus index entr${entries.length === 1 ? "y" : "ies"}.\n`);
+      return 0;
+    }
+    if (command === "query" && first !== undefined) {
+      const query = parseCorpusQuery(args.slice(2));
+      for (const entry of queryCorpusIndex(readCorpusIndex(first), query)) write(`${canonicalizeMetadata(entry)}\n`);
+      return 0;
+    }
+    if (command === "validate" && first !== undefined && second !== undefined && args.length === 3) {
+      const issues = validateCorpusIndex(first, readCorpusIndex(second));
+      for (const issue of issues) write(`${issue.manifestPath} [${issue.kind}]: ${issue.message}\n`);
+      if (issues.length > 0) return 1;
+      write("Corpus index is current and all indexed evidence is reachable.\n");
+      return 0;
+    }
+    if (command === "pack" && first !== undefined && second !== undefined && third !== undefined && args.length === 4) {
+      return packPortableExport(first, third, readJson(second) as PortableExportPolicy).then((digest) => {
+        write(`Packed portable export (${digest}).\n`);
+        return 0;
+      }, (error: unknown) => {
+        write(`${errorMessage(error)}\n`);
+        return 1;
+      });
+    }
+    if (command === "unpack" && first !== undefined && second !== undefined && args.length === 3) {
+      const manifest = unpackPortableExport(first, second);
+      write(`Unpacked portable export ${manifest.bundleId} (${manifest.artifacts.length} artifacts).\n`);
+      return 0;
+    }
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  }
+  write("Usage: ebo corpus <build|query|validate|pack|unpack> ...\n");
+  return 1;
+}
+
+function parseCorpusQuery(args: string[]): CorpusIndexQuery {
+  const fields: Record<string, keyof CorpusIndexQuery> = {
+    "--kind": "manifestKind",
+    "--run": "runId",
+    "--trial": "runId",
+    "--attempt": "attemptId",
+    "--task": "taskId",
+    "--model": "modelId",
+    "--harness": "harnessId",
+    "--terminal": "terminalState",
+    "--failure-class": "failureClass",
+    "--verifier-status": "verifierStatus",
+    "--capture": "captureQualification",
+    "--export-status": "exportStatus",
+    "--sharing-class": "sharingClass",
+  };
+  const query: Record<string, string> = {};
+  for (let index = 0; index < args.length; index += 2) {
+    const field = fields[args[index]!];
+    const value = args[index + 1];
+    if (field === undefined || value === undefined) throw new Error("Corpus query filters require a supported flag and value.");
+    query[field] = value;
+  }
+  return query as CorpusIndexQuery;
 }
 
 function compileQueue(
@@ -297,5 +386,10 @@ function isDirectExecution(entryPath = process.argv[1]): boolean {
 }
 
 if (isDirectExecution()) {
-  process.exitCode = main();
+  Promise.resolve(main()).then((exitCode) => {
+    process.exitCode = exitCode;
+  }, (error: unknown) => {
+    process.stderr.write(`${errorMessage(error)}\n`);
+    process.exitCode = 1;
+  });
 }
