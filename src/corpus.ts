@@ -93,6 +93,7 @@ export type CorpusIndexValidationIssue = {
 
 const INDEX_SCHEMA_VERSION = "ebo.corpus-index-entry/v1" as const;
 const MAX_CORPUS_MANIFESTS = 100_000;
+const MAX_CORPUS_INDEX_BYTES = 512 * 1024 * 1024;
 const MAX_PORTABLE_ARCHIVE_BYTES = 512 * 1024 * 1024;
 const MAX_PORTABLE_ARCHIVE_MEMBERS = 10_000;
 const TAR_BLOCK_BYTES = 512;
@@ -105,11 +106,14 @@ export function buildCorpusIndex(corpusRoot: string): CorpusIndexEntry[] {
 
 export function writeCorpusIndex(path: string, entries: readonly CorpusIndexEntry[]): void {
   const bytes = Buffer.from(entries.map((entry) => canonicalizeMetadata(entry)).join("\n") + (entries.length === 0 ? "" : "\n"));
+  if (bytes.length > MAX_CORPUS_INDEX_BYTES) throw new Error("Corpus index exceeds its local byte limit.");
   writeAtomically(path, bytes, true);
 }
 
 export function readCorpusIndex(path: string): CorpusIndexEntry[] {
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(readBoundedFile(path, "Corpus index"));
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(
+    readBoundedFile(path, "Corpus index", undefined, MAX_CORPUS_INDEX_BYTES),
+  );
   if (text.trim() === "") return [];
   return text.trimEnd().split("\n").map((line, index) => {
     assertNoDuplicateJsonKeys(line);
@@ -238,26 +242,32 @@ function discoverManifestPaths(root: string): string[] {
 function projectManifest(root: string, manifestPath: string): CorpusIndexEntry {
   const bytes = readBoundedFile(join(root, ...manifestPath.split("/")), "Corpus manifest");
   const manifestRoot = dirname(join(root, ...manifestPath.split("/")));
-  const document = parseJson(bytes, `Corpus manifest ${manifestPath}`);
-  const schemaVersion = isRecord(document) ? document.schemaVersion : undefined;
-  const manifestKind = schemaVersion === "run-manifest/v1" ? "run"
-    : schemaVersion === "export-manifest/v1" ? "export" : "unknown";
-  const issues = validateArtifact(manifestPath, document).map(({ field, message }) => ({ field, message }));
   const entry: CorpusIndexEntry = {
     schemaVersion: INDEX_SCHEMA_VERSION,
-    manifestKind,
+    manifestKind: "unknown",
     manifestPath,
     manifestDigest: digestString(digestBytes(bytes)),
     verifierArtifactIds: [],
     verifierStatuses: [],
     captureArtifactIds: [],
     exportArtifactIds: [],
-    issues,
+    issues: [],
   };
+  let document: unknown;
+  try {
+    document = parseJson(bytes, `Corpus manifest ${manifestPath}`);
+  } catch (error) {
+    entry.issues.push({ field: "/", message: errorMessage(error) });
+    return entry;
+  }
+  const schemaVersion = isRecord(document) ? document.schemaVersion : undefined;
+  entry.manifestKind = schemaVersion === "run-manifest/v1" ? "run"
+    : schemaVersion === "export-manifest/v1" ? "export" : "unknown";
+  entry.issues.push(...validateArtifact(manifestPath, document).map(({ field, message }) => ({ field, message })));
   if (!isRecord(document)) return entry;
   if (typeof document.bundleId === "string") entry.bundleId = document.bundleId;
-  if (manifestKind === "run") projectRun(entry, document as unknown as RunManifest, manifestRoot);
-  if (manifestKind === "export") projectExport(entry, document as unknown as PortableExportManifest, manifestRoot);
+  if (entry.manifestKind === "run") projectRun(entry, document as unknown as RunManifest, manifestRoot);
+  if (entry.manifestKind === "export") projectExport(entry, document as unknown as PortableExportManifest, manifestRoot);
   entry.issues = uniqueSourceIssues(entry.issues);
   return entry;
 }

@@ -199,3 +199,22 @@ test("malformed evidence remains an indexed issue", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("unparsable manifests remain unknown corpus issues", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-unparsable-corpus-"));
+  try {
+    cpSync(join(fixtures, "task-failed"), join(root, "valid"), { recursive: true });
+    mkdirSync(join(root, "damaged"));
+    writeFileSync(join(root, "damaged", "manifest.json"), '{"schemaVersion":"run-manifest/v1"');
+
+    const entries = buildCorpusIndex(root);
+    assert.equal(entries.length, 2);
+    const damaged = entries.find(({ manifestPath }) => manifestPath === "damaged/manifest.json")!;
+    assert.equal(damaged.manifestKind, "unknown");
+    assert.ok(damaged.issues.some(({ message }) => /unterminated|valid JSON/i.test(message)));
+    assert.ok(validateCorpusIndex(root, entries).some(({ kind, manifestPath }) =>
+      kind === "evidence" && manifestPath === "damaged/manifest.json"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
