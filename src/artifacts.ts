@@ -14,8 +14,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { link, lstat, mkdir, open, readdir, realpath, rename, rm } from "node:fs/promises";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { link, lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Ajv2020, type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
@@ -25,6 +25,7 @@ import {
   closeBundleRoot,
   isSafeArtifactRelativePath,
   openBundleRoot,
+  removeInterruptedPublicationLink,
   resolveBundleArtifact,
   type BundleRootHandle,
   type Digest,
@@ -945,7 +946,7 @@ export async function readVerifiedArtifact(
   expectedDigest: Digest,
 ): Promise<Buffer> {
   const { root, path } = await resolveExistingArtifactPath(artifactRoot, relativePath);
-  await recoverNoClobberLink(path);
+  removeInterruptedPublicationLink(path, lstatSync(path));
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
 
   try {
@@ -968,30 +969,6 @@ export async function readVerifiedArtifact(
     return bytes;
   } finally {
     await handle.close();
-  }
-}
-
-async function recoverNoClobberLink(path: string): Promise<void> {
-  let target;
-  try {
-    target = await lstat(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
-  if (!target.isFile() || target.isSymbolicLink() || target.nlink <= 1) return;
-  const parent = dirname(path);
-  for (const name of await readdir(parent)) {
-    if (!/^\.[0-9a-f-]{36}\.tmp$/.test(name)) continue;
-    const temporaryPath = resolve(parent, basename(name));
-    try {
-      const temporary = await lstat(temporaryPath);
-      if (temporary.isFile() && temporary.dev === target.dev && temporary.ino === target.ino) {
-        await rm(temporaryPath, { force: true });
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
   }
 }
 
@@ -1053,7 +1030,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
   let temporaryPath: string | undefined;
 
   try {
-    const { parent, path } = prepareArtifactPathSync(rootIdentity.path, relativePath);
+    const { createdDirectories, parent, path } = prepareArtifactPathSync(rootIdentity.path, relativePath);
     temporaryPath = resolve(parent, `.${randomUUID()}.tmp`);
     descriptor = openSync(
       temporaryPath,
@@ -1080,7 +1057,7 @@ export function writeMetadataAtomicallyIfAbsentSync(
       }
       temporaryPath = undefined;
     }
-    syncDirectorySync(parent);
+    syncPublicationDirectories(rootIdentity.path, createdDirectories, parent);
     if (created) afterDestinationPublish?.();
     return { created, digest: digestExistingPath(path, relativePath) };
   } finally {
@@ -1376,10 +1353,11 @@ async function prepareArtifactPath(artifactRoot: string, relativePath: string): 
 function prepareArtifactPathSync(
   artifactRoot: string,
   relativePath: string,
-): { parent: string; path: string } {
+): { createdDirectories: string[]; parent: string; path: string } {
   assertSafeArtifactPath(relativePath);
   const root = realpathSync(artifactRoot);
   const segments = relativePath.split("/");
+  const createdDirectories: string[] = [];
   let parent = root;
 
   for (const segment of segments.slice(0, -1)) {
@@ -1387,6 +1365,7 @@ function prepareArtifactPathSync(
     if (!isContained(root, parent)) throw new Error(`Artifact path "${relativePath}" escapes its declared root.`);
     try {
       mkdirSync(parent, { mode: 0o700 });
+      createdDirectories.push(parent);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
@@ -1405,13 +1384,17 @@ function prepareArtifactPathSync(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  return { parent, path };
+  return { createdDirectories, parent, path };
 }
 
 function digestExistingPath(path: string, relativePath: string): Digest {
   const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const opened = fstatSync(descriptor);
+    let opened = fstatSync(descriptor);
+    if (opened.nlink > 1) {
+      removeInterruptedPublicationLink(path, opened);
+      opened = fstatSync(descriptor);
+    }
     const openedTimes = fstatSync(descriptor, { bigint: true });
     if (!opened.isFile() || !isReadablePublishedFile(path, opened)
         || !Number.isSafeInteger(opened.size) || opened.size < 0) {
@@ -1473,6 +1456,11 @@ function syncDirectorySync(path: string): void {
   } finally {
     closeSync(descriptor);
   }
+}
+
+function syncPublicationDirectories(root: string, createdDirectories: readonly string[], parent: string): void {
+  const directories = new Set([parent, ...createdDirectories.slice().reverse(), ...createdDirectories.map(dirname), root]);
+  for (const directory of directories) syncDirectorySync(directory);
 }
 
 async function syncDirectory(path: string): Promise<void> {

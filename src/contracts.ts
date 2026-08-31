@@ -635,10 +635,11 @@ function isReadableBundleFile(
   }
 }
 
-function removeInterruptedPublicationLink(path: string, target: { dev: number; ino: number }): void {
+export function removeInterruptedPublicationLink(path: string, target: { dev: number; ino: number }): void {
   for (const name of readdirSync(dirname(path))) {
     if (!/^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(name)) continue;
     const temporaryPath = resolve(dirname(path), name);
+    if (temporaryPath === path) continue;
     try {
       const candidate = lstatSync(temporaryPath);
       if (candidate.isFile() && sameFileIdentity(candidate, target)) unlinkSync(temporaryPath);

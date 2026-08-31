@@ -550,6 +550,20 @@ test("stale unique temporary names do not block publication", () => {
   }
 });
 
+test("temp-shaped destinations survive interrupted-alias cleanup", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-temp-shaped-destination-"));
+  const destination = ".00000000-0000-4000-8000-000000000000.tmp";
+  const alias = join(root, ".11111111-1111-4111-8111-111111111111.tmp");
+  try {
+    const result = writeMetadataAtomicallyIfAbsentSync(root, destination, { state: "ready" });
+    linkSync(join(root, destination), alias);
+    assert.deepEqual(await readVerifiedArtifact(root, destination, result.digest), Buffer.from('{"state":"ready"}'));
+    assert.equal(existsSync(join(root, destination)), true);
+    assert.equal(existsSync(alias), false);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
 
 test("freeze publication rejects a symlinked ancestor", () => {
   const { root } = createBundle();
