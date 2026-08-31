@@ -34,6 +34,47 @@ export type ClaudeAgentSdkLifecycleEvent =
   | { type: "completed"; at: string; messageCount: number }
   | { type: "failed"; at: string; messageCount: number; error: string };
 
+export type ClaudeAgentSdkMessageDiagnostic = {
+  sequence: number;
+  code: "unknown-native-type";
+  nativeType: string;
+};
+
+export type ClaudeAgentSdkMessageRecord = {
+  schemaVersion: "ebo.agent-sdk-message/v1";
+  sequence: number;
+  capturedAt: string;
+  nativeType: string;
+  nativeSubtype?: string;
+  sessionId?: string;
+  message: SDKMessage;
+  diagnostics?: ClaudeAgentSdkMessageDiagnostic[];
+};
+
+export type ClaudeAgentSdkCaptureReport = {
+  schemaVersion: "ebo.agent-sdk-capture/v1";
+  status: "complete" | "partial";
+  artifact: {
+    path: string;
+    kind: "session";
+    authority: "semantic";
+    mediaType: "application/x-ndjson";
+    sharingClass: "restricted";
+  };
+  capabilities: {
+    typedMessageStream: { status: "available"; messageCount: number };
+    sessionIdentity:
+      | { status: "available"; sessionId: string; source: "sdk-result.session_id" | "sdk-message.session_id" }
+      | { status: "missing"; reason: "not-emitted" };
+  };
+  result?: { uuid: string; subtype: string; sessionId: string };
+  diagnostics: {
+    count: number;
+    retained: ClaudeAgentSdkMessageDiagnostic[];
+    truncated: boolean;
+  };
+};
+
 export type ClaudeAgentSdkEvidenceSink = EvidenceSink & {
   message: (message: SDKMessage) => void | Promise<void>;
   stderr: (data: string) => void;
@@ -75,6 +116,13 @@ export type ClaudeAgentSdkCaptureWarnings = {
   diagnostic: string;
   sizeBytes: number;
   truncated: boolean;
+};
+
+export type ClaudeAgentSdkStreamCapture = ClaudeAgentSdkEvidenceSink & {
+  path: string;
+  flush: () => Promise<void>;
+  report: () => ClaudeAgentSdkCaptureReport;
+  close: () => Promise<void>;
 };
 
 export type ClaudeAgentSdkCapabilities = {
@@ -144,6 +192,99 @@ export async function openClaudeAgentSdkHookCapture(
     },
     flush: () => writer.flush(),
     close: () => writer.close(),
+  };
+}
+
+const MAX_CAPTURE_DIAGNOSTICS = 32;
+const KNOWN_MESSAGE_TYPES = new Set<SDKMessage["type"]>([
+  "assistant",
+  "auth_status",
+  "conversation_reset",
+  "prompt_suggestion",
+  "rate_limit_event",
+  "result",
+  "stream_event",
+  "system",
+  "tool_progress",
+  "tool_use_summary",
+  "user",
+]);
+
+export async function openClaudeAgentSdkStreamCapture(
+  path: string,
+  sink: ClaudeAgentSdkEvidenceSink,
+  now: () => string = () => new Date().toISOString(),
+): Promise<ClaudeAgentSdkStreamCapture> {
+  validateEvidenceSink(sink);
+  const writer = await openJsonlEvidenceWriter(path, { exclusive: true });
+  let sequence = 0;
+  let sessionId: string | undefined;
+  let sessionSource: "sdk-result.session_id" | "sdk-message.session_id" | undefined;
+  let result: ClaudeAgentSdkCaptureReport["result"];
+  let diagnosticCount = 0;
+  let appendError: unknown;
+  const diagnostics: ClaudeAgentSdkMessageDiagnostic[] = [];
+
+  return {
+    path: writer.path,
+    async message(message) {
+      const record = nativeMessageRecord(message, sequence + 1, now());
+      const value = message as unknown;
+      try {
+        await writer.append(record);
+      } catch (error) {
+        appendError ??= error;
+        throw error;
+      }
+      sequence = record.sequence;
+      for (const diagnostic of record.diagnostics ?? []) {
+        diagnosticCount += 1;
+        if (diagnostics.length < MAX_CAPTURE_DIAGNOSTICS) diagnostics.push(diagnostic);
+      }
+      if (record.sessionId !== undefined && sessionId === undefined) {
+        sessionId = record.sessionId;
+        sessionSource = "sdk-message.session_id";
+      }
+      if (record.nativeType === "result" && record.sessionId !== undefined && isRecord(value)
+          && typeof value.uuid === "string" && typeof value.subtype === "string") {
+        sessionId = record.sessionId;
+        sessionSource = "sdk-result.session_id";
+        result = { uuid: value.uuid, subtype: value.subtype, sessionId: record.sessionId };
+      }
+      await sink.message(message);
+    },
+    stderr: (data) => sink.stderr(data),
+    hook: (event, input, toolUseId, signal) => sink.hook(event, input, toolUseId, signal),
+    lifecycle: (event) => sink.lifecycle(event),
+    async flush() {
+      const results = await Promise.allSettled([writer.flush(), Promise.resolve().then(() => sink.flush?.())]);
+      const error = appendError ?? results.find((entry) => entry.status === "rejected")?.reason;
+      if (error !== undefined) throw error;
+    },
+    close: () => writer.close(),
+    report: () => ({
+      schemaVersion: "ebo.agent-sdk-capture/v1",
+      status: result === undefined || appendError !== undefined ? "partial" : "complete",
+      artifact: {
+        path: writer.path,
+        kind: "session",
+        authority: "semantic",
+        mediaType: "application/x-ndjson",
+        sharingClass: "restricted",
+      },
+      capabilities: {
+        typedMessageStream: { status: "available", messageCount: sequence },
+        sessionIdentity: sessionId === undefined || sessionSource === undefined
+          ? { status: "missing", reason: "not-emitted" }
+          : { status: "available", sessionId, source: sessionSource },
+      },
+      ...(result === undefined ? {} : { result: { ...result } }),
+      diagnostics: {
+        count: diagnosticCount,
+        retained: diagnostics.map((diagnostic) => ({ ...diagnostic })),
+        truncated: diagnosticCount > diagnostics.length,
+      },
+    }),
   };
 }
 
@@ -437,6 +578,26 @@ function validateEvidenceSink(sink: ClaudeAgentSdkEvidenceSink): void {
   if (!isRecord(sink) || [sink.message, sink.stderr, sink.hook, sink.lifecycle].some((callback) => typeof callback !== "function")) {
     throw new Error("Claude Agent SDK evidence sink requires message, stderr, hook, and lifecycle callbacks.");
   }
+}
+
+function nativeMessageRecord(message: SDKMessage, sequence: number, capturedAt: string): ClaudeAgentSdkMessageRecord {
+  const value = message as unknown;
+  const nativeType = isRecord(value) && typeof value.type === "string" && value.type !== "" ? value.type : "unknown";
+  const nativeSubtype = isRecord(value) && typeof value.subtype === "string" && value.subtype !== "" ? value.subtype : undefined;
+  const sessionId = isRecord(value) && typeof value.session_id === "string" && value.session_id !== "" ? value.session_id : undefined;
+  const diagnostic = KNOWN_MESSAGE_TYPES.has(nativeType as SDKMessage["type"])
+    ? undefined
+    : { sequence, code: "unknown-native-type" as const, nativeType: nativeType.slice(0, 256) };
+  return {
+    schemaVersion: "ebo.agent-sdk-message/v1",
+    sequence,
+    capturedAt,
+    nativeType,
+    ...(nativeSubtype === undefined ? {} : { nativeSubtype }),
+    ...(sessionId === undefined ? {} : { sessionId }),
+    message,
+    ...(diagnostic === undefined ? {} : { diagnostics: [diagnostic] }),
+  };
 }
 
 function installedVersions(): { sdkVersion: string; claudeCodeVersion: string } {
