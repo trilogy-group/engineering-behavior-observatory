@@ -11,7 +11,7 @@ last_memory_sync: 2026-08-31T12:29:52.140252+00:00
 
 ## Current model
 
-- COE-570 contributed: PR #15: COE-570: capture TypeScript Agent SDK lifecycle hooks (merge `8ca6c62`)
+- COE-590 contributed: PR #19: COE-590: complete the production Agent SDK capture path (merge `5d440ca`)
 
 ## Important invariants
 
@@ -28,10 +28,10 @@ last_memory_sync: 2026-08-31T12:29:52.140252+00:00
 
 ## Recent changes
 
-- COE-570: Capture the supported TypeScript Agent SDK lifecycle hooks
+- COE-590: Complete the production Agent SDK capture path
 
 ## Source refs
 
-- COE-570
+- COE-590
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

@@ -11,7 +11,7 @@ last_memory_sync: 2026-08-31T12:29:52.140543+00:00
 
 ## Current model
 
-- COE-568 contributed: PR #15: COE-570: capture TypeScript Agent SDK lifecycle hooks (merge `8ca6c62`)
+- COE-590 contributed: PR #19: COE-590: complete the production Agent SDK capture path (merge `5d440ca`)
 
 ## Important invariants
 
@@ -28,10 +28,10 @@ last_memory_sync: 2026-08-31T12:29:52.140543+00:00
 
 ## Recent changes
 
-- COE-568: Implement the Claude Agent SDK executor
+- COE-590: Complete the production Agent SDK capture path
 
 ## Source refs
 
-- COE-568
+- COE-590
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

@@ -11,7 +11,7 @@ last_memory_sync: 2026-08-31T12:29:52.140383+00:00
 
 ## Current model
 
-- COE-572 contributed: PR #17: COE-572: assemble complete and partial run bundles (merge `affd9de`)
+- COE-590 contributed: PR #19: COE-590: complete the production Agent SDK capture path (merge `5d440ca`)
 
 ## Important invariants
 
@@ -28,10 +28,10 @@ last_memory_sync: 2026-08-31T12:29:52.140383+00:00
 
 ## Recent changes
 
-- COE-572: Package outcome and partial run evidence
+- COE-590: Complete the production Agent SDK capture path
 
 ## Source refs
 
-- COE-572
+- COE-590
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

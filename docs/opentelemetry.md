@@ -11,7 +11,7 @@ last_memory_sync: 2026-08-31T12:29:52.140353+00:00
 
 ## Current model
 
-- COE-571 contributed: PR #13: COE-571: configure correlated Agent SDK OTLP receipt checks (merge `113490f`)
+- COE-590 contributed: PR #19: COE-590: complete the production Agent SDK capture path (merge `5d440ca`)
 
 ## Important invariants
 
@@ -28,10 +28,10 @@ last_memory_sync: 2026-08-31T12:29:52.140353+00:00
 
 ## Recent changes
 
-- COE-571: Configure Agent SDK OpenTelemetry correlation and receipt checks
+- COE-590: Complete the production Agent SDK capture path
 
 ## Source refs
 
-- COE-571
+- COE-590
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

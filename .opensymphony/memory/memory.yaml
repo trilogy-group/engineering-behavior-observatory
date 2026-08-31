@@ -71,8 +71,12 @@ areas:
     - evidence
     source_refs:
       linear_labels:
+      - area:agent-sdk
+      - area:capture
       - area:evidence
       - area:outcomes
+      - area:quality
+      - area:runner
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
   hooks:
@@ -85,7 +89,11 @@ areas:
     - hooks
     source_refs:
       linear_labels:
+      - area:agent-sdk
+      - area:capture
       - area:hooks
+      - area:quality
+      - area:runner
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
   m2-native-agent-sdk-capture:
@@ -110,7 +118,11 @@ areas:
     - opentelemetry
     source_refs:
       linear_labels:
+      - area:agent-sdk
+      - area:capture
       - area:opentelemetry
+      - area:quality
+      - area:runner
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
   outcomes:
@@ -123,7 +135,11 @@ areas:
     - outcomes
     source_refs:
       linear_labels:
+      - area:agent-sdk
+      - area:capture
       - area:outcomes
+      - area:quality
+      - area:runner
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
   quality:
@@ -182,6 +198,9 @@ areas:
     - runner
     source_refs:
       linear_labels:
+      - area:agent-sdk
+      - area:capture
+      - area:quality
       - area:runner
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
@@ -195,6 +214,10 @@ areas:
     - sessions
     source_refs:
       linear_labels:
+      - area:agent-sdk
+      - area:capture
+      - area:quality
+      - area:runner
       - area:sessions
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
