@@ -26,7 +26,7 @@ import {
 
 const fixtureRoot = resolve("test/fixtures/run-bundles/complete");
 const token = "ghp_abcdefghijklmnopqrstuvwxyz123456";
-const heuristicSecret = "unseeded-password-value-98765";
+const heuristicSecret = "correct horse battery staple";
 const databaseUrl = "postgres://user:password@private.example/database";
 const clientSecret = "client-secret-value-12345";
 const privateKey = "private-key-value-12345";
@@ -50,7 +50,8 @@ test("exports a sanitized public M2 bundle without mutating its source", async (
         id: "session-complete-1",
         session_id: "session-complete-1",
         runId: "run-complete",
-        attemptId: "attempt-complete-1",
+        attemptId: "a",
+        status: "available",
         tool_result: "x".repeat(200),
         apiKey: token,
         path: join(homedir(), "private", "result.txt"),
@@ -68,13 +69,16 @@ test("exports a sanitized public M2 bundle without mutating its source", async (
         session_id: "session-complete-1",
       })}\n`,
       "telemetry/trace.json": `${JSON.stringify({ traceId: "trace-complete-1" })}\n`,
-      "workspace.patch": `${readFileSync(join(fixtureRoot, "workspace.patch"), "utf8")}+${homedir()}/private/result.txt ${userInfo().username} ${token} password=\"${heuristicSecret}\" client_secret=\"${clientSecret}\"\n`,
+      "workspace.patch": `${readFileSync(join(fixtureRoot, "workspace.patch"), "utf8")}+${homedir()}/private/result.txt /workspace/acme/private-repo /mnt/builds/customer ${userInfo().username} ${token} password=\"${heuristicSecret}\" client_secret=\"${clientSecret}\"\n`,
     });
+    const sourceManifest = JSON.parse(readFileSync(join(source, "manifest.json"), "utf8")) as SourceManifest;
+    sourceManifest.attempt.id = "a";
+    writeFileSync(join(source, "manifest.json"), `${JSON.stringify(sourceManifest)}\n`);
     const sourceBefore = snapshot(source);
     const policy: PortableExportPolicy = {
       sharingClass: "public",
       maxArtifactBytes: 4096,
-      maxStringBytes: 48,
+      maxStringBytes: 8,
       sensitiveValues: [token],
     };
 
@@ -101,6 +105,8 @@ test("exports a sanitized public M2 bundle without mutating its source", async (
       secretAccessKey,
       credentialsJson,
       homedir(),
+      "/workspace/acme/private-repo",
+      "/mnt/builds/customer",
       userInfo().username,
       "hidden chain of thought",
       "run-complete",
@@ -116,9 +122,13 @@ test("exports a sanitized public M2 bundle without mutating its source", async (
     const telemetry = jsonArtifact(destination, manifest, "telemetry");
     assert.equal(session.runId, manifest.correlations.runId);
     assert.equal(session.attemptId, manifest.correlations.attemptId);
+    assert.equal(session.status, "available");
+    assert.equal(String(session.tool_result).length, 8);
     assert.equal(session.session_id, manifest.correlations.sessionId);
     assert.equal(hook.session_id, manifest.correlations.sessionId);
     assert.equal(telemetry.traceId, manifest.correlations.traceId);
+    assert.equal(jsonArtifact(destination, manifest, "verifier").schemaVersion, "verifier-result/v1");
+    assert.equal(jsonArtifact(destination, manifest, "capture-report").schemaVersion, "capture-report/v1");
   } finally {
     if (previousSecret === undefined) delete process.env.EBO_TEST_EXPORT_SECRET;
     else process.env.EBO_TEST_EXPORT_SECRET = previousSecret;
@@ -268,6 +278,7 @@ function jsonArtifact(
 }
 
 type SourceManifest = {
+  attempt: { id: string };
   evidence: Array<{
     digest: `sha256:${string}`;
     kind: string;

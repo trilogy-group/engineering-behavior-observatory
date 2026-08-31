@@ -104,12 +104,31 @@ const SECRET_FIELDS = new Set([
   "secretaccesskey",
   "token",
 ]);
+const CORRELATION_FIELDS = new Set(["attemptid", "bundleid", "id", "runid", "sessionid", "traceid"]);
+const TRUNCATABLE_FIELDS = new Set([
+  "body",
+  "commandoutput",
+  "content",
+  "diff",
+  "filecontent",
+  "input",
+  "output",
+  "patch",
+  "prompt",
+  "stderr",
+  "stdout",
+  "text",
+  "toolinput",
+  "toolresult",
+]);
 const SECRET_PATTERNS = [
-  /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/gu,
-  /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{12,}|AKIA[0-9A-Z]{16})\b/gu,
-  /((?:authorization|api[_-]?key|access[_-]?token|oauth[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=]\s*["']?(?:Bearer\s+)?)(?!\[REDACTED_)[^\s,"'}\]]{8,}/giu,
+  /()(?:-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----)()/gu,
+  /()(?:\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{12,}|AKIA[0-9A-Z]{16})\b)()/gu,
+  /((?:authorization|api[_-]?key|access[_-]?token|oauth[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=]\s*")(?!\[REDACTED_SECRET\]")(?:\\.|[^"\\])*(")/giu,
+  /((?:authorization|api[_-]?key|access[_-]?token|oauth[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=]\s*')(?!\[REDACTED_SECRET\]')(?:\\.|[^'\\])*(')/giu,
+  /((?:authorization|api[_-]?key|access[_-]?token|oauth[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=]\s*(?:Bearer\s+)?)(?!\[REDACTED_)[^\s,"'}\]]{8,}()/giu,
 ];
-const LOCAL_PATH = /(?:[A-Za-z]:\\(?:[^\\\s"']+\\)*[^\\\s"']*|\/(?:Users|home|private|tmp|var\/folders)\/[^\s"']+)/gu;
+const LOCAL_PATH = /(^|[\s"'=:(])(?:[A-Za-z]:\\(?:[^\\\s"']+\\)*[^\\\s"']*|\/(?!\/)[^\s"']+)/gu;
 
 /** Create one separately rooted, sanitized derivative of an M2 run bundle. */
 export async function createPortableRunBundleExport(
@@ -315,7 +334,9 @@ function sanitizeArtifact(
     if (retained.length !== sanitized.length) increment(counts, "truncated", sanitized.length - retained.length);
     return Buffer.from(`${retained.join("\n")}\n`);
   }
-  const sanitized = rewriteString(decode(bytes, "text evidence"), policy, replacements, sensitiveValues, localIdentifiers, counts);
+  const sanitized = rewriteString(
+    decode(bytes, "text evidence"), policy, replacements, sensitiveValues, localIdentifiers, counts, false, true,
+  );
   const bounded = truncateUtf8(sanitized, policy.maxArtifactBytes);
   if (bounded !== sanitized) increment(counts, "truncated");
   return Buffer.from(bounded);
@@ -328,9 +349,27 @@ function sanitizeValue(
   sensitiveValues: readonly string[],
   localIdentifiers: readonly string[],
   counts: Map<TransformationAction, number>,
+  fieldName?: string,
+  truncatable = false,
 ): unknown {
-  if (typeof value === "string") return rewriteString(value, policy, replacements, sensitiveValues, localIdentifiers, counts);
-  if (Array.isArray(value)) return value.map((entry) => sanitizeValue(entry, policy, replacements, sensitiveValues, localIdentifiers, counts));
+  const normalizedField = fieldName === undefined ? undefined : normalizeFieldName(fieldName);
+  if (typeof value === "string") {
+    return rewriteString(
+      value,
+      policy,
+      replacements,
+      sensitiveValues,
+      localIdentifiers,
+      counts,
+      normalizedField !== undefined && CORRELATION_FIELDS.has(normalizedField),
+      truncatable,
+    );
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeValue(
+      entry, policy, replacements, sensitiveValues, localIdentifiers, counts, fieldName, truncatable,
+    ));
+  }
   if (!isRecord(value)) return value;
   const output: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
@@ -343,7 +382,16 @@ function sanitizeValue(
       increment(counts, "redacted-secret");
       continue;
     }
-    output[key] = sanitizeValue(entry, policy, replacements, sensitiveValues, localIdentifiers, counts);
+    output[key] = sanitizeValue(
+      entry,
+      policy,
+      replacements,
+      sensitiveValues,
+      localIdentifiers,
+      counts,
+      key,
+      truncatable || TRUNCATABLE_FIELDS.has(normalizeFieldName(key)),
+    );
   }
   if (Object.keys(output).length === 0) throw new Error("Sanitization removed every field from an evidence record.");
   return output;
@@ -356,14 +404,14 @@ function rewriteString(
   sensitiveValues: readonly string[],
   localIdentifiers: readonly string[],
   counts: Map<TransformationAction, number>,
+  rewriteCorrelation: boolean,
+  truncateContent: boolean,
 ): string {
   let output = input;
-  for (const [source, replacement] of [...replacements.entries()].sort(([left], [right]) => right.length - left.length)) {
-    const occurrences = countOccurrences(output, source);
-    if (occurrences > 0) {
-      output = output.replaceAll(source, replacement);
-      increment(counts, "rewritten-correlation", occurrences);
-    }
+  const correlation = rewriteCorrelation ? replacements.get(output) : undefined;
+  if (correlation !== undefined) {
+    output = correlation;
+    increment(counts, "rewritten-correlation");
   }
   for (const secret of sensitiveValues) {
     const occurrences = countOccurrences(output, secret);
@@ -373,22 +421,23 @@ function rewriteString(
     }
   }
   for (const pattern of SECRET_PATTERNS) {
-    output = output.replace(pattern, (_match, prefix: unknown) => {
+    output = output.replace(pattern, (_match, prefix: unknown, suffix: unknown) => {
       increment(counts, "redacted-secret");
-      return `${typeof prefix === "string" ? prefix : ""}[REDACTED_SECRET]`;
+      return `${typeof prefix === "string" ? prefix : ""}[REDACTED_SECRET]${typeof suffix === "string" ? suffix : ""}`;
     });
   }
-  output = output.replace(LOCAL_PATH, () => {
+  output = output.replace(LOCAL_PATH, (_match, prefix: unknown) => {
     increment(counts, "redacted-local-identifier");
-    return "[LOCAL_PATH]";
+    return `${typeof prefix === "string" ? prefix : ""}[LOCAL_PATH]`;
   });
   for (const identifier of localIdentifiers.filter((value) => value !== homedir())) {
-    const pattern = new RegExp(`\\b${escapeRegExp(identifier)}\\b`, "gu");
-    output = output.replace(pattern, () => {
-      increment(counts, "redacted-local-identifier");
-      return "[LOCAL_USER]";
-    });
+    const occurrences = countOccurrences(output, identifier);
+    if (occurrences > 0) {
+      output = output.replaceAll(identifier, "[LOCAL_USER]");
+      increment(counts, "redacted-local-identifier", occurrences);
+    }
   }
+  if (!truncateContent) return output;
   const bounded = truncateUtf8(output, policy.maxStringBytes);
   if (bounded !== output) increment(counts, "truncated");
   return bounded;
@@ -404,7 +453,7 @@ function scanPortableTree(
     if (sensitiveValues.some((value) => text.includes(value))
         || SECRET_PATTERNS.some((pattern) => pattern.test(text))
         || LOCAL_PATH.test(text)
-        || localIdentifiers.filter((value) => value.length > 1).some((value) => new RegExp(`\\b${escapeRegExp(value)}\\b`, "u").test(text))
+        || localIdentifiers.filter((value) => value.length > 1).some((value) => text.includes(value))
         || /"(?:chain[_-]?of[_-]?thought|extended[_-]?thinking|hidden[_-]?reasoning|reasoning|thinking|raw[_-]?(?:api|request|response)[_-]?body)"\s*:/iu.test(text)) {
       resetPatterns();
       throw new Error("Portable export failed the final secret scan.");
@@ -579,10 +628,6 @@ function decode(bytes: Buffer, label: string): string {
 
 function formatValidationErrors(errors: Array<{ artifact: string; field: string; message: string }>): string {
   return errors.map((error) => `${error.artifact} ${error.field}: ${error.message}`).join("\n");
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function normalizeFieldName(value: string): string {
