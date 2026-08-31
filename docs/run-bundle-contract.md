@@ -156,6 +156,31 @@ workspace patch is present, callers supply the admitted starting fixture so the
 patch can be checked with `git apply --check`; omission leaves an explicit
 `WORKSPACE_PATCH_NOT_CHECKED` gap.
 
+## Portable export
+
+`createPortableRunBundleExport` reads a qualified M2 bundle without changing
+it and creates a separate partner or public derivative tree. Its policy fixes
+the artifact and string byte limits plus caller-supplied sensitive values. The
+exporter also removes credential-bearing environment values, local paths and
+usernames, hidden-reasoning fields, and disallowed raw API bodies. Run,
+attempt, bundle, session, and trace identities are replaced consistently so
+cross-artifact correlation survives without exposing native identifiers.
+
+The M2 allowlist is deliberately small: JSONL session/hooks, JSON telemetry,
+text workspace patches, JSON verifier/capture reports, and text verifier
+diagnostics. Unknown classifications and unrecognized kind/media pairs stop
+the export. Workspace snapshots are not exported until a later issue defines a
+safe archive-content policy. Existing source export manifests are excluded and
+recorded rather than recursively exported.
+
+The derivative `export-manifest/v1` records each portable artifact's source
+digest, every applied transformation, each exclusion, the effective policy
+digest, and rewritten correlations. Creation reports success only after
+`readPortableRunBundleExport` rechecks schema, paths, digests, sizes,
+references, policy, JSON/JSONL structure, and a final secret scan. A failed
+creation removes its newly-created destination tree; an existing destination
+is never replaced.
+
 Verifier results cannot contradict their assertions: passed results have no
 failed assertion, while failed results retain at least one failed assertion.
 Assertion IDs are unique, and a retained verifier result names the containing

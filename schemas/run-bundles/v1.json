@@ -868,6 +868,56 @@
         "affects": { "type": "array", "contains": { "const": "outcome" } }
       }
     },
+    "portableExportArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sourceArtifactId", "kind", "mediaType", "digest", "sizeBytes", "relativePath", "sourceDigest"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "sourceArtifactId": { "$ref": "#/$defs/identifier" },
+        "kind": {
+          "enum": ["session", "hook", "telemetry", "workspace", "verifier", "diagnostic", "capture-report"]
+        },
+        "mediaType": { "type": "string", "minLength": 1 },
+        "digest": { "$ref": "#/$defs/digest" },
+        "sizeBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "relativePath": { "$ref": "#/$defs/relativePath" },
+        "sourceDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "exportTransformation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactId", "action", "count"],
+      "properties": {
+        "artifactId": { "$ref": "#/$defs/identifier" },
+        "action": {
+          "enum": ["sanitized", "canonicalized", "removed-field", "redacted-secret", "redacted-local-identifier", "rewritten-correlation", "truncated"]
+        },
+        "count": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      }
+    },
+    "excludedExportArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactId", "reason"],
+      "properties": {
+        "artifactId": { "$ref": "#/$defs/identifier" },
+        "reason": { "enum": ["source-export-manifest"] }
+      }
+    },
+    "exportCorrelations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bundleId", "runId", "attemptId"],
+      "properties": {
+        "bundleId": { "$ref": "#/$defs/identifier" },
+        "runId": { "$ref": "#/$defs/identifier" },
+        "attemptId": { "$ref": "#/$defs/identifier" },
+        "sessionId": { "$ref": "#/$defs/identifier" },
+        "traceId": { "$ref": "#/$defs/identifier" }
+      }
+    },
     "exportManifest": {
       "type": "object",
       "additionalProperties": false,
@@ -882,6 +932,22 @@
           "type": "array",
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/identifier" }
+        },
+        "sourceManifestDigest": { "$ref": "#/$defs/digest" },
+        "correlations": { "$ref": "#/$defs/exportCorrelations" },
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/portableExportArtifact" }
+        },
+        "transformations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/exportTransformation" }
+        },
+        "excludedArtifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/excludedExportArtifact" }
         }
       },
       "allOf": [
@@ -892,6 +958,13 @@
               "artifactIds": { "minItems": 1 },
               "sharingClass": { "not": { "const": "unknown" } }
             }
+          }
+        },
+        {
+          "if": { "required": ["artifacts"] },
+          "then": {
+            "required": ["sourceManifestDigest", "correlations", "transformations", "excludedArtifacts"],
+            "properties": { "status": { "enum": ["ready", "exported"] } }
           }
         }
       ]

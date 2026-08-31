@@ -183,6 +183,13 @@ export type {
   RunBundleRuntimeComponent,
   RunManifest,
 } from "./run-bundles.js";
+export { createPortableRunBundleExport, readPortableRunBundleExport } from "./exports.js";
+export type {
+  CreatePortableRunBundleExportOptions,
+  PortableExportArtifact,
+  PortableExportManifest,
+  PortableExportPolicy,
+} from "./exports.js";
 export {
   BoundedDiagnosticCapture,
   JsonlEvidenceWriter,
