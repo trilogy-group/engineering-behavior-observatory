@@ -180,3 +180,22 @@ test("bounded reads honor a caller-supplied archive limit", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("malformed evidence remains an indexed issue", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-malformed-corpus-"));
+  const runRoot = join(root, "run");
+  try {
+    cpSync(join(fixtures, "complete"), runRoot, { recursive: true });
+    const manifestPath = join(runRoot, "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { evidence: unknown[] };
+    manifest.evidence.push(null);
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    const entries = buildCorpusIndex(root);
+    const malformed = entries.find(({ manifestPath: path }) => path === "run/manifest.json")!;
+    assert.ok(malformed.issues.some(({ field }) => field.startsWith("/evidence")));
+    assert.ok(validateCorpusIndex(root, entries).some(({ kind }) => kind === "evidence"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

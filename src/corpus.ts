@@ -305,7 +305,10 @@ function projectExport(entry: CorpusIndexEntry, manifest: PortableExportManifest
     assignString(entry, "attemptId", manifest.correlations.attemptId);
   }
   const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
-  entry.exportArtifactIds = artifacts.map(({ id }) => id).filter((id): id is string => typeof id === "string");
+  entry.exportArtifactIds = artifacts
+    .filter(isRecord)
+    .map(({ id }) => id)
+    .filter((id): id is string => typeof id === "string");
   projectEvidence(entry, manifestRoot, artifacts);
   if (["ready", "exported"].includes(String(manifest.status))) {
     try {
@@ -319,16 +322,18 @@ function projectExport(entry: CorpusIndexEntry, manifest: PortableExportManifest
 function projectEvidence(
   entry: CorpusIndexEntry,
   root: string,
-  descriptors: readonly (RunBundleEvidenceDescriptor | PortableExportArtifact)[],
+  descriptors: readonly unknown[],
 ): void {
-  for (const descriptor of descriptors) {
+  for (const candidate of descriptors) {
+    if (!isRecord(candidate) || typeof candidate.id !== "string") continue;
+    const descriptor = candidate as Pick<RunBundleEvidenceDescriptor | PortableExportArtifact, "id" | "kind" | "relativePath" | "digest">;
     if (descriptor.kind === "verifier") {
       entry.verifierArtifactIds.push(descriptor.id);
-      const document = readDescriptorJson(root, descriptor, entry.issues);
+      const document = readDescriptorJson(root, candidate, entry.issues);
       if (isRecord(document) && typeof document.status === "string") entry.verifierStatuses.push(document.status);
     } else if (descriptor.kind === "capture-report") {
       entry.captureArtifactIds.push(descriptor.id);
-      const document = readDescriptorJson(root, descriptor, entry.issues);
+      const document = readDescriptorJson(root, candidate, entry.issues);
       if (isRecord(document)) assignString(entry, "captureQualification", document.qualification);
     } else if (descriptor.kind === "export-manifest") entry.exportArtifactIds.push(descriptor.id);
   }
@@ -340,16 +345,19 @@ function projectEvidence(
 
 function readDescriptorJson(
   root: string,
-  descriptor: Pick<RunBundleEvidenceDescriptor | PortableExportArtifact, "id" | "relativePath" | "digest">,
+  descriptor: Record<string, unknown>,
   issues: CorpusSourceIssue[],
 ): unknown {
+  const { id, relativePath, digest } = descriptor;
+  if (typeof id !== "string" || typeof relativePath !== "string" || typeof digest !== "string"
+      || digestValue(digest) === undefined) return undefined;
   try {
     return parseJson(resolveBundleArtifact(root, {
-      locator: descriptor.relativePath,
-      digest: parseDigest(descriptor.digest),
-    }), `Evidence ${descriptor.id}`);
+      locator: relativePath,
+      digest: parseDigest(digest),
+    }), `Evidence ${id}`);
   } catch (error) {
-    issues.push({ field: `/evidence/${descriptor.id}`, message: errorMessage(error) });
+    issues.push({ field: `/evidence/${id}`, message: errorMessage(error) });
     return undefined;
   }
 }
