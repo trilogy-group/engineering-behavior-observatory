@@ -371,6 +371,31 @@ test("retains unknown future message types with bounded diagnostics without fail
   }
 });
 
+test("keeps an append failure visible through lifecycle flushes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-append-failure-"));
+  const path = join(root, "session.jsonl");
+  const capture = await openClaudeAgentSdkStreamCapture(path, noOpSink);
+  const valid = nativeFixtureMessages()[0]!;
+  const invalid = { type: "future_message", payload: { invalid: 1n } } as unknown as SDKMessage;
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: { setup: async () => ({ status: "ready", path: root, artifactId: "workspace-1", retained: true }) },
+      harness: (context) => executeClaudeAgentSdk(context, configuration, capture, () => stream([valid, invalid])),
+      evidence: capture,
+    });
+
+    assert.equal(result.classification.kind, "capture-incomplete");
+    assert.equal(result.record.capture?.status, "incomplete");
+    assert.match(result.record.capture?.error ?? "", /JSON/);
+    assert.deepEqual(readJsonl(path).map((record) => record.message), [valid]);
+    assert.equal(capture.report().status, "partial");
+  } finally {
+    await capture.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function stream(messages: SDKMessage[], before?: () => void | Promise<void>): QueryHandle {
   return {
     close: () => undefined,

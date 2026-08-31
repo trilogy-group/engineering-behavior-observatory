@@ -154,6 +154,7 @@ export async function openClaudeAgentSdkStreamCapture(
   let sessionSource: "sdk-result.session_id" | "sdk-message.session_id" | undefined;
   let result: ClaudeAgentSdkCaptureReport["result"];
   let diagnosticCount = 0;
+  let appendError: unknown;
   const diagnostics: ClaudeAgentSdkMessageDiagnostic[] = [];
 
   return {
@@ -161,7 +162,12 @@ export async function openClaudeAgentSdkStreamCapture(
     async message(message) {
       const record = nativeMessageRecord(message, sequence + 1, now());
       const value = message as unknown;
-      await writer.append(record);
+      try {
+        await writer.append(record);
+      } catch (error) {
+        appendError ??= error;
+        throw error;
+      }
       sequence = record.sequence;
       for (const diagnostic of record.diagnostics ?? []) {
         diagnosticCount += 1;
@@ -183,13 +189,14 @@ export async function openClaudeAgentSdkStreamCapture(
     hook: (event, input, toolUseId, signal) => sink.hook(event, input, toolUseId, signal),
     lifecycle: (event) => sink.lifecycle(event),
     async flush() {
-      await writer.flush();
-      await sink.flush?.();
+      const results = await Promise.allSettled([writer.flush(), Promise.resolve().then(() => sink.flush?.())]);
+      const error = appendError ?? results.find((entry) => entry.status === "rejected")?.reason;
+      if (error !== undefined) throw error;
     },
     close: () => writer.close(),
     report: () => ({
       schemaVersion: "ebo.agent-sdk-capture/v1",
-      status: result === undefined ? "partial" : "complete",
+      status: result === undefined || appendError !== undefined ? "partial" : "complete",
       artifact: {
         path: writer.path,
         kind: "session",
