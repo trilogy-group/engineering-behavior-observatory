@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync, unlinkSync } from "node:fs";
 import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
 
@@ -47,21 +47,6 @@ const MAX_ARCHIVE_PATH_COMPONENTS = 64;
 const MAX_ARCHIVE_PATH_LENGTH = 960;
 const TAR_BLOCK_BYTES = 512;
 const MAX_TAR_OVERHEAD_PER_MEMBER = 4096;
-const PUBLICATION_MARKER_SCHEMA_VERSION = "ebo.publication-staging/v1";
-const PUBLICATION_ATTEMPT_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const PUBLICATION_STAGING_PATTERN = /^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
-const MAX_PUBLICATION_MARKER_BYTES = 4096;
-
-export type PublicationOwnership = {
-  marker: Record<string, unknown>;
-  binding: Record<string, unknown>;
-  markerIdentity: { dev: number; ino: number };
-  bindingIdentity: { dev: number; ino: number };
-  stagingIdentity: { dev: number; ino: number };
-};
-
-type FileIdentity = { dev: number; ino: number; nlink?: number };
-
 export type TaskCondition = {
   packetRef: {
     locator: string;
@@ -257,7 +242,7 @@ export function assertNoSelectedSymlinks(
     }
   }
 
-  for (const [path, kind] of destinations) {
+  for (const path of destinations.keys()) {
     if (!isWithinAllowlist(path, includePathSet)) {
       throw new Error(`Selected archive entry "${path}" is outside the declared allowlist.`);
     }
@@ -583,8 +568,12 @@ export function openBundleRegularFile(
       }
       throw error;
     }
-    const opened = fstatSync(descriptor);
+    let opened = fstatSync(descriptor);
     const current = lstatSync(leaf);
+    if (opened.nlink > 1) {
+      removeInterruptedPublicationLink(resolve(currentPath, leaf), opened);
+      opened = fstatSync(descriptor);
+    }
     if (!opened.isFile() || current.isSymbolicLink() || !sameFileIdentity(opened, current)
         || !isReadableBundleFile(resolve(currentPath, leaf), opened)) {
       throw new Error(`${label} "${locator}" is not an isolated regular file.`);
@@ -632,180 +621,31 @@ function assertBundlePathWithoutLinks(bundleRoot: string, locator: string, label
   return selectedPath;
 }
 
-function isReadableBundleFile(path: string | undefined, target: { dev: number; ino: number; nlink: number }): boolean {
-  return path !== undefined && isPublicationFileReadable(path, target);
-}
-
-export function isPublicationFileReadable(
-  path: string,
+function isReadableBundleFile(
+  path: string | undefined,
   target: { dev: number; ino: number; nlink: number },
-  expectedRelativePath?: string,
 ): boolean {
-  if (target.nlink === 1) return true;
-  const ownership = readPublicationOwnership(path, target, expectedRelativePath);
-  if (ownership === undefined) return false;
-  const openedTarget = aliasIdentity(path, target);
-  const quarantine = aliasIdentity(path + ".quarantine", target);
-  const recovered = aliasIdentity(path + ".recovered", target);
-  const staging = hasStagingAlias(path, target, ownership);
-  const accounted = Number(quarantine !== undefined) + Number(recovered !== undefined) + Number(staging !== undefined);
-  if (openedTarget === undefined || !isPublicationOwnershipCurrent(path, ownership, expectedRelativePath)
-      || accounted === 0) return false;
-  const currentTarget = aliasIdentity(path, target);
-  const currentQuarantine = aliasIdentity(path + ".quarantine", target);
-  const currentRecovered = aliasIdentity(path + ".recovered", target);
-  const currentStaging = hasStagingAlias(path, target, ownership);
-  return currentTarget !== undefined && sameFileIdentity(openedTarget, currentTarget)
-    && sameOptionalIdentity(quarantine, currentQuarantine)
-    && sameOptionalIdentity(recovered, currentRecovered)
-    && sameOptionalIdentity(staging, currentStaging)
-    && isPublicationOwnershipCurrent(path, ownership, expectedRelativePath)
-    && currentTarget.nlink === 1 + accounted;
-}
-
-export function isOwnedPublicationAlias(
-  path: string,
-  target: { dev: number; ino: number },
-  expectedRelativePath?: string,
-): boolean {
-  return readPublicationOwnership(path, target, expectedRelativePath) !== undefined;
-}
-
-export function readPublicationOwnership(
-  path: string,
-  target: { dev: number; ino: number },
-  expectedRelativePath?: string,
-): PublicationOwnership | undefined {
-  const markerMetadata = readPublicationMarkerWithIdentity(`${path}.quarantine.marker`);
-  const bindingMetadata = readPublicationMarkerWithIdentity(`${path}.quarantine.marker.binding`);
-  if (markerMetadata === undefined || bindingMetadata === undefined
-      || !isPublicationMarker(markerMetadata.value, expectedRelativePath)
-      || !isPublicationMarker(bindingMetadata.value, expectedRelativePath)
-      || !samePublicationMarkerFields(markerMetadata.value, bindingMetadata.value)
-      || !isRecord(bindingMetadata.value.stagingIdentity)) return undefined;
-  const { dev, ino } = bindingMetadata.value.stagingIdentity;
-  if (!Number.isSafeInteger(dev) || !Number.isSafeInteger(ino)
-      || dev !== target.dev || ino !== target.ino) return undefined;
-  return {
-    marker: markerMetadata.value,
-    binding: bindingMetadata.value,
-    markerIdentity: markerMetadata.identity,
-    bindingIdentity: bindingMetadata.identity,
-    stagingIdentity: { dev, ino },
-  };
-}
-
-export function isPublicationOwnershipCurrent(
-  path: string,
-  ownership: PublicationOwnership,
-  expectedRelativePath?: string,
-): boolean {
-  const current = readPublicationOwnership(path, ownership.stagingIdentity, expectedRelativePath);
-  return current !== undefined
-    && sameFileIdentity(current.markerIdentity, ownership.markerIdentity)
-    && sameFileIdentity(current.bindingIdentity, ownership.bindingIdentity)
-    && sameFileIdentity(current.stagingIdentity, ownership.stagingIdentity)
-    && samePublicationMarkerFields(current.marker, ownership.marker)
-    && samePublicationMarkerFields(current.binding, ownership.binding);
-}
-
-export function readPublicationStagingPath(path: string, expectedRelativePath?: string): string | undefined {
-  const marker = readPublicationMarker(`${path}.quarantine.marker`);
-  return marker !== undefined && isPublicationMarker(marker, expectedRelativePath)
-    ? marker.stagingPath as string
-    : undefined;
-}
-
-function readPublicationMarker(path: string): Record<string, unknown> | undefined {
-  return readPublicationMarkerWithIdentity(path)?.value;
-}
-
-function readPublicationMarkerWithIdentity(
-  path: string,
-): { value: Record<string, unknown>; identity: { dev: number; ino: number } } | undefined {
-  let descriptor: number | undefined;
+  if (target.nlink !== 1) return false;
+  if (path === undefined) return true;
   try {
-    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    const opened = fstatSync(descriptor);
-    if (!opened.isFile() || (opened.mode & 0o777) !== 0o600
-        || !Number.isSafeInteger(opened.size) || opened.size > MAX_PUBLICATION_MARKER_BYTES) return undefined;
-    const bytes = Buffer.alloc(opened.size);
-    for (let offset = 0; offset < opened.size;) {
-      const read = readSync(descriptor, bytes, offset, opened.size - offset, offset);
-      if (read === 0) return undefined;
-      offset += read;
-    }
-    const trailing = Buffer.allocUnsafe(1);
-    if (readSync(descriptor, trailing, 0, 1, opened.size) !== 0) return undefined;
-    const completed = fstatSync(descriptor);
-    if (!completed.isFile() || completed.dev !== opened.dev || completed.ino !== opened.ino
-        || completed.size !== opened.size) return undefined;
-    const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
-    return isRecord(value) ? { value, identity: opened } : undefined;
+    const current = lstatSync(path);
+    return current.nlink === 1 && current.isFile() && !current.isSymbolicLink() && sameFileIdentity(current, target);
   } catch {
-    return undefined;
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
+    return false;
   }
 }
 
-function isPublicationMarker(value: Record<string, unknown>, expectedRelativePath?: string): boolean {
-  return value.schemaVersion === PUBLICATION_MARKER_SCHEMA_VERSION
-    && typeof value.relativePath === "string"
-    && isSafeArtifactRelativePath(value.relativePath)
-    && (expectedRelativePath === undefined || value.relativePath === expectedRelativePath)
-    && typeof value.stagingPath === "string"
-    && PUBLICATION_STAGING_PATTERN.test(value.stagingPath)
-    && typeof value.attemptId === "string"
-    && PUBLICATION_ATTEMPT_PATTERN.test(value.attemptId)
-    && typeof value.ownerPid === "number"
-    && Number.isSafeInteger(value.ownerPid)
-    && value.ownerPid > 0
-    && typeof value.ownerStart === "string"
-    && value.ownerStart.length > 0;
-}
-
-function samePublicationMarkerFields(
-  marker: Record<string, unknown>,
-  binding: Record<string, unknown>,
-): boolean {
-  return ["schemaVersion", "relativePath", "stagingPath", "attemptId", "ownerPid", "ownerStart"]
-    .every((field) => marker[field] === binding[field]);
-}
-
-function aliasIdentity(path: string, target: FileIdentity): FileIdentity | undefined {
-  try {
-    const alias = lstatSync(path);
-    return sameFileIdentity(target, alias) ? alias : undefined;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-}
-
-function sameOptionalIdentity(left: FileIdentity | undefined, right: FileIdentity | undefined): boolean {
-  return left === undefined ? right === undefined : right !== undefined && sameFileIdentity(left, right);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hasStagingAlias(
-  path: string,
-  target: { dev: number; ino: number },
-  ownership: PublicationOwnership,
-): FileIdentity | undefined {
-  try {
-    const marker = ownership.marker;
-    if (marker === undefined
-        || marker.schemaVersion !== "ebo.publication-staging/v1"
-        || typeof marker.stagingPath !== "string"
-        || !/^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(marker.stagingPath)) return undefined;
-    return aliasIdentity(resolve(dirname(path), marker.stagingPath), target);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    return undefined;
+export function removeInterruptedPublicationLink(path: string, target: { dev: number; ino: number }): void {
+  for (const name of readdirSync(dirname(path))) {
+    if (!/^\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/.test(name)) continue;
+    const temporaryPath = resolve(dirname(path), name);
+    if (temporaryPath === path) continue;
+    try {
+      const candidate = lstatSync(temporaryPath);
+      if (candidate.isFile() && sameFileIdentity(candidate, target)) unlinkSync(temporaryPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
   }
 }
 

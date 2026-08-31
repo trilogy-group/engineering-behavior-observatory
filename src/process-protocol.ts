@@ -627,7 +627,6 @@ export class ProtocolProcess {
   private readonly cwd: string;
   private readonly args: string[];
   private readonly onFrame: ProtocolProcessOptions["onFrame"];
-  private lineCount = 0;
   private nextLineNumber = 1;
   private frameCount = 0;
   private lineQueue: Promise<void> = Promise.resolve();
@@ -638,8 +637,6 @@ export class ProtocolProcess {
   private termination: ProcessTermination = "natural";
   private protocolError: { line: number; message: string; raw?: string } | undefined;
   private recorderError: string | undefined;
-  private shutdownStarted = false;
-  private interruptionStarted = false;
   private childError: string | undefined;
   private signalQueue: Promise<void> = Promise.resolve();
   private abortListener: (() => void) | undefined;
@@ -749,7 +746,6 @@ export class ProtocolProcess {
 
   public async shutdown(): Promise<ProtocolProcessResult> {
     if (this.closeObserved) return this.wait();
-    this.shutdownStarted = true;
     this.setTermination("shutdown");
     await this.sendSignal("SIGTERM", this.shutdownGraceMs);
     return this.wait();
@@ -757,7 +753,6 @@ export class ProtocolProcess {
 
   public async interrupt(): Promise<ProtocolProcessResult> {
     if (this.closeObserved) return this.wait();
-    this.interruptionStarted = true;
     this.setTermination("interrupted");
     await this.sendSignal("SIGINT", this.shutdownGraceMs);
     return this.wait();
@@ -840,7 +835,6 @@ export class ProtocolProcess {
 
   private async processLine(bytes: Buffer, lineNumber: number): Promise<void> {
     if (this.recorderError !== undefined || (this.protocolError !== undefined && lineNumber >= this.protocolError.line)) return;
-    this.lineCount = lineNumber;
     let line: string;
     try {
       line = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -1078,9 +1072,6 @@ export function spawnProtocolProcess(options: ProtocolProcessOptions): ProtocolP
 export async function runProtocolProcess(options: ProtocolProcessOptions): Promise<ProtocolProcessResult> {
   return spawnProtocolProcess(options).wait();
 }
-
-export const spawnJsonlProcess = spawnProtocolProcess;
-export const runJsonlProcess = runProtocolProcess;
 
 function syncDirectory(path: string): void {
   const descriptor = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY);

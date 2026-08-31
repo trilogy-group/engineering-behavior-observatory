@@ -11,7 +11,6 @@ export {
   validateRunManifestEvidence,
   verifyDigest,
   writeMetadataAtomically,
-  writeMetadataAtomicallyIfAbsentSync,
 } from "./artifacts.js";
 export type { ArtifactIdentity, ArtifactValidationError } from "./artifacts.js";
 export {
@@ -119,16 +118,11 @@ export type {
 } from "./workspaces.js";
 export {
   createAttemptIdentity,
-  createRetryAttempt,
   createRunIdentity,
-  executeRun,
   executeRunAttempt,
   InvalidLifecycleTransitionError,
   LifecycleController,
   retryAttempt,
-  RunLifecycle,
-  RunOrchestrator,
-  runAttempt,
   readAttemptRecord,
   writeAttemptRecord,
 } from "./lifecycle.js";
@@ -168,9 +162,7 @@ export {
   openJsonlEvidenceWriter,
   ProtocolEvidenceRecorder,
   ProtocolProcess,
-  runJsonlProcess,
   runProtocolProcess,
-  spawnJsonlProcess,
   spawnProtocolProcess,
 } from "./process-protocol.js";
 export type {
