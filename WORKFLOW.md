@@ -231,19 +231,20 @@ Active review provider: `codex`
      To switch providers later, edit the value above and follow
      https://github.com/kumanday/OpenSymphony/blob/main/docs/codex-code-review-setup.md -->
 
-Both providers post standard GitHub reviews with inline comments, and both are
-re-triggered after every follow-up push so each fix round gets a fresh review
-pass. Treat findings from either provider identically under the PR feedback
-sweep protocol below.
+Both providers post standard GitHub reviews with inline comments. The initial
+review runs automatically. Batch accepted findings into one remediation push
+and request at most one focused re-review; do not resample the whole PR after
+every follow-up commit. Treat findings from either provider identically under
+the PR feedback sweep protocol below.
 
 Whenever this workflow says "re-trigger AI review", perform the action that
 matches the active provider:
 
 - `openhands`: add the `review-this` label to the PR
   (`gh pr edit <pr> --add-label review-this`).
-- `codex`: post a top-level PR comment whose entire body is exactly
-  `@codex review` (`gh pr comment <pr> --body '@codex review'`). Codex reacts
-  with 👀 and posts a fresh review.
+- `codex`: for the single remediation re-review, post
+  `@codex review for regressions introduced since <reviewed-sha> and unresolved P0/P1 issues in changed lines`.
+  Codex reacts with 👀 and posts a focused review.
 - `none`: skip re-trigger steps; only human and CI feedback apply.
 
 Never re-trigger at PR creation time for either provider: the initial review
@@ -252,10 +253,8 @@ runs automatically when the PR is opened (`pull_request.opened` for
 
 Codex guardrails (mandatory whenever the active provider is `codex`):
 
-- The re-trigger phrase must be exactly `@codex review` with no other text.
-  Mentioning `@codex` with anything else starts a Codex cloud task that bills
-  against general Codex usage limits (not the separate code-review pool) and
-  operates outside this orchestration.
+- A review request must begin with `@codex review`. Any other `@codex` request
+  starts a cloud task outside this review workflow and is prohibited.
 - Never ask Codex to fix, implement, or push changes. All code changes happen
   in this orchestrated workspace through the normal implementation flow; the
   review bot only reviews.
@@ -274,7 +273,7 @@ When a ticket has an attached PR, run this protocol before moving to `Human Revi
    - Top-level PR comments (`gh pr view --comments`).
    - Inline review comments (`gh api repos/<owner>/<repo>/pulls/<pr>/comments`).
    - Review summaries/states (`gh pr view --json reviews`).
-3. Treat every actionable feedback item (human or bot), including Linear issue comments and inline PR review comments, as blocking until one of these is true:
+3. Treat every P0/P1 feedback item and any P2 that demonstrates an acceptance-criteria failure, evidence loss or corruption, secret leakage, or a stated trust-boundary violation as blocking until one of these is true:
    - code/test/docs updated to address it, or
    - explicit, justified pushback is recorded in the originating feedback channel.
 4. **Respond to inline review comments IN THE SAME THREAD** (required):
@@ -306,9 +305,9 @@ When a ticket has an attached PR, run this protocol before moving to `Human Revi
    - After making code changes, reply in the thread: "Fixed in <commit-sha>: <brief description of change>" or "Pushback: <justification for not making the requested change>".
    - The goal is for the reviewer to see your response in context and easily track resolution status.
 5. Update the workpad plan/checklist to include each feedback item and its resolution status.
-6. Re-run validation after feedback-driven changes and push updates.
-7. Repeat this sweep until there are no outstanding actionable comments.
-8. If you pushed follow-up commits to an existing PR, re-trigger AI review after the push (see `Automated AI PR review`) so the new commits get a fresh review pass.
+6. Address accepted findings as one local batch, re-run validation once, and push one remediation update.
+7. Record explicit pushback for non-blocking or out-of-scope P2 findings; do not expand the issue to satisfy them.
+8. Request at most one focused AI re-review after the batched remediation push. If that review finds a new valid blocker, fix it and review the exact fix commit locally rather than requesting another whole-PR review.
    - Do **not** re-trigger when the PR is first created; the initial AI review pass already runs automatically on PR open.
 
 ## Blocked-access escape hatch (required behavior)
@@ -347,7 +346,7 @@ Use this only when completion is blocked by missing required tools or missing au
 8.  Attach the PR URL to the Linear issue through the repo-local `linear` skill using `attachmentLinkGitHubPR` (preferred) or `attachmentLinkURL` when the target is not a GitHub PR. This is REQUIRED - do not rely on mentioning the PR URL in comments alone. The PR must appear in the issue's Links/Attachments section.
     - Ensure the GitHub PR has label `symphony` (add it if missing).
     - Do **not** re-trigger AI review when this push created the PR; the PR open already triggered the initial review.
-    - If this push updated an existing PR with new commits, re-trigger AI review after the push (see `Automated AI PR review`) to request a fresh review pass.
+    - If this is the single batched remediation push, request the one focused re-review described above. Do not re-trigger for every later commit.
 9.  Merge latest `origin/develop` into branch, resolve conflicts, and rerun checks.
 10. Update the workpad comment with final checklist status and validation notes.
     - Mark completed plan/acceptance/validation checklist items as checked.
@@ -423,7 +422,7 @@ For most code review feedback (addressing comments, small fixes, requested tweak
 5. Re-run validation/tests to ensure changes are correct.
    - Always inspect current PR checks (`gh pr view --json statusCheckRollup`) before declaring feedback addressed.
    - If any required check is failing, treat that as unfinished rework even if the latest review text is positive.
-6. After pushing follow-up commits to the existing PR, re-trigger AI review (see `Automated AI PR review`) so the rework gets a fresh review pass.
+6. After the single batched remediation push, request the one focused AI re-review if it has not already been used. Later blocker fixes receive exact-commit local review.
 7. Move the issue back to `Human Review` once all feedback is addressed.
 
 **Preserve review history**: Keeping the same PR preserves all discussion context, review threads, and decision history. Reviewers can see incremental changes rather than starting from scratch.
@@ -475,7 +474,7 @@ For major rework:
   link to the current issue, and `blockedBy` when the follow-up depends on
   the current issue.
 - Shared guidance documents (`.agents/skills/custom-codereview-guide.md`, `AGENTS.md`, this file) are durable and task-agnostic. Never write PR-specific or ticket-specific content into them — no "already resolved, do not re-flag" lists, no per-PR evidence dumps. Respond to review feedback in the PR's review threads; only add guidance that applies to all future work.
-- Never mention `@codex` in any comment except the exact re-trigger phrase `@codex review`, and only when the active review provider is `codex`.
+- Never mention `@codex` except in a review request beginning with `@codex review`, and only when the active review provider is `codex`.
 - Never ask a review bot (Codex or OpenHands) to implement, fix, or push changes; implement all fixes in this workspace through the normal flow.
 - Do not move to `Human Review` unless the `Completion bar before Human Review` is satisfied.
 - **Never merge or allow merge of a PR with outstanding critical feedback or failing checks.** This includes not moving to `Merging` if feedback sweep shows unresolved comments.

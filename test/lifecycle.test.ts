@@ -583,7 +583,7 @@ test("in-flight harness shutdown is available before an eventual result", async 
     signal: controller.signal,
     shutdownGraceMs: 25,
     workspace: workspace(),
-    harness: async ({ signal, registerShutdown }) => {
+    harness: async ({ registerShutdown }) => {
       registerShutdown(() => { shutdownCalls += 1; });
       harnessStartedResolve?.();
       await new Promise<void>(() => undefined);

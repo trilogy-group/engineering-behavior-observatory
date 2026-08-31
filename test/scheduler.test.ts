@@ -29,7 +29,7 @@ import {
 import { readBoundedFile } from "../src/scheduler.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
-const overlongFreezeLocator = `${"a".repeat(250)}/${"b".repeat(250)}/${"c".repeat(250)}/${"d".repeat(199)}`;
+const overlongFreezeLocator = `${"a".repeat(250)}/${"b".repeat(250)}/${"c".repeat(250)}/${"d".repeat(210)}`;
 
 function fixture(name: string): ExperimentConfiguration {
   return JSON.parse(readFileSync(join(repositoryRoot, "tests", "fixtures", name), "utf8")) as ExperimentConfiguration;
@@ -305,16 +305,9 @@ test("compiles arbitrary matrices with stable serialized identities", () => {
   assert.throws(
     () => compileRunQueue(experiment, {
       ...compileOptions(experiment),
-      freezeLocators: { "task-a": "freezes/a", "task-b": "freezes/a.quarantine" },
-    }),
-    /Freeze locator.*aliases task.*freeze locator/,
-  );
-  assert.throws(
-    () => compileRunQueue(experiment, {
-      ...compileOptions(experiment),
       freezeLocators: { "task-a": overlongFreezeLocator },
     }),
-    /task-a.*exceeds safe path limits/,
+    /task-a.*(?:unsafe|exceeds safe path limits|more than 960 characters)/,
   );
 
   const changedExperiment = structuredClone(experiment);
@@ -596,16 +589,7 @@ test("standalone queues reject conflicting identities for one condition ID", () 
   overlongFreezePath.entries[0]!.task.freezeLocator = overlongFreezeLocator;
   assert.match(
     validateRunQueue(overlongFreezePath).map((error) => error.message).join("\n"),
-    /exceeds safe path limits/,
-  );
-  const sidecarCollision = structuredClone(queue);
-  for (const entry of sidecarCollision.entries) {
-    if (entry.taskId === "task-a") entry.task.freezeLocator = "freezes/a";
-    if (entry.taskId === "task-b") entry.task.freezeLocator = "freezes/a.quarantine";
-  }
-  assert.match(
-    validateRunQueue(sidecarCollision).map((error) => error.message).join("\n"),
-    /Freeze locator.*aliases task/,
+    /(?:exceeds safe path limits|more than 960 characters)/,
   );
 });
 

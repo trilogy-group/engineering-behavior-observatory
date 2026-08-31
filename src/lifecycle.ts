@@ -277,8 +277,6 @@ export function retryAttempt(previous: AttemptIdentity | Pick<AttemptRecord, "at
   return createAttemptIdentity("retry", identity.number + 1, id, identity.id);
 }
 
-export const createRetryAttempt = retryAttempt;
-
 export class LifecycleController {
   private readonly transitions: LifecycleTransition[] = [];
   private readonly timestamps: Partial<Record<LifecycleState, string>>;
@@ -318,14 +316,6 @@ export class LifecycleController {
       timestamps: { ...this.timestamps },
       transitions: this.transitions.map((transition) => ({ ...transition })),
     };
-  }
-}
-
-export class RunLifecycle extends LifecycleController {}
-
-export class RunOrchestrator {
-  public async run(options: RunAttemptOptions): Promise<RunAttemptResult> {
-    return executeRunAttempt(options);
   }
 }
 
@@ -947,9 +937,6 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
     classification: structuredClone(record.classification!),
   };
 }
-
-export const runAttempt = executeRunAttempt;
-export const executeRun = executeRunAttempt;
 
 export async function writeAttemptRecord(path: string, record: AttemptRecord): Promise<void> {
   if (path.trim() === "") throw new Error("Attempt record path is required.");

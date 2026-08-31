@@ -496,7 +496,7 @@ test("classifies timeout, crash, and malformed output as verifier errors", async
       name: "malformed output",
       source: `process.stdout.write("not-json");`,
       options: {},
-      check: async (result: CompleteVerifierResult, root: Roots) => assert.match(
+      check: async (result: CompleteVerifierResult) => assert.match(
         result.error ?? "",
         /invalid|Unexpected token/i,
       ),

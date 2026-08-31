@@ -19,6 +19,8 @@ Automated PR review reads this guidance: the OpenHands PR Review plugin loads it
 - Treat bundle-relative paths, digests, sharing class, retry lineage, terminal state, and capture qualification as integrity boundaries. Review partial and interrupted bundles as closely as successful ones.
 - Export must fail closed on unknown classification. Partner and public artifacts need distinct sanitized provenance; a changed sharing label is never sufficient.
 - Keep source-specific harness evidence authoritative. Do not replace it with a universal protocol, normalized event copy, or inferred semantic label.
+- Treat task archives before validation, candidate workspaces, SDK messages, subprocess output, and external responses as untrusted. EBO configuration, admitted digest-pinned verifier code, and in-process adapter callbacks are trusted.
+- Do not require JavaScript defenses against hostile same-user filesystem races or untrusted verifier containment; the latter requires an OS or container sandbox.
 
 ## Expected Checks
 
@@ -33,3 +35,4 @@ Automated PR review reads this guidance: the OpenHands PR Review plugin loads it
 
 - Prefer Node standard-library facilities and `node:test`; do not add a capture shim, telemetry backend, graph database, distributed scheduler, dynamic plugin host, or hosted Atlas without an issue-backed need.
 - Review evidence loss, export leakage, partial-attempt overwrite, protocol-channel corruption, and untested failure paths before style.
+- P0/P1 findings block. P2 findings block only for acceptance-criteria failure, evidence loss or corruption, secret leakage, or a stated trust-boundary violation.
