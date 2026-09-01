@@ -49,7 +49,7 @@ if (!passed) process.exitCode = 1;
 
 test("executes one frozen queue entry end to end and retains a qualified bundle", async () => {
   const fixture = createRunnerFixture();
-  const query = fakeQuery({ resultContent: "done\n" });
+  const query = fakeQuery({ resultContent: "done\n", extraFiles: { "node_modules/cache.txt": "generated\n" } });
   try {
     const summary = await runAgentSdkQueueEntry({
       bundleRoot: fixture.bundleRoot,
@@ -616,6 +616,7 @@ function createRunnerFixture(options: RunnerFixtureOptions = {}): RunnerFixture 
         logToolContent: false,
         logRawApiBodies: false,
       },
+      workspaceOutcome: { excludeDirectoryNames: ["node_modules"] },
     },
   };
 
@@ -707,7 +708,9 @@ function fakeQuery(behavior: {
         const workspace = String(input.options?.cwd);
         writeFileSync(join(workspace, "result.txt"), behavior.resultContent);
         for (const [name, content] of Object.entries(behavior.extraFiles ?? {})) {
-          writeFileSync(join(workspace, name), content);
+          const path = join(workspace, name);
+          mkdirSync(dirname(path), { recursive: true });
+          writeFileSync(path, content);
         }
         for (const message of messages) {
           if (closed) break;

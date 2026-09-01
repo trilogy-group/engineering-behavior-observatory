@@ -154,7 +154,7 @@ const LOCAL_IDENTIFIER_PATTERNS = [
   /((?:user(?:name)?|owner|login)\s*[:=]\s*')(?!\[LOCAL_USER\]')(?:\\.|[^'\\])*(')/giu,
   /((?:user(?:name)?|owner|login)\s*[:=])(?!(?:\s*)\[LOCAL_USER\])\s*[^\s,"'}\]]+()/giu,
 ];
-const LOCAL_PATH = /(^|[\s"'=:(+\-])(?:[A-Za-z]:\\(?:[^\\\s"']+\\)*[^\\\s"']*|\/(?!\/|\\{1,2}\/)[^\s"']+)/gu;
+const LOCAL_PATH = /(^|[\s"'=:(+\-])(?:[A-Za-z]:\\(?:[^\\\s"']+\\)*[^\\\s"']*|\/(?!\/)[^\s"']+)/gu;
 
 /** Create one separately rooted, sanitized derivative of an M2 run bundle. */
 export async function createPortableRunBundleExport(

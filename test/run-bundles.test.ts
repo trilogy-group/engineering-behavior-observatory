@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   cpSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -191,6 +192,8 @@ test("workspace patches reproduce the final content and executable-mode tree dig
 
 test("workspace outcome excludes declared transient directory names", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-run-bundle-filtered-patch-"));
+  const gitConfiguration = ["GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"]
+    .map((name) => [name, process.env[name]] as const);
   try {
     const bundleRoot = join(root, "bundle");
     const fixture = createWorkspaceFixture(root, true);
@@ -203,6 +206,12 @@ test("workspace outcome excludes declared transient directory names", async () =
     mkdirSync(join(fixture.final, "generated"));
     writeFileSync(join(fixture.final, "generated", "cache.txt"), "generated\n");
     writeFileSync(join(fixture.final, "new-outcome.txt"), "must remain observable\n");
+    const ambientExcludes = join(root, "ambient-excludes");
+    writeFileSync(ambientExcludes, "ambient-only.txt\n");
+    writeFileSync(join(fixture.final, "ambient-only.txt"), "must ignore ambient Git configuration\n");
+    process.env.GIT_CONFIG_COUNT = "1";
+    process.env.GIT_CONFIG_KEY_0 = "core.excludesFile";
+    process.env.GIT_CONFIG_VALUE_0 = ambientExcludes;
     const assembler = await createRunBundleAssembler(definition(bundleRoot, "filtered-patch"));
     const captured = await assembler.captureWorkspaceOutcome({
       startPath: fixture.start,
@@ -215,8 +224,13 @@ test("workspace outcome excludes declared transient directory names", async () =
     const patch = readFileSync(join(bundleRoot, captured.descriptor.relativePath), "utf8");
     assert.match(patch, /changed\.txt/u);
     assert.match(patch, /diff --git a\/new-outcome\.txt b\/new-outcome\.txt/u);
+    assert.match(patch, /diff --git a\/ambient-only\.txt b\/ambient-only\.txt/u);
     assert.doesNotMatch(patch, /node_modules|coverage|generated\/cache/u);
   } finally {
+    for (const [name, value] of gitConfiguration) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -234,6 +248,22 @@ test("workspace outcome omits empty directories without another projection filte
       omitEmptyDirectories: true,
     });
     assert.equal(captured.format, "patch");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("workspace projection rejects hard-linked source evidence before copying it", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-run-bundle-projected-hard-link-"));
+  try {
+    const fixture = createWorkspaceFixture(root);
+    linkSync(join(fixture.final, "changed.txt"), join(fixture.final, "linked.txt"));
+    const assembler = await createRunBundleAssembler(definition(join(root, "bundle"), "projected-hard-link"));
+    await assert.rejects(assembler.captureWorkspaceOutcome({
+      startPath: fixture.start,
+      finalPath: fixture.final,
+      omitEmptyDirectories: true,
+    }), /hard-linked file/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

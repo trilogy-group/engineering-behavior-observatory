@@ -34,6 +34,7 @@ import type { VerifierResult } from "./verifiers.js";
 export type CaptureClaudeAgentSdkVerifier = (
   context: VerifierExecutionContext,
   workspace: CapturedWorkspaceOutcome,
+  workspacePath: string,
 ) => VerifierResult | Promise<VerifierResult>;
 
 export type CaptureClaudeAgentSdkRunOptions = {
@@ -84,8 +85,10 @@ export async function captureClaudeAgentSdkRun(
   let workspaceOutcome: CapturedWorkspaceOutcome | undefined;
   let workspaceOutcomePromise: Promise<CapturedWorkspaceOutcome> | undefined;
   let workspaceCaptureError: string | undefined;
+  let verifierResult: VerifierResult | undefined;
+  let verifierError: unknown;
 
-  const captureWorkspace = async (): Promise<CapturedWorkspaceOutcome> => {
+  const captureWorkspace = async (verifierContext?: VerifierExecutionContext): Promise<CapturedWorkspaceOutcome> => {
     if (workspaceOutcome !== undefined) return workspaceOutcome;
     workspaceOutcomePromise ??= (async () => {
       if (workspace?.status !== "ready" || workspace.path === undefined || workspace.artifactId === undefined) {
@@ -104,7 +107,15 @@ export async function captureClaudeAgentSdkRun(
         ...(options.workspaceOutcomeOmitsEmptyDirectories === undefined ? {} : {
           omitEmptyDirectories: options.workspaceOutcomeOmitsEmptyDirectories,
         }),
-      });
+      }, verifierContext === undefined || options.verifier === undefined
+        ? undefined
+        : async (projectedPath, outcome) => {
+            try {
+              verifierResult = await options.verifier!(verifierContext, outcome, projectedPath);
+            } catch (error) {
+              verifierError = error;
+            }
+          });
       return workspaceOutcome;
     })().catch((error: unknown) => {
       workspaceCaptureError = error instanceof Error ? error.message : String(error);
@@ -145,8 +156,10 @@ export async function captureClaudeAgentSdkRun(
       harness: (context) => executeClaudeAgentSdk(context, options.configuration, streamCapture, options.query),
       ...(options.verifier === undefined ? {} : {
         verifier: async (context) => {
-          const outcome = await captureWorkspace();
-          const result = await options.verifier!(context, outcome);
+          await captureWorkspace(context);
+          if (verifierError !== undefined) throw verifierError;
+          if (verifierResult === undefined) throw new Error("Agent SDK verifier did not return a result.");
+          const result = verifierResult;
           await assembler.writeJsonArtifact({
             id: "verifier",
             source: "ebo-verifier",

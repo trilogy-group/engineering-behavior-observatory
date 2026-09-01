@@ -204,11 +204,11 @@ export async function runAgentSdkQueueEntry(options: RunAgentSdkQueueEntryOption
         }),
       }),
       ...(verifierReference === undefined ? {} : {
-        verifier: (_context, outcome) => executeVerifier({
+        verifier: (_context, outcome, projectedWorkspacePath) => executeVerifier({
           bundleId: definition.bundleId,
           verifierRoot: bundleRoot,
           verifier: verifierReference,
-          workspacePath: workspace.path,
+          workspacePath: projectedWorkspacePath,
           workspaceFingerprint: outcome.fingerprint,
           workspace: {
             artifactId: outcome.descriptor.id,

@@ -350,58 +350,39 @@ export class RunBundleAssembler {
     }
   }
 
-  public async captureWorkspaceOutcome(options: CaptureWorkspaceOutcomeOptions): Promise<CapturedWorkspaceOutcome> {
+  public async captureWorkspaceOutcome(
+    options: CaptureWorkspaceOutcomeOptions,
+    whileProjected?: (projectedPath: string, outcome: CapturedWorkspaceOutcome) => Promise<void>,
+  ): Promise<CapturedWorkspaceOutcome> {
     this.assertOpen();
-    const startPath = resolve(options.startPath);
-    const finalPath = resolve(options.finalPath);
-    const exclusions = [...new Set(options.excludeDirectoryNames ?? [])];
-    for (const name of exclusions) {
-      if (name.includes("/") || !isSafeArtifactRelativePath(name)) throw new Error(`Workspace outcome exclusion "${name}" is invalid.`);
-    }
-    const filteredRoot = exclusions.length === 0
-        && options.respectGitignore !== true
-        && options.omitEmptyDirectories !== true
-      ? undefined
-      : await mkdtemp(join(tmpdir(), "ebo-workspace-filter-"));
-    const capturedPath = filteredRoot === undefined ? finalPath : join(filteredRoot, "workspace");
-    if (filteredRoot !== undefined) {
-      await cp(finalPath, capturedPath, {
-        recursive: true,
-        preserveTimestamps: true,
-        force: false,
-        filter: (source) => source === finalPath || !source.slice(finalPath.length + 1).split(/[\\/]/u).some((segment) => exclusions.includes(segment)),
+    return withWorkspaceOutcomeProjection(options, async (startPath, capturedPath) => {
+      const [fingerprint, treeDigest] = await Promise.all([
+        digestWorkspace(capturedPath) as Promise<DigestString>,
+        digestWorkspaceTree(capturedPath) as Promise<DigestString>,
+      ]);
+      const patch = await workspacePatch(startPath, capturedPath, treeDigest);
+      if (await digestWorkspace(capturedPath) !== fingerprint) {
+        throw new Error("Final workspace metadata changed while its outcome was being captured.");
+      }
+      const format = patch === undefined ? "snapshot" : "patch";
+      const content = patch ?? await workspaceSnapshot(capturedPath, treeDigest);
+      const relativePath = format === "patch"
+        ? options.relativePath ?? "workspace.patch"
+        : options.snapshotRelativePath ?? "workspace.tar.gz";
+      await writeArtifactAtomically(this.bundleRoot, relativePath, content, undefined, { overwrite: false });
+      const descriptor = await this.registerArtifact({
+        id: options.id ?? "workspace",
+        source: options.source ?? `workspace-${format}`,
+        kind: "workspace",
+        mediaType: format === "patch" ? "text/x-diff" : "application/gzip",
+        sharingClass: "restricted",
+        relativePath,
+        fingerprint,
       });
-      if (options.respectGitignore === true) await removeIgnoredWorkspaceEntries(startPath, capturedPath);
-      if (options.omitEmptyDirectories === true) await removeEmptyDirectories(capturedPath);
-    }
-    try {
-    const [fingerprint, treeDigest] = await Promise.all([
-      digestWorkspace(capturedPath) as Promise<DigestString>,
-      digestWorkspaceTree(capturedPath) as Promise<DigestString>,
-    ]);
-    const patch = await workspacePatch(startPath, capturedPath, treeDigest);
-    if (await digestWorkspace(capturedPath) !== fingerprint) {
-      throw new Error("Final workspace metadata changed while its outcome was being captured.");
-    }
-    const format = patch === undefined ? "snapshot" : "patch";
-    const content = patch ?? await workspaceSnapshot(capturedPath, treeDigest);
-    const relativePath = format === "patch"
-      ? options.relativePath ?? "workspace.patch"
-      : options.snapshotRelativePath ?? "workspace.tar.gz";
-    await writeArtifactAtomically(this.bundleRoot, relativePath, content, undefined, { overwrite: false });
-    const descriptor = await this.registerArtifact({
-      id: options.id ?? "workspace",
-      source: options.source ?? `workspace-${format}`,
-      kind: "workspace",
-      mediaType: format === "patch" ? "text/x-diff" : "application/gzip",
-      sharingClass: "restricted",
-      relativePath,
-      fingerprint,
+      const outcome: CapturedWorkspaceOutcome = { descriptor, fingerprint, treeDigest, format };
+      await whileProjected?.(capturedPath, outcome);
+      return outcome;
     });
-    return { descriptor, fingerprint, treeDigest, format };
-    } finally {
-      if (filteredRoot !== undefined) await rm(filteredRoot, { recursive: true, force: true });
-    }
   }
 
   public async finalize(input: {
@@ -471,6 +452,38 @@ export class RunBundleAssembler {
     this.run = structuredClone(run);
     this.manifest = structuredClone(manifest);
     this.revision += 1;
+  }
+}
+
+async function withWorkspaceOutcomeProjection<T>(
+  options: Pick<CaptureWorkspaceOutcomeOptions,
+    "startPath" | "finalPath" | "excludeDirectoryNames" | "respectGitignore" | "omitEmptyDirectories">,
+  use: (startPath: string, projectedPath: string) => Promise<T>,
+): Promise<T> {
+  const startPath = resolve(options.startPath);
+  const finalPath = resolve(options.finalPath);
+  const exclusions = [...new Set(options.excludeDirectoryNames ?? [])];
+  for (const name of exclusions) {
+    if (name.includes("/") || !isSafeArtifactRelativePath(name)) throw new Error(`Workspace outcome exclusion "${name}" is invalid.`);
+  }
+  if (exclusions.length === 0 && options.respectGitignore !== true && options.omitEmptyDirectories !== true) {
+    return use(startPath, finalPath);
+  }
+  await assertNoWorkspaceHardLinks(finalPath, new Set(exclusions));
+  const filteredRoot = await mkdtemp(join(tmpdir(), "ebo-workspace-filter-"));
+  const projectedPath = join(filteredRoot, "workspace");
+  try {
+    await cp(finalPath, projectedPath, {
+      recursive: true,
+      preserveTimestamps: true,
+      force: false,
+      filter: (source) => source === finalPath || !source.slice(finalPath.length + 1).split(/[\\/]/u).some((segment) => exclusions.includes(segment)),
+    });
+    if (options.respectGitignore === true) await removeIgnoredWorkspaceEntries(startPath, projectedPath);
+    if (options.omitEmptyDirectories === true) await removeEmptyDirectories(projectedPath);
+    return await use(startPath, projectedPath);
+  } finally {
+    await rm(filteredRoot, { recursive: true, force: true });
   }
 }
 
@@ -1051,11 +1064,13 @@ function runWithNativeReference(run: RunBundleRun, descriptor: RunBundleEvidence
 async function removeIgnoredWorkspaceEntries(startPath: string, finalPath: string): Promise<void> {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "ebo-workspace-ignore-index-"));
   const baseline = join(temporaryRoot, "baseline");
+  const globalExcludes = join(temporaryRoot, "global-excludes");
   try {
+    await writeFile(globalExcludes, "");
     await cp(startPath, baseline, { recursive: true, preserveTimestamps: true, force: false });
     await execFileAsync("git", ["init", "--quiet"], { cwd: baseline });
     await execFileAsync("git", ["add", "--force", "--all"], { cwd: baseline });
-    for (const relativePath of await ignoredWorkspacePaths(baseline, finalPath)) {
+    for (const relativePath of await ignoredWorkspacePaths(baseline, finalPath, globalExcludes)) {
       await rm(join(finalPath, relativePath), { recursive: true, force: true });
     }
   } finally {
@@ -1063,7 +1078,25 @@ async function removeIgnoredWorkspaceEntries(startPath: string, finalPath: strin
   }
 }
 
-async function ignoredWorkspacePaths(baseline: string, finalPath: string): Promise<string[]> {
+async function assertNoWorkspaceHardLinks(
+  directory: string,
+  exclusions: ReadonlySet<string>,
+  prefix = "",
+): Promise<void> {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (exclusions.has(entry.name)) continue;
+    const path = join(directory, entry.name);
+    const relativePath = `${prefix}${entry.name}`;
+    const metadata = await lstat(path, { bigint: true });
+    if (metadata.isDirectory() && !metadata.isSymbolicLink()) {
+      await assertNoWorkspaceHardLinks(path, exclusions, `${relativePath}/`);
+    } else if (metadata.isFile() && metadata.nlink > 1n) {
+      throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
+    }
+  }
+}
+
+async function ignoredWorkspacePaths(baseline: string, finalPath: string, globalExcludes: string): Promise<string[]> {
   const paths: string[] = [];
   async function visit(directory: string, prefix = ""): Promise<void> {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -1075,7 +1108,10 @@ async function ignoredWorkspacePaths(baseline: string, finalPath: string): Promi
   await visit(finalPath);
   if (paths.length === 0) return [];
   return new Promise((resolvePaths, reject) => {
-    const child = spawn("git", ["check-ignore", "-z", "--stdin"], { cwd: baseline, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn("git", ["-c", `core.excludesFile=${globalExcludes}`, "check-ignore", "-z", "--stdin"], {
+      cwd: baseline,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));

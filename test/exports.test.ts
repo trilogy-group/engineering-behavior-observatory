@@ -195,6 +195,7 @@ test("sanitizes untruncated text evidence and preserves pre-existing destination
         "workspace.patch": `${readFileSync(join(fixtureRoot, "workspace.patch"), "utf8")}
 +/workspace/acme/private-repo
 +/\\private/alice/project
++/\\/private/alice/project
 +session-complete-1
 +password="${heuristicSecret}"
 +token="${genericToken}"
@@ -214,6 +215,7 @@ test("sanitizes untruncated text evidence and preserves pre-existing destination
       for (const forbidden of [
         "/workspace/acme/private-repo",
         "/\\private/alice/project",
+        "/\\/private/alice/project",
         "session-complete-1",
         heuristicSecret,
         genericToken,
