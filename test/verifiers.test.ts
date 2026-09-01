@@ -572,6 +572,23 @@ test("aborts and reaps a running verifier before its independent timeout", async
   }
 });
 
+test("stops before verifier staging when its signal is already aborted", async () => {
+  const root = await createRoots();
+  const controller = new AbortController();
+  controller.abort("fixture interruption");
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      setInterval(() => {}, 10000);
+    `);
+    await assert.rejects(run(root, verifier, {
+      signal: controller.signal,
+      timeoutMs: 10_000,
+    }), /aborted/u);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("does not expose verifier completion capabilities to descendants", async () => {
   const root = await createRoots();
   try {

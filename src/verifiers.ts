@@ -189,22 +189,23 @@ export async function resolve(specifier, context, nextResolve) {
 }
 `;
 
-export async function digestWorkspace(workspacePath: string): Promise<string> {
-  return digestWorkspaceEntries(workspacePath, true);
+export async function digestWorkspace(workspacePath: string, signal?: AbortSignal): Promise<string> {
+  return digestWorkspaceEntries(workspacePath, true, signal);
 }
 
-export async function digestWorkspaceTree(workspacePath: string): Promise<string> {
-  return digestWorkspaceEntries(workspacePath, false);
+export async function digestWorkspaceTree(workspacePath: string, signal?: AbortSignal): Promise<string> {
+  return digestWorkspaceEntries(workspacePath, false, signal);
 }
 
-async function digestWorkspaceEntries(workspacePath: string, includeTimestamps: boolean): Promise<string> {
+async function digestWorkspaceEntries(workspacePath: string, includeTimestamps: boolean, signal?: AbortSignal): Promise<string> {
+  assertNotAborted(signal);
   const root = await realpath(workspacePath);
   const hash = createHash("sha256");
   hash.update(includeTimestamps ? "ebo.workspace/v1\0" : "ebo.workspace-tree/v1\0");
   const metadata = await lstat(root, { bigint: true });
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("Workspace root is not a directory.");
   hash.update(`root\0${metadata.mode & 0o7777n}\0${includeTimestamps ? `${workspaceTimestamp(metadata)}\0` : ""}`);
-  await hashWorkspaceDirectory(root, "", hash, includeTimestamps);
+  await hashWorkspaceDirectory(root, "", hash, includeTimestamps, signal);
   return `sha256:${hash.digest("hex")}`;
 }
 
@@ -213,7 +214,9 @@ async function hashWorkspaceDirectory(
   relativeDirectory: string,
   hash: ReturnType<typeof createHash>,
   includeTimestamps: boolean,
+  signal?: AbortSignal,
 ): Promise<void> {
+  assertNotAborted(signal);
   const entries = await readdir(directory, { withFileTypes: true });
   entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
   for (const entry of entries) {
@@ -223,10 +226,10 @@ async function hashWorkspaceDirectory(
     if (metadata.isSymbolicLink()) throw new Error(`Workspace contains a symbolic link at "${relativePath}".`);
     if (metadata.isDirectory()) {
       hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777n}\0${includeTimestamps ? `${workspaceTimestamp(metadata)}\0` : ""}`);
-      await hashWorkspaceDirectory(path, relativePath, hash, includeTimestamps);
+      await hashWorkspaceDirectory(path, relativePath, hash, includeTimestamps, signal);
     } else if (metadata.isFile()) {
       if (metadata.nlink > 1n) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
-      const bytes = await readFile(path);
+      const bytes = await readFile(path, { signal });
       hash.update(`file\0${relativePath}\0${metadata.mode & 0o7777n}\0${includeTimestamps ? `${workspaceTimestamp(metadata)}\0` : ""}${bytes.length}\0`);
       hash.update(bytes);
     } else {
@@ -235,12 +238,13 @@ async function hashWorkspaceDirectory(
   }
 }
 
-async function captureWorkspaceContent(workspacePath: string): Promise<WorkspaceContent> {
+async function captureWorkspaceContent(workspacePath: string, signal?: AbortSignal): Promise<WorkspaceContent> {
+  assertNotAborted(signal);
   const root = await realpath(workspacePath);
   const metadata = await lstat(root, { bigint: true });
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("Workspace root is not a directory.");
   const entries = new Map<string, WorkspaceContentEntry>([["", { kind: "directory", mode: metadata.mode & 0o7777n }]]);
-  await captureWorkspaceDirectory(root, "", entries);
+  await captureWorkspaceDirectory(root, "", entries, signal);
   return entries;
 }
 
@@ -248,7 +252,9 @@ async function captureWorkspaceDirectory(
   directory: string,
   relativeDirectory: string,
   entries: Map<string, WorkspaceContentEntry>,
+  signal?: AbortSignal,
 ): Promise<void> {
+  assertNotAborted(signal);
   const children = await readdir(directory, { withFileTypes: true });
   children.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
   for (const child of children) {
@@ -258,18 +264,22 @@ async function captureWorkspaceDirectory(
     if (metadata.isSymbolicLink()) throw new Error(`Workspace contains a symbolic link at "${relativePath}".`);
     if (metadata.isDirectory()) {
       entries.set(relativePath, { kind: "directory", mode: metadata.mode & 0o7777n });
-      await captureWorkspaceDirectory(path, relativePath, entries);
+      await captureWorkspaceDirectory(path, relativePath, entries, signal);
     } else if (metadata.isFile()) {
       if (metadata.nlink > 1n) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
-      entries.set(relativePath, { kind: "file", mode: metadata.mode & 0o7777n, bytes: await readFile(path) });
+      entries.set(relativePath, { kind: "file", mode: metadata.mode & 0o7777n, bytes: await readFile(path, { signal }) });
     } else {
       throw new Error(`Workspace contains an unsupported entry at "${relativePath}".`);
     }
   }
 }
 
-async function assertWorkspaceSnapshotContent(snapshotPath: string, expected: WorkspaceContent): Promise<void> {
-  const actual = await captureWorkspaceContent(snapshotPath);
+async function assertWorkspaceSnapshotContent(
+  snapshotPath: string,
+  expected: WorkspaceContent,
+  signal?: AbortSignal,
+): Promise<void> {
+  const actual = await captureWorkspaceContent(snapshotPath, signal);
   if (actual.size !== expected.size) throw new Error("Workspace changed while its private evaluation snapshot was being created.");
   for (const [relativePath, expectedEntry] of expected) {
     const actualEntry = actual.get(relativePath);
@@ -280,16 +290,19 @@ async function assertWorkspaceSnapshotContent(snapshotPath: string, expected: Wo
   }
 }
 
-async function copyWorkspaceSnapshot(source: string, destination: string): Promise<void> {
+async function copyWorkspaceSnapshot(source: string, destination: string, signal?: AbortSignal): Promise<void> {
+  assertNotAborted(signal);
   if (process.platform !== "win32") {
-    await execFileAsync("/bin/cp", ["-a", source, destination]);
+    await execFileAsync("/bin/cp", ["-a", source, destination], { signal });
     return;
   }
   await cp(source, destination, { recursive: true, force: false, preserveTimestamps: true });
-  await restoreWorkspaceTimestamps(source, destination);
+  assertNotAborted(signal);
+  await restoreWorkspaceTimestamps(source, destination, signal);
 }
 
-async function restoreWorkspaceTimestamps(source: string, destination: string): Promise<void> {
+async function restoreWorkspaceTimestamps(source: string, destination: string, signal?: AbortSignal): Promise<void> {
+  assertNotAborted(signal);
   const entries = await readdir(source, { withFileTypes: true });
   for (const entry of entries) {
     const sourcePath = join(source, entry.name);
@@ -297,7 +310,7 @@ async function restoreWorkspaceTimestamps(source: string, destination: string): 
     const metadata = await lstat(sourcePath, { bigint: true });
     if (metadata.isSymbolicLink()) throw new Error(`Workspace contains a symbolic link at "${entry.name}".`);
     if (metadata.isDirectory()) {
-      await restoreWorkspaceTimestamps(sourcePath, destinationPath);
+      await restoreWorkspaceTimestamps(sourcePath, destinationPath, signal);
     } else if (!metadata.isFile()) {
       throw new Error(`Workspace contains an unsupported entry at "${entry.name}".`);
     }
@@ -309,6 +322,10 @@ async function restoreWorkspaceTimestamps(source: string, destination: string): 
 
 function timestampSeconds(milliseconds: bigint): number {
   return Number(milliseconds) / 1_000 + 0.000001;
+}
+
+function assertNotAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error("Verifier execution was aborted.");
 }
 
 function workspaceTimestamp(metadata: { mtimeNs: bigint; mtimeMs: bigint }): bigint {
@@ -334,7 +351,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
   assertDisjointRoots(workspacePath, verifierRoot, "Verifier and workspace roots");
   assertDisjointRoots(workspacePath, artifactCandidate, "Artifact and workspace roots");
   assertDisjointRoots(verifierRoot, artifactCandidate, "Verifier and artifact roots");
-  if (options.workspaceFingerprint !== await digestWorkspace(workspacePath)) {
+  if (options.workspaceFingerprint !== await digestWorkspace(workspacePath, options.signal)) {
     throw new Error("Workspace fingerprint does not match the evaluated workspace.");
   }
   const artifactRoot = await prepareRoot(artifactCandidate);
@@ -365,15 +382,15 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
     try {
       if (internalError === undefined) {
         const verifierBytes = await readVerifiedArtifact(verifierRoot, options.verifier.locator, options.verifier.digest);
-        const workspaceContent = await captureWorkspaceContent(workspacePath);
+        const workspaceContent = await captureWorkspaceContent(workspacePath, options.signal);
         stagingRoot = await createStagingRoot(workspacePath);
         const evaluatedWorkspacePath = join(stagingRoot, "workspace");
-        await copyWorkspaceSnapshot(workspacePath, evaluatedWorkspacePath);
-        await assertWorkspaceSnapshotContent(evaluatedWorkspacePath, workspaceContent);
-        if (await digestWorkspace(workspacePath) !== options.workspaceFingerprint) {
+        await copyWorkspaceSnapshot(workspacePath, evaluatedWorkspacePath, options.signal);
+        await assertWorkspaceSnapshotContent(evaluatedWorkspacePath, workspaceContent, options.signal);
+        if (await digestWorkspace(workspacePath, options.signal) !== options.workspaceFingerprint) {
           throw new Error("Workspace changed while its private evaluation snapshot was being created.");
         }
-        evaluatedWorkspaceFingerprint = await digestWorkspace(evaluatedWorkspacePath);
+        evaluatedWorkspaceFingerprint = await digestWorkspace(evaluatedWorkspacePath, options.signal);
         if (evaluatedWorkspaceFingerprint !== options.workspaceFingerprint) {
           throw new Error("Workspace snapshot metadata does not match the evaluated workspace.");
         }

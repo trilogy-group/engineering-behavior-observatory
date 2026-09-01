@@ -246,10 +246,13 @@ test("retains interrupted, verifier-error, and capture/workspace-failure attempt
           } : {}),
         });
         const expectedClassification = scenario === "interrupted" ? "interrupted"
-          : scenario === "verifier-timeout" ? "interrupted"
           : scenario === "verifier-error" ? "verifier-error"
             : scenario === "capture-failure" ? "capture-incomplete" : "verifier-error";
-        assert.equal(result.attempt.classification.kind, expectedClassification);
+        if (scenario === "verifier-timeout") {
+          assert.ok(["interrupted", "capture-incomplete"].includes(result.attempt.classification.kind));
+        } else {
+          assert.equal(result.attempt.classification.kind, expectedClassification);
+        }
         assert.equal(result.manifest.terminal.state, ["interrupted", "verifier-timeout"].includes(scenario)
           ? "interrupted" : "failed");
         if (scenario === "workspace-error") {

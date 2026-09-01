@@ -210,7 +210,7 @@ export type CaptureQualificationOptions = {
 const execFileAsync = promisify(execFile);
 const MAX_WORKSPACE_PATCH_BYTES = 64 * 1024 * 1024;
 const MAX_WORKSPACE_SNAPSHOT_BYTES = 128 * 1024 * 1024;
-const MAX_QUALIFICATION_ARTIFACT_BYTES = 128 * 1024 * 1024;
+const MAX_QUALIFICATION_ARTIFACT_BYTES = 64 * 1024 * 1024;
 const QUALIFICATION_DIMENSION_RANK = { qualified: 0, unsupported: 1, gap: 2, unqualified: 3 } as const;
 const PINNED_HOOK_EVENTS = new Set<string>(HOOK_EVENTS);
 const TAR_COMMAND = process.platform === "win32" ? "tar" : "/usr/bin/tar";
@@ -548,7 +548,9 @@ export async function qualifyRunBundle(
         bundleRoot,
         descriptor.relativePath,
         digestValue(descriptor.digest),
-        MAX_QUALIFICATION_ARTIFACT_BYTES,
+        descriptor.kind === "workspace" && descriptor.mediaType === "application/gzip"
+          ? MAX_WORKSPACE_SNAPSHOT_BYTES
+          : MAX_QUALIFICATION_ARTIFACT_BYTES,
       );
       if (descriptor.mediaType === "application/x-ndjson") {
         const summary = parseNativeJsonl(bytes);
