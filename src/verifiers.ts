@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { cp, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, utimes } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { chmod, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, utimes } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
+import { pipeline } from "node:stream/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -296,9 +298,34 @@ async function copyWorkspaceSnapshot(source: string, destination: string, signal
     await execFileAsync("/bin/cp", ["-a", source, destination], { signal });
     return;
   }
-  await cp(source, destination, { recursive: true, force: false, preserveTimestamps: true });
-  assertNotAborted(signal);
+  await copyWorkspaceSnapshotOnWindows(source, destination, signal);
   await restoreWorkspaceTimestamps(source, destination, signal);
+}
+
+async function copyWorkspaceSnapshotOnWindows(source: string, destination: string, signal?: AbortSignal): Promise<void> {
+  assertNotAborted(signal);
+  const sourceMetadata = await lstat(source, { bigint: true });
+  await mkdir(destination);
+  await chmod(destination, Number(sourceMetadata.mode & 0o7777n));
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    assertNotAborted(signal);
+    const sourcePath = join(source, entry.name);
+    const destinationPath = join(destination, entry.name);
+    const metadata = await lstat(sourcePath, { bigint: true });
+    if (metadata.isSymbolicLink()) throw new Error(`Workspace contains a symbolic link at "${entry.name}".`);
+    if (metadata.isDirectory()) {
+      await copyWorkspaceSnapshotOnWindows(sourcePath, destinationPath, signal);
+    } else if (metadata.isFile()) {
+      await pipeline(
+        createReadStream(sourcePath),
+        createWriteStream(destinationPath, { flags: "wx", mode: Number(metadata.mode & 0o7777n) }),
+        ...(signal === undefined ? [] : [{ signal }]),
+      );
+      await chmod(destinationPath, Number(metadata.mode & 0o7777n));
+    } else {
+      throw new Error(`Workspace contains an unsupported entry at "${entry.name}".`);
+    }
+  }
 }
 
 async function restoreWorkspaceTimestamps(source: string, destination: string, signal?: AbortSignal): Promise<void> {

@@ -1158,8 +1158,12 @@ async function restoreProjectedDirectoryTimestamps(source: string, projected: st
       await restoreProjectedDirectoryTimestamps(join(source, entry.name), join(projected, entry.name));
     }
   }
-  const metadata = await lstat(source);
-  await utimes(projected, metadata.atime, metadata.mtime);
+  if (process.platform === "win32") {
+    const metadata = await lstat(source);
+    await utimes(projected, metadata.atime, metadata.mtime);
+  } else {
+    await execFileAsync("/usr/bin/touch", ["-r", source, projected]);
+  }
 }
 
 async function workspacePatch(startPath: string, finalPath: string, finalTreeDigest: DigestString): Promise<Buffer | undefined> {
