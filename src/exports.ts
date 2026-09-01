@@ -120,7 +120,9 @@ const SECRET_FIELDS = new Set([
   "secretaccesskey",
   "token",
 ]);
-const CORRELATION_FIELDS = new Set(["attemptid", "bundleid", "id", "runid", "sessionid", "traceid"]);
+// "eborunid"/"eboattemptid" are the normalized EBO OTel resource-attribute keys
+// ("ebo.run.id"/"ebo.attempt.id") retained inside native telemetry evidence.
+const CORRELATION_FIELDS = new Set(["attemptid", "bundleid", "id", "runid", "sessionid", "traceid", "eborunid", "eboattemptid"]);
 const LOCAL_IDENTIFIER_FIELDS = new Set(["login", "owner", "user", "username"]);
 const TRUNCATABLE_FIELDS = new Set([
   "body",
@@ -486,6 +488,9 @@ function sanitizeValue(
 ): unknown {
   const normalizedField = fieldName === undefined ? undefined : normalizeFieldName(fieldName);
   if (typeof value === "string") {
+    // Correlation values are also rewritten as substrings: native evidence
+    // embeds session and workspace identities inside encoded path strings that
+    // survive absolute-path redaction.
     return rewriteString(
       value,
       policy,
@@ -495,7 +500,7 @@ function sanitizeValue(
       counts,
       normalizedField !== undefined && CORRELATION_FIELDS.has(normalizedField),
       truncatable,
-      false,
+      true,
       normalizedField !== undefined && LOCAL_IDENTIFIER_FIELDS.has(normalizedField),
     );
   }
@@ -547,6 +552,16 @@ function rewriteString(
   rewriteLocalIdentifier = false,
 ): string {
   let output = input;
+  // Declared sensitive values are redacted before correlation rewriting: a
+  // secret that embeds a run, attempt, bundle, session, or trace ID must not
+  // be mutated into a form the exact-secret match and final scan cannot see.
+  for (const secret of sensitiveValues) {
+    const occurrences = countOccurrences(output, secret);
+    if (occurrences > 0) {
+      output = output.replaceAll(secret, "[REDACTED_SECRET]");
+      increment(counts, "redacted-secret", occurrences);
+    }
+  }
   const correlation = rewriteCorrelation ? replacements.get(output) : undefined;
   if (correlation !== undefined) {
     output = correlation;
@@ -560,13 +575,6 @@ function rewriteString(
         output = output.replaceAll(source, replacement);
         increment(counts, "rewritten-correlation", occurrences);
       }
-    }
-  }
-  for (const secret of sensitiveValues) {
-    const occurrences = countOccurrences(output, secret);
-    if (occurrences > 0) {
-      output = output.replaceAll(secret, "[REDACTED_SECRET]");
-      increment(counts, "redacted-secret", occurrences);
     }
   }
   for (const pattern of SECRET_PATTERNS) {

@@ -249,6 +249,22 @@ export type {
   CaptureClaudeAgentSdkRunResult,
   CaptureClaudeAgentSdkVerifier,
 } from "./agent-sdk-run.js";
+export {
+  AGENT_SDK_CONFIG_SCHEMA_VERSION,
+  resolveAgentSdkConfigurationRecord,
+  runAgentSdkQueueEntry,
+} from "./agent-sdk-runner.js";
+export type {
+  AgentSdkCaptureProfileConfiguration,
+  AgentSdkConfigurationKind,
+  AgentSdkConfigurationRecord,
+  AgentSdkHarnessConfiguration,
+  AgentSdkModelConfiguration,
+  AgentSdkNativeLimitsConfiguration,
+  AgentSdkNativeToolPolicyConfiguration,
+  AgentSdkRunSummary,
+  RunAgentSdkQueueEntryOptions,
+} from "./agent-sdk-runner.js";
 export type {
   BoundedDiagnostic,
   JsonlEvidenceWriterOptions,
