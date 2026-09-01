@@ -111,7 +111,23 @@ export async function captureClaudeAgentSdkRun(
         ? undefined
         : async (projectedPath, outcome) => {
             try {
-              verifierResult = await options.verifier!(verifierContext, outcome, projectedPath);
+              const aborted = Symbol("aborted");
+              let onAbort: (() => void) | undefined;
+              const verifierPromise = Promise.resolve(options.verifier!(verifierContext, outcome, projectedPath));
+              const verifierOutcome = await Promise.race([
+                verifierPromise,
+                new Promise<typeof aborted>((resolvePromise) => {
+                  onAbort = () => resolvePromise(aborted);
+                  if (verifierContext.signal.aborted) onAbort();
+                  else verifierContext.signal.addEventListener("abort", onAbort, { once: true });
+                }),
+              ]);
+              if (onAbort !== undefined) verifierContext.signal.removeEventListener("abort", onAbort);
+              if (verifierOutcome === aborted) {
+                void verifierPromise.catch(() => undefined);
+              } else {
+                verifierResult = verifierOutcome;
+              }
             } catch (error) {
               verifierError = error;
             }

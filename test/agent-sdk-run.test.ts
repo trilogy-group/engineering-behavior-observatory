@@ -162,7 +162,7 @@ test("rejects a declared model that differs from the executed SDK model", async 
 });
 
 test("retains interrupted, verifier-error, and capture/workspace-failure attempts", async (context) => {
-  for (const scenario of ["interrupted", "verifier-error", "capture-failure", "workspace-error"] as const) {
+  for (const scenario of ["interrupted", "verifier-error", "verifier-timeout", "capture-failure", "workspace-error"] as const) {
     await context.test(scenario, async () => {
       const root = mkdtempSync(join(tmpdir(), `ebo-agent-sdk-run-${scenario}-`));
       const start = join(root, "start");
@@ -221,7 +221,9 @@ test("retains interrupted, verifier-error, and capture/workspace-failure attempt
           ...(["interrupted", "capture-failure", "workspace-error"].includes(scenario) ? {
             ...(scenario === "interrupted" ? { signal: controller.signal } : {}),
           } : {
-            verifier: async (_verifierContext, workspace) => ({
+            verifier: scenario === "verifier-timeout"
+              ? async () => new Promise<never>(() => undefined)
+              : async (_verifierContext, workspace) => ({
               schemaVersion: "verifier-result/v1" as const,
               bundleId: definition.bundleId,
               status: "error" as const,
@@ -234,12 +236,19 @@ test("retains interrupted, verifier-error, and capture/workspace-failure attempt
               assertions: [],
             }),
           }),
+          ...(scenario === "verifier-timeout" ? {
+            maxWallClockMs: 50,
+            shutdownGraceMs: 10,
+            workspaceOutcomeOmitsEmptyDirectories: true,
+          } : {}),
         });
         const expectedClassification = scenario === "interrupted" ? "interrupted"
+          : scenario === "verifier-timeout" ? "budget-stop"
           : scenario === "verifier-error" ? "verifier-error"
             : scenario === "capture-failure" ? "capture-incomplete" : "verifier-error";
         assert.equal(result.attempt.classification.kind, expectedClassification);
-        assert.equal(result.manifest.terminal.state, scenario === "interrupted" ? "interrupted" : "failed");
+        assert.equal(result.manifest.terminal.state, scenario === "interrupted" ? "interrupted"
+          : scenario === "verifier-timeout" ? "stopped" : "failed");
         if (scenario === "workspace-error") {
           assert.equal(result.manifest.evidence.some((entry) => entry.kind === "workspace"), false);
           assert.equal(result.manifest.terminal.workspaceArtifactId, undefined);
