@@ -251,6 +251,7 @@
           "required": ["id", "task", "fixture", "model", "harness", "runtime"],
           "properties": {
             "id": { "$ref": "#/$defs/identifier" },
+            "assessmentMode": { "enum": ["observational", "verified"] },
             "task": {
               "type": "object",
               "additionalProperties": false,
@@ -299,7 +300,13 @@
                 "traceId": { "$ref": "#/$defs/identifier" }
               }
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "assessmentMode": { "const": "observational" } }, "required": ["assessmentMode"] },
+              "then": { "not": { "required": ["verifier"] } }
+            }
+          ]
         },
         "attempt": {
           "type": "object",
@@ -500,6 +507,7 @@
       "properties": {
         "schemaVersion": { "const": "capture-report/v1" },
         "bundleId": { "$ref": "#/$defs/identifier" },
+        "assessmentMode": { "enum": ["observational", "verified"] },
         "qualification": { "enum": ["qualified", "incomplete"] },
         "capabilities": {
           "type": "object",
@@ -938,6 +946,7 @@
         "bundleId": { "$ref": "#/$defs/identifier" },
         "status": { "enum": ["not-requested", "blocked", "ready", "exported"] },
         "sharingClass": { "$ref": "#/$defs/sharingClass" },
+        "assessmentMode": { "enum": ["observational", "verified"] },
         "policyDigest": { "$ref": "#/$defs/digest" },
         "artifactIds": {
           "type": "array",

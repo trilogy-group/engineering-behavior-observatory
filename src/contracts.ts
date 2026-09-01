@@ -15,6 +15,8 @@ export type ArtifactReference = {
   digest: Digest;
 };
 
+export type AssessmentMode = "observational" | "verified";
+
 export type BundleRootHandle = {
   path: string;
   descriptor: number;
@@ -65,6 +67,7 @@ export type ReferenceSolutionDeclaration =
   | { status: "not-provided" | "unsupported" };
 
 export type ResolvedTaskPacket = {
+  assessmentMode: AssessmentMode;
   /** Packet identity retained by the admission resolver for freeze binding. */
   packetId?: string;
   /** Resolved task-packet component digests retained for freeze binding. */
@@ -83,8 +86,8 @@ export type ResolvedTaskPacket = {
     declaration: ReferenceSolutionDeclaration;
     resolvedDigest: Digest | null;
   };
-  verifierDigest: Digest;
-  resolvedVerifierDigest: Digest;
+  verifierDigest: Digest | null;
+  resolvedVerifierDigest: Digest | null;
   admission: {
     status: "proposed" | "admitted" | "rejected";
     reviewedAt: string | null;
@@ -747,11 +750,13 @@ export function assertAdmittedTaskPackets(
     if (packet.admission.status !== "admitted") {
       throw new Error(`Task packet "${taskId}" is not admitted.`);
     }
-    if (
-      packet.verifierDigest.algorithm !== packet.resolvedVerifierDigest.algorithm
-      || packet.verifierDigest.value !== packet.resolvedVerifierDigest.value
-    ) {
-      throw new Error(`Task packet "${taskId}" verifier digest does not match its resolved bytes.`);
+    if (packet.assessmentMode === "verified") {
+      assertEqualDigests(`Task packet "${taskId}" verifier`, packet.verifierDigest, packet.resolvedVerifierDigest);
+    } else if (packet.assessmentMode !== "observational"
+        || packet.verifierDigest !== null || packet.resolvedVerifierDigest !== null
+        || packet.referenceSolution.declaration.status === "referenced"
+        || packet.referenceSolution.resolvedDigest !== null) {
+      throw new Error(`Task packet "${taskId}" observational assessment cannot include verifier or reference-solution evidence.`);
     }
     if (packet.controlledPerturbation.declaration.status === "referenced") {
       assertEqualDigests(

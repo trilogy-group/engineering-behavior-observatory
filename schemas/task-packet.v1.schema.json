@@ -11,12 +11,12 @@
     "provenance",
     "controlledPerturbation",
     "sharing",
-    "admission",
-    "restricted"
+    "admission"
   ],
   "properties": {
     "schemaVersion": { "const": "ebo.task-packet/v1" },
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "assessmentMode": { "enum": ["observational", "verified"] },
     "agentInput": {
       "type": "object",
       "additionalProperties": false,
@@ -118,6 +118,26 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "assessmentMode": { "const": "observational" } },
+        "required": ["assessmentMode"]
+      },
+      "then": { "not": { "required": ["restricted"] } }
+    },
+    {
+      "if": {
+        "properties": { "assessmentMode": { "const": "verified" } },
+        "required": ["assessmentMode"]
+      },
+      "then": { "required": ["restricted"] }
+    },
+    {
+      "if": { "not": { "required": ["assessmentMode"] } },
+      "then": { "required": ["restricted"] }
+    }
+  ],
   "$defs": {
     "admission": {
       "oneOf": [

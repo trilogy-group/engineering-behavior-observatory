@@ -15,11 +15,13 @@ EBO already has the pieces required to capture an Agent SDK attempt:
 - isolated workspace materialization;
 - Agent SDK stream, hook, usage, and OpenTelemetry capture;
 - lifecycle and partial-attempt retention;
-- digest-pinned verifier execution;
+- optional digest-pinned verifier execution for verified tasks;
 - run-bundle assembly and structural qualification;
 - fail-closed portable export and corpus indexing.
 
-The pieces are not yet connected into an operator path. The public `captureClaudeAgentSdkRun` function requires a caller to construct a run definition, preserve a starting workspace, provide a workspace coordinator, resolve Agent SDK settings, and wire the task verifier. No production command performs that composition. The existing live smoke calls the capture function directly with a trivial no-tool prompt and a synthetic verifier, so it does not prove that a real frozen task can travel through the complete system.
+The production path composes these pieces for both observational and verified
+task packets. Observational packets are the primary open-ended research path
+and deliberately have no reference solution or verifier.
 
 This change closes those gaps before cross-harness normalization begins.
 
@@ -32,11 +34,11 @@ The relevant existing modules are:
 | Module | Existing responsibility |
 | --- | --- |
 | `src/scheduler.ts` | Read, validate, inspect, and select persisted run-queue entries. |
-| `src/task-packets.ts` | Validate admission/freeze state and expose the model-visible prompt plus restricted verifier reference. |
+| `src/task-packets.ts` | Validate admission/freeze state and expose the model-visible prompt plus any verified-task reference. |
 | `src/contracts.ts` | Resolve digest-pinned bundle artifacts and configuration bytes. |
 | `src/workspaces.ts` | Materialize and clean one frozen task workspace. |
 | `src/agent-sdk-run.ts` | Capture one already-resolved Agent SDK attempt. Do not duplicate this logic. |
-| `src/verifiers.ts` | Execute the task's digest-pinned verifier against a detached final workspace snapshot. |
+| `src/verifiers.ts` | Execute a verified task's digest-pinned verifier against a detached final workspace snapshot. |
 | `src/exports.ts` | Create and read back a sanitized partner/public derivative. |
 | `src/corpus.ts` | Build, query, validate, pack, and unpack corpus artifacts. |
 | `src/cli.ts` | Current operator commands. Add the narrow commands specified below. |
@@ -46,7 +48,8 @@ The authoritative evidence model is:
 ```text
 Agent SDK stream + hooks     semantic evidence
 Agent SDK OpenTelemetry     timing and resource evidence
-workspace + verifier        outcome evidence
+workspace                   artifact and outcome evidence
+verified-task verifier      optional executable outcome evidence
 capture report              evidence availability and qualification
 ```
 
@@ -71,6 +74,7 @@ The run command executes exactly one queue entry. It does not iterate the queue,
 On success, print a small JSON result containing:
 
 - run ID, attempt ID, and bundle path;
+- assessment mode;
 - terminal state and attempt classification;
 - capture qualification status;
 - native session ID and trace ID when present.
@@ -156,7 +160,7 @@ Implement one production function used by the CLI. Its inputs should be ordinary
 7. Build `ClaudeAgentSdkConfiguration` from the prompt and the resolved model, native-limit, tool-policy, and capture-profile records.
 8. Build the run-bundle definition from the queue entry and frozen packet identities. Attempt number is 1; a later retry is a separate future invocation, not part of this command.
 9. Call `captureClaudeAgentSdkRun` once. Its workspace coordinator returns the already-materialized live workspace. Its cleanup delegates to the existing materialization cleanup after the capture function has retained the final workspace outcome.
-10. Supply a verifier callback that calls `executeVerifier` with the task packet's digest-pinned restricted verifier, the captured workspace descriptor and fingerprint, and a diagnostic root inside the new run bundle.
+10. For a verified packet only, supply a verifier callback that calls `executeVerifier` with the packet's digest-pinned restricted verifier, captured workspace descriptor and fingerprint, and a diagnostic root inside the run bundle. For an observational packet, supply no verifier callback and retain no verifier artifact.
 11. Keep the baseline until `captureClaudeAgentSdkRun` finishes qualification, then remove it in `finally`. Clean the disposable live workspace through the existing cleanup API. Never delete the retained run bundle.
 12. Reopen and validate the final manifest before reporting success.
 
@@ -176,18 +180,21 @@ The runner must preserve existing identities rather than inventing a second sche
 - `attempt.id`: a new UUID safe for existing lifecycle/workspace contracts;
 - `attempt.number`: 1;
 - `bundleId`: the attempt ID or a deterministic prefix plus that ID;
-- verifier identity: the packet's exact restricted verifier locator, digest, and inferred module format;
+- assessment mode: the packet's exact observational or verified declaration;
+- verifier identity for verified tasks: the packet's exact restricted verifier locator, digest, and inferred module format;
 - `configuration.digest`: a canonical digest over the resolved model, harness, and capture-profile references;
 - `configuration.budgetDigest`: native-limits reference digest;
 - `configuration.toolPolicyDigest`: native-tool-policy reference digest.
 
-The retained Agent SDK/CLI versions, effective settings, capabilities, usage, session identity, telemetry state, workspace outcome, verifier result, and qualification remain produced by the existing capture path.
+The retained Agent SDK/CLI versions, effective settings, capabilities, usage,
+session identity, telemetry state, workspace outcome, optional verified-task
+result, and qualification remain produced by the existing capture path.
 
 ## 7. Failure and cleanup semantics
 
 - Never silently retry an Agent SDK attempt.
 - Never replace an existing attempt directory or source bundle.
-- Preserve a partial bundle after interruption, Agent SDK transport failure, verifier error, or missing telemetry receipt whenever the existing capture path can finalize it.
+- Preserve a partial bundle after interruption, Agent SDK transport failure, optional verifier error, or missing telemetry receipt whenever the existing capture path can finalize it.
 - Do not convert a verifier execution error into task failure.
 - Do not convert missing capture evidence into a model outcome.
 - Do not keep a mutable workspace merely to make later export or analysis work; the run bundle is the retained evidence.
@@ -198,16 +205,17 @@ The retained Agent SDK/CLI versions, effective settings, capabilities, usage, se
 
 ### Deterministic tests
 
-Use the actual frozen packet, queue, materializer, capture function, verifier executor, bundle validator, exporter, and corpus validator. Inject the already-supported Agent SDK query seam only to avoid network access.
+Use the actual frozen packet, queue, materializer, capture function, bundle validator, exporter, and corpus validator. Exercise the verifier executor only for verified fixtures. Inject the already-supported Agent SDK query seam only to avoid network access.
 
 Cover at least:
 
-1. A selected queue entry modifies its materialized workspace, passes its real digest-pinned verifier, retains an applicable workspace patch or reproducible snapshot, and produces a qualified or qualified-with-explicit-telemetry-gap bundle.
-2. An invalid or wrong-kind configuration fails before query invocation and leaves no fabricated attempt bundle.
-3. A verifier assertion failure produces a retained task-failure bundle; a verifier crash produces verifier-error instead.
-4. An interrupted SDK run retains a readable partial bundle and does not retry.
-5. A second invocation cannot replace an existing attempt destination.
-6. `ebo export create` turns the real produced bundle into a policy-validated derivative, and corpus validation accepts the resulting source/export pair.
+1. An observational queue entry modifies its materialized workspace, retains an applicable workspace patch or reproducible snapshot, and produces a qualified or qualified-with-explicit-telemetry-gap bundle without verifier evidence.
+2. A verified queue entry preserves the existing verifier-backed pass/fail path.
+3. An invalid or wrong-kind configuration fails before query invocation and leaves no fabricated attempt bundle.
+4. A verifier assertion failure produces a retained task-failure bundle; a verifier crash produces verifier-error instead.
+5. An interrupted SDK run retains a readable partial bundle and does not retry.
+6. A second invocation cannot replace an existing attempt destination.
+7. `ebo export create` turns the real produced bundle into a policy-validated derivative, and corpus validation accepts the resulting source/export pair.
 
 Do not recreate queue, workspace, verifier, export, or corpus behavior in mocks. The fake query may emit SDK messages and mutate only the supplied SDK working directory; everything around it must be production code.
 
@@ -215,14 +223,19 @@ Do not recreate queue, workspace, verifier, export, or corpus behavior in mocks.
 
 Add an opt-in live test beyond the current trivial confidence boundary. It must invoke the new production runner rather than `captureClaudeAgentSdkRun` directly.
 
-The live fixture must be a small frozen task packet whose prompt requires at least one Agent SDK tool operation and whose digest-pinned verifier checks the resulting workspace. Bound it with a low turn limit, wall-clock limit, and dollar budget. Run it only when explicitly enabled and authenticated through `CLAUDE_CODE_OAUTH_TOKEN`, with `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` unset.
+The live fixture must be a small frozen task packet whose prompt requires at
+least one Agent SDK tool operation. It may use either assessment mode, but an
+observational proof must not add a dummy verifier. Bound it with a low turn
+limit, wall-clock limit, and dollar budget. Run it only when explicitly enabled
+and authenticated through `CLAUDE_CODE_OAUTH_TOKEN`, with `ANTHROPIC_API_KEY`
+and `ANTHROPIC_AUTH_TOKEN` unset.
 
 Before cleanup, assert:
 
 - a nonempty native session stream with a result identity;
 - at least one retained tool-related SDK message or lifecycle hook;
 - a retained final workspace outcome;
-- an executed verifier bound to that workspace;
+- the declared assessment mode and any mode-appropriate verifier evidence;
 - a structurally valid final manifest and explicit qualification result;
 - portable export creation/readback and corpus validation over this actual run.
 
@@ -232,15 +245,15 @@ If the test owns a local bounded OTLP receiver, also assert correlated receipt. 
 
 - [ ] A fresh operator can execute one frozen queue entry through the Agent SDK with the documented command and no bespoke TypeScript caller.
 - [ ] The command resolves and digest-verifies the task packet plus every configuration input before SDK launch.
-- [ ] The Agent SDK receives only the admitted prompt and disposable workspace; restricted verifier/reference artifacts remain outside the model-visible surface.
+- [ ] The Agent SDK receives only the admitted prompt and disposable workspace; observational packets contain no reference/verifier artifacts and verified packet artifacts remain outside the model-visible surface.
 - [ ] The starting baseline survives until workspace capture and qualification finish, while the SDK mutates only the disposable live workspace.
-- [ ] The task's real digest-pinned verifier determines pass/fail and is bound to the retained workspace evidence.
+- [ ] Observational completion is explicitly unscored; verified tasks preserve verifier-backed pass/fail bound to retained workspace evidence.
 - [ ] Complete, failed, stopped, interrupted, and verifier-error attempts retain the existing terminal/capture semantics without silent retry.
 - [ ] The final CLI summary identifies the bundle and outcome without leaking captured content or credentials.
 - [ ] The export command creates and revalidates a separate portable derivative through the existing export implementation.
 - [ ] Deterministic coverage exercises the production queue-to-corpus path without mocking the components being integrated.
-- [ ] An opt-in OAuth test proves a real tool-using Agent SDK trajectory through the same runner, verifier, export, and corpus path.
-- [ ] The full existing test suite remains green, no runtime dependency is added, and no serialized run/task/export format changes except the one minimal Agent SDK configuration contract.
+- [ ] An opt-in OAuth test proves a real tool-using Agent SDK trajectory through the same runner, export, and corpus path without requiring a dummy verifier.
+- [ ] The full existing test suite remains green, no runtime dependency is added, and task/run/export records carry only the one explicit assessment-mode discriminator required for these semantics.
 
 ## 10. Explicit non-goals
 

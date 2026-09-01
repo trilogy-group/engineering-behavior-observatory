@@ -3,6 +3,8 @@ import { closeSync, fsyncSync, linkSync, openSync, readFileSync, renameSync, unl
 import { lstat, mkdir, open, readFile, rm, type FileHandle } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
+import type { AssessmentMode } from "./contracts.js";
+
 export type RunIdentity = {
   id: string;
   taskId: string;
@@ -160,6 +162,7 @@ export type EvidenceSink = {
 
 export type RunAttemptOptions = {
   run: RunIdentity;
+  assessmentMode?: AssessmentMode;
   attempt?: AttemptIdentity;
   workspace: WorkspaceCoordinator;
   harness: HarnessExecutor;
@@ -175,6 +178,7 @@ export type RunAttemptOptions = {
 
 export type AttemptRecord = {
   schemaVersion: "ebo.attempt/v1";
+  assessmentMode: AssessmentMode;
   run: RunIdentity;
   attempt: AttemptIdentity;
   lifecycle: LifecycleSnapshot;
@@ -327,6 +331,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   const workspaceCleanup = workspaceCoordinator.cleanup;
   const harnessExecutor = options.harness;
   const verifierExecutor = options.verifier;
+  const assessmentMode = options.assessmentMode ?? "verified";
   const evidenceSink = options.evidence;
   const evidenceFlush = evidenceSink?.flush;
   const signal = options.signal;
@@ -343,6 +348,7 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
   const executionStartedAt = Date.now();
   const record: AttemptRecord = {
     schemaVersion: "ebo.attempt/v1",
+    assessmentMode,
     run: structuredClone(runSnapshot),
     attempt: structuredClone(attemptSnapshot),
     lifecycle: lifecycle.snapshot(),
@@ -681,16 +687,22 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
           record.harnessTerminationConfirmed = harnessTerminationConfirmed;
         }
         if (classification === undefined && harnessResult.status === "completed") {
-          lifecycle.transition("verifying");
-          await persist();
-          markCoordinatorBudgetIfExpired();
-          if (controller.signal.aborted) {
-            classification = abortClassification(abortCause, budgetExpired, undefined, workspace);
-          } else if (verifierExecutor === undefined) {
-            record.verifier = { status: "not-run" };
-            classification = infrastructureClassification("Verifier did not run.", "verifier", workspace);
+          if (assessmentMode === "observational") {
+            markCoordinatorBudgetIfExpired();
+            classification = controller.signal.aborted
+              ? abortClassification(abortCause, budgetExpired, undefined, workspace)
+              : completedClassification(workspace);
           } else {
-            try {
+            lifecycle.transition("verifying");
+            await persist();
+            markCoordinatorBudgetIfExpired();
+            if (controller.signal.aborted) {
+              classification = abortClassification(abortCause, budgetExpired, undefined, workspace);
+            } else if (verifierExecutor === undefined) {
+              record.verifier = { status: "not-run" };
+              classification = infrastructureClassification("Verifier did not run.", "verifier", workspace);
+            } else {
+              try {
               const verifierPromise = Promise.resolve(verifierExecutor.call(options, {
                 run: structuredClone(runSnapshot),
                 attempt: structuredClone(attemptSnapshot),
@@ -751,21 +763,22 @@ export async function executeRunAttempt(options: RunAttemptOptions): Promise<Run
                   ? abortClassification(abortCause, budgetExpired, undefined, workspace)
                   : classifyVerifier(verifier, workspace);
               }
-            } catch (error) {
-              const verifierError = errorMessage(error);
-              record.verifier = { status: "error", error: verifierError };
-              record.verifierTerminationConfirmed = true;
-              if (verifierShutdown !== undefined) {
-                const shutdownResult = await shutdownVerifier(verifierShutdown, shutdownGraceMs);
-                if (shutdownResult !== undefined) {
-                  record.verifier.shutdownResult = shutdownResult;
-                  record.verifierTerminationConfirmed = shutdownResult.status === "completed";
+              } catch (error) {
+                const verifierError = errorMessage(error);
+                record.verifier = { status: "error", error: verifierError };
+                record.verifierTerminationConfirmed = true;
+                if (verifierShutdown !== undefined) {
+                  const shutdownResult = await shutdownVerifier(verifierShutdown, shutdownGraceMs);
+                  if (shutdownResult !== undefined) {
+                    record.verifier.shutdownResult = shutdownResult;
+                    record.verifierTerminationConfirmed = shutdownResult.status === "completed";
+                  }
                 }
+                markCoordinatorBudgetIfExpired();
+                classification = controller.signal.aborted
+                  ? abortClassification(abortCause, budgetExpired, verifierError, workspace)
+                  : verifierErrorClassification(verifierError, workspace);
               }
-              markCoordinatorBudgetIfExpired();
-              classification = controller.signal.aborted
-                ? abortClassification(abortCause, budgetExpired, verifierError, workspace)
-                : verifierErrorClassification(verifierError, workspace);
             }
           }
         }
@@ -1112,6 +1125,12 @@ function validateOptions(options: RunAttemptOptions): void {
   if (options.attempt !== undefined) {
     createAttemptIdentity(options.run.id, options.attempt.number, options.attempt.id, options.attempt.retryOf);
   }
+  if (options.assessmentMode !== undefined && options.assessmentMode !== "observational" && options.assessmentMode !== "verified") {
+    throw new Error("Assessment mode must be observational or verified.");
+  }
+  if (options.assessmentMode === "observational" && options.verifier !== undefined) {
+    throw new Error("Observational attempts cannot execute a verifier.");
+  }
   if (!Number.isSafeInteger(options.maxWallClockMs) && options.maxWallClockMs !== undefined) {
     throw new Error("Coordinator wall-clock budget must be a positive safe integer.");
   }
@@ -1154,6 +1173,7 @@ function assertCheckpointDoesNotRegress(existing: AttemptRecord, incoming: Attem
     }
   }
   if (!sameJsonValue(existing.run, incoming.run) || !sameJsonValue(existing.attempt, incoming.attempt)
+      || existing.assessmentMode !== incoming.assessmentMode
       || existing.lifecycle.createdAt !== incoming.lifecycle.createdAt) {
     throw new Error("Attempt record update changes retained creation metadata.");
   }
@@ -1514,6 +1534,10 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
   }
   assertJsonValue(value, "attempt record", new Set<object>());
   if (value.schemaVersion !== "ebo.attempt/v1") throw new Error("Attempt record schemaVersion is invalid.");
+  if (value.assessmentMode === undefined) value.assessmentMode = "verified";
+  if (value.assessmentMode !== "observational" && value.assessmentMode !== "verified") {
+    throw new Error("Attempt record assessment mode is invalid.");
+  }
   const run = value.run;
   if (!isRecord(run)) throw new Error("Attempt record run is invalid.");
   assertIdentityValue(run.id, "Run ID");
@@ -1589,6 +1613,10 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
   if ((value.verifier !== undefined || value.verifierTerminationConfirmed !== undefined)
       && !visitedStates.has("verifying")) {
     throw new Error("Verifier evidence requires the verifying lifecycle phase.");
+  }
+  if (value.assessmentMode === "observational"
+      && (visitedStates.has("verifying") || value.verifier !== undefined || value.verifierTerminationConfirmed !== undefined)) {
+    throw new Error("Observational attempt records cannot contain verifier execution evidence.");
   }
   if (value.harnessTerminationConfirmed !== undefined && typeof value.harnessTerminationConfirmed !== "boolean") {
     throw new Error("Harness termination confirmation is invalid.");
@@ -1779,22 +1807,23 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
     );
   }
   if (value.terminal?.state === "completed") {
-    if (!visitedStates.has("running") || !visitedStates.has("verifying")) {
-      throw new Error("Completed terminal records require running and verifying lifecycle phases.");
+    if (!visitedStates.has("running") || value.assessmentMode === "verified" && !visitedStates.has("verifying")) {
+      throw new Error("Completed terminal records require their assessment lifecycle phases.");
     }
     assertHarnessStatus(value.harness, "completed");
     assertCleanupStatus(value.cleanup, "completed");
-    if (value.harnessTerminationConfirmed === false || value.verifierTerminationConfirmed === false) {
+    if (value.harnessTerminationConfirmed === false
+        || value.assessmentMode === "verified" && value.verifierTerminationConfirmed === false) {
       throw new Error("Completed terminal records require confirmed execution termination.");
     }
     assertShutdownCompleted(value.workspace, "Workspace");
     assertShutdownCompleted(value.harness, "Harness");
-    assertShutdownCompleted(value.verifier, "Verifier");
+    if (value.assessmentMode === "verified") assertShutdownCompleted(value.verifier, "Verifier");
     if (isRecord(value.persistence) && value.persistence.status !== "complete") {
       throw new Error("Completed terminal records cannot have incomplete persistence.");
     }
     assertTerminalWorkspaceEvidence(value.workspace, value.terminal.workspaceArtifactId);
-    assertVerifierStatus(value.verifier, "passed");
+    if (value.assessmentMode === "verified") assertVerifierStatus(value.verifier, "passed");
   }
   if (value.terminal?.state === "failed" && value.terminal.failureClass === "task") {
     if (!visitedStates.has("running") || !visitedStates.has("verifying")) {

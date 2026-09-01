@@ -3,6 +3,7 @@
   "bundleId": "bundle-interrupted",
   "run": {
     "id": "run-interrupted",
+    "assessmentMode": "verified",
     "task": { "id": "task-example" },
     "fixture": {
       "id": "fixture-example",
@@ -42,8 +43,8 @@
       "kind": "capture-report",
       "authority": "capture",
       "mediaType": "application/json",
-      "digest": "sha256:40c66e5d06c21421886ad9a8e2f9d6879034f8d6a478c924b67d24a59bf0f40a",
-      "sizeBytes": 526,
+      "digest": "sha256:91665537b0b2e228c1313c5c167d497e8d131bcf221de5c109f88954c4262571",
+      "sizeBytes": 558,
       "sharingClass": "internal",
       "relativePath": "capture-report.json"
     }

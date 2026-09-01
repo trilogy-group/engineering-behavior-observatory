@@ -1,6 +1,7 @@
 {
   "schemaVersion": "capture-report/v1",
   "bundleId": "bundle-telemetry-incomplete",
+  "assessmentMode": "verified",
   "qualification": "incomplete",
   "capabilities": {
     "semantic": { "status": "available" },

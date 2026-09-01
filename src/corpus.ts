@@ -53,6 +53,7 @@ export type CorpusIndexEntry = {
   modelId?: string;
   harnessId?: string;
   harnessVersion?: string;
+  assessmentMode?: string;
   configurationDigest?: DigestString;
   terminalState?: string;
   failureClass?: string;
@@ -78,6 +79,7 @@ export type CorpusIndexQuery = Partial<Pick<CorpusIndexEntry,
   | "taskId"
   | "modelId"
   | "harnessId"
+  | "assessmentMode"
   | "terminalState"
   | "failureClass"
   | "captureQualification"
@@ -284,6 +286,7 @@ function projectRun(entry: CorpusIndexEntry, manifest: RunManifest, manifestRoot
     assignString(entry, "modelId", isRecord(manifest.run.model) ? manifest.run.model.id : undefined);
     assignString(entry, "harnessId", isRecord(manifest.run.harness) ? manifest.run.harness.id : undefined);
     assignString(entry, "harnessVersion", isRecord(manifest.run.harness) ? manifest.run.harness.version : undefined);
+    assignString(entry, "assessmentMode", manifest.run.assessmentMode ?? "verified");
     if (isRecord(manifest.run.verifier)) {
       assignString(entry, "verifierLocator", manifest.run.verifier.locator);
       assignDigest(entry, "verifierDigest", manifest.run.verifier.digest);
@@ -307,6 +310,7 @@ function projectRun(entry: CorpusIndexEntry, manifest: RunManifest, manifestRoot
 function projectExport(entry: CorpusIndexEntry, manifest: PortableExportManifest, manifestRoot: string): void {
   assignString(entry, "exportStatus", manifest.status);
   assignString(entry, "sharingClass", manifest.sharingClass);
+  assignString(entry, "assessmentMode", manifest.assessmentMode ?? "verified");
   assignDigest(entry, "policyDigest", manifest.policyDigest);
   assignDigest(entry, "sourceManifestDigest", manifest.sourceManifestDigest);
   if (isRecord(manifest.correlations)) {
@@ -530,7 +534,7 @@ function assertCorpusIndexEntry(value: unknown, line: number): asserts value is 
   const stringArrays = [value.verifierArtifactIds, value.verifierStatuses, value.captureArtifactIds, value.exportArtifactIds];
   const optionalStrings = [
     value.bundleId, value.runId, value.trialId, value.attemptId, value.retryOf, value.taskId, value.fixtureId,
-    value.modelProvider, value.modelId, value.harnessId, value.harnessVersion, value.terminalState,
+    value.modelProvider, value.modelId, value.harnessId, value.harnessVersion, value.assessmentMode, value.terminalState,
     value.failureClass, value.stopReason, value.verifierLocator, value.captureQualification, value.exportStatus,
     value.sharingClass,
   ];
@@ -591,6 +595,7 @@ function numberValue(value: unknown): number | undefined {
 
 type StringField = "runId" | "trialId" | "attemptId" | "retryOf" | "taskId" | "fixtureId"
   | "modelProvider" | "modelId" | "harnessId" | "harnessVersion" | "terminalState"
+  | "assessmentMode"
   | "failureClass" | "stopReason" | "verifierLocator" | "captureQualification" | "exportStatus"
   | "sharingClass";
 type DigestField = "configurationDigest" | "verifierDigest" | "policyDigest" | "sourceManifestDigest";

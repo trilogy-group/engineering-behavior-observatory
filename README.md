@@ -1,11 +1,11 @@
 # Engineering Behavior Observatory
 
 Engineering Behavior Observatory (EBO) captures the native evidence produced by
-software-engineering agents, connects it to workspace and verifier outcomes, and
+software-engineering agents, connects it to final workspace outcomes, and
 later supports evidence-grounded behavioral comparison across harnesses.
 
 The first useful product is capture and observation: retained sessions, events,
-hooks, telemetry references, workspace changes, verifier results, and explicit
+hooks, telemetry references, workspace changes, optional verified-task results, and explicit
 capture-quality reports. Cross-harness normalization, behavioral evaluation,
 and the local Behavior Atlas build on capture-qualified bundles afterward.
 
@@ -14,7 +14,8 @@ and the local Behavior Atlas build on capture-qualified bundles afterward.
 M2 native Agent SDK capture is available through the public
 `captureClaudeAgentSdkRun` library entry point. It executes one caller-supplied
 attempt and retains its native stream, hooks, telemetry receipt, workspace,
-verifier result, capability profile, and structural qualification. Queue-wide
+assessment mode, capability profile, and structural qualification. Verified
+tasks additionally retain their verifier result. Queue-wide
 study execution remains an operational caller concern. The implementation
 backlog is maintained separately in:
 
@@ -79,7 +80,7 @@ node dist/src/cli.js queue validate <queue.json> [experiment.json] [--bundle-roo
 node dist/src/cli.js agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 node dist/src/cli.js export create <run-bundle-root> <policy.json> <export-root>
 node dist/src/cli.js corpus build <corpus-root> <index.jsonl>
-node dist/src/cli.js corpus query <index.jsonl> [--task <id>] [--model <id>] [--harness <id>]
+node dist/src/cli.js corpus query <index.jsonl> [--task <id>] [--model <id>] [--harness <id>] [--assessment-mode <observational|verified>]
 node dist/src/cli.js corpus validate <corpus-root> <index.jsonl>
 node dist/src/cli.js corpus pack <approved-export-root> <policy.json> <archive.tar.gz>
 node dist/src/cli.js corpus unpack <archive.tar.gz> <destination-root>
@@ -92,16 +93,15 @@ EBO_LIVE_AGENT_SDK_RUNNER=1 node --test --test-name-pattern='approved live Agent
 
 `captureClaudeAgentSdkRun` is intentionally a library API rather than another
 configuration dialect: callers provide an already-resolved run definition,
-workspace coordinator, Agent SDK configuration, and verifier. It does not
+workspace coordinator, Agent SDK configuration, and any mode-appropriate verifier. It does not
 schedule or retry attempts.
 
 `ebo agent-sdk run` executes exactly one persisted queue entry: it
 digest-verifies the frozen task packet and the five `ebo.agent-sdk-config/v1`
 records (model, harness, native-limits, native-tool-policy, and the queue's
 capture profile) before launching the SDK, materializes one disposable
-workspace, preserves an immutable starting baseline, runs the task's
-digest-pinned restricted verifier against the retained workspace outcome, and
-prints a small JSON summary identifying the bundle, terminal state,
+workspace, preserves an immutable starting baseline, and prints a small JSON
+summary identifying the bundle, assessment mode, terminal state,
 classification, and capture qualification. A task failure, budget stop, or
 captured infrastructure failure is a successfully recorded observation; the
 command returns nonzero only when inputs cannot be qualified, the attempt
@@ -109,6 +109,13 @@ cannot start, or the retained output fails validation. It never iterates the
 queue, retries, or replaces an existing attempt destination. `ebo export
 create` calls `createPortableRunBundleExport` with its policy-bound readback
 and never modifies the restricted source bundle.
+
+Observational packets are the primary path for open-ended enterprise work.
+They contain no reference solution or verifier. Their `completed` terminal
+means the agent loop ended normally and a final workspace was retained; it is
+not a claim that the stakeholder's request was satisfied. Verified packets are
+an optional benchmark-style mode and preserve verifier-backed pass/task-fail
+semantics.
 
 `ebo validate` checks the supported task-packet, experiment, and run-bundle
 artifact versions. On failure it identifies the artifact, schema version, and
@@ -126,7 +133,7 @@ policy, and secret-scan readback. It does not publish or package a corpus.
 
 The corpus index is a deterministic, atomically rebuilt JSONL read model over
 run and export manifests. It records run-cell/trial and attempt identities
-separately, projects terminal, verifier, capture, and export facts, and retains
+separately, projects assessment mode, terminal, optional verifier, capture, and export facts, and retains
 validation issues instead of silently omitting missing evidence. Native
 manifests remain authoritative; delete and rebuild the index at any time.
 Queries use exact-match flags shown by `ebo --help` and do not index prompt or

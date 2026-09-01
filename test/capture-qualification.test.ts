@@ -350,7 +350,7 @@ test("reuses export-manifest qualification for unsafe ready exports", async () =
     const exportRoot = join(fixture.bundleRoot, "export");
     mkdirSync(exportRoot);
     const exportDocument = {
-      schemaVersion: "export-manifest/v1", bundleId: "bundle-success", status: "ready",
+      schemaVersion: "export-manifest/v1", bundleId: "bundle-success", status: "ready", assessmentMode: "verified",
       sharingClass: "partner", policyDigest: SHA("e"), artifactIds: ["session"],
     };
     const bytes = Buffer.from(`${JSON.stringify(exportDocument)}\n`);
@@ -435,6 +435,7 @@ test("approved live Agent SDK smoke records sanitized collector receipt", {
         bundleId: "bundle-live-smoke",
         run: {
           id: "run-live-smoke",
+          assessmentMode: "verified",
           task: { id: "task-live-smoke" },
           fixture: { id: "fixture-live-smoke", digest: SHA("a") },
           model: { provider: "anthropic", id: model },
@@ -530,6 +531,7 @@ async function assembleScenario(scenario: Scenario, omitHooks: HookEvent[] = [])
     bundleId: `bundle-${scenario}`,
     run: {
       id: `run-${scenario}`,
+      assessmentMode: "verified",
       task: { id: "task-smoke" },
       fixture: { id: "fixture-smoke", digest: SHA("a") },
       model: { provider: "anthropic", id: "claude-test" },

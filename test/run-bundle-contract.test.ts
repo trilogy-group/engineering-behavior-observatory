@@ -748,6 +748,15 @@ test("rejects contradictory and incomplete contract records", () => {
   ]);
   const verifier = readJson(resolve(fixtureRoot, "complete/verifier.json"));
 
+  const legacyComplete = structuredClone(complete);
+  delete (legacyComplete.run as JsonObject).assessmentMode;
+  const legacyCaptureReport = structuredClone(completeCaptureReport);
+  delete legacyCaptureReport.assessmentMode;
+  assertContractValid(legacyComplete, new Map([
+    ["capture-report", legacyCaptureReport],
+    ["verifier", completeVerifier],
+  ]));
+
   const invalidTerminal = structuredClone(complete);
   invalidTerminal.terminal = { state: "completed", failureClass: "task", stopReason: "none" };
   assertContractInvalid(invalidTerminal);

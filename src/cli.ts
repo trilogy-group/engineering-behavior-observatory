@@ -40,7 +40,7 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
        ebo export create <run-bundle-root> <policy.json> <export-root>
        ebo corpus build <corpus-root> <index.jsonl>
-       ebo corpus query <index.jsonl> [--kind|--run|--attempt|--task|--model|--harness|--terminal|--failure-class|--verifier-status|--capture|--export-status|--sharing-class <value>]
+       ebo corpus query <index.jsonl> [--kind|--run|--attempt|--task|--model|--harness|--assessment-mode|--terminal|--failure-class|--verifier-status|--capture|--export-status|--sharing-class <value>]
        ebo corpus validate <corpus-root> <index.jsonl>
        ebo corpus pack <export-root> <policy.json> <archive.tar.gz>
        ebo corpus unpack <archive.tar.gz> <destination-root>
@@ -209,6 +209,7 @@ function parseCorpusQuery(args: string[]): CorpusIndexQuery {
     "--task": "taskId",
     "--model": "modelId",
     "--harness": "harnessId",
+    "--assessment-mode": "assessmentMode",
     "--terminal": "terminalState",
     "--failure-class": "failureClass",
     "--verifier-status": "verifierStatus",

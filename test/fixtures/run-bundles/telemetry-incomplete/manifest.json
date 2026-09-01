@@ -3,6 +3,7 @@
   "bundleId": "bundle-telemetry-incomplete",
   "run": {
     "id": "run-telemetry-incomplete",
+    "assessmentMode": "verified",
     "task": { "id": "task-example" },
     "fixture": {
       "id": "fixture-example",
@@ -76,8 +77,8 @@
       "kind": "capture-report",
       "authority": "capture",
       "mediaType": "application/json",
-      "digest": "sha256:7a1873d86769c7b3af47e9751c2c533305dfd25b48e19339d4d7c561aae5af11",
-      "sizeBytes": 431,
+      "digest": "sha256:e13b16c34b6e44bd7ae460dde343db6596e0881d1be4ee61cf11ff84321f9ed5",
+      "sizeBytes": 463,
       "sharingClass": "internal",
       "relativePath": "capture-report.json"
     }

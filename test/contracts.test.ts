@@ -110,6 +110,7 @@ function admittedResolutions(taskSet: TaskConditionSet): Record<string, Resolved
     Object.entries(taskSet).map(([taskId, condition]) => [
       taskId,
       {
+        assessmentMode: "verified",
         digest: condition.packetRef.digest,
         preAdmissionDigest,
         reviewRecordDigest: condition.packetRef.digest,
@@ -176,6 +177,9 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
 
   assert.equal(validate(admitted), true, JSON.stringify(validate.errors));
   assert.equal(validate(proposed), true, JSON.stringify(validate.errors));
+  const legacyVerified = structuredClone(admitted) as Document;
+  delete legacyVerified.assessmentMode;
+  assert.equal(validate(legacyVerified), true, JSON.stringify(validate.errors));
   assert.equal("components" in admitted, false);
   assert.deepEqual((proposed.admission as Document).review, null);
   assert.deepEqual(Object.keys(proposed.restricted as Document).sort(), ["referenceSolution", "verifier"]);
@@ -710,6 +714,7 @@ test("task resolution accepts only matching admitted packets", () => {
   }
 
   resolutions["task-a"] = {
+    assessmentMode: "verified",
     digest: { algorithm: "sha256", value: "0".repeat(64) },
     preAdmissionDigest: { algorithm: "sha256", value: "0".repeat(64) },
     reviewRecordDigest: experiment.taskSet["task-a"]!.packetRef.digest,

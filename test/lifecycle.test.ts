@@ -832,6 +832,27 @@ test("a missing verifier is recorded as not-run instead of a false completion", 
   assert.equal(result.classification.kind, "verifier-error");
 });
 
+test("observational completion is unscored and does not enter verifier execution", async () => {
+  const result = await executeRunAttempt({
+    run,
+    assessmentMode: "observational",
+    workspace: workspace(),
+    harness: async () => ({ status: "completed" }),
+    evidence: { flush: () => undefined },
+  });
+  assert.equal(result.classification.kind, "completed");
+  assert.equal(result.record.assessmentMode, "observational");
+  assert.equal(result.record.verifier, undefined);
+  assert.equal(result.record.lifecycle.transitions.some(({ to }) => to === "verifying"), false);
+  await assert.rejects(executeRunAttempt({
+    run,
+    assessmentMode: "observational",
+    workspace: workspace(),
+    harness: async () => ({ status: "completed" }),
+    verifier: async () => ({ status: "passed" }),
+  }), /cannot execute a verifier/);
+});
+
 test("completion requires a retained workspace artifact", async () => {
   const result = await executeRunAttempt({
     run,
@@ -989,6 +1010,7 @@ test("attempt persistence rejects replacing another attempt's record", async () 
     const path = join(root, "attempt.json");
     const first = {
       schemaVersion: "ebo.attempt/v1" as const,
+      assessmentMode: "verified" as const,
       run,
       attempt: createAttemptIdentity(run.id, 1, "first"),
       lifecycle: new LifecycleController().snapshot(),
@@ -1012,6 +1034,7 @@ test("attempt persistence rejects stale lifecycle checkpoints", async () => {
     lifecycle.transition("running", "running");
     const current = {
       schemaVersion: "ebo.attempt/v1" as const,
+      assessmentMode: "verified" as const,
       run,
       attempt: createAttemptIdentity(run.id, 1, "attempt-1"),
       lifecycle: lifecycle.snapshot(),
@@ -1085,6 +1108,7 @@ test("attempt persistence rejects reopening a terminal attempt", async () => {
     await writeAttemptRecord(path, terminal.record);
     await assert.rejects(writeAttemptRecord(path, {
       schemaVersion: "ebo.attempt/v1",
+      assessmentMode: "verified",
       run,
       attempt: terminal.attempt,
       lifecycle: new LifecycleController().snapshot(),
@@ -1290,6 +1314,26 @@ test("attempt records are validated when read", async () => {
   }
 });
 
+test("legacy v1 attempt records default to verified assessment", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-legacy-record-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    const path = join(root, "legacy.json");
+    const record = structuredClone(result.record) as unknown as Record<string, unknown>;
+    delete record.assessmentMode;
+    writeFileSync(path, JSON.stringify(record));
+    assert.equal((await readAttemptRecord(path)).assessmentMode, "verified");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("attempt records reject lifecycle timestamps that disagree with transitions", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-timestamps-"));
   try {
@@ -1316,6 +1360,7 @@ test("attempt checkpoints remain partial before terminal state", async () => {
     const path = join(root, "checkpoint.json");
     writeFileSync(path, JSON.stringify({
       schemaVersion: "ebo.attempt/v1",
+      assessmentMode: "verified",
       run,
       attempt: createAttemptIdentity(run.id, 1, "attempt-1"),
       lifecycle: new LifecycleController(() => "created").snapshot(),
@@ -1841,6 +1886,7 @@ test("terminal attempt records require matching terminal classification", async 
     const path = join(root, "terminal.json");
     writeFileSync(path, JSON.stringify({
       schemaVersion: "ebo.attempt/v1",
+      assessmentMode: "verified",
       run,
       attempt: createAttemptIdentity(run.id, 1, "attempt-1"),
       lifecycle: {
@@ -1871,6 +1917,7 @@ test("durable validation rejects classification kinds that contradict terminals"
     const path = join(root, "contradictory.json");
     writeFileSync(path, JSON.stringify({
       schemaVersion: "ebo.attempt/v1",
+      assessmentMode: "verified",
       run,
       attempt: createAttemptIdentity(run.id, 1, "attempt-1"),
       lifecycle: {
@@ -1903,6 +1950,7 @@ test("durable validation rejects malformed optional outcome evidence", async () 
     const path = join(root, "malformed.json");
     writeFileSync(path, JSON.stringify({
       schemaVersion: "ebo.attempt/v1",
+      assessmentMode: "verified",
       run,
       attempt: createAttemptIdentity(run.id, 1, "attempt-1"),
       lifecycle: new LifecycleController().snapshot(),
