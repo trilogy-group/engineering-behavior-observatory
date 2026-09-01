@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { cp, lstat, mkdir, mkdtemp, readdir, rm, rmdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -358,7 +358,9 @@ export class RunBundleAssembler {
     for (const name of exclusions) {
       if (name.includes("/") || !isSafeArtifactRelativePath(name)) throw new Error(`Workspace outcome exclusion "${name}" is invalid.`);
     }
-    const filteredRoot = exclusions.length === 0 && options.respectGitignore !== true
+    const filteredRoot = exclusions.length === 0
+        && options.respectGitignore !== true
+        && options.omitEmptyDirectories !== true
       ? undefined
       : await mkdtemp(join(tmpdir(), "ebo-workspace-filter-"));
     const capturedPath = filteredRoot === undefined ? finalPath : join(filteredRoot, "workspace");
@@ -1053,15 +1055,41 @@ async function removeIgnoredWorkspaceEntries(startPath: string, finalPath: strin
     await cp(startPath, baseline, { recursive: true, preserveTimestamps: true, force: false });
     await execFileAsync("git", ["init", "--quiet"], { cwd: baseline });
     await execFileAsync("git", ["add", "--force", "--all"], { cwd: baseline });
-    await execFileAsync("git", ["-c", "user.name=EBO", "-c", "user.email=ebo.invalid", "commit", "--quiet", "--allow-empty", "-m", "starting fixture"], { cwd: baseline });
-    await execFileAsync("git", [
-      `--git-dir=${join(baseline, ".git")}`,
-      `--work-tree=${finalPath}`,
-      "clean", "-ffdX",
-    ]);
+    for (const relativePath of await ignoredWorkspacePaths(baseline, finalPath)) {
+      await rm(join(finalPath, relativePath), { recursive: true, force: true });
+    }
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
+}
+
+async function ignoredWorkspacePaths(baseline: string, finalPath: string): Promise<string[]> {
+  const paths: string[] = [];
+  async function visit(directory: string, prefix = ""): Promise<void> {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const relativePath = `${prefix}${entry.name}`;
+      paths.push(entry.isDirectory() ? `${relativePath}/` : relativePath);
+      if (entry.isDirectory()) await visit(join(directory, entry.name), `${relativePath}/`);
+    }
+  }
+  await visit(finalPath);
+  if (paths.length === 0) return [];
+  return new Promise((resolvePaths, reject) => {
+    const child = spawn("git", ["check-ignore", "-z", "--stdin"], { cwd: baseline, stdio: ["pipe", "pipe", "pipe"] });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code !== 0 && code !== 1) {
+        reject(new Error(`Unable to apply starting workspace ignore rules: ${Buffer.concat(stderr).toString("utf8").trim()}`));
+        return;
+      }
+      resolvePaths(Buffer.concat(stdout).toString("utf8").split("\0").filter(Boolean));
+    });
+    child.stdin.end(Buffer.from(`${paths.join("\0")}\0`));
+  });
 }
 
 async function removeEmptyDirectories(directory: string, root: string = directory): Promise<void> {

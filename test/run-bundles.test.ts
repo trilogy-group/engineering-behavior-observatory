@@ -199,9 +199,10 @@ test("workspace outcome excludes declared transient directory names", async () =
     mkdirSync(join(fixture.final, "coverage"));
     writeFileSync(join(fixture.final, "coverage", "summary.json"), "generated\n");
     writeFileSync(join(fixture.start, ".gitignore"), "ignored.bin\ngenerated/\n");
-    writeFileSync(join(fixture.final, ".gitignore"), "ignored.bin\ngenerated/\n");
+    writeFileSync(join(fixture.final, ".gitignore"), "ignored.bin\nnew-outcome.txt\n");
     mkdirSync(join(fixture.final, "generated"));
     writeFileSync(join(fixture.final, "generated", "cache.txt"), "generated\n");
+    writeFileSync(join(fixture.final, "new-outcome.txt"), "must remain observable\n");
     const assembler = await createRunBundleAssembler(definition(bundleRoot, "filtered-patch"));
     const captured = await assembler.captureWorkspaceOutcome({
       startPath: fixture.start,
@@ -213,7 +214,26 @@ test("workspace outcome excludes declared transient directory names", async () =
     assert.equal(captured.format, "patch");
     const patch = readFileSync(join(bundleRoot, captured.descriptor.relativePath), "utf8");
     assert.match(patch, /changed\.txt/u);
+    assert.match(patch, /diff --git a\/new-outcome\.txt b\/new-outcome\.txt/u);
     assert.doesNotMatch(patch, /node_modules|coverage|generated\/cache/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("workspace outcome omits empty directories without another projection filter", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-run-bundle-empty-directory-"));
+  try {
+    const bundleRoot = join(root, "bundle");
+    const fixture = createWorkspaceFixture(root);
+    mkdirSync(join(fixture.final, "empty"));
+    const assembler = await createRunBundleAssembler(definition(bundleRoot, "empty-directory"));
+    const captured = await assembler.captureWorkspaceOutcome({
+      startPath: fixture.start,
+      finalPath: fixture.final,
+      omitEmptyDirectories: true,
+    });
+    assert.equal(captured.format, "patch");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
