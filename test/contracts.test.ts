@@ -324,6 +324,12 @@ test("literal archive selection rejects unsafe or colliding destinations", () =>
     { path: "src", kind: "directory" },
     { path: "src/index.ts", kind: "file" },
   ], ["src"]));
+  assert.doesNotThrow(() => assertNoSelectedSymlinks([
+    { path: "apps", kind: "directory" },
+    { path: "apps/staff/src/app/groups/[groupId].tsx", kind: "file" },
+    { path: "apps/mobile/src/app/(tabs)/+html.tsx", kind: "file" },
+    { path: "apps/mobile/assets/react-logo@2x.png", kind: "file" },
+  ], ["apps"]));
   assert.doesNotThrow(() => validateArchiveSelection([{ path: "src/index.ts", kind: "file" }], ["src/index.ts"]));
   assert.throws(
     () => validateArchiveSelection([{ path: "src/index.ts", kind: "file" }], ["src"]),

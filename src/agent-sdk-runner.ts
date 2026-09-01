@@ -13,7 +13,7 @@ import {
   type ClaudeAgentSdkQuery,
   type ClaudeAgentSdkTelemetryConfiguration,
 } from "./agent-sdk.js";
-import { resolveBundleConfiguration, type ArtifactReference } from "./contracts.js";
+import { isSafeArtifactRelativePath, resolveBundleConfiguration, type ArtifactReference } from "./contracts.js";
 import type { AttemptClassificationKind, TerminalRecord } from "./lifecycle.js";
 import type { CaptureQualificationStatus, RunBundleDefinition, RunManifest } from "./run-bundles.js";
 import { readBoundedFile, readRunQueue, type RunQueueEntry } from "./scheduler.js";
@@ -63,6 +63,11 @@ export type AgentSdkCaptureProfileConfiguration = {
     logToolDetails?: boolean;
     logToolContent?: boolean;
     logRawApiBodies?: boolean;
+  };
+  workspaceOutcome?: {
+    excludeDirectoryNames: string[];
+    respectGitignore?: boolean;
+    omitEmptyDirectories?: boolean;
   };
 };
 
@@ -189,12 +194,21 @@ export async function runAgentSdkQueueEntry(options: RunAgentSdkQueueEntryOption
         },
       },
       configuration,
+      ...(captureProfile.workspaceOutcome === undefined ? {} : {
+        workspaceOutcomeExcludedDirectoryNames: captureProfile.workspaceOutcome.excludeDirectoryNames,
+        ...(captureProfile.workspaceOutcome.respectGitignore === undefined ? {} : {
+          workspaceOutcomeRespectsGitignore: captureProfile.workspaceOutcome.respectGitignore,
+        }),
+        ...(captureProfile.workspaceOutcome.omitEmptyDirectories === undefined ? {} : {
+          workspaceOutcomeOmitsEmptyDirectories: captureProfile.workspaceOutcome.omitEmptyDirectories,
+        }),
+      }),
       ...(verifierReference === undefined ? {} : {
-        verifier: (_context, outcome) => executeVerifier({
+        verifier: (context, outcome, projectedWorkspacePath) => executeVerifier({
           bundleId: definition.bundleId,
           verifierRoot: bundleRoot,
           verifier: verifierReference,
-          workspacePath: workspace.path,
+          workspacePath: projectedWorkspacePath,
           workspaceFingerprint: outcome.fingerprint,
           workspace: {
             artifactId: outcome.descriptor.id,
@@ -203,6 +217,7 @@ export async function runAgentSdkQueueEntry(options: RunAgentSdkQueueEntryOption
           },
           artifactRoot: attemptBundleRoot,
           moduleFormat: verifierFormat,
+          signal: context.signal,
         }),
       }),
       maxWallClockMs: queue.coordinatorBudget.maxWallClockMs,
@@ -311,7 +326,21 @@ function validateConfigurationRecord(record: Record<string, unknown>, kind: Agen
       return;
     }
     case "capture-profile": {
-      assertRecordKeys(record, ["telemetry"], [], reference);
+      assertRecordKeys(record, ["telemetry", "workspaceOutcome"], [], reference);
+      if (record.workspaceOutcome !== undefined) {
+        if (!isRecord(record.workspaceOutcome)) throw configurationError(reference, "workspaceOutcome must be an object");
+        assertKeys(record.workspaceOutcome, ["excludeDirectoryNames", "respectGitignore", "omitEmptyDirectories"], ["excludeDirectoryNames"], reference);
+        assertToolList(record.workspaceOutcome.excludeDirectoryNames, "workspaceOutcome excludeDirectoryNames", reference);
+        if ((record.workspaceOutcome.excludeDirectoryNames as string[]).some((name) => name.includes("/") || !isSafeArtifactRelativePath(name))) {
+          throw configurationError(reference, "workspaceOutcome excludeDirectoryNames must contain safe path segments");
+        }
+        if (record.workspaceOutcome.respectGitignore !== undefined && typeof record.workspaceOutcome.respectGitignore !== "boolean") {
+          throw configurationError(reference, "workspaceOutcome respectGitignore must be a boolean");
+        }
+        if (record.workspaceOutcome.omitEmptyDirectories !== undefined && typeof record.workspaceOutcome.omitEmptyDirectories !== "boolean") {
+          throw configurationError(reference, "workspaceOutcome omitEmptyDirectories must be a boolean");
+        }
+      }
       if (record.telemetry === undefined) return;
       if (!isRecord(record.telemetry)) throw configurationError(reference, "telemetry must be an object");
       const telemetry = record.telemetry;

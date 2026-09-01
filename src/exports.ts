@@ -71,7 +71,7 @@ export type PortableExportManifest = {
   };
   artifacts: PortableExportArtifact[];
   transformations: Array<{ artifactId: string; action: TransformationAction; count: number }>;
-  excludedArtifacts: Array<{ artifactId: string; reason: "source-export-manifest" }>;
+  excludedArtifacts: Array<{ artifactId: string; reason: "source-export-manifest" | "unsupported-workspace-snapshot" }>;
 };
 
 export type CreatePortableRunBundleExportOptions = {
@@ -250,6 +250,10 @@ export async function createPortableRunBundleExport(
     for (const [index, descriptor] of sourceManifest.evidence.entries()) {
       if (descriptor.kind === "export-manifest") {
         excludedArtifacts.push({ artifactId: descriptor.id, reason: "source-export-manifest" });
+        continue;
+      }
+      if (descriptor.kind === "workspace" && descriptor.mediaType === "application/gzip") {
+        excludedArtifacts.push({ artifactId: descriptor.id, reason: "unsupported-workspace-snapshot" });
         continue;
       }
       assertSupportedPair(descriptor.kind, descriptor.mediaType);
@@ -614,7 +618,7 @@ function scanPortableTree(
   sensitiveValues: readonly string[],
   sourceCorrelations: readonly string[],
 ): void {
-  for (const bytes of buffers) {
+  for (const [index, bytes] of buffers.entries()) {
     const text = decode(bytes, "portable export");
     const secretPatternIndex = SECRET_PATTERNS.findIndex((pattern) => pattern.test(text));
     const failure = [
@@ -627,7 +631,7 @@ function scanPortableTree(
     ].find(([, matched]) => matched);
     if (failure !== undefined) {
       resetPatterns();
-      throw new Error(`Portable export failed the final secret scan: ${String(failure[0])}.`);
+      throw new Error(`Portable export buffer ${index} failed the final secret scan: ${String(failure[0])}.`);
     }
     resetPatterns();
   }
@@ -673,8 +677,12 @@ async function validateSourceReferences(
     }
   }
   for (const excluded of manifest.excludedArtifacts) {
-    if (sourceById.get(excluded.artifactId)?.kind !== "export-manifest") {
-      throw new Error(`Portable exclusion ${excluded.artifactId} is not a source export manifest.`);
+    const source = sourceById.get(excluded.artifactId);
+    const valid = excluded.reason === "source-export-manifest"
+      ? source?.kind === "export-manifest"
+      : source?.kind === "workspace" && source.mediaType === "application/gzip";
+    if (!valid) {
+      throw new Error(`Portable exclusion ${excluded.artifactId} does not match its declared reason.`);
     }
   }
   const represented = new Set([

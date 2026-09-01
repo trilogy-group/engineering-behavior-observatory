@@ -80,6 +80,9 @@ test("captures and qualifies one caller-supplied Agent SDK run", async () => {
         },
       },
       expectedHooks: ["UserPromptSubmit", "SessionStart", "SessionEnd", "SessionStart"],
+      workspaceOutcomeExcludedDirectoryNames: ["node_modules", "coverage"],
+      workspaceOutcomeRespectsGitignore: true,
+      workspaceOutcomeOmitsEmptyDirectories: true,
       query,
       verifier: async (_context, workspace) => {
         const bytes = Buffer.from("verifier output\n");
@@ -114,11 +117,17 @@ test("captures and qualifies one caller-supplied Agent SDK run", async () => {
     const report = JSON.parse(readFileSync(join(bundleRoot, descriptor.relativePath), "utf8")) as {
       agentSdk: { capabilities: { sdkVersion: string }; effectiveConfiguration: { model: string }; expectedHooks: string[] };
       structuralQualification: { status: string };
+      workspaceOutcomeExcludedDirectoryNames: string[];
+      workspaceOutcomeRespectsGitignore: boolean;
+      workspaceOutcomeOmitsEmptyDirectories: boolean;
     };
     assert.equal(report.agentSdk.capabilities.sdkVersion, capabilities.sdkVersion);
     assert.equal(report.agentSdk.effectiveConfiguration.model, "claude-test");
     assert.deepEqual(report.agentSdk.expectedHooks, ["UserPromptSubmit", "SessionStart", "SessionEnd"]);
     assert.equal(report.structuralQualification.status, "qualified");
+    assert.deepEqual(report.workspaceOutcomeExcludedDirectoryNames, ["node_modules", "coverage"]);
+    assert.equal(report.workspaceOutcomeRespectsGitignore, true);
+    assert.equal(report.workspaceOutcomeOmitsEmptyDirectories, true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -153,7 +162,7 @@ test("rejects a declared model that differs from the executed SDK model", async 
 });
 
 test("retains interrupted, verifier-error, and capture/workspace-failure attempts", async (context) => {
-  for (const scenario of ["interrupted", "verifier-error", "capture-failure", "workspace-error"] as const) {
+  for (const scenario of ["interrupted", "verifier-error", "verifier-timeout", "capture-failure", "workspace-error"] as const) {
     await context.test(scenario, async () => {
       const root = mkdtempSync(join(tmpdir(), `ebo-agent-sdk-run-${scenario}-`));
       const start = join(root, "start");
@@ -212,7 +221,12 @@ test("retains interrupted, verifier-error, and capture/workspace-failure attempt
           ...(["interrupted", "capture-failure", "workspace-error"].includes(scenario) ? {
             ...(scenario === "interrupted" ? { signal: controller.signal } : {}),
           } : {
-            verifier: async (_verifierContext, workspace) => ({
+            verifier: scenario === "verifier-timeout"
+              ? async () => {
+                  controller.abort("fixture verifier interruption");
+                  return new Promise<never>(() => undefined);
+                }
+              : async (_verifierContext, workspace) => ({
               schemaVersion: "verifier-result/v1" as const,
               bundleId: definition.bundleId,
               status: "error" as const,
@@ -225,12 +239,22 @@ test("retains interrupted, verifier-error, and capture/workspace-failure attempt
               assertions: [],
             }),
           }),
+          ...(scenario === "verifier-timeout" ? {
+            signal: controller.signal,
+            shutdownGraceMs: 10,
+            workspaceOutcomeOmitsEmptyDirectories: true,
+          } : {}),
         });
         const expectedClassification = scenario === "interrupted" ? "interrupted"
           : scenario === "verifier-error" ? "verifier-error"
             : scenario === "capture-failure" ? "capture-incomplete" : "verifier-error";
-        assert.equal(result.attempt.classification.kind, expectedClassification);
-        assert.equal(result.manifest.terminal.state, scenario === "interrupted" ? "interrupted" : "failed");
+        if (scenario === "verifier-timeout") {
+          assert.ok(["interrupted", "capture-incomplete"].includes(result.attempt.classification.kind));
+        } else {
+          assert.equal(result.attempt.classification.kind, expectedClassification);
+        }
+        assert.equal(result.manifest.terminal.state, ["interrupted", "verifier-timeout"].includes(scenario)
+          ? "interrupted" : "failed");
         if (scenario === "workspace-error") {
           assert.equal(result.manifest.evidence.some((entry) => entry.kind === "workspace"), false);
           assert.equal(result.manifest.terminal.workspaceArtifactId, undefined);
@@ -239,8 +263,12 @@ test("retains interrupted, verifier-error, and capture/workspace-failure attempt
         const reportDescriptor = result.manifest.evidence.find((entry) => entry.kind === "capture-report")!;
         const report = JSON.parse(readFileSync(join(bundleRoot, reportDescriptor.relativePath), "utf8")) as {
           structuralQualification: { status: string };
+          missingEvidence: Array<{ kind: string; detail?: string }>;
         };
         assert.equal(report.structuralQualification.status, "unqualified");
+        if (scenario === "workspace-error") {
+          assert.match(report.missingEvidence.find(({ kind }) => kind === "workspace")?.detail ?? "", /symbolic link/u);
+        }
       } finally {
         rmSync(root, { recursive: true, force: true });
       }

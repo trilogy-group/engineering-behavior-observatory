@@ -837,7 +837,7 @@ export function isSafeArtifactRelativePath(path: string): boolean {
 
   return path === posix.normalize(path)
     && path.length <= MAX_ARCHIVE_PATH_LENGTH
-    && /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[A-Za-z0-9._-][A-Za-z0-9._\/-]*$/.test(path)
+    && /^(?!\/)(?!.*\/\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[A-Za-z0-9._@+()\[\]\/-]+$/.test(path)
     && segments.length <= MAX_ARCHIVE_PATH_COMPONENTS
     && !segments.some((segment) => segment.length > 255 || segment.endsWith(".") || segment.toLowerCase() === ".git"
       || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(segment));

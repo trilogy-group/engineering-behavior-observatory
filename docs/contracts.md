@@ -20,6 +20,8 @@ not contain an evaluation corpus or a fixed operating matrix.
   Include paths are canonical POSIX logical paths only; leading slashes, trailing
   slashes, backslashes,
   drive letters, UNC paths, and traversal forms are invalid.
+  Common framework filenames may use brackets, parentheses, `+`, and `@`;
+  spaces, colons, wildcard characters, and shell metacharacters remain invalid.
 - `verified-archive-literal-paths-v1` resolves each literal from the sanitized
   archive root. A file includes that file; a directory includes its complete
   descendant tree. Wildcards are intentionally unsupported.

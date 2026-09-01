@@ -547,6 +547,48 @@ test("settles timeout when a detached descendant inherits verifier pipes", async
   }
 });
 
+test("aborts and reaps a running verifier before its independent timeout", async () => {
+  const root = await createRoots();
+  const controller = new AbortController();
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      process.stderr.write("started");
+      setInterval(() => {}, 10000);
+    `);
+    const timer = setTimeout(() => controller.abort("fixture interruption"), 1_000);
+    const result = await Promise.race([
+      run(root, verifier, { signal: controller.signal, timeoutMs: 10_000 }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("abort did not settle")), 3_000)),
+    ]);
+    clearTimeout(timer);
+
+    assert.equal(result.status, "error");
+    assert.match(result.error ?? "", /aborted|complete normally/u);
+    const diagnostic = result.diagnostics.find((item) => item.stream === "stderr");
+    assert.ok(diagnostic);
+    assert.match((await readFile(join(root.artifact, diagnostic.locator))).toString("utf8"), /started/u);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
+test("stops before verifier staging when its signal is already aborted", async () => {
+  const root = await createRoots();
+  const controller = new AbortController();
+  controller.abort("fixture interruption");
+  try {
+    const verifier = await addVerifier(root.verifier, `
+      setInterval(() => {}, 10000);
+    `);
+    await assert.rejects(run(root, verifier, {
+      signal: controller.signal,
+      timeoutMs: 10_000,
+    }), /aborted/u);
+  } finally {
+    await rm(root.parent, { force: true, recursive: true });
+  }
+});
+
 test("does not expose verifier completion capabilities to descendants", async () => {
   const root = await createRoots();
   try {
@@ -927,7 +969,7 @@ async function addVerifier(root: string, source: string): Promise<{ locator: str
 async function run(
   root: Roots,
   verifier: { locator: string; digest: ReturnType<typeof digestBytes> },
-  options: { timeoutMs?: number; maxOutputBytes?: number; command?: string; args?: readonly string[]; env?: NodeJS.ProcessEnv; moduleFormat?: "commonjs" | "module"; diagnosticDirectory?: string } = {},
+  options: { timeoutMs?: number; maxOutputBytes?: number; command?: string; args?: readonly string[]; env?: NodeJS.ProcessEnv; moduleFormat?: "commonjs" | "module"; diagnosticDirectory?: string; signal?: AbortSignal } = {},
 ): Promise<CompleteVerifierResult> {
   const workspaceFingerprint = await digestWorkspace(root.workspace);
   const workspace = {
