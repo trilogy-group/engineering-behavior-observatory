@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { cp, lstat, mkdir, mkdtemp, readdir, rm, rmdir, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { HOOK_EVENTS } from "@anthropic-ai/claude-agent-sdk";
 
@@ -1138,7 +1138,7 @@ async function isExcludedWorkspaceDirectory(
   exclusions: readonly string[],
 ): Promise<boolean> {
   let candidate = root;
-  for (const segment of source.slice(root.length + 1).split(/[\\/]/u)) {
+  for (const segment of source.slice(root.length + 1).split(sep)) {
     candidate = join(candidate, segment);
     if (exclusions.includes(segment) && (await lstat(candidate)).isDirectory()) return true;
   }

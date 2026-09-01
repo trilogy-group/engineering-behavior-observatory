@@ -209,6 +209,9 @@ test("workspace outcome excludes declared transient directory names", async () =
     mkdirSync(join(fixture.final, "generated"));
     writeFileSync(join(fixture.final, "generated", "cache.txt"), "generated\n");
     writeFileSync(join(fixture.final, "new-outcome.txt"), "must remain observable\n");
+    if (process.platform !== "win32") {
+      writeFileSync(join(fixture.final, "node_modules\\result.txt"), "backslash is not a POSIX separator\n");
+    }
     const ambientExcludes = join(root, "ambient-excludes");
     writeFileSync(ambientExcludes, "ambient-only.txt\n");
     writeFileSync(join(fixture.final, "ambient-only.txt"), "must ignore ambient Git configuration\n");
@@ -228,6 +231,9 @@ test("workspace outcome excludes declared transient directory names", async () =
         statSync(join(projectedPath, "legitimate"), { bigint: true }).mtimeNs,
         statSync(join(fixture.final, "legitimate"), { bigint: true }).mtimeNs,
       );
+      if (process.platform !== "win32") {
+        assert.equal(readFileSync(join(projectedPath, "node_modules\\result.txt"), "utf8"), "backslash is not a POSIX separator\n");
+      }
     });
     assert.equal(captured.format, "patch");
     const patch = readFileSync(join(bundleRoot, captured.descriptor.relativePath), "utf8");
@@ -236,7 +242,7 @@ test("workspace outcome excludes declared transient directory names", async () =
     assert.match(patch, /diff --git a\/ambient-only\.txt b\/ambient-only\.txt/u);
     assert.match(patch, /diff --git a\/legitimate\/coverage b\/legitimate\/coverage/u);
     assert.match(patch, /diff --git a\/ignored\.bin b\/ignored\.bin[\s\S]*deleted file mode/u);
-    assert.doesNotMatch(patch, /node_modules|coverage\/summary|generated\/cache/u);
+    assert.doesNotMatch(patch, /node_modules\/|coverage\/summary|generated\/cache/u);
   } finally {
     for (const [name, value] of gitConfiguration) {
       if (value === undefined) delete process.env[name];
