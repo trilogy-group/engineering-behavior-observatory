@@ -97,7 +97,7 @@ export type TaskPacketComponents = {
 export type TaskPacketFreezeRecord = {
   schemaVersion: "ebo.task-packet-freeze/v1";
   packetId: string;
-  assessmentMode: AssessmentMode;
+  assessmentMode?: AssessmentMode;
   packetLocator: string;
   preAdmissionDigest: Digest;
   packetDigest: Digest;
@@ -178,8 +178,12 @@ function inspectTaskPacketWithRoot(
     return { packetLocator, packet: null, preAdmissionDigest: null, packetDigest: null, components: null, modelVisible: null, errors };
   }
 
-  const packet = document as TaskPacket;
-  const preAdmissionPacket = structuredClone(packet) as unknown as Record<string, unknown>;
+  const serializedPacket = document as TaskPacket | Omit<Extract<TaskPacket, { assessmentMode: "verified" }>, "assessmentMode">;
+  const packet = {
+    ...structuredClone(serializedPacket),
+    assessmentMode: "assessmentMode" in serializedPacket ? serializedPacket.assessmentMode : "verified",
+  } as TaskPacket;
+  const preAdmissionPacket = structuredClone(serializedPacket) as unknown as Record<string, unknown>;
   delete preAdmissionPacket.admission;
   const preAdmissionDigest = digestMetadata(preAdmissionPacket);
   const components: TaskPacketComponents = {
@@ -226,7 +230,7 @@ function inspectTaskPacketWithRoot(
     packetLocator,
     packet,
     preAdmissionDigest,
-    packetDigest: digestMetadata(packet),
+    packetDigest: digestMetadata(serializedPacket),
     components,
     modelVisible: modelVisibleTaskPacket(packet),
     errors,
@@ -727,7 +731,7 @@ function aggregateDigest(
 function compareFreezeRecord(record: TaskPacketFreezeRecord, inspection: TaskPacketInspection): string[] {
   const mismatches: string[] = [];
   if (record.packetId !== inspection.packet?.id) mismatches.push("packetId");
-  if (record.assessmentMode !== inspection.packet?.assessmentMode) mismatches.push("assessmentMode");
+  if ((record.assessmentMode ?? "verified") !== inspection.packet?.assessmentMode) mismatches.push("assessmentMode");
   if (record.packetLocator !== inspection.packetLocator) mismatches.push("packetLocator");
   if (!sameDigest(record.preAdmissionDigest, inspection.preAdmissionDigest)) mismatches.push("pre-admission");
   if (!sameDigest(record.packetDigest, inspection.packetDigest)) mismatches.push("packet");

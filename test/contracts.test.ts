@@ -177,6 +177,9 @@ test("task packet validation rejects unsafe sources, missing evidence, and bad r
 
   assert.equal(validate(admitted), true, JSON.stringify(validate.errors));
   assert.equal(validate(proposed), true, JSON.stringify(validate.errors));
+  const legacyVerified = structuredClone(admitted) as Document;
+  delete legacyVerified.assessmentMode;
+  assert.equal(validate(legacyVerified), true, JSON.stringify(validate.errors));
   assert.equal("components" in admitted, false);
   assert.deepEqual((proposed.admission as Document).review, null);
   assert.deepEqual(Object.keys(proposed.restricted as Document).sort(), ["referenceSolution", "verifier"]);

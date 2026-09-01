@@ -1534,6 +1534,7 @@ function assertRecord(value: unknown): asserts value is AttemptRecord {
   }
   assertJsonValue(value, "attempt record", new Set<object>());
   if (value.schemaVersion !== "ebo.attempt/v1") throw new Error("Attempt record schemaVersion is invalid.");
+  if (value.assessmentMode === undefined) value.assessmentMode = "verified";
   if (value.assessmentMode !== "observational" && value.assessmentMode !== "verified") {
     throw new Error("Attempt record assessment mode is invalid.");
   }

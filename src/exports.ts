@@ -638,7 +638,7 @@ async function validateSourceReferences(
   source: RunManifest,
   sourceRoot?: string,
 ): Promise<void> {
-  if (manifest.assessmentMode !== source.run.assessmentMode) {
+  if ((manifest.assessmentMode ?? "verified") !== (source.run.assessmentMode ?? "verified")) {
     throw new Error("Portable export assessment mode does not match its source run.");
   }
   const sourceById = new Map(source.evidence.map((descriptor) => [descriptor.id, descriptor]));

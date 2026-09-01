@@ -190,6 +190,34 @@ test("observational packets freeze without reference-solution or verifier compon
   }
 });
 
+test("legacy v1 packets without assessment mode remain verified", () => {
+  const seeded = createBundle();
+  const packet = seeded.packet as unknown as Record<string, unknown>;
+  delete packet.assessmentMode;
+  try {
+    const preAdmission = structuredClone(packet);
+    delete preAdmission.admission;
+    const admission = packet.admission as VerifiedTaskPacket["admission"];
+    const review = Buffer.from(JSON.stringify({
+      preAdmissionDigest: digestMetadata(preAdmission),
+      decision: admission.status,
+      reviewedAt: admission.review!.reviewedAt,
+      reviewedBy: admission.review!.reviewedBy,
+    }));
+    admission.review!.reviewRecord.digest = digestBytes(review);
+    writeFileSync(join(seeded.root, "review.json"), review);
+    writeFileSync(join(seeded.root, "packet.json"), JSON.stringify(packet, null, 2));
+
+    const inspection = inspectTaskPacket(seeded.root, "packet.json");
+    assert.deepEqual(inspection.errors, []);
+    assert.equal(inspection.packet?.assessmentMode, "verified");
+    const record = freezeTaskPacket(seeded.root, "packet.json");
+    assert.equal(record.assessmentMode, "verified");
+  } finally {
+    rmSync(seeded.root, { force: true, recursive: true });
+  }
+});
+
 test("freeze keeps a relative bundle root during pre-link validation", () => {
   const { root } = createBundle();
   const bundleRoot = relative(process.cwd(), root);

@@ -1314,6 +1314,26 @@ test("attempt records are validated when read", async () => {
   }
 });
 
+test("legacy v1 attempt records default to verified assessment", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-legacy-record-"));
+  try {
+    const result = await executeRunAttempt({
+      run,
+      workspace: workspace(),
+      harness: async () => ({ status: "completed" }),
+      verifier: async () => ({ status: "passed" }),
+      evidence: { flush: () => undefined },
+    });
+    const path = join(root, "legacy.json");
+    const record = structuredClone(result.record) as unknown as Record<string, unknown>;
+    delete record.assessmentMode;
+    writeFileSync(path, JSON.stringify(record));
+    assert.equal((await readAttemptRecord(path)).assessmentMode, "verified");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("attempt records reject lifecycle timestamps that disagree with transitions", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-lifecycle-timestamps-"));
   try {

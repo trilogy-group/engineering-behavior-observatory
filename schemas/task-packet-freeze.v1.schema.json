@@ -7,7 +7,6 @@
   "required": [
     "schemaVersion",
     "packetId",
-    "assessmentMode",
     "packetLocator",
     "preAdmissionDigest",
     "packetDigest",

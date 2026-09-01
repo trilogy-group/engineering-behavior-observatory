@@ -248,7 +248,7 @@
         "run": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id", "assessmentMode", "task", "fixture", "model", "harness", "runtime"],
+          "required": ["id", "task", "fixture", "model", "harness", "runtime"],
           "properties": {
             "id": { "$ref": "#/$defs/identifier" },
             "assessmentMode": { "enum": ["observational", "verified"] },
@@ -503,7 +503,7 @@
     "captureReport": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "bundleId", "assessmentMode", "qualification", "capabilities", "missingEvidence"],
+      "required": ["schemaVersion", "bundleId", "qualification", "capabilities", "missingEvidence"],
       "properties": {
         "schemaVersion": { "const": "capture-report/v1" },
         "bundleId": { "$ref": "#/$defs/identifier" },
@@ -940,7 +940,7 @@
     "exportManifest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "bundleId", "status", "sharingClass", "assessmentMode", "policyDigest", "artifactIds"],
+      "required": ["schemaVersion", "bundleId", "status", "sharingClass", "policyDigest", "artifactIds"],
       "properties": {
         "schemaVersion": { "const": "export-manifest/v1" },
         "bundleId": { "$ref": "#/$defs/identifier" },

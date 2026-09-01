@@ -286,7 +286,7 @@ function projectRun(entry: CorpusIndexEntry, manifest: RunManifest, manifestRoot
     assignString(entry, "modelId", isRecord(manifest.run.model) ? manifest.run.model.id : undefined);
     assignString(entry, "harnessId", isRecord(manifest.run.harness) ? manifest.run.harness.id : undefined);
     assignString(entry, "harnessVersion", isRecord(manifest.run.harness) ? manifest.run.harness.version : undefined);
-    assignString(entry, "assessmentMode", manifest.run.assessmentMode);
+    assignString(entry, "assessmentMode", manifest.run.assessmentMode ?? "verified");
     if (isRecord(manifest.run.verifier)) {
       assignString(entry, "verifierLocator", manifest.run.verifier.locator);
       assignDigest(entry, "verifierDigest", manifest.run.verifier.digest);
@@ -310,7 +310,7 @@ function projectRun(entry: CorpusIndexEntry, manifest: RunManifest, manifestRoot
 function projectExport(entry: CorpusIndexEntry, manifest: PortableExportManifest, manifestRoot: string): void {
   assignString(entry, "exportStatus", manifest.status);
   assignString(entry, "sharingClass", manifest.sharingClass);
-  assignString(entry, "assessmentMode", manifest.assessmentMode);
+  assignString(entry, "assessmentMode", manifest.assessmentMode ?? "verified");
   assignDigest(entry, "policyDigest", manifest.policyDigest);
   assignDigest(entry, "sourceManifestDigest", manifest.sourceManifestDigest);
   if (isRecord(manifest.correlations)) {

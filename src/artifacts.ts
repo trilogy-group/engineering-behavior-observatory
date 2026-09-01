@@ -384,7 +384,7 @@ export function validateRunManifestEvidence(
     }
   }
   const terminal = isRecord(manifest.terminal) ? manifest.terminal : undefined;
-  const assessmentMode = isRecord(manifest.run) ? manifest.run.assessmentMode : undefined;
+  const assessmentMode = isRecord(manifest.run) ? manifest.run.assessmentMode ?? "verified" : undefined;
   const terminalWorkspace = typeof terminal?.workspaceArtifactId === "string"
     ? workspaceEvidence.get(terminal.workspaceArtifactId)
     : undefined;
@@ -744,7 +744,8 @@ export function validateExportManifest(
   if (exportManifest.bundleId !== containingManifest.bundleId) {
     return [{ artifact, schemaVersion: "export-manifest/v1", field: "/bundleId", message: "Export bundle ID does not match its containing run manifest." }];
   }
-  if (!isRecord(containingManifest.run) || exportManifest.assessmentMode !== containingManifest.run.assessmentMode) {
+  if (!isRecord(containingManifest.run)
+      || (exportManifest.assessmentMode ?? "verified") !== (containingManifest.run.assessmentMode ?? "verified")) {
     return [{ artifact, schemaVersion: "export-manifest/v1", field: "/assessmentMode", message: "Export assessment mode does not match its containing run manifest." }];
   }
 

@@ -462,7 +462,7 @@ export async function qualifyRunBundle(
     return finishQualificationReport(report);
   }
   const manifest = document as unknown as RunManifest;
-  const assessmentMode = manifest.run?.assessmentMode;
+  const assessmentMode = manifest.run?.assessmentMode ?? "verified";
   report.assessmentMode = assessmentMode;
   report.attempt = structuredClone(manifest.attempt);
   report.terminal = structuredClone(manifest.terminal);
@@ -830,7 +830,7 @@ function crossCheckCaptureReport(
   assessmentMode: AssessmentMode = "verified",
 ): void {
   if (!isRecord(value) || !isRecord(value.capabilities)) return;
-  if (value.assessmentMode !== assessmentMode) {
+  if ((value.assessmentMode ?? "verified") !== assessmentMode) {
     addQualificationReason(report, "terminal", "unqualified", "CAPTURE_REPORT_CONTRADICTS_SOURCE", evidenceId, "Capture report assessment mode contradicts the run manifest.");
   }
   for (const [area, available] of Object.entries(actual) as Array<[keyof typeof actual, boolean]>) {

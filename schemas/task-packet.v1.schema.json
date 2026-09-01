@@ -7,7 +7,6 @@
   "required": [
     "schemaVersion",
     "id",
-    "assessmentMode",
     "agentInput",
     "provenance",
     "controlledPerturbation",
@@ -132,6 +131,10 @@
         "properties": { "assessmentMode": { "const": "verified" } },
         "required": ["assessmentMode"]
       },
+      "then": { "required": ["restricted"] }
+    },
+    {
+      "if": { "not": { "required": ["assessmentMode"] } },
       "then": { "required": ["restricted"] }
     }
   ],

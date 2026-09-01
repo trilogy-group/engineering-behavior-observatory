@@ -1050,7 +1050,7 @@ function assertAdmittedFreezeRecords(
     if (
       packet === undefined
       || packet.packetId !== record.packetId
-      || packet.assessmentMode !== record.assessmentMode
+      || packet.assessmentMode !== (record.assessmentMode ?? "verified")
       || !sameDigest(packet.digest, record.packetDigest)
       || packet.preAdmissionDigest === null
       || !sameDigest(packet.preAdmissionDigest, record.preAdmissionDigest)
