@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { cp, lstat, mkdir, mkdtemp, readdir, rm, rmdir, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readdir, rm, rmdir, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -482,6 +482,7 @@ async function withWorkspaceOutcomeProjection<T>(
     });
     if (options.respectGitignore === true) await removeIgnoredWorkspaceEntries(startPath, projectedPath);
     if (options.omitEmptyDirectories === true) await removeEmptyDirectories(projectedPath);
+    await restoreProjectedDirectoryTimestamps(finalPath, projectedPath);
     return await use(startPath, projectedPath);
   } finally {
     await rm(filteredRoot, { recursive: true, force: true });
@@ -1147,6 +1148,16 @@ async function removeEmptyDirectories(directory: string, root: string = director
     if (entry.isDirectory()) await removeEmptyDirectories(join(directory, entry.name), root);
   }
   if (directory !== root && (await readdir(directory)).length === 0) await rmdir(directory);
+}
+
+async function restoreProjectedDirectoryTimestamps(source: string, projected: string): Promise<void> {
+  for (const entry of await readdir(projected, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      await restoreProjectedDirectoryTimestamps(join(source, entry.name), join(projected, entry.name));
+    }
+  }
+  const metadata = await lstat(source);
+  await utimes(projected, metadata.atime, metadata.mtime);
 }
 
 async function workspacePatch(startPath: string, finalPath: string, finalTreeDigest: DigestString): Promise<Buffer | undefined> {

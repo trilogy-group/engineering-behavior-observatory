@@ -204,7 +204,7 @@ export async function runAgentSdkQueueEntry(options: RunAgentSdkQueueEntryOption
         }),
       }),
       ...(verifierReference === undefined ? {} : {
-        verifier: (_context, outcome, projectedWorkspacePath) => executeVerifier({
+        verifier: (context, outcome, projectedWorkspacePath) => executeVerifier({
           bundleId: definition.bundleId,
           verifierRoot: bundleRoot,
           verifier: verifierReference,
@@ -217,6 +217,7 @@ export async function runAgentSdkQueueEntry(options: RunAgentSdkQueueEntryOption
           },
           artifactRoot: attemptBundleRoot,
           moduleFormat: verifierFormat,
+          signal: context.signal,
         }),
       }),
       maxWallClockMs: queue.coordinatorBudget.maxWallClockMs,

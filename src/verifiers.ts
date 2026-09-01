@@ -138,6 +138,7 @@ export type ExecuteVerifierOptions = {
   timeoutMs?: number;
   maxOutputBytes?: number;
   diagnosticDirectory?: string;
+  signal?: AbortSignal;
 };
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -395,6 +396,7 @@ export async function executeVerifier(options: ExecuteVerifierOptions): Promise<
           maxOutputBytes,
           diagnosticFiles as [DiagnosticFile, DiagnosticFile],
           trustedRoot,
+          options.signal,
         );
         stdout = processResult.stdout;
         stderr = processResult.stderr;
@@ -680,6 +682,7 @@ async function runProcess(
   maxOutputBytes: number,
   diagnosticFiles: readonly DiagnosticFile[],
   verifierRoot: string,
+  signal?: AbortSignal,
 ): Promise<ProcessResult> {
   const environment = overrides === undefined ? { PATH: "" } : cleanEnvironment(overrides);
   environment.PATH = join(verifierRoot, "bin");
@@ -707,6 +710,7 @@ async function runProcess(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      abortSignal?.removeEventListener("abort", abort);
       await terminate();
       resolveProcess({
         started,
@@ -740,6 +744,17 @@ async function runProcess(
       void finish(null, null);
     }, timeoutMs);
     timer.unref();
+    const abortSignal = signal;
+    const abort = () => {
+      error ??= "Verifier execution was aborted.";
+      void terminate().catch(() => undefined);
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      completionStream?.destroy?.();
+      void finish(null, null);
+    };
+    if (abortSignal?.aborted) abort();
+    else abortSignal?.addEventListener("abort", abort, { once: true });
   });
 }
 

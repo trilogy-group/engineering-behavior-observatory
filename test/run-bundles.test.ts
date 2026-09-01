@@ -8,7 +8,9 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -214,6 +216,9 @@ test("workspace outcome excludes declared transient directory names", async () =
     process.env.GIT_CONFIG_COUNT = "1";
     process.env.GIT_CONFIG_KEY_0 = "core.excludesFile";
     process.env.GIT_CONFIG_VALUE_0 = ambientExcludes;
+    const finalDirectoryTime = new Date("2020-01-02T03:04:05.000Z");
+    utimesSync(fixture.final, finalDirectoryTime, finalDirectoryTime);
+    utimesSync(join(fixture.final, "legitimate"), finalDirectoryTime, finalDirectoryTime);
     const assembler = await createRunBundleAssembler(definition(bundleRoot, "filtered-patch"));
     const captured = await assembler.captureWorkspaceOutcome({
       startPath: fixture.start,
@@ -221,6 +226,9 @@ test("workspace outcome excludes declared transient directory names", async () =
       excludeDirectoryNames: ["node_modules", "coverage"],
       respectGitignore: true,
       omitEmptyDirectories: true,
+    }, async (projectedPath) => {
+      assert.equal(statSync(projectedPath).mtimeMs, statSync(fixture.final).mtimeMs);
+      assert.equal(statSync(join(projectedPath, "legitimate")).mtimeMs, statSync(join(fixture.final, "legitimate")).mtimeMs);
     });
     assert.equal(captured.format, "patch");
     const patch = readFileSync(join(bundleRoot, captured.descriptor.relativePath), "utf8");

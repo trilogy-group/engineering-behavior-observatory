@@ -124,7 +124,20 @@ export async function captureClaudeAgentSdkRun(
               ]);
               if (onAbort !== undefined) verifierContext.signal.removeEventListener("abort", onAbort);
               if (verifierOutcome === aborted) {
-                void verifierPromise.catch(() => undefined);
+                let graceTimer: NodeJS.Timeout | undefined;
+                const settled = await Promise.race([
+                  verifierPromise.then(
+                    (value) => ({ kind: "result" as const, value }),
+                    (error: unknown) => ({ kind: "error" as const, error }),
+                  ),
+                  new Promise<{ kind: "timed-out" }>((resolvePromise) => {
+                    graceTimer = setTimeout(() => resolvePromise({ kind: "timed-out" }), options.shutdownGraceMs ?? 250);
+                  }),
+                ]);
+                if (graceTimer !== undefined) clearTimeout(graceTimer);
+                if (settled.kind === "result") verifierResult = settled.value;
+                else if (settled.kind === "error") verifierError = settled.error;
+                else void verifierPromise.catch(() => undefined);
               } else {
                 verifierResult = verifierOutcome;
               }
