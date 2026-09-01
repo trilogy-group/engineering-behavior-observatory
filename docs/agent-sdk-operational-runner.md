@@ -129,6 +129,11 @@ Use one versioned discriminated contract, `ebo.agent-sdk-config/v1`, with these 
     "logToolDetails": false,
     "logToolContent": false,
     "logRawApiBodies": false
+  },
+  "workspaceOutcome": {
+    "excludeDirectoryNames": ["node_modules", "coverage"],
+    "respectGitignore": true,
+    "omitEmptyDirectories": true
   }
 }
 ```

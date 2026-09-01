@@ -42,6 +42,9 @@ export type CaptureClaudeAgentSdkRunOptions = {
   workspace: WorkspaceCoordinator;
   configuration: ClaudeAgentSdkConfiguration;
   verifier?: CaptureClaudeAgentSdkVerifier;
+  workspaceOutcomeExcludedDirectoryNames?: readonly string[];
+  workspaceOutcomeRespectsGitignore?: boolean;
+  workspaceOutcomeOmitsEmptyDirectories?: boolean;
   expectedHooks?: readonly HookEvent[];
   query?: ClaudeAgentSdkQuery;
   traceId?: string;
@@ -80,6 +83,7 @@ export async function captureClaudeAgentSdkRun(
   let workspace: WorkspaceExecutionResult | undefined;
   let workspaceOutcome: CapturedWorkspaceOutcome | undefined;
   let workspaceOutcomePromise: Promise<CapturedWorkspaceOutcome> | undefined;
+  let workspaceCaptureError: string | undefined;
 
   const captureWorkspace = async (): Promise<CapturedWorkspaceOutcome> => {
     if (workspaceOutcome !== undefined) return workspaceOutcome;
@@ -91,9 +95,21 @@ export async function captureClaudeAgentSdkRun(
         startPath: options.startingWorkspacePath,
         finalPath: workspace.path,
         id: workspace.artifactId,
+        ...(options.workspaceOutcomeExcludedDirectoryNames === undefined ? {} : {
+          excludeDirectoryNames: options.workspaceOutcomeExcludedDirectoryNames,
+        }),
+        ...(options.workspaceOutcomeRespectsGitignore === undefined ? {} : {
+          respectGitignore: options.workspaceOutcomeRespectsGitignore,
+        }),
+        ...(options.workspaceOutcomeOmitsEmptyDirectories === undefined ? {} : {
+          omitEmptyDirectories: options.workspaceOutcomeOmitsEmptyDirectories,
+        }),
       });
       return workspaceOutcome;
-    })();
+    })().catch((error: unknown) => {
+      workspaceCaptureError = error instanceof Error ? error.message : String(error);
+      throw error;
+    });
     return workspaceOutcomePromise;
   };
 
@@ -192,14 +208,24 @@ export async function captureClaudeAgentSdkRun(
       reason: attempt.terminal.state === "interrupted" ? "process-interrupted" as const : "not-emitted" as const,
       affects: ["semantic" as const],
     }]),
-    ...(agentSdkEvidence?.captureWarnings.count === 0 ? [] : [{
-      kind: "hook-callback",
+    ...(workspaceOutcome === undefined && workspaceCaptureError !== undefined ? [{
+      kind: "workspace",
       reason: "not-collected" as const,
-      affects: ["semantic" as const],
-    }]),
+      affects: ["outcome" as const],
+      detail: workspaceCaptureError.slice(0, 4096),
+    }] : []),
   ];
   const qualificationOptions = {
     startingWorkspacePath: options.startingWorkspacePath,
+    ...(options.workspaceOutcomeExcludedDirectoryNames === undefined ? {} : {
+      workspaceOutcomeExcludedDirectoryNames: options.workspaceOutcomeExcludedDirectoryNames,
+    }),
+    ...(options.workspaceOutcomeRespectsGitignore === undefined ? {} : {
+      workspaceOutcomeRespectsGitignore: options.workspaceOutcomeRespectsGitignore,
+    }),
+    ...(options.workspaceOutcomeOmitsEmptyDirectories === undefined ? {} : {
+      workspaceOutcomeOmitsEmptyDirectories: options.workspaceOutcomeOmitsEmptyDirectories,
+    }),
     ...(agentSdkEvidence === undefined ? {} : { agentSdkEvidence }),
     hookCapabilities: capabilities,
     expectedHooks,

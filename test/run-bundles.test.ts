@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -183,6 +184,36 @@ test("workspace patches reproduce the final content and executable-mode tree dig
     assert.equal(await digestWorkspaceTree(applied), captured.treeDigest);
     assert.equal(await digestWorkspaceTree(fixture.final), captured.treeDigest);
     assert.notEqual(await digestWorkspaceTree(fixture.start), captured.treeDigest);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("workspace outcome excludes declared transient directory names", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-run-bundle-filtered-patch-"));
+  try {
+    const bundleRoot = join(root, "bundle");
+    const fixture = createWorkspaceFixture(root, true);
+    mkdirSync(join(fixture.final, "node_modules"));
+    symlinkSync("../changed.txt", join(fixture.final, "node_modules", "linked-package"));
+    mkdirSync(join(fixture.final, "coverage"));
+    writeFileSync(join(fixture.final, "coverage", "summary.json"), "generated\n");
+    writeFileSync(join(fixture.start, ".gitignore"), "ignored.bin\ngenerated/\n");
+    writeFileSync(join(fixture.final, ".gitignore"), "ignored.bin\ngenerated/\n");
+    mkdirSync(join(fixture.final, "generated"));
+    writeFileSync(join(fixture.final, "generated", "cache.txt"), "generated\n");
+    const assembler = await createRunBundleAssembler(definition(bundleRoot, "filtered-patch"));
+    const captured = await assembler.captureWorkspaceOutcome({
+      startPath: fixture.start,
+      finalPath: fixture.final,
+      excludeDirectoryNames: ["node_modules", "coverage"],
+      respectGitignore: true,
+      omitEmptyDirectories: true,
+    });
+    assert.equal(captured.format, "patch");
+    const patch = readFileSync(join(bundleRoot, captured.descriptor.relativePath), "utf8");
+    assert.match(patch, /changed\.txt/u);
+    assert.doesNotMatch(patch, /node_modules|coverage|generated\/cache/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

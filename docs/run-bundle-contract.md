@@ -128,6 +128,15 @@ configuration, and expected hook set used for qualification. Its
 reason codes. These are capture facts, not behavioral judgments, and remain
 internal until the M3 export policy produces an approved derivative.
 
+Real package-manager workspaces may declare a bounded outcome projection:
+directory names such as `node_modules` and `coverage`, source `.gitignore`
+rules, and empty-directory omission. EBO copies the final workspace, applies
+that policy without mutating the live attempt, records the policy in the
+capture report, and then verifies the resulting patch or snapshot. Link and
+hard-link rejection remains unchanged. Hook serialization warnings are retained
+in the Agent SDK capture report and qualify the hook dimension as a gap rather
+than erasing an otherwise complete native session and hook stream.
+
 `captureClaudeAgentSdkRun` is the single-run production composition boundary.
 It reuses the existing lifecycle, caller-supplied workspace coordinator,
 passive Agent SDK sinks, optional verified-task result, assembler, and qualifier. It neither
@@ -177,8 +186,10 @@ cross-artifact correlation survives without exposing native identifiers.
 The M2 allowlist is deliberately small: JSONL session/hooks, JSON telemetry,
 text workspace patches, JSON verifier/capture reports, and text verifier
 diagnostics. Unknown classifications and unrecognized kind/media pairs stop
-the export. Workspace snapshots are not exported until a later issue defines a
-safe archive-content policy. Existing source export manifests are excluded and
+the export. Restricted workspace snapshots may be retained up to 128 MiB for
+qualification, but portable exports explicitly exclude them as
+`unsupported-workspace-snapshot`; opaque archive bytes never pass through the
+text sanitizer. Existing source export manifests are likewise excluded and
 recorded rather than recursively exported.
 
 The derivative `export-manifest/v1` records each portable artifact's source

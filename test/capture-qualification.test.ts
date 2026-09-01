@@ -317,7 +317,7 @@ test("preserves explicit unsupported telemetry as a qualified dimension", async 
 test("rejects native evidence above the documented qualification bound without reading it", async () => {
   const fixture = await assembleScenario("success");
   try {
-    truncateSync(join(fixture.bundleRoot, evidencePath(fixture.bundleRoot, "hooks")), 64 * 1024 * 1024 + 1);
+    truncateSync(join(fixture.bundleRoot, evidencePath(fixture.bundleRoot, "hooks")), 128 * 1024 * 1024 + 1);
     const report = await qualifyRunBundle(fixture.bundleRoot, {
       startingWorkspacePath: fixture.start,
       hookCapabilities: capabilities,

@@ -15,6 +15,7 @@ import type { Dirent } from "node:fs";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
+import { gzipSync } from "node:zlib";
 
 import {
   createPortableRunBundleExport,
@@ -70,6 +71,7 @@ test("exports a sanitized public M2 bundle without mutating its source", async (
         private_key: privateKey,
         secret_access_key: secretAccessKey,
         credentialsJson,
+        regexLiteral: "/\\/(foo)/u",
       })}\n`,
       "hooks.jsonl": `${JSON.stringify({
         type: "PostToolUse",
@@ -315,6 +317,34 @@ test("exports verifier diagnostic sidecars with portable references", async () =
   }
 });
 
+test("portable export explicitly excludes an opaque workspace snapshot", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-export-snapshot-exclusion-"));
+  const source = join(root, "source");
+  const destination = join(root, "portable");
+  try {
+    stageSource(source);
+    const manifest = JSON.parse(readFileSync(join(source, "manifest.json"), "utf8")) as SourceManifest;
+    const workspace = manifest.evidence.find(({ kind }) => kind === "workspace")!;
+    const snapshot = gzipSync(Buffer.from("opaque workspace"));
+    writeFileSync(join(source, "workspace.tar.gz"), snapshot);
+    workspace.relativePath = "workspace.tar.gz";
+    workspace.mediaType = "application/gzip";
+    workspace.digest = `sha256:${createHash("sha256").update(snapshot).digest("hex")}`;
+    workspace.sizeBytes = snapshot.length;
+    const verifier = JSON.parse(readFileSync(join(source, "verifier.json"), "utf8")) as { workspace: { digest: string } };
+    verifier.workspace.digest = workspace.digest;
+    replaceArtifact(source, manifest, "verifier.json", Buffer.from(`${JSON.stringify(verifier)}\n`));
+    writeFileSync(join(source, "manifest.json"), `${JSON.stringify(manifest)}\n`);
+
+    const exported = await createPortableRunBundleExport({ sourceRoot: source, destinationRoot: destination, policy: policy() });
+    assert.ok(exported.excludedArtifacts.some(({ artifactId, reason }) =>
+      artifactId === workspace.id && reason === "unsupported-workspace-snapshot"));
+    assert.equal(exported.artifacts.some(({ sourceArtifactId }) => sourceArtifactId === workspace.id), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("readback rejects a corrupted portable artifact and source reference", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-export-corrupt-"));
   const source = join(root, "source");
@@ -428,6 +458,7 @@ function jsonArtifact(
 type SourceManifest = {
   attempt: { id: string };
   evidence: Array<{
+    id: string;
     digest: `sha256:${string}`;
     kind: string;
     mediaType: string;

@@ -80,6 +80,9 @@ test("captures and qualifies one caller-supplied Agent SDK run", async () => {
         },
       },
       expectedHooks: ["UserPromptSubmit", "SessionStart", "SessionEnd", "SessionStart"],
+      workspaceOutcomeExcludedDirectoryNames: ["node_modules", "coverage"],
+      workspaceOutcomeRespectsGitignore: true,
+      workspaceOutcomeOmitsEmptyDirectories: true,
       query,
       verifier: async (_context, workspace) => {
         const bytes = Buffer.from("verifier output\n");
@@ -114,11 +117,17 @@ test("captures and qualifies one caller-supplied Agent SDK run", async () => {
     const report = JSON.parse(readFileSync(join(bundleRoot, descriptor.relativePath), "utf8")) as {
       agentSdk: { capabilities: { sdkVersion: string }; effectiveConfiguration: { model: string }; expectedHooks: string[] };
       structuralQualification: { status: string };
+      workspaceOutcomeExcludedDirectoryNames: string[];
+      workspaceOutcomeRespectsGitignore: boolean;
+      workspaceOutcomeOmitsEmptyDirectories: boolean;
     };
     assert.equal(report.agentSdk.capabilities.sdkVersion, capabilities.sdkVersion);
     assert.equal(report.agentSdk.effectiveConfiguration.model, "claude-test");
     assert.deepEqual(report.agentSdk.expectedHooks, ["UserPromptSubmit", "SessionStart", "SessionEnd"]);
     assert.equal(report.structuralQualification.status, "qualified");
+    assert.deepEqual(report.workspaceOutcomeExcludedDirectoryNames, ["node_modules", "coverage"]);
+    assert.equal(report.workspaceOutcomeRespectsGitignore, true);
+    assert.equal(report.workspaceOutcomeOmitsEmptyDirectories, true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -239,8 +248,12 @@ test("retains interrupted, verifier-error, and capture/workspace-failure attempt
         const reportDescriptor = result.manifest.evidence.find((entry) => entry.kind === "capture-report")!;
         const report = JSON.parse(readFileSync(join(bundleRoot, reportDescriptor.relativePath), "utf8")) as {
           structuralQualification: { status: string };
+          missingEvidence: Array<{ kind: string; detail?: string }>;
         };
         assert.equal(report.structuralQualification.status, "unqualified");
+        if (scenario === "workspace-error") {
+          assert.match(report.missingEvidence.find(({ kind }) => kind === "workspace")?.detail ?? "", /symbolic link/u);
+        }
       } finally {
         rmSync(root, { recursive: true, force: true });
       }

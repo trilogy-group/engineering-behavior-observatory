@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { cp, lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readdir, rm, rmdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -83,6 +83,7 @@ export type CaptureMissingEvidence = {
   kind: string;
   reason: "not-emitted" | "not-collected" | "optional-beta-unavailable" | "process-interrupted" | "policy-restricted" | "unsupported" | "not-checked";
   affects: Array<"semantic" | "timing-resource" | "outcome">;
+  detail?: string;
 };
 
 export type RunBundleDefinition = {
@@ -107,6 +108,9 @@ export type RegisterRunBundleArtifact = {
 export type CaptureWorkspaceOutcomeOptions = {
   startPath: string;
   finalPath: string;
+  excludeDirectoryNames?: readonly string[];
+  respectGitignore?: boolean;
+  omitEmptyDirectories?: boolean;
   id?: string;
   source?: string;
   relativePath?: string;
@@ -149,6 +153,7 @@ export type CaptureQualificationReasonCode =
   | "HOOK_SUPPORTED_BUT_MISSING"
   | "HOOK_UNSUPPORTED_BY_PINNED_SDK"
   | "HOOK_CAPABILITY_CONTRADICTION"
+  | "HOOK_CAPTURE_WARNING"
   | "TELEMETRY_EVIDENCE_MISSING"
   | "TELEMETRY_RECEIPT_MISSING"
   | "TELEMETRY_UNSUPPORTED_BY_PINNED_RUNTIME"
@@ -189,11 +194,14 @@ export type CaptureQualificationReport = {
 
 export type AgentSdkQualificationEvidence = Pick<
   ClaudeAgentSdkAttemptEvidence,
-  "capabilities" | "effectiveConfiguration"
+  "capabilities" | "effectiveConfiguration" | "captureWarnings"
 >;
 
 export type CaptureQualificationOptions = {
   startingWorkspacePath?: string;
+  workspaceOutcomeExcludedDirectoryNames?: readonly string[];
+  workspaceOutcomeRespectsGitignore?: boolean;
+  workspaceOutcomeOmitsEmptyDirectories?: boolean;
   hookCapabilities?: Pick<ClaudeAgentSdkCapabilities, "sdkVersion" | "hooks" | "unsupportedHooks">;
   agentSdkEvidence?: AgentSdkQualificationEvidence;
   expectedHooks?: readonly string[];
@@ -201,8 +209,8 @@ export type CaptureQualificationOptions = {
 
 const execFileAsync = promisify(execFile);
 const MAX_WORKSPACE_PATCH_BYTES = 64 * 1024 * 1024;
-const MAX_WORKSPACE_SNAPSHOT_BYTES = 64 * 1024 * 1024;
-const MAX_QUALIFICATION_ARTIFACT_BYTES = 64 * 1024 * 1024;
+const MAX_WORKSPACE_SNAPSHOT_BYTES = 128 * 1024 * 1024;
+const MAX_QUALIFICATION_ARTIFACT_BYTES = 128 * 1024 * 1024;
 const QUALIFICATION_DIMENSION_RANK = { qualified: 0, unsupported: 1, gap: 2, unqualified: 3 } as const;
 const PINNED_HOOK_EVENTS = new Set<string>(HOOK_EVENTS);
 const TAR_COMMAND = process.platform === "win32" ? "tar" : "/usr/bin/tar";
@@ -346,16 +354,35 @@ export class RunBundleAssembler {
     this.assertOpen();
     const startPath = resolve(options.startPath);
     const finalPath = resolve(options.finalPath);
+    const exclusions = [...new Set(options.excludeDirectoryNames ?? [])];
+    for (const name of exclusions) {
+      if (name.includes("/") || !isSafeArtifactRelativePath(name)) throw new Error(`Workspace outcome exclusion "${name}" is invalid.`);
+    }
+    const filteredRoot = exclusions.length === 0 && options.respectGitignore !== true
+      ? undefined
+      : await mkdtemp(join(tmpdir(), "ebo-workspace-filter-"));
+    const capturedPath = filteredRoot === undefined ? finalPath : join(filteredRoot, "workspace");
+    if (filteredRoot !== undefined) {
+      await cp(finalPath, capturedPath, {
+        recursive: true,
+        preserveTimestamps: true,
+        force: false,
+        filter: (source) => source === finalPath || !source.slice(finalPath.length + 1).split(/[\\/]/u).some((segment) => exclusions.includes(segment)),
+      });
+      if (options.respectGitignore === true) await removeIgnoredWorkspaceEntries(startPath, capturedPath);
+      if (options.omitEmptyDirectories === true) await removeEmptyDirectories(capturedPath);
+    }
+    try {
     const [fingerprint, treeDigest] = await Promise.all([
-      digestWorkspace(finalPath) as Promise<DigestString>,
-      digestWorkspaceTree(finalPath) as Promise<DigestString>,
+      digestWorkspace(capturedPath) as Promise<DigestString>,
+      digestWorkspaceTree(capturedPath) as Promise<DigestString>,
     ]);
-    const patch = await workspacePatch(startPath, finalPath, treeDigest);
-    if (await digestWorkspace(finalPath) !== fingerprint) {
+    const patch = await workspacePatch(startPath, capturedPath, treeDigest);
+    if (await digestWorkspace(capturedPath) !== fingerprint) {
       throw new Error("Final workspace metadata changed while its outcome was being captured.");
     }
     const format = patch === undefined ? "snapshot" : "patch";
-    const content = patch ?? await workspaceSnapshot(finalPath, treeDigest);
+    const content = patch ?? await workspaceSnapshot(capturedPath, treeDigest);
     const relativePath = format === "patch"
       ? options.relativePath ?? "workspace.patch"
       : options.snapshotRelativePath ?? "workspace.tar.gz";
@@ -370,6 +397,9 @@ export class RunBundleAssembler {
       fingerprint,
     });
     return { descriptor, fingerprint, treeDigest, format };
+    } finally {
+      if (filteredRoot !== undefined) await rm(filteredRoot, { recursive: true, force: true });
+    }
   }
 
   public async finalize(input: {
@@ -568,6 +598,14 @@ export async function qualifyRunBundle(
 
   const captureReport = captureReports[0]?.document;
   qualifyTelemetry(report, telemetry, captureMissingEvidence(captureReport));
+  const captureWarnings = isRecord(captureReport) && isRecord(captureReport.agentSdk)
+    && isRecord(captureReport.agentSdk.captureWarnings)
+    ? captureReport.agentSdk.captureWarnings
+    : undefined;
+  if (typeof captureWarnings?.count === "number" && captureWarnings.count > 0) {
+    addQualificationReason(report, "hooks", "gap", "HOOK_CAPTURE_WARNING", captureReports[0]?.descriptor.id,
+      `${String(captureWarnings.count)} hook callback${captureWarnings.count === 1 ? "" : "s"} could not be retained: ${String(captureWarnings.diagnostic ?? "no diagnostic")}`);
+  }
 
   if (workspaces.length === 0) {
     addQualificationReason(report, "workspace", "unqualified", "WORKSPACE_EVIDENCE_MISSING", undefined, "No valid workspace outcome is retained.");
@@ -895,7 +933,11 @@ function captureReport(
     capabilities: ClaudeAgentSdkCapabilities;
     effectiveConfiguration: ClaudeAgentSdkAttemptEvidence["effectiveConfiguration"];
     expectedHooks: string[];
+    captureWarnings: ClaudeAgentSdkAttemptEvidence["captureWarnings"];
   };
+  workspaceOutcomeExcludedDirectoryNames?: string[];
+  workspaceOutcomeRespectsGitignore?: boolean;
+  workspaceOutcomeOmitsEmptyDirectories?: boolean;
   structuralQualification?: Pick<CaptureQualificationReport, "status" | "semanticAnalysisUsable" | "dimensions" | "reasons">;
 } {
   const kinds = new Set(evidence.map((descriptor) => descriptor.kind));
@@ -923,11 +965,21 @@ function captureReport(
       outcome: { status: outcome },
     },
     missingEvidence: missing,
+    ...(qualification?.workspaceOutcomeExcludedDirectoryNames === undefined ? {} : {
+      workspaceOutcomeExcludedDirectoryNames: [...qualification.workspaceOutcomeExcludedDirectoryNames],
+    }),
+    ...(qualification?.workspaceOutcomeRespectsGitignore === undefined ? {} : {
+      workspaceOutcomeRespectsGitignore: qualification.workspaceOutcomeRespectsGitignore,
+    }),
+    ...(qualification?.workspaceOutcomeOmitsEmptyDirectories === undefined ? {} : {
+      workspaceOutcomeOmitsEmptyDirectories: qualification.workspaceOutcomeOmitsEmptyDirectories,
+    }),
     ...(qualification?.agentSdkEvidence === undefined ? {} : {
       agentSdk: {
         capabilities: structuredClone(qualification.agentSdkEvidence.capabilities),
         effectiveConfiguration: structuredClone(qualification.agentSdkEvidence.effectiveConfiguration),
         expectedHooks: [...(qualification.expectedHooks ?? [])],
+        captureWarnings: structuredClone(qualification.agentSdkEvidence.captureWarnings),
       },
     }),
     ...(structuralQualification === undefined ? {} : {
@@ -992,6 +1044,31 @@ function runWithNativeReference(run: RunBundleRun, descriptor: RunBundleEvidence
     native.traceId = descriptor.nativeReference.id;
   }
   return { ...structuredClone(run), ...(Object.keys(native).length === 0 ? {} : { native }) };
+}
+
+async function removeIgnoredWorkspaceEntries(startPath: string, finalPath: string): Promise<void> {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "ebo-workspace-ignore-index-"));
+  const baseline = join(temporaryRoot, "baseline");
+  try {
+    await cp(startPath, baseline, { recursive: true, preserveTimestamps: true, force: false });
+    await execFileAsync("git", ["init", "--quiet"], { cwd: baseline });
+    await execFileAsync("git", ["add", "--force", "--all"], { cwd: baseline });
+    await execFileAsync("git", ["-c", "user.name=EBO", "-c", "user.email=ebo.invalid", "commit", "--quiet", "--allow-empty", "-m", "starting fixture"], { cwd: baseline });
+    await execFileAsync("git", [
+      `--git-dir=${join(baseline, ".git")}`,
+      `--work-tree=${finalPath}`,
+      "clean", "-ffdX",
+    ]);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
+async function removeEmptyDirectories(directory: string, root: string = directory): Promise<void> {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (entry.isDirectory()) await removeEmptyDirectories(join(directory, entry.name), root);
+  }
+  if (directory !== root && (await readdir(directory)).length === 0) await rmdir(directory);
 }
 
 async function workspacePatch(startPath: string, finalPath: string, finalTreeDigest: DigestString): Promise<Buffer | undefined> {
