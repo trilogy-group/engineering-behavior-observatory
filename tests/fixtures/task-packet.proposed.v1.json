@@ -1,6 +1,7 @@
 {
   "schemaVersion": "ebo.task-packet/v1",
   "id": "example-proposed-contract-change",
+  "assessmentMode": "verified",
   "agentInput": {
     "prompt": "Update the documented API contract and verify the fixture.",
     "fixture": {

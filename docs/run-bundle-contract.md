@@ -13,7 +13,7 @@ run-bundle/
   hooks.jsonl
   telemetry/
   workspace.patch
-  verifier.json
+  verifier.json       # verified tasks only
   capture-report.json
   export/manifest.json
 ```
@@ -53,7 +53,7 @@ cannot masquerade as another evidence class.
 | --- | --- | --- |
 | `semantic` | Native session and hook artifacts | What the agent and harness exchanged or observed |
 | `timing-resource` | Native telemetry | Timing, tokens, cost, and resource observations |
-| `outcome` | Workspace and verifier artifacts | What changed and whether the task passed |
+| `outcome` | Workspace and optional verified-task artifacts | What changed and, only for verified tasks, whether executable assertions passed |
 | `capture` | Capture report | Which evidence is available, missing, or unsupported |
 | `export` | Export manifest | Which approved artifacts were prepared for sharing |
 
@@ -91,6 +91,12 @@ absent SDK or CLI identity.
 | `stopped` | `none` | `budget` or `policy` |
 | `interrupted` | `infrastructure` | `none` |
 
+Every run declares `assessmentMode`. `observational` is the primary mode for
+open-ended engineering work: a `completed` terminal means execution ended
+normally with retained workspace evidence, not that the task was correct or
+stakeholder-approved. It has no verifier artifact. `verified` preserves the
+existing verifier-backed completion and task-failure semantics.
+
 Capture incompleteness is not a task or infrastructure failure class. It is a
 capture-report qualification with an explicit missing-evidence reason.
 
@@ -98,7 +104,9 @@ capture-report qualification with an explicit missing-evidence reason.
 
 `capture-report/v1` records `semantic`, `timingResource`, and `outcome`
 capabilities separately. A `qualified` report requires available semantic and
-outcome evidence and checked timing-resource evidence. Missing optional beta spans are recorded as
+outcome evidence and checked timing-resource evidence. For observational runs,
+workspace evidence satisfies the outcome capability; verified runs also require
+their verifier evidence. Missing optional beta spans are recorded as
 `optional-beta-unavailable` affecting `timing-resource`; they never assert that
 semantic evidence is missing. Every unavailable capability has an explicit
 missing-evidence entry; optional-beta-unavailable affects timing-resource only.
@@ -122,14 +130,14 @@ internal until the M3 export policy produces an approved derivative.
 
 `captureClaudeAgentSdkRun` is the single-run production composition boundary.
 It reuses the existing lifecycle, caller-supplied workspace coordinator,
-passive Agent SDK sinks, verifier result, assembler, and qualifier. It neither
+passive Agent SDK sinks, optional verified-task result, assembler, and qualifier. It neither
 reads a run queue nor retries an attempt; an operational runner may call it once
 for each already-resolved queue entry.
 
 `qualifyRunBundle` performs the post-capture structural check without adding a
 new artifact dialect. Its report evaluates attempt identity, session evidence,
 pinned hook capability versus observed callbacks, telemetry receipt and
-optional timing, workspace outcome, verifier result, terminal classification,
+optional timing, workspace outcome, assessment mode, any required verified-task result, terminal classification,
 and sharing classification independently. The overall result is `qualified`,
 `qualified-with-gaps`, or `unqualified`, with stable reason codes and the named
 evidence ID. Optional detailed-beta timing and a missing collector receipt are
@@ -151,7 +159,7 @@ collector receipt is a `TELEMETRY_RECEIPT_MISSING` gap, including the supported
 usage-only path.
 
 Qualification reuses manifest schema checks, descriptor digest/path readback,
-verifier-to-workspace terminal binding, and export-manifest validation. When a
+mode-appropriate outcome binding, and export-manifest validation. When a
 workspace patch is present, callers supply the admitted starting fixture so the
 patch can be checked with `git apply --check`; omission leaves an explicit
 `WORKSPACE_PATCH_NOT_CHECKED` gap.
@@ -181,12 +189,13 @@ references, policy, JSON/JSONL structure, and a final secret scan. A failed
 creation removes its newly-created destination tree; an existing destination
 is never replaced.
 
+The remainder of this verifier section applies only to `verified` tasks.
 Verifier results cannot contradict their assertions: passed results have no
 failed assertion, while failed results retain at least one failed assertion.
 Assertion IDs are unique, and a retained verifier result names the containing
 bundle. Completed runs retain passed verifier results; task-failed runs retain
 at least one failed verifier result and may retain independent passed results.
-Both outcomes require retained verifier and workspace evidence; workspace
+Both verified outcomes require retained verifier and workspace evidence; workspace
 evidence alone cannot establish task pass or task failure. A passed verifier
 result contains only passed assertions and, when retained, an exit code of zero.
 Every passed or failed verifier also names the retained workspace artifact and
@@ -286,10 +295,11 @@ artifact ID/digest against the containing bundle's retained evidence. The
 manifest and cannot be used for verifier results or diagnostic directories.
 The CLI applies duplicate-key detection to standalone verifier JSON before
 parsing, just as manifest-nested verifier artifacts and subprocess output are
-checked before interpretation. Manifest validation also requires a retained
-passed verifier for a completed run and a retained failed verifier for a
+checked before interpretation. Manifest validation requires a retained passed
+verifier for a completed verified run and a retained failed verifier for a
 task-failed run, and checks each verifier's status against that terminal
-outcome before the bundle is accepted.
+outcome before the bundle is accepted. Observational completion instead
+requires retained workspace evidence and rejects verifier evidence.
 
 ## Sharing boundary
 

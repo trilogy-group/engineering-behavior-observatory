@@ -3,6 +3,7 @@
   "bundleId": "bundle-complete",
   "run": {
     "id": "run-complete",
+    "assessmentMode": "verified",
     "task": { "id": "task-example" },
     "fixture": {
       "id": "fixture-example",
@@ -88,8 +89,8 @@
       "kind": "capture-report",
       "authority": "capture",
       "mediaType": "application/json",
-      "digest": "sha256:5be02f45dcbbb90fba25de22fd102094e1d16727532c5f3e87b0fdccf8efa9ef",
-      "sizeBytes": 291,
+      "digest": "sha256:3a2650cbd8a6a2d5413226f6ec51332ac31f8ea619993f8ecd681b1dacded7af",
+      "sizeBytes": 323,
       "sharingClass": "internal",
       "relativePath": "capture-report.json"
     },
@@ -99,8 +100,8 @@
       "kind": "export-manifest",
       "authority": "export",
       "mediaType": "application/json",
-      "digest": "sha256:fcb8e79f9e93198f73b0e2e1a163576a1b9290c289e440941c8ede0c2235298e",
-      "sizeBytes": 345,
+      "digest": "sha256:39e2837f9710ff3bead1ba4bd7b0b5c431251727e4684ffb881635337fac8bf1",
+      "sizeBytes": 377,
       "sharingClass": "internal",
       "relativePath": "export/manifest.json"
     }

@@ -296,6 +296,7 @@ function definition(bundleRoot: string, suffix: string): RunBundleDefinition {
     bundleId: `bundle-${suffix}`,
     run: {
       id: `run-${suffix}`,
+      assessmentMode: "verified",
       task: { id: "task-example" },
       fixture: { id: "fixture-example", digest: SHA_A },
       model: { provider: "anthropic", id: "claude-test" },

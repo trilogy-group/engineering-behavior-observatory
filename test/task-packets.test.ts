@@ -26,6 +26,8 @@ import {
   statusTaskPacket,
   type TaskPacket,
 } from "../src/index.js";
+
+type VerifiedTaskPacket = Extract<TaskPacket, { assessmentMode: "verified" }>;
 import { writeMetadataAtomicallyIfAbsentSync } from "../src/artifacts.js";
 import { closeBundleRoot, openBundleRoot } from "../src/contracts.js";
 
@@ -88,11 +90,11 @@ function tarOldGnuPrefixArchive(): Buffer {
   return gzipSync(archive);
 }
 
-function packetFixture(name = "task-packet.valid.v1.json"): TaskPacket {
-  return JSON.parse(readFileSync(fixturePath(name), "utf8")) as TaskPacket;
+function packetFixture(name = "task-packet.valid.v1.json"): VerifiedTaskPacket {
+  return JSON.parse(readFileSync(fixturePath(name), "utf8")) as VerifiedTaskPacket;
 }
 
-function createBundle(packet = packetFixture()): { root: string; packet: TaskPacket } {
+function createBundle(packet = packetFixture()): { root: string; packet: VerifiedTaskPacket } {
   const root = mkdtempSync(join(tmpdir(), "ebo-task-packet-"));
   const components = {
     fixture: fixtureArchive(),
@@ -156,6 +158,35 @@ test("freezing a packet is idempotent and keeps the model projection private", (
     assert.doesNotMatch(JSON.stringify(modelVisibleTaskPacket(packet)), /referenceSolution|reviewRecord|verifier/);
   } finally {
     rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("observational packets freeze without reference-solution or verifier components", () => {
+  const seeded = createBundle();
+  const { restricted: _restricted, ...base } = seeded.packet;
+  const packet: TaskPacket = { ...base, assessmentMode: "observational" };
+  try {
+    const preAdmission = structuredClone(packet) as unknown as Record<string, unknown>;
+    delete preAdmission.admission;
+    const review = Buffer.from(JSON.stringify({
+      preAdmissionDigest: digestMetadata(preAdmission),
+      decision: packet.admission.status,
+      reviewedAt: packet.admission.review!.reviewedAt,
+      reviewedBy: packet.admission.review!.reviewedBy,
+    }));
+    packet.admission.review!.reviewRecord.digest = digestBytes(review);
+    writeFileSync(join(seeded.root, "review.json"), review);
+    writeFileSync(join(seeded.root, "packet.json"), JSON.stringify(packet, null, 2));
+
+    const inspection = inspectTaskPacket(seeded.root, "packet.json");
+    assert.deepEqual(inspection.errors, []);
+    const record = freezeTaskPacket(seeded.root, "packet.json");
+    assert.equal(record.assessmentMode, "observational");
+    assert.deepEqual(record.components.reference, { status: "not-provided" });
+    assert.equal(record.components.verifier, null);
+    assert.equal(statusTaskPacket(seeded.root, "packet.json").status, "frozen");
+  } finally {
+    rmSync(seeded.root, { force: true, recursive: true });
   }
 });
 

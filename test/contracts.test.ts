@@ -110,6 +110,7 @@ function admittedResolutions(taskSet: TaskConditionSet): Record<string, Resolved
     Object.entries(taskSet).map(([taskId, condition]) => [
       taskId,
       {
+        assessmentMode: "verified",
         digest: condition.packetRef.digest,
         preAdmissionDigest,
         reviewRecordDigest: condition.packetRef.digest,
@@ -710,6 +711,7 @@ test("task resolution accepts only matching admitted packets", () => {
   }
 
   resolutions["task-a"] = {
+    assessmentMode: "verified",
     digest: { algorithm: "sha256", value: "0".repeat(64) },
     preAdmissionDigest: { algorithm: "sha256", value: "0".repeat(64) },
     reviewRecordDigest: experiment.taskSet["task-a"]!.packetRef.digest,

@@ -18,7 +18,7 @@ import {
   writeArtifactAtomically,
   writeMetadataAtomically,
 } from "./artifacts.js";
-import { isSafeArtifactRelativePath } from "./contracts.js";
+import { isSafeArtifactRelativePath, type AssessmentMode } from "./contracts.js";
 import { digestWorkspace, digestWorkspaceTree } from "./verifiers.js";
 import type { ClaudeAgentSdkAttemptEvidence, ClaudeAgentSdkCapabilities } from "./agent-sdk.js";
 import type { AttemptIdentity, TerminalRecord } from "./lifecycle.js";
@@ -38,6 +38,7 @@ export type RunBundleRuntimeComponent = {
 
 export type RunBundleRun = {
   id: string;
+  assessmentMode: AssessmentMode;
   task: { id: string };
   fixture: { id: string; digest: DigestString };
   model: { provider: string; id: string };
@@ -176,6 +177,7 @@ export type CaptureQualificationReason = {
 export type CaptureQualificationReport = {
   status: CaptureQualificationStatus;
   semanticAnalysisUsable: boolean;
+  assessmentMode?: AssessmentMode;
   attempt?: AttemptIdentity;
   terminal?: TerminalRecord;
   dimensions: Record<CaptureQualificationDimension, {
@@ -400,7 +402,7 @@ export class RunBundleAssembler {
     qualification?: CaptureQualificationOptions,
     structuralQualification?: CaptureQualificationReport,
   ): Promise<void> {
-    const report = captureReport(this.bundleId, evidence, [
+    const report = captureReport(this.bundleId, run.assessmentMode, evidence, [
       ...this.captureMissing,
       ...missingEvidence,
     ], qualification, structuralQualification);
@@ -460,6 +462,8 @@ export async function qualifyRunBundle(
     return finishQualificationReport(report);
   }
   const manifest = document as unknown as RunManifest;
+  const assessmentMode = manifest.run?.assessmentMode;
+  report.assessmentMode = assessmentMode;
   report.attempt = structuredClone(manifest.attempt);
   report.terminal = structuredClone(manifest.terminal);
 
@@ -576,7 +580,7 @@ export async function qualifyRunBundle(
     }
   }
 
-  if (verifiers.length === 0) {
+  if (assessmentMode === "verified" && verifiers.length === 0) {
     addQualificationReason(report, "verifier", "unqualified", "VERIFIER_EVIDENCE_MISSING", undefined, "No valid verifier result is retained.");
   }
   for (const verifier of verifiers) {
@@ -613,8 +617,8 @@ export async function qualifyRunBundle(
         const receipt = isRecord(document) && isRecord(document.telemetry) ? document.telemetry.receipt : undefined;
         return isRecord(receipt) && receipt.status === "received";
       }),
-      outcome: workspaces.length > 0 && verifiers.length > 0,
-    });
+      outcome: workspaces.length > 0 && (assessmentMode === "observational" || verifiers.length > 0),
+    }, assessmentMode);
   }
 
   return finishQualificationReport(report);
@@ -823,8 +827,12 @@ function crossCheckCaptureReport(
   evidenceId: string,
   value: unknown,
   actual: Record<"semantic" | "timingResource" | "outcome", boolean>,
+  assessmentMode: AssessmentMode = "verified",
 ): void {
   if (!isRecord(value) || !isRecord(value.capabilities)) return;
+  if (value.assessmentMode !== assessmentMode) {
+    addQualificationReason(report, "terminal", "unqualified", "CAPTURE_REPORT_CONTRADICTS_SOURCE", evidenceId, "Capture report assessment mode contradicts the run manifest.");
+  }
   for (const [area, available] of Object.entries(actual) as Array<[keyof typeof actual, boolean]>) {
     const capability = value.capabilities[area];
     const claimsAvailable = isRecord(capability) && capability.status === "available";
@@ -834,7 +842,9 @@ function crossCheckCaptureReport(
     }
   }
   const retainedKinds = new Set<unknown>(Object.entries(actual).filter(([, available]) => available).flatMap(([area]) =>
-    area === "semantic" ? ["session", "hook"] : area === "timingResource" ? ["telemetry"] : ["workspace", "verifier"]));
+    area === "semantic" ? ["session", "hook"]
+      : area === "timingResource" ? ["telemetry"]
+        : assessmentMode === "observational" ? ["workspace"] : ["workspace", "verifier"]));
   for (const entry of captureMissingEvidence(value)) {
     if (retainedKinds.has(entry.kind) && entry.reason !== "optional-beta-unavailable") {
       const dimension = entry.kind === "telemetry" ? "telemetry" : ["workspace", "verifier"].includes(String(entry.kind)) ? "workspace" : "semanticEvidence";
@@ -869,6 +879,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function captureReport(
   bundleId: string,
+  assessmentMode: AssessmentMode,
   evidence: RunBundleEvidenceDescriptor[],
   suppliedMissing: CaptureMissingEvidence[],
   qualification?: CaptureQualificationOptions,
@@ -876,6 +887,7 @@ function captureReport(
 ): {
   schemaVersion: "capture-report/v1";
   bundleId: string;
+  assessmentMode: AssessmentMode;
   qualification: "qualified" | "incomplete";
   capabilities: Record<"semantic" | "timingResource" | "outcome", { status: CapabilityStatus }>;
   missingEvidence: CaptureMissingEvidence[];
@@ -889,11 +901,11 @@ function captureReport(
   const kinds = new Set(evidence.map((descriptor) => descriptor.kind));
   const missing = deduplicateMissing([
     ...structuredClone(suppliedMissing),
-    ...defaultMissing(kinds, suppliedMissing),
+    ...defaultMissing(kinds, suppliedMissing, assessmentMode),
   ]);
   const semantic = capability(kinds.has("session") && kinds.has("hook"), "semantic", missing);
   const timingResource = capability(kinds.has("telemetry"), "timing-resource", missing);
-  const outcome = capability(kinds.has("workspace") && kinds.has("verifier"), "outcome", missing);
+  const outcome = capability(kinds.has("workspace") && (assessmentMode === "observational" || kinds.has("verifier")), "outcome", missing);
   const qualified = semantic === "available"
     && outcome === "available"
     && (timingResource === "available" || timingResource === "unsupported")
@@ -903,6 +915,7 @@ function captureReport(
   return {
     schemaVersion: "capture-report/v1",
     bundleId,
+    assessmentMode,
     qualification: qualified ? "qualified" : "incomplete",
     capabilities: {
       semantic: { status: semantic },
@@ -931,13 +944,14 @@ function captureReport(
 function defaultMissing(
   kinds: ReadonlySet<RunBundleEvidenceDescriptor["kind"]>,
   supplied: readonly CaptureMissingEvidence[],
+  assessmentMode: AssessmentMode,
 ): CaptureMissingEvidence[] {
   const expected: Array<[EvidenceKind, CaptureMissingEvidence["affects"][number]]> = [
     ["session", "semantic"],
     ["hook", "semantic"],
     ["telemetry", "timing-resource"],
     ["workspace", "outcome"],
-    ["verifier", "outcome"],
+    ...(assessmentMode === "verified" ? [["verifier", "outcome"] as [EvidenceKind, CaptureMissingEvidence["affects"][number]]] : []),
   ];
   return expected.flatMap(([kind, affects]) => kinds.has(kind)
     || supplied.some((entry) => entry.kind === kind && entry.affects.includes(affects))

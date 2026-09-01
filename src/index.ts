@@ -48,6 +48,7 @@ export {
 export type { TaskPacket, TaskPacketComponent, TaskPacketComponents, TaskPacketFreezeRecord, TaskPacketInspection, TaskPacketStatus } from "./task-packets.js";
 export type {
   ArtifactReference,
+  AssessmentMode,
   ArchiveEntry,
   ArchiveLimits,
   ArchiveMeasurements,

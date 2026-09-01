@@ -31,6 +31,7 @@ test("captures and qualifies one caller-supplied Agent SDK run", async () => {
     bundleId: "bundle-production-capture",
     run: {
       id: "run-production-capture",
+      assessmentMode: "verified",
       task: { id: "task-production-capture" },
       fixture: { id: "fixture-production-capture", digest: SHA("a") },
       model: { provider: "anthropic", id: "claude-test" },
@@ -132,6 +133,7 @@ test("rejects a declared model that differs from the executed SDK model", async 
         bundleRoot: join(root, "bundle"), bundleId: "bundle-model-mismatch",
         run: {
           id: "run-model-mismatch", task: { id: "task-model-mismatch" },
+          assessmentMode: "verified",
           fixture: { id: "fixture-model-mismatch", digest: SHA("a") },
           model: { provider: "anthropic", id: "declared-model" },
           harness: { id: "agent-sdk", version: capabilities.sdkVersion },
@@ -168,6 +170,7 @@ test("retains interrupted, verifier-error, and capture/workspace-failure attempt
         bundleId: `bundle-${scenario}`,
         run: {
           id: `run-${scenario}`,
+          assessmentMode: "verified",
           task: { id: "task-partial" },
           fixture: { id: "fixture-partial", digest: SHA("a") },
           model: { provider: "anthropic", id: "claude-test" },

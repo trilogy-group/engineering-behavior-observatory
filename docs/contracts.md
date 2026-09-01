@@ -30,8 +30,10 @@ not contain an evaluation corpus or a fixed operating matrix.
   joining either archive or workspace roots.
 - Archive membership and allowlist selection use exact canonical POSIX names.
   Case folding is used only to reject destination collisions across filesystems.
-- `restricted` contains only digest-addressed references to the reference
-  solution and verifier. It deliberately cannot embed their contents.
+- `assessmentMode` is explicit. `observational` packets are the primary
+  open-ended task form and omit `restricted` entirely. `verified` packets use
+  `restricted` only for digest-addressed reference-solution and verifier
+  references; the packet cannot embed their contents.
 
 The packet records repository provenance, a controlled perturbation, admission
 review status, sharing classification, and SHA-256 digests for every frozen
@@ -44,15 +46,16 @@ bytes; admission-freeze tooling owns the whole-packet identity.
 `rejected` packets require a reviewer, RFC 3339 `date-time` evidence, and the
 restricted review-record reference. Repository provenance is a credential-free
 HTTPS repository URI, optionally on an explicit port, plus a full immutable Git
-object ID—not a branch or tag. A verifier is always required; `referenceSolution.status` may be
-`not-provided` or `unsupported` for verifier-only work. Controlled perturbation
+object ID—not a branch or tag. A verifier is required only for `verified`
+packets; `referenceSolution.status` may be `not-provided` or `unsupported` for
+verifier-only work. Controlled perturbation
 content is either an external, digest-addressed artifact or an explicit
 `not-applied`/`unsupported` state; EBO does not prescribe a task-authoring
 taxonomy.
 
 Before scheduling, EBO requires an admitted packet's review time to be a valid
-RFC 3339 calendar timestamp and its review record, provided reference solution,
-and verifier bytes to match their pinned digests. The review record binds the
+RFC 3339 calendar timestamp and its review record. Verified packets additionally
+require provided reference-solution and verifier bytes to match their pinned digests. The review record binds the
 canonical pre-admission packet digest; the admitted packet can then hash its
 review-record reference without requiring a circular digest. Each declared
 materialization literal must select at least one verified archive file or
@@ -66,15 +69,15 @@ Task-packet tooling consumes an externally authored packet; it does not create
 tasks or make a human review decision. `validate` checks the packet schema,
 parses each declared TAR+gzip fixture, verifies its declared size/member/link
 limits and literal allowlist, and resolves every declared perturbation,
-reference solution, verifier, and review-record digest. `admit` additionally
+mode-appropriate reference/verifier, and review-record digest. `admit` additionally
 requires the recorded admission status to be `admitted` and a complete human
 review.
 
 `freeze` writes a sibling
 [`ebo.task-packet-freeze/v1`](../schemas/task-packet-freeze.v1.schema.json)
-record. It records stable SHA-256 digests for the prompt, fixture, reference
-solution, verifier, review record, controlled perturbation, and canonical
-packet. The review record binds the canonical packet content with its
+record. It records the assessment mode and stable SHA-256 digests for the
+prompt, fixture, optional reference solution/verifier, review record,
+controlled perturbation, and canonical packet. The review record binds the canonical packet content with its
 `admission` field omitted, using its `preAdmissionDigest` field and avoiding a
 circular reference. The aggregate digest is derived from those identities, the
 packet locator, and the recorded `frozenAt` timestamp. Repeating a freeze for
@@ -84,7 +87,7 @@ An existing freeze is never silently replaced after a component changes.
 `status` compares the current packet and resolved bytes with the freeze record
 and reports the named mismatching component before a later materializer or
 scheduler can consume it. The model-visible projection is only `agentInput`;
-reference solutions, verifier bytes, and review records remain restricted.
+verified-task reference solutions/verifier bytes and all review records remain restricted.
 
 ## Workspace materialization
 
@@ -93,7 +96,7 @@ creates an attempt-identified directory outside the task bundle. It verifies
 the digest-pinned TAR+gzip source, copies only the declared literal allowlist,
 rejects links, special entries, traversal, and a selected `restricted/`
 subtree, then normalizes private modes and timestamps before calculating the
-`workspaceFingerprint` used by the verifier. The result's `startingDigest` is
+`workspaceFingerprint` used for outcome binding and, when present, verification. The result's `startingDigest` is
 the declared fixture digest; `workspaceDigest` is the normalized tree
 fingerprint. Attempt roots and non-executable files use `0700` and `0600`;
 executable archive or setup files retain the owner execute bit.

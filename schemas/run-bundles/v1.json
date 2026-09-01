@@ -248,9 +248,10 @@
         "run": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id", "task", "fixture", "model", "harness", "runtime"],
+          "required": ["id", "assessmentMode", "task", "fixture", "model", "harness", "runtime"],
           "properties": {
             "id": { "$ref": "#/$defs/identifier" },
+            "assessmentMode": { "enum": ["observational", "verified"] },
             "task": {
               "type": "object",
               "additionalProperties": false,
@@ -299,7 +300,13 @@
                 "traceId": { "$ref": "#/$defs/identifier" }
               }
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "assessmentMode": { "const": "observational" } }, "required": ["assessmentMode"] },
+              "then": { "not": { "required": ["verifier"] } }
+            }
+          ]
         },
         "attempt": {
           "type": "object",
@@ -496,10 +503,11 @@
     "captureReport": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "bundleId", "qualification", "capabilities", "missingEvidence"],
+      "required": ["schemaVersion", "bundleId", "assessmentMode", "qualification", "capabilities", "missingEvidence"],
       "properties": {
         "schemaVersion": { "const": "capture-report/v1" },
         "bundleId": { "$ref": "#/$defs/identifier" },
+        "assessmentMode": { "enum": ["observational", "verified"] },
         "qualification": { "enum": ["qualified", "incomplete"] },
         "capabilities": {
           "type": "object",
@@ -932,12 +940,13 @@
     "exportManifest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "bundleId", "status", "sharingClass", "policyDigest", "artifactIds"],
+      "required": ["schemaVersion", "bundleId", "status", "sharingClass", "assessmentMode", "policyDigest", "artifactIds"],
       "properties": {
         "schemaVersion": { "const": "export-manifest/v1" },
         "bundleId": { "$ref": "#/$defs/identifier" },
         "status": { "enum": ["not-requested", "blocked", "ready", "exported"] },
         "sharingClass": { "$ref": "#/$defs/sharingClass" },
+        "assessmentMode": { "enum": ["observational", "verified"] },
         "policyDigest": { "$ref": "#/$defs/digest" },
         "artifactIds": {
           "type": "array",

@@ -329,6 +329,11 @@ test("readback rejects a corrupted portable artifact and source reference", asyn
     writeFileSync(join(destination, "manifest.json"), JSON.stringify(invalidReference));
     await assert.rejects(readPortableRunBundleExport(destination, exportPolicy, sourceManifest), /source reference/i);
 
+    const invalidMode = structuredClone(manifest);
+    invalidMode.assessmentMode = "observational";
+    writeFileSync(join(destination, "manifest.json"), JSON.stringify(invalidMode));
+    await assert.rejects(readPortableRunBundleExport(destination, exportPolicy, sourceManifest), /assessment mode/i);
+
     writeFileSync(join(destination, "manifest.json"), JSON.stringify(manifest));
     appendFileSync(join(destination, manifest.artifacts[0]!.relativePath), "corruption");
     await assert.rejects(readPortableRunBundleExport(destination, exportPolicy), /digest|size/i);

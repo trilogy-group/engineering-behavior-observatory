@@ -58,6 +58,7 @@ export type PortableExportManifest = {
   bundleId: string;
   status: "ready" | "exported";
   sharingClass: "partner" | "public";
+  assessmentMode: RunManifest["run"]["assessmentMode"];
   policyDigest: DigestString;
   artifactIds: string[];
   sourceManifestDigest: DigestString;
@@ -293,6 +294,7 @@ export async function createPortableRunBundleExport(
       bundleId: correlations.bundleId,
       status: "ready",
       sharingClass: options.policy.sharingClass,
+      assessmentMode: sourceManifest.run.assessmentMode,
       policyDigest,
       artifactIds: artifacts.map(({ id }) => id),
       sourceManifestDigest,
@@ -636,6 +638,9 @@ async function validateSourceReferences(
   source: RunManifest,
   sourceRoot?: string,
 ): Promise<void> {
+  if (manifest.assessmentMode !== source.run.assessmentMode) {
+    throw new Error("Portable export assessment mode does not match its source run.");
+  }
   const sourceById = new Map(source.evidence.map((descriptor) => [descriptor.id, descriptor]));
   if (manifest.sourceManifestDigest === undefined) throw new Error("Portable export omits its source-manifest digest.");
   for (const artifact of manifest.artifacts) {

@@ -59,7 +59,7 @@ function fixtureArchive(): Buffer {
 
 function bundleFixture(): { root: string; experiment: ExperimentConfiguration } {
   const root = mkdtempSync(join(tmpdir(), "ebo-scheduler-bundle-"));
-  const packet = JSON.parse(readFileSync(join(repositoryRoot, "tests", "fixtures", "task-packet.valid.v1.json"), "utf8")) as TaskPacket;
+  const packet = JSON.parse(readFileSync(join(repositoryRoot, "tests", "fixtures", "task-packet.valid.v1.json"), "utf8")) as Extract<TaskPacket, { assessmentMode: "verified" }>;
   const writeRef = (reference: { locator: string; digest: { algorithm: "sha256"; value: string } }, locator: string, bytes: Buffer) => {
     reference.locator = locator;
     reference.digest = digestBytes(bytes);
@@ -154,6 +154,7 @@ function compileOptions(
       return [id, {
         schemaVersion: "ebo.task-packet-freeze/v1" as const,
         packetId: id,
+        assessmentMode: "verified" as const,
         packetLocator,
         preAdmissionDigest,
         packetDigest,
@@ -165,6 +166,7 @@ function compileOptions(
   ) as Record<string, FrozenTaskInput>;
   const resolvedPackets = Object.fromEntries(
     Object.entries(experiment.taskSet).map(([id, condition]) => [id, {
+      assessmentMode: "verified" as const,
       packetId: id,
       promptDigest: condition.packetRef.digest,
       fixtureDigest: condition.packetRef.digest,

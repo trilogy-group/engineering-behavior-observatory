@@ -384,6 +384,7 @@ export function validateRunManifestEvidence(
     }
   }
   const terminal = isRecord(manifest.terminal) ? manifest.terminal : undefined;
+  const assessmentMode = isRecord(manifest.run) ? manifest.run.assessmentMode : undefined;
   const terminalWorkspace = typeof terminal?.workspaceArtifactId === "string"
     ? workspaceEvidence.get(terminal.workspaceArtifactId)
     : undefined;
@@ -396,7 +397,8 @@ export function validateRunManifestEvidence(
       && (outcome.workspace.fingerprint === undefined
         ? terminalWorkspace.fingerprint === undefined
         : terminalWorkspace.fingerprint !== undefined && outcome.workspace.fingerprint === terminalWorkspace.fingerprint);
-  if (terminal?.state === "completed" && !verifierOutcomes.some((outcome) => matchesTerminalWorkspace(outcome, "passed"))) {
+  if (assessmentMode === "verified" && terminal?.state === "completed"
+      && !verifierOutcomes.some((outcome) => matchesTerminalWorkspace(outcome, "passed"))) {
     errors.push({
       artifact,
       schemaVersion: "run-manifest/v1",
@@ -411,6 +413,22 @@ export function validateRunManifestEvidence(
       schemaVersion: "run-manifest/v1",
       field: "/terminal/state",
       message: "Task-failed runs require a failed verifier bound to the terminal workspace.",
+    });
+  }
+  if (assessmentMode === "observational" && terminal?.failureClass === "task") {
+    errors.push({
+      artifact,
+      schemaVersion: "run-manifest/v1",
+      field: "/terminal/failureClass",
+      message: "Observational runs cannot claim task failure.",
+    });
+  }
+  if (assessmentMode === "observational" && verifierOutcomes.length > 0) {
+    errors.push({
+      artifact,
+      schemaVersion: "run-manifest/v1",
+      field: "/evidence",
+      message: "Observational runs cannot retain verifier outcome evidence.",
     });
   }
   return errors;
@@ -725,6 +743,9 @@ export function validateExportManifest(
   }
   if (exportManifest.bundleId !== containingManifest.bundleId) {
     return [{ artifact, schemaVersion: "export-manifest/v1", field: "/bundleId", message: "Export bundle ID does not match its containing run manifest." }];
+  }
+  if (!isRecord(containingManifest.run) || exportManifest.assessmentMode !== containingManifest.run.assessmentMode) {
+    return [{ artifact, schemaVersion: "export-manifest/v1", field: "/assessmentMode", message: "Export assessment mode does not match its containing run manifest." }];
   }
 
   const evidenceById = new Map<string, Record<string, unknown>>();

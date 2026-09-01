@@ -123,6 +123,7 @@ export async function captureClaudeAgentSdkRun(
   try {
     attempt = await executeRunAttempt({
       run,
+      assessmentMode: definition.run.assessmentMode,
       attempt: attemptIdentity,
       workspace: coordinatedWorkspace,
       harness: (context) => executeClaudeAgentSdk(context, options.configuration, streamCapture, options.query),

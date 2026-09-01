@@ -27,9 +27,10 @@ or implement beyond the assigned issue.
   projection. Each adapter retains its own methods, identities, lifecycle, and
   completion semantics.
 - Native sessions, streams, events, and hooks are semantic evidence; native
-  OpenTelemetry is timing and resource evidence; workspace state plus verifiers
-  are outcome evidence. Preserve native evidence and normalize only after
-  capture qualification.
+  OpenTelemetry is timing and resource evidence; workspace state is artifact
+  and outcome evidence. Verifiers are optional assertions for explicitly
+  verified tasks, never a prerequisite for observational capture. Preserve
+  native evidence and normalize only after capture qualification.
 - Represent missing or unsupported evidence explicitly. Never synthesize events
   or turn missing evidence into `false` or zero.
 - Preserve failed and interrupted attempts as valid partial bundles. A retry is
@@ -53,8 +54,8 @@ or implement beyond the assigned issue.
 
 - Treat task archives before validation, candidate workspaces, SDK messages,
   subprocess output, and external responses as untrusted input.
-- Treat EBO configuration, admitted digest-pinned verifier code, and in-process
-  adapter callbacks as trusted implementation inputs.
+- Treat EBO configuration, any admitted digest-pinned verifier code, and
+  in-process adapter callbacks as trusted implementation inputs.
 - EBO does not defend its private files from a hostile same-user process.
   Untrusted verifier containment requires an OS or container sandbox; do not
   approximate either boundary with additional JavaScript filesystem races.

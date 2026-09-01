@@ -88,6 +88,58 @@ test("executes one frozen queue entry end to end and retains a qualified bundle"
   }
 });
 
+test("captures, exports, and indexes an observational task without verifier claims", async () => {
+  const fixture = createRunnerFixture({ assessmentMode: "observational" });
+  const query = fakeQuery({ resultContent: "open-ended workspace result\n" });
+  const corpusRoot = join(fixture.parent, "corpus");
+  try {
+    const summary = await runAgentSdkQueueEntry({
+      bundleRoot: fixture.bundleRoot,
+      queuePath: fixture.queuePath,
+      runId: fixture.runId,
+      outputRoot: join(corpusRoot, "runs"),
+      workspaceRoot: fixture.workspaceRoot,
+      query: query.query,
+      checkTelemetryReceipt: receivedReceipt,
+    });
+
+    assert.equal(summary.assessmentMode, "observational");
+    assert.equal(summary.classification, "completed");
+    assert.equal(summary.captureQualification, "qualified");
+    assert.equal(query.calls(), 1);
+
+    const manifest = readManifest(summary.bundlePath);
+    assert.equal(manifest.run.assessmentMode, "observational");
+    assert.equal(manifest.run.verifier, undefined);
+    assert.equal(manifest.evidence.some(({ kind }) => kind === "verifier"), false);
+    const reportDescriptor = manifest.evidence.find(({ kind }) => kind === "capture-report")!;
+    const report = JSON.parse(readFileSync(join(summary.bundlePath, reportDescriptor.relativePath), "utf8")) as {
+      assessmentMode: string;
+      capabilities: { outcome: { status: string } };
+      missingEvidence: Array<{ kind: string }>;
+    };
+    assert.equal(report.assessmentMode, "observational");
+    assert.equal(report.capabilities.outcome.status, "available");
+    assert.equal(report.missingEvidence.some(({ kind }) => kind === "verifier"), false);
+
+    const policyPath = join(fixture.parent, "observational-policy.json");
+    writeFileSync(policyPath, JSON.stringify({
+      sharingClass: "partner",
+      maxArtifactBytes: 8 * 1024 * 1024,
+      maxStringBytes: 64 * 1024,
+    }));
+    const exportRoot = join(corpusRoot, "exports", "observational");
+    const output: string[] = [];
+    assert.equal(await main(["export", "create", summary.bundlePath, policyPath, exportRoot], (message) => output.push(message)), 0, output.join(""));
+    const entries = buildCorpusIndex(corpusRoot);
+    assert.deepEqual(validateCorpusIndex(corpusRoot, entries), []);
+    assert.equal(queryCorpusIndex(entries, { manifestKind: "run", assessmentMode: "observational" }).length, 1);
+    assert.equal(queryCorpusIndex(entries, { manifestKind: "export", assessmentMode: "observational" }).length, 1);
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
 for (const invalid of [
   {
     name: "wrong-kind",
@@ -384,6 +436,7 @@ test("approved live Agent SDK operational runner proves a tool-using trajectory"
   const endpoint = `http://127.0.0.1:${(receiver.address() as AddressInfo).port}`;
   const model = process.env.EBO_LIVE_AGENT_SDK_MODEL ?? "sonnet";
   const fixture = createRunnerFixture({
+    assessmentMode: "observational",
     modelId: model,
     prompt: "Use the Write tool to create a file named result.txt in the current working directory containing exactly the single line: done",
     records: {
@@ -434,8 +487,8 @@ test("approved live Agent SDK operational runner proves a tool-using trajectory"
     });
 
     const manifest = readManifest(summary.bundlePath);
-    const verifier = readVerifierResult(summary.bundlePath, manifest);
-    assert.equal(summary.classification, "completed", JSON.stringify({ summary, verifier: sanitizedVerifier(verifier) }));
+    assert.equal(summary.classification, "completed", JSON.stringify(summary));
+    assert.equal(summary.assessmentMode, "observational");
     assert.equal(summary.terminal.state, "completed");
     assert.equal(summary.captureQualification, "qualified", JSON.stringify(summary));
     assert.equal(typeof summary.sessionId, "string");
@@ -452,9 +505,7 @@ test("approved live Agent SDK operational runner proves a tool-using trajectory"
 
     const workspaceEvidence = manifest.evidence.find((descriptor) => descriptor.kind === "workspace");
     assert.ok(workspaceEvidence, "a final workspace outcome must be retained");
-    assert.equal(verifier.status, "passed", JSON.stringify(sanitizedVerifier(verifier)));
-    assert.equal(verifier.status === "passed" ? verifier.workspace.artifactId : undefined, workspaceEvidence.id);
-    assert.equal(verifier.status === "passed" ? verifier.workspace.fingerprint : undefined, workspaceEvidence.fingerprint);
+    assert.equal(manifest.evidence.some(({ kind }) => kind === "verifier"), false);
 
     const policyPath = join(fixture.parent, "policy.json");
     writeFileSync(policyPath, JSON.stringify({
@@ -475,7 +526,7 @@ test("approved live Agent SDK operational runner proves a tool-using trajectory"
       messageRecords: sessionRecords.length,
       hookRecords: hookRecords.length,
       collectorPaths: [...new Set(requests.map((request) => request.path))].sort(),
-      verifierStatus: verifier.status,
+      assessmentMode: summary.assessmentMode,
     })}\n`);
   } finally {
     await new Promise<void>((resolvePromise, reject) => receiver.close((error) => error === undefined ? resolvePromise() : reject(error)));
@@ -493,6 +544,7 @@ type RunnerFixture = {
 };
 
 type RunnerFixtureOptions = {
+  assessmentMode?: TaskPacket["assessmentMode"];
   modelId?: string;
   prompt?: string;
   verifierSource?: string;
@@ -504,7 +556,10 @@ function createRunnerFixture(options: RunnerFixtureOptions = {}): RunnerFixture 
   const bundleRoot = join(parent, "bundle");
   mkdirSync(bundleRoot);
   const modelId = options.modelId ?? "claude-test";
-  const packet = JSON.parse(readFileSync(join(repositoryRoot, "tests", "fixtures", "task-packet.valid.v1.json"), "utf8")) as TaskPacket;
+  const verifiedPacket = JSON.parse(readFileSync(join(repositoryRoot, "tests", "fixtures", "task-packet.valid.v1.json"), "utf8")) as Extract<TaskPacket, { assessmentMode: "verified" }>;
+  const packet: TaskPacket = options.assessmentMode === "observational"
+    ? (({ restricted: _restricted, ...task }) => ({ ...task, assessmentMode: "observational" as const }))(verifiedPacket)
+    : verifiedPacket;
   packet.agentInput.prompt = options.prompt ?? "Create a file named result.txt containing exactly the single line: done";
   const writeRef = (reference: { locator: string; digest: { algorithm: "sha256"; value: string } }, locator: string, bytes: Buffer) => {
     reference.locator = locator;
@@ -515,12 +570,15 @@ function createRunnerFixture(options: RunnerFixtureOptions = {}): RunnerFixture 
   };
 
   writeRef(packet.agentInput.fixture.source, "components/fixture.tar.gz", fixtureArchive());
-  if (!("reference" in packet.controlledPerturbation) || !("locator" in packet.restricted.referenceSolution)) {
+  if (!("reference" in packet.controlledPerturbation)
+      || packet.assessmentMode === "verified" && !("locator" in packet.restricted.referenceSolution)) {
     throw new Error("Fixture packet must include referenced components.");
   }
   writeRef(packet.controlledPerturbation.reference, "components/perturbation.json", Buffer.from('{"kind":"controlled"}\n'));
-  writeRef(packet.restricted.referenceSolution, "restricted/reference.txt", Buffer.from("reference solution\n"));
-  writeRef(packet.restricted.verifier, "restricted/verifier.cjs", Buffer.from(options.verifierSource ?? DEFAULT_VERIFIER));
+  if (packet.assessmentMode === "verified") {
+    writeRef(packet.restricted.referenceSolution as { locator: string; digest: { algorithm: "sha256"; value: string } }, "restricted/reference.txt", Buffer.from("reference solution\n"));
+    writeRef(packet.restricted.verifier, "restricted/verifier.cjs", Buffer.from(options.verifierSource ?? DEFAULT_VERIFIER));
+  }
   const preAdmission = structuredClone(packet) as unknown as Record<string, unknown>;
   delete preAdmission.admission;
   writeRef(packet.admission.review!.reviewRecord, "restricted/review.json", Buffer.from(JSON.stringify({
@@ -710,12 +768,4 @@ function readVerifierResult(bundleRoot: string, manifest: RunManifest): Verifier
   const descriptor = manifest.evidence.find((entry) => entry.kind === "verifier");
   assert.ok(descriptor, "a verifier result must be retained");
   return JSON.parse(readFileSync(join(bundleRoot, descriptor.relativePath), "utf8")) as VerifierResult;
-}
-
-function sanitizedVerifier(verifier: VerifierResult): Record<string, unknown> {
-  return {
-    status: verifier.status,
-    assertions: verifier.assertions,
-    error: "error" in verifier ? verifier.error?.slice(0, 500) : undefined,
-  };
 }

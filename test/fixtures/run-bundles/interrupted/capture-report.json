@@ -1,6 +1,7 @@
 {
   "schemaVersion": "capture-report/v1",
   "bundleId": "bundle-interrupted",
+  "assessmentMode": "verified",
   "qualification": "incomplete",
   "capabilities": {
     "semantic": { "status": "available" },

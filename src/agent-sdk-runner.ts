@@ -97,6 +97,7 @@ export type AgentSdkRunSummary = {
   terminal: TerminalRecord;
   classification: AttemptClassificationKind;
   captureQualification: CaptureQualificationStatus;
+  assessmentMode: TaskPacket["assessmentMode"];
   sessionId?: string;
   traceId?: string;
 };
@@ -136,8 +137,8 @@ export async function runAgentSdkQueueEntry(options: RunAgentSdkQueueEntryOption
       || inspection.packetDigest.algorithm !== entry.task.packetRef.digest.algorithm) {
     throw new Error(`Task packet "${entry.task.packetRef.locator}" changed from its frozen queue reference.`);
   }
-  const verifierReference = packet.restricted.verifier;
-  const verifierFormat = verifierReference.locator.toLowerCase().endsWith(".mjs") ? "module" : "commonjs";
+  const verifierReference = packet.assessmentMode === "verified" ? packet.restricted.verifier : undefined;
+  const verifierFormat = verifierReference?.locator.toLowerCase().endsWith(".mjs") ? "module" : "commonjs";
 
   const attemptId = options.attemptId ?? randomUUID();
   if (!ATTEMPT_ID_PATTERN.test(attemptId)) {
@@ -188,19 +189,21 @@ export async function runAgentSdkQueueEntry(options: RunAgentSdkQueueEntryOption
         },
       },
       configuration,
-      verifier: (_context, outcome) => executeVerifier({
-        bundleId: definition.bundleId,
-        verifierRoot: bundleRoot,
-        verifier: verifierReference,
-        workspacePath: workspace.path,
-        workspaceFingerprint: outcome.fingerprint,
-        workspace: {
-          artifactId: outcome.descriptor.id,
-          digest: outcome.descriptor.digest,
-          fingerprint: outcome.fingerprint,
-        },
-        artifactRoot: attemptBundleRoot,
-        moduleFormat: verifierFormat,
+      ...(verifierReference === undefined ? {} : {
+        verifier: (_context, outcome) => executeVerifier({
+          bundleId: definition.bundleId,
+          verifierRoot: bundleRoot,
+          verifier: verifierReference,
+          workspacePath: workspace.path,
+          workspaceFingerprint: outcome.fingerprint,
+          workspace: {
+            artifactId: outcome.descriptor.id,
+            digest: outcome.descriptor.digest,
+            fingerprint: outcome.fingerprint,
+          },
+          artifactRoot: attemptBundleRoot,
+          moduleFormat: verifierFormat,
+        }),
       }),
       maxWallClockMs: queue.coordinatorBudget.maxWallClockMs,
       ...(options.query === undefined ? {} : { query: options.query }),
@@ -215,6 +218,7 @@ export async function runAgentSdkQueueEntry(options: RunAgentSdkQueueEntryOption
       terminal: structuredClone(result.attempt.terminal),
       classification: result.attempt.classification.kind,
       captureQualification: result.qualification.status,
+      assessmentMode: packet.assessmentMode,
       ...(manifest.run.native?.sessionId === undefined ? {} : { sessionId: manifest.run.native.sessionId }),
       ...(manifest.run.native?.traceId === undefined ? {} : { traceId: manifest.run.native.traceId }),
     };
@@ -385,6 +389,7 @@ function buildRunBundleDefinition(
     bundleId: `bundle-${attemptId}`,
     run: {
       id: entry.runId,
+      assessmentMode: packet.assessmentMode,
       task: { id: entry.task.id },
       fixture: {
         id: packet.agentInput.fixture.source.locator,
@@ -396,11 +401,13 @@ function buildRunBundleDefinition(
         { source: "anthropic", name: "agent-sdk", version: capabilities.sdkVersion },
         { source: "anthropic", name: "agent-cli", version: capabilities.claudeCodeVersion },
       ],
-      verifier: {
-        locator: packet.restricted.verifier.locator,
-        digest: `sha256:${packet.restricted.verifier.digest.value}`,
-        format: verifierFormat,
-      },
+      ...(packet.assessmentMode === "verified" ? {
+        verifier: {
+          locator: packet.restricted.verifier.locator,
+          digest: `sha256:${packet.restricted.verifier.digest.value}`,
+          format: verifierFormat,
+        },
+      } : {}),
     },
     attempt: { id: attemptId, number: 1 },
     configuration: {
