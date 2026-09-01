@@ -477,7 +477,8 @@ async function withWorkspaceOutcomeProjection<T>(
       recursive: true,
       preserveTimestamps: true,
       force: false,
-      filter: (source) => source === finalPath || !source.slice(finalPath.length + 1).split(/[\\/]/u).some((segment) => exclusions.includes(segment)),
+      filter: async (source) => source === finalPath
+        || !await isExcludedWorkspaceDirectory(finalPath, source, exclusions),
     });
     if (options.respectGitignore === true) await removeIgnoredWorkspaceEntries(startPath, projectedPath);
     if (options.omitEmptyDirectories === true) await removeEmptyDirectories(projectedPath);
@@ -1084,10 +1085,10 @@ async function assertNoWorkspaceHardLinks(
   prefix = "",
 ): Promise<void> {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (exclusions.has(entry.name)) continue;
     const path = join(directory, entry.name);
     const relativePath = `${prefix}${entry.name}`;
     const metadata = await lstat(path, { bigint: true });
+    if (exclusions.has(entry.name) && metadata.isDirectory() && !metadata.isSymbolicLink()) continue;
     if (metadata.isDirectory() && !metadata.isSymbolicLink()) {
       await assertNoWorkspaceHardLinks(path, exclusions, `${relativePath}/`);
     } else if (metadata.isFile() && metadata.nlink > 1n) {
@@ -1108,7 +1109,7 @@ async function ignoredWorkspacePaths(baseline: string, finalPath: string, global
   await visit(finalPath);
   if (paths.length === 0) return [];
   return new Promise((resolvePaths, reject) => {
-    const child = spawn("git", ["-c", `core.excludesFile=${globalExcludes}`, "check-ignore", "-z", "--stdin"], {
+    const child = spawn("git", ["-c", `core.excludesFile=${globalExcludes}`, "check-ignore", "--no-index", "-z", "--stdin"], {
       cwd: baseline,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -1126,6 +1127,19 @@ async function ignoredWorkspacePaths(baseline: string, finalPath: string, global
     });
     child.stdin.end(Buffer.from(`${paths.join("\0")}\0`));
   });
+}
+
+async function isExcludedWorkspaceDirectory(
+  root: string,
+  source: string,
+  exclusions: readonly string[],
+): Promise<boolean> {
+  let candidate = root;
+  for (const segment of source.slice(root.length + 1).split(/[\\/]/u)) {
+    candidate = join(candidate, segment);
+    if (exclusions.includes(segment) && (await lstat(candidate)).isDirectory()) return true;
+  }
+  return false;
 }
 
 async function removeEmptyDirectories(directory: string, root: string = directory): Promise<void> {

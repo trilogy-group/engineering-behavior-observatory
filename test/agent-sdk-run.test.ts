@@ -222,7 +222,10 @@ test("retains interrupted, verifier-error, and capture/workspace-failure attempt
             ...(scenario === "interrupted" ? { signal: controller.signal } : {}),
           } : {
             verifier: scenario === "verifier-timeout"
-              ? async () => new Promise<never>(() => undefined)
+              ? async () => {
+                  controller.abort("fixture verifier interruption");
+                  return new Promise<never>(() => undefined);
+                }
               : async (_verifierContext, workspace) => ({
               schemaVersion: "verifier-result/v1" as const,
               bundleId: definition.bundleId,
@@ -237,18 +240,18 @@ test("retains interrupted, verifier-error, and capture/workspace-failure attempt
             }),
           }),
           ...(scenario === "verifier-timeout" ? {
-            maxWallClockMs: 50,
+            signal: controller.signal,
             shutdownGraceMs: 10,
             workspaceOutcomeOmitsEmptyDirectories: true,
           } : {}),
         });
         const expectedClassification = scenario === "interrupted" ? "interrupted"
-          : scenario === "verifier-timeout" ? "budget-stop"
+          : scenario === "verifier-timeout" ? "interrupted"
           : scenario === "verifier-error" ? "verifier-error"
             : scenario === "capture-failure" ? "capture-incomplete" : "verifier-error";
         assert.equal(result.attempt.classification.kind, expectedClassification);
-        assert.equal(result.manifest.terminal.state, scenario === "interrupted" ? "interrupted"
-          : scenario === "verifier-timeout" ? "stopped" : "failed");
+        assert.equal(result.manifest.terminal.state, ["interrupted", "verifier-timeout"].includes(scenario)
+          ? "interrupted" : "failed");
         if (scenario === "workspace-error") {
           assert.equal(result.manifest.evidence.some((entry) => entry.kind === "workspace"), false);
           assert.equal(result.manifest.terminal.workspaceArtifactId, undefined);

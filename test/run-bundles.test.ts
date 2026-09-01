@@ -201,6 +201,8 @@ test("workspace outcome excludes declared transient directory names", async () =
     symlinkSync("../changed.txt", join(fixture.final, "node_modules", "linked-package"));
     mkdirSync(join(fixture.final, "coverage"));
     writeFileSync(join(fixture.final, "coverage", "summary.json"), "generated\n");
+    mkdirSync(join(fixture.final, "legitimate"));
+    writeFileSync(join(fixture.final, "legitimate", "coverage"), "must remain observable\n");
     writeFileSync(join(fixture.start, ".gitignore"), "ignored.bin\ngenerated/\n");
     writeFileSync(join(fixture.final, ".gitignore"), "ignored.bin\nnew-outcome.txt\n");
     mkdirSync(join(fixture.final, "generated"));
@@ -225,7 +227,9 @@ test("workspace outcome excludes declared transient directory names", async () =
     assert.match(patch, /changed\.txt/u);
     assert.match(patch, /diff --git a\/new-outcome\.txt b\/new-outcome\.txt/u);
     assert.match(patch, /diff --git a\/ambient-only\.txt b\/ambient-only\.txt/u);
-    assert.doesNotMatch(patch, /node_modules|coverage|generated\/cache/u);
+    assert.match(patch, /diff --git a\/legitimate\/coverage b\/legitimate\/coverage/u);
+    assert.match(patch, /diff --git a\/ignored\.bin b\/ignored\.bin[\s\S]*deleted file mode/u);
+    assert.doesNotMatch(patch, /node_modules|coverage\/summary|generated\/cache/u);
   } finally {
     for (const [name, value] of gitConfiguration) {
       if (value === undefined) delete process.env[name];
