@@ -552,6 +552,16 @@ function rewriteString(
   rewriteLocalIdentifier = false,
 ): string {
   let output = input;
+  // Declared sensitive values are redacted before correlation rewriting: a
+  // secret that embeds a run, attempt, bundle, session, or trace ID must not
+  // be mutated into a form the exact-secret match and final scan cannot see.
+  for (const secret of sensitiveValues) {
+    const occurrences = countOccurrences(output, secret);
+    if (occurrences > 0) {
+      output = output.replaceAll(secret, "[REDACTED_SECRET]");
+      increment(counts, "redacted-secret", occurrences);
+    }
+  }
   const correlation = rewriteCorrelation ? replacements.get(output) : undefined;
   if (correlation !== undefined) {
     output = correlation;
@@ -565,13 +575,6 @@ function rewriteString(
         output = output.replaceAll(source, replacement);
         increment(counts, "rewritten-correlation", occurrences);
       }
-    }
-  }
-  for (const secret of sensitiveValues) {
-    const occurrences = countOccurrences(output, secret);
-    if (occurrences > 0) {
-      output = output.replaceAll(secret, "[REDACTED_SECRET]");
-      increment(counts, "redacted-secret", occurrences);
     }
   }
   for (const pattern of SECRET_PATTERNS) {

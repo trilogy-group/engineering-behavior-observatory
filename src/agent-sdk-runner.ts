@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 
 import { assertNoDuplicateJsonKeys, digestMetadata, validateArtifact, validateRunManifestEvidence } from "./artifacts.js";
@@ -103,6 +103,9 @@ export type AgentSdkRunSummary = {
 
 const PERMISSION_MODES = ["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"] as const;
 const TELEMETRY_PROTOCOLS = ["http/protobuf", "http/json", "grpc"] as const;
+// Matches the workspace attempt-ID contract: one safe path component, no
+// separators, no leading dot, so a supplied ID cannot escape the output root.
+const ATTEMPT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 /**
  * Execute exactly one frozen run-queue entry through the Claude Agent SDK and
@@ -137,7 +140,16 @@ export async function runAgentSdkQueueEntry(options: RunAgentSdkQueueEntryOption
   const verifierFormat = verifierReference.locator.toLowerCase().endsWith(".mjs") ? "module" : "commonjs";
 
   const attemptId = options.attemptId ?? randomUUID();
-  const attemptBundleRoot = join(resolve(options.outputRoot), entry.runId, attemptId);
+  if (!ATTEMPT_ID_PATTERN.test(attemptId)) {
+    throw new Error("Attempt ID must be one safe path component.");
+  }
+  const outputRoot = resolve(options.outputRoot);
+  const attemptBundleRoot = join(outputRoot, entry.runId, attemptId);
+  const fromOutputRoot = relative(outputRoot, attemptBundleRoot);
+  if (fromOutputRoot === "" || isAbsolute(fromOutputRoot)
+      || fromOutputRoot === ".." || fromOutputRoot.startsWith(`..${sep}`)) {
+    throw new Error("Attempt destination escapes the selected output root.");
+  }
   if (pathExists(attemptBundleRoot)) {
     throw new Error(`Attempt destination "${attemptBundleRoot}" already exists and is never replaced.`);
   }

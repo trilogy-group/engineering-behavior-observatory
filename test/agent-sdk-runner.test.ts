@@ -270,10 +270,41 @@ test("never replaces an existing attempt destination", async () => {
   }
 });
 
+test("rejects a supplied attempt ID that is not one safe path component", async () => {
+  const fixture = createRunnerFixture();
+  const query = fakeQuery({ resultContent: "done\n" });
+  try {
+    for (const attemptId of ["../../../escaped", "a/b", "..", ".hidden", "a\\b", ""]) {
+      await assert.rejects(
+        runAgentSdkQueueEntry({
+          bundleRoot: fixture.bundleRoot,
+          queuePath: fixture.queuePath,
+          runId: fixture.runId,
+          outputRoot: fixture.outputRoot,
+          workspaceRoot: fixture.workspaceRoot,
+          attemptId,
+          query: query.query,
+        }),
+        /one safe path component/,
+        JSON.stringify(attemptId),
+      );
+    }
+    assert.equal(query.calls(), 0);
+    assert.equal(existsSync(fixture.outputRoot), false, "no attempt evidence may exist outside or inside the output root");
+    assert.equal(existsSync(join(fixture.parent, "escaped")), false);
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
 test("exports the produced bundle and validates the source/export corpus pair", async () => {
   const fixture = createRunnerFixture();
   const corpusRoot = join(fixture.parent, "corpus");
   const outputRoot = join(corpusRoot, "runs");
+  // A declared secret embedding the attempt ID must stay an exact-secret
+  // match: correlation rewriting cannot run first and hide it from redaction.
+  const attemptId = "attempt-export-1";
+  const embeddedSecret = `confidential-prefix-${attemptId}-suffix`;
   try {
     const summary = await runAgentSdkQueueEntry({
       bundleRoot: fixture.bundleRoot,
@@ -281,7 +312,8 @@ test("exports the produced bundle and validates the source/export corpus pair", 
       runId: fixture.runId,
       outputRoot,
       workspaceRoot: fixture.workspaceRoot,
-      query: fakeQuery({ resultContent: "done\n" }).query,
+      attemptId,
+      query: fakeQuery({ resultContent: "done\n", messageText: `note ${embeddedSecret} end` }).query,
       checkTelemetryReceipt: receivedReceipt,
     });
     assert.equal(summary.classification, "completed");
@@ -291,6 +323,7 @@ test("exports the produced bundle and validates the source/export corpus pair", 
       sharingClass: "partner",
       maxArtifactBytes: 4 * 1024 * 1024,
       maxStringBytes: 64 * 1024,
+      sensitiveValues: [embeddedSecret],
     }));
     const exportRoot = join(corpusRoot, "exports", "run-a");
     const output: string[] = [];
@@ -301,12 +334,16 @@ test("exports the produced bundle and validates the source/export corpus pair", 
     const exportManifest = JSON.parse(readFileSync(join(exportRoot, "manifest.json"), "utf8")) as {
       artifacts: Array<{ relativePath: string }>;
     };
+    let redactedSecretSeen = false;
     for (const file of ["manifest.json", ...exportManifest.artifacts.map(({ relativePath }) => relativePath)]) {
       const text = readFileSync(join(exportRoot, file), "utf8");
       for (const correlation of [SESSION_ID, fixture.runId, summary.attemptId]) {
         assert.equal(text.includes(correlation), false, `exported ${file} must not retain source correlation ${correlation}`);
       }
+      assert.equal(text.includes("confidential-prefix"), false, `exported ${file} must not retain any part of the declared secret`);
+      redactedSecretSeen ||= text.includes("[REDACTED_SECRET]");
     }
+    assert.equal(redactedSecretSeen, true, "the declared secret must be redacted, not rewritten away");
 
     const entries = buildCorpusIndex(corpusRoot);
     assert.equal(queryCorpusIndex(entries, { manifestKind: "run", runId: fixture.runId }).length, 1);
@@ -592,14 +629,15 @@ function fakeQuery(behavior: {
   resultContent: string;
   extraFiles?: Record<string, string>;
   interrupt?: AbortController;
+  messageText?: string;
 }): { query: (input: QueryInput) => QueryHandle; calls: () => number } {
   let calls = 0;
   const query = (input: QueryInput): QueryHandle => {
     calls += 1;
     let closed = false;
     const messages: SDKMessage[] = behavior.interrupt === undefined
-      ? [systemInitMessage(), assistantMessage(), sdkResult()]
-      : [systemInitMessage(), assistantMessage()];
+      ? [systemInitMessage(), assistantMessage(behavior.messageText), sdkResult()]
+      : [systemInitMessage(), assistantMessage(behavior.messageText)];
     return {
       close: () => {
         closed = true;
@@ -636,12 +674,12 @@ function systemInitMessage(): SDKMessage {
   } as unknown as SDKMessage;
 }
 
-function assistantMessage(): SDKMessage {
+function assistantMessage(text?: string): SDKMessage {
   return {
     type: "assistant",
     uuid: "assistant-1",
     session_id: SESSION_ID,
-    message: { role: "assistant", content: [] },
+    message: { role: "assistant", content: text === undefined ? [] : [{ type: "text", text }] },
   } as unknown as SDKMessage;
 }
 
