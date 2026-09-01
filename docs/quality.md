@@ -11,8 +11,7 @@ last_memory_sync: 2026-08-26T03:34:35.394130+00:00
 
 ## Current model
 
-- COE-574 contributed: PR #20: COE-574: add fail-closed portable evidence export (merge `7cb377a`)
-- COE-575 contributed: PR #21: COE-575: add corpus indexing and portable bundles (merge `6a5b7ae`)
+- COE-591 contributed: PR #22: feat: add operational Agent SDK runner and portable-export command (merge `0c8c4e5`)
 
 ## Important invariants
 
@@ -29,12 +28,10 @@ last_memory_sync: 2026-08-26T03:34:35.394130+00:00
 
 ## Recent changes
 
-- COE-574: Implement the fail-closed export pipeline
-- COE-575: Implement corpus indexing and portable bundles
+- COE-591: Operationalize one Agent SDK run from a frozen queue entry
 
 ## Source refs
 
-- COE-574
-- COE-575
+- COE-591
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->
