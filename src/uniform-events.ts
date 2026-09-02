@@ -168,14 +168,19 @@ export async function validateUniformEvents(
   const parentById = new Map(events.flatMap((event) => event.relations.parent.status === "known"
     ? [[event.id, event.relations.parent.value] as const]
     : []));
+  const resolved = new Set<string>();
   for (const event of events) {
+    if (resolved.has(event.id)) continue;
     const ancestry = new Set<string>();
+    const path: string[] = [];
     let current: string | undefined = event.id;
-    while (current !== undefined) {
+    while (current !== undefined && !resolved.has(current)) {
       if (ancestry.has(current)) throw new Error(`Uniform event "${event.id}" has cyclic parentage.`);
       ancestry.add(current);
+      path.push(current);
       current = parentById.get(current);
     }
+    for (const eventId of path) resolved.add(eventId);
   }
 }
 
