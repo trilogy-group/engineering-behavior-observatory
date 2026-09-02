@@ -22,6 +22,10 @@ APIs for this boundary and does not add the client as a runtime dependency.
 
 `captureOpenHandsAgentServerRun` coordinates one caller-supplied run definition:
 
+The run configuration must expose the actual model at `agent.llm.model` or
+`agent_settings.llm.model`; EBO rejects a request whose executable model differs
+from the run manifest identity.
+
 1. Verify `/server_info` reports exactly `1.44.1`.
 2. Create one conversation with the supplied agent configuration and the
    workspace path visible to the server. Authenticated REST requests use the

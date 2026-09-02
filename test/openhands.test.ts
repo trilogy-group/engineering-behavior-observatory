@@ -282,6 +282,48 @@ test("retains streamed evidence and a capture gap when final REST reconciliation
   assert.equal(deleted, true);
 });
 
+test("retains successful final REST pages when a later page fails", async () => {
+  let eventPages = 0;
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
+      return json({ id: "conversation-1", execution_status: "finished" });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) {
+      eventPages += 1;
+      return eventPages === 1
+        ? json({ items: [message], next_page_id: "page-2" })
+        : json({ detail: "later page failed" }, 503);
+    }
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+
+  const result = await captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: {},
+    message: {},
+    fetch,
+    webSocket: (url) => {
+      const socket = new FakeWebSocket(url);
+      queueMicrotask(() => socket.open());
+      return socket;
+    },
+    pollIntervalMs: 0,
+  });
+  const normalized = await normalizeOpenHandsCapture(result);
+
+  assert.match(result.reconciliation.finalReadError ?? "", /503/);
+  assert.deepEqual(result.reconciliation.finalEventIds, ["event-message"]);
+  assert.equal(result.records.filter(({ record }) => record.channel === "rest-event").length, 1);
+  assert.equal(normalized.events.some(({ source }) => source.nativeType === "MessageEvent"), true);
+});
+
 test("retains and cleans up a partial attempt when message submission fails", async () => {
   let deleted = false;
   const fetch: typeof globalThis.fetch = async (input, init) => {
@@ -533,6 +575,41 @@ test("preserves timezone-naive native timestamps without inventing a uniform tim
   assert.equal(capture.records[0]?.record.payload.timestamp, "2026-09-02T07:00:00");
 });
 
+test("marks missing native content unknown instead of emitting a nonexistent pointer", async () => {
+  const capture: OpenHandsCapture = {
+    runId: "run-1",
+    attemptId: "attempt-1",
+    qualification: "qualified-with-gaps",
+    records: [{
+      reference: { artifactId: "session", recordLocator: "line:1" },
+      record: {
+        schemaVersion: "ebo.openhands-native-record/v1",
+        session_id: "conversation-1",
+        channel: "rest-event",
+        sequence: 1,
+        channelSequence: 1,
+        payload: { id: "message-without-content", kind: "MessageEvent", source: "user" },
+      },
+    }],
+    conversationId: "conversation-1",
+    serverInfo: { version: "1.44.1" },
+    finalConversation: { execution_status: "finished" },
+    reconciliation: {
+      status: "matched",
+      streamedEventIds: [],
+      finalEventIds: ["message-without-content"],
+      streamedOnlyEventIds: [],
+      finalOnlyEventIds: [],
+      transportGaps: [],
+    },
+    eventLogCompleteness: { status: "unknown", reason: "not exposed" },
+  };
+
+  const normalized = await normalizeOpenHandsCapture(capture);
+
+  assert.equal(normalized.events[0]?.content.status, "unknown");
+});
+
 test("packages one verified smoke attempt with native, workspace, verifier, and normalized evidence", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-openhands-run-"));
   const start = join(root, "start");
@@ -598,7 +675,7 @@ test("packages one verified smoke attempt with native, workspace, verifier, and 
         model: "test/model",
         baseUrl: "http://127.0.0.1:8000",
         serverWorkspacePath: "/server/workspace",
-        startConversation: { agent: { kind: "Agent" } },
+        startConversation: { agent: { kind: "Agent", llm: { model: "test/model" } } },
         message: { role: "user", content: [{ type: "text", text: "update result.txt" }], run: true },
         fetch,
         webSocket: (url) => {
@@ -639,6 +716,91 @@ test("packages one verified smoke attempt with native, workspace, verifier, and 
       .every(({ nativeReference }) => nativeReference.artifactId === "session"), true);
     assert.equal(result.qualification.status, "qualified-with-gaps");
     assert.equal(result.qualification.reasons.some(({ code }) => code === "EVENT_LOG_COMPLETENESS_UNPROVEN"), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a declared model that differs from the actual conversation request", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-openhands-model-mismatch-"));
+  const definition: RunBundleDefinition = {
+    bundleRoot: join(root, "bundle"),
+    bundleId: "bundle-openhands-model-mismatch",
+    run: {
+      id: "run-openhands-model-mismatch",
+      assessmentMode: "observational",
+      task: { id: "task-openhands-model-mismatch" },
+      fixture: { id: "fixture-openhands-model-mismatch", digest: SHA("a") },
+      model: { provider: "test", id: "declared/model" },
+      harness: { id: "openhands-agent-server", version: OPENHANDS_AGENT_SERVER_VERSION },
+      runtime: [],
+    },
+    attempt: { id: "attempt-openhands-model-mismatch", number: 1 },
+    configuration: { digest: SHA("b"), budgetDigest: SHA("c"), toolPolicyDigest: SHA("d") },
+  };
+
+  try {
+    await assert.rejects(captureOpenHandsAgentServerRun({
+      definition,
+      startingWorkspacePath: root,
+      workspace: { setup: async () => { throw new Error("workspace must not start"); } },
+      configuration: {
+        model: "declared/model",
+        baseUrl: "http://127.0.0.1:8000",
+        startConversation: { agent: { kind: "Agent", llm: { model: "actual/model" } } },
+        message: {},
+      },
+    }), /actual conversation request model/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("retains pre-session evidence when conversation creation fails", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-openhands-create-failure-"));
+  const start = join(root, "start");
+  const final = join(root, "final");
+  mkdirSync(start);
+  cpSync(start, final, { recursive: true, preserveTimestamps: true });
+  const definition: RunBundleDefinition = {
+    bundleRoot: join(root, "bundle"),
+    bundleId: "bundle-openhands-create-failure",
+    run: {
+      id: "run-openhands-create-failure",
+      assessmentMode: "observational",
+      task: { id: "task-openhands-create-failure" },
+      fixture: { id: "fixture-openhands-create-failure", digest: SHA("a") },
+      model: { provider: "test", id: "test/model" },
+      harness: { id: "openhands-agent-server", version: OPENHANDS_AGENT_SERVER_VERSION },
+      runtime: [],
+    },
+    attempt: { id: "attempt-openhands-create-failure", number: 1 },
+    configuration: { digest: SHA("b"), budgetDigest: SHA("c"), toolPolicyDigest: SHA("d") },
+  };
+
+  try {
+    const result = await captureOpenHandsAgentServerRun({
+      definition,
+      startingWorkspacePath: start,
+      workspace: { setup: async () => ({ status: "ready", path: final, artifactId: "workspace", retained: true }) },
+      configuration: {
+        model: "test/model",
+        baseUrl: "http://127.0.0.1:8000",
+        startConversation: { agent: { kind: "Agent", llm: { model: "test/model" } } },
+        message: {},
+        fetch: async (input) => String(input).endsWith("/server_info")
+          ? json({ version: "1.44.1" }) : json({ detail: "create failed" }, 503),
+      },
+    });
+    const session = result.manifest.evidence.find(({ kind }) => kind === "session")!;
+    const native = readFileSync(join(definition.bundleRoot, session.relativePath), "utf8");
+
+    assert.equal(result.capture.conversationId, undefined);
+    assert.match(result.capture.captureError ?? "", /503/);
+    assert.equal(session.nativeReference, undefined);
+    assert.equal(native.includes("server-info"), true);
+    assert.equal(native.includes("capture-error"), true);
+    assert.equal(result.qualification.status, "unqualified");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -692,7 +854,7 @@ test("retains progressively written native evidence when lifecycle cancellation 
       configuration: {
         model: "test/model",
         baseUrl: "http://127.0.0.1:8000",
-        startConversation: {},
+        startConversation: { agent: { kind: "Agent", llm: { model: "test/model" } } },
         message: {},
         fetch,
         webSocket: (url) => {

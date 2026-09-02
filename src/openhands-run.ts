@@ -75,6 +75,10 @@ export async function captureOpenHandsAgentServerRun(
   if (options.definition.run.model.id !== options.configuration.model) {
     throw new Error("The declared model must match the OpenHands run configuration.");
   }
+  const requestModel = openHandsRequestModel(options.configuration.startConversation);
+  if (requestModel !== options.configuration.model) {
+    throw new Error(`The actual conversation request model must match ${options.configuration.model}; received ${String(requestModel)}.`);
+  }
   const definition = withPinnedRuntime(options.definition);
   const assembler = await createRunBundleAssembler(definition);
   const sessionWriter = await openJsonlEvidenceWriter(`${assembler.bundleRoot}/session.jsonl`, { exclusive: true });
@@ -123,7 +127,7 @@ export async function captureOpenHandsAgentServerRun(
     if (nativeEvidenceWritten) return;
     await sessionWriter.flush();
     if (progressiveWriteError !== undefined) throw new Error(progressiveWriteError);
-    if (!captureSettled || sessionWriter.count === 0 || progressiveSessionId === undefined) return;
+    if (!captureSettled || sessionWriter.count === 0) return;
     await sessionWriter.close();
     await assembler.registerArtifact({
       id: "session",
@@ -132,7 +136,9 @@ export async function captureOpenHandsAgentServerRun(
       mediaType: "application/x-ndjson",
       sharingClass: "restricted",
       relativePath: "session.jsonl",
-      nativeReference: { type: "session", id: progressiveSessionId },
+      ...(progressiveSessionId === undefined ? {} : {
+        nativeReference: { type: "session", id: progressiveSessionId },
+      }),
     });
     if (capture === undefined) {
       nativeEvidenceWritten = true;
@@ -202,7 +208,7 @@ export async function captureOpenHandsAgentServerRun(
           signal,
           onRecord: (captured) => {
             if (!acceptingRecords) return;
-            if (captured.record.session_id !== "pending") progressiveSessionId = captured.record.session_id;
+            if (captured.record.session_id !== undefined) progressiveSessionId = captured.record.session_id;
             progressiveRecords.push(captured);
             void sessionWriter.append(captured.record).catch((error: unknown) => {
               progressiveWriteError ??= error instanceof Error ? error.message : String(error);
@@ -386,6 +392,17 @@ function withPinnedRuntime(definition: RunBundleDefinition): RunBundleDefinition
       runtime,
     },
   };
+}
+
+function openHandsRequestModel(startConversation: Record<string, unknown>): string | undefined {
+  for (const candidate of [startConversation.agent, startConversation.agent_settings]) {
+    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) continue;
+    const llm = (candidate as Record<string, unknown>).llm;
+    if (typeof llm !== "object" || llm === null || Array.isArray(llm)) continue;
+    const model = (llm as Record<string, unknown>).model;
+    if (typeof model === "string" && model !== "") return model;
+  }
+  return undefined;
 }
 
 async function cleanupOpenHandsConversation(

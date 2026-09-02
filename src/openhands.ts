@@ -62,7 +62,7 @@ export interface OpenHandsWebSocket {
 
 export type OpenHandsNativeRecord = {
   schemaVersion: "ebo.openhands-native-record/v1";
-  session_id: string;
+  session_id?: string;
   channel: "server-info" | "conversation-created" | "websocket-status" | "websocket-event" | "conversation-final" | "rest-event" | "capture-error" | "cleanup";
   sequence: number;
   channelSequence?: number;
@@ -88,7 +88,7 @@ export type OpenHandsCaptureRequest = {
 };
 
 export type OpenHandsCapture = QualifiedNativeCapture<OpenHandsNativeRecord> & {
-  conversationId: string;
+  conversationId?: string;
   serverInfo: Record<string, unknown>;
   finalConversation?: Record<string, unknown>;
   captureError?: string;
@@ -145,8 +145,7 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
   const fetch = request.fetch ?? globalThis.fetch;
   const records: Array<CapturedNativeRecord<OpenHandsNativeRecord>> = [];
   let sequence = 0;
-  let conversationId = "pending";
-  const unpublished: Array<CapturedNativeRecord<OpenHandsNativeRecord>> = [];
+  let conversationId: string | undefined;
   const publish = (captured: CapturedNativeRecord<OpenHandsNativeRecord>): void => {
     request.onRecord?.(structuredClone(captured));
   };
@@ -158,7 +157,7 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
     sequence += 1;
     const record: OpenHandsNativeRecord = {
       schemaVersion: "ebo.openhands-native-record/v1",
-      session_id: conversationId,
+      ...(conversationId === undefined ? {} : { session_id: conversationId }),
       channel,
       sequence,
       ...(channelSequence === undefined ? {} : { channelSequence }),
@@ -169,8 +168,7 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
       record,
     };
     records.push(captured);
-    if (conversationId === "pending") unpublished.push(captured);
-    else publish(captured);
+    publish(captured);
   };
 
   const serverInfo = await requestJson(fetch, baseUrl, "/server_info", undefined, request.sessionApiKey, maxResponseBytes, request.signal);
@@ -179,16 +177,40 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
   }
   append("server-info", serverInfo);
 
-  const created = await requestJson(fetch, baseUrl, "/api/conversations", {
-    method: "POST",
-    body: JSON.stringify(request.startConversation),
-  }, request.sessionApiKey, maxResponseBytes, request.signal);
-  if (typeof created.id !== "string" || created.id.length === 0) {
-    throw new Error("OpenHands conversation creation did not return an ID.");
+  let created: Record<string, unknown>;
+  try {
+    created = await requestJson(fetch, baseUrl, "/api/conversations", {
+      method: "POST",
+      body: JSON.stringify(request.startConversation),
+    }, request.sessionApiKey, maxResponseBytes, request.signal);
+    if (typeof created.id !== "string" || created.id.length === 0) {
+      throw new Error("OpenHands conversation creation did not return an ID.");
+    }
+  } catch (error) {
+    const captureError = errorMessage(error);
+    append("capture-error", { error: captureError.slice(0, 512) });
+    return {
+      runId: request.runId,
+      attemptId: request.attemptId,
+      qualification: "qualified-with-gaps",
+      records,
+      serverInfo,
+      captureError,
+      reconciliation: {
+        status: "partial",
+        streamedEventIds: [],
+        finalEventIds: [],
+        streamedOnlyEventIds: [],
+        finalOnlyEventIds: [],
+        transportGaps: ["conversation-not-created"],
+      },
+      eventLogCompleteness: {
+        status: "unknown",
+        reason: "REST/WebSocket reconciliation cannot prove complete in-process EventLog delivery.",
+      },
+    };
   }
   conversationId = created.id;
-  for (const captured of records) captured.record.session_id = conversationId;
-  for (const captured of unpublished.splice(0)) publish(captured);
   append("conversation-created", created);
 
   const streamed: Record<string, unknown>[] = [];
@@ -222,7 +244,10 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
     finalConversation = await pollConversation(fetch, baseUrl, conversationId, request);
     append("conversation-final", finalConversation);
     try {
-      finalEvents.push(...await readFinalEvents(fetch, baseUrl, conversationId, request.sessionApiKey, maxResponseBytes, request.signal));
+      await readFinalEvents(fetch, baseUrl, conversationId, request.sessionApiKey, maxResponseBytes, request.signal, (event, index) => {
+        finalEvents.push(event);
+        append("rest-event", event, index);
+      });
     } catch (error) {
       finalReadError = errorMessage(error);
     }
@@ -231,14 +256,16 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
     append("capture-error", { error: captureError.slice(0, 512) });
     const recoverySignal = request.signal?.aborted ? AbortSignal.timeout(100) : request.signal;
     try {
-      finalEvents.push(...await readFinalEvents(fetch, baseUrl, conversationId, request.sessionApiKey, maxResponseBytes, recoverySignal));
+      await readFinalEvents(fetch, baseUrl, conversationId, request.sessionApiKey, maxResponseBytes, recoverySignal, (event, index) => {
+        finalEvents.push(event);
+        append("rest-event", event, index);
+      });
     } catch (readError) {
       finalReadError = errorMessage(readError);
     }
   } finally {
     socket?.close();
   }
-  finalEvents.forEach((event, index) => append("rest-event", event, index + 1));
   try {
     const cleanupSignal = request.signal?.aborted ? AbortSignal.timeout(100) : request.signal;
     await requestJson(fetch, baseUrl, `/api/conversations/${encodeURIComponent(conversationId)}`, {
@@ -287,8 +314,16 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
 export async function normalizeOpenHandsCapture(
   capture: NormalizationInput<OpenHandsNativeRecord>,
 ): Promise<NormalizationResult> {
-  const conversationId = capture.records[0]?.record.session_id;
-  if (conversationId === undefined) throw new Error("OpenHands normalization requires a captured conversation identity.");
+  const conversationId = capture.records.find(({ record }) => record.session_id !== undefined)?.record.session_id;
+  if (conversationId === undefined) {
+    return {
+      events: [],
+      unmapped: capture.records.map(({ reference }) => ({
+        reference,
+        reason: "capture ended before the Agent Server assigned a conversation identity",
+      })),
+    };
+  }
   const canonical = new Map<string, CapturedNativeRecord<OpenHandsNativeRecord>>();
   for (const captured of capture.records) {
     if (captured.record.channel !== "rest-event") continue;
@@ -497,14 +532,18 @@ function eventContent(
   kind: string,
   captured: CapturedNativeRecord<OpenHandsNativeRecord>,
 ): UniformEvent["content"] {
-  const pointer = kind === "MessageEvent" || kind === "SystemPromptEvent" ? "/payload/llm_message/content"
-    : kind === "ActionEvent" ? "/payload/action"
-      : ["ObservationEvent", "UserRejectObservation"].includes(kind) ? "/payload/observation"
-        : kind === "AgentErrorEvent" ? "/payload/error"
-          : ["ConversationErrorEvent", "ServerErrorEvent"].includes(kind) ? "/payload/detail"
-            : ["Condensation", "CondensationSummaryEvent"].includes(kind) ? "/payload/summary"
-              : kind === "HookExecutionEvent" ? "/payload"
-                : undefined;
+  const native = captured.record.payload;
+  const llmMessage = isRecord(native.llm_message) ? native.llm_message : undefined;
+  const pointer = kind === "MessageEvent" && llmMessage !== undefined && Object.hasOwn(llmMessage, "content")
+    ? "/payload/llm_message/content"
+    : kind === "SystemPromptEvent" && Object.hasOwn(native, "system_prompt") ? "/payload/system_prompt"
+      : kind === "ActionEvent" && Object.hasOwn(native, "action") ? "/payload/action"
+        : ["ObservationEvent", "UserRejectObservation"].includes(kind) && Object.hasOwn(native, "observation") ? "/payload/observation"
+          : kind === "AgentErrorEvent" && Object.hasOwn(native, "error") ? "/payload/error"
+            : ["ConversationErrorEvent", "ServerErrorEvent"].includes(kind) && Object.hasOwn(native, "detail") ? "/payload/detail"
+              : kind === "Condensation" || kind === "HookExecutionEvent" ? "/payload"
+                : kind === "CondensationSummaryEvent" && Object.hasOwn(native, "summary") ? "/payload/summary"
+                  : undefined;
   return pointer === undefined
     ? { status: "unknown", reason: "Pinned Agent Server event has no mapped content field." }
     : {
@@ -652,6 +691,7 @@ async function readFinalEvents(
   sessionApiKey?: string,
   maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
   signal?: AbortSignal,
+  onEvent?: (event: Record<string, unknown>, index: number) => void,
 ): Promise<Record<string, unknown>[]> {
   const events: Record<string, unknown>[] = [];
   const pageIds = new Set<string>();
@@ -666,7 +706,10 @@ async function readFinalEvents(
     const page = await requestJson(fetch, baseUrl, path.toString(), undefined, sessionApiKey, maxResponseBytes, signal);
     if (!Array.isArray(page.items) || !page.items.every(isRecord)) throw new Error("OpenHands event search returned an invalid page.");
     if (events.length + page.items.length > MAX_CAPTURE_EVENTS) throw new Error(`OpenHands event capture exceeds ${MAX_CAPTURE_EVENTS} records.`);
-    events.push(...page.items);
+    for (const event of page.items) {
+      events.push(event);
+      onEvent?.(event, events.length);
+    }
     pageId = typeof page.next_page_id === "string" && page.next_page_id.length > 0 ? page.next_page_id : undefined;
   } while (pageId !== undefined);
   return events;
