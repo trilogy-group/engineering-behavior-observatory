@@ -43,7 +43,6 @@
       "properties": {
         "provider": { "$ref": "#/$defs/nonempty" },
         "model": { "$ref": "#/$defs/nonempty" },
-        "reasoningEffort": { "$ref": "#/$defs/nonempty" },
         "maxTokens": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
       }
     },

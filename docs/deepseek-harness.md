@@ -1,8 +1,8 @@
 # DeepSeek Harness adapter
 
 EBO drives DeepSeek Harness out of process through the pinned public package
-roots `@deepseek-ai/dsh-sdk-client@0.1.2-alpha.4` and
-`@deepseek-ai/dsh-sdk-protocol@0.1.2-alpha.4`. It does not import source modules,
+roots `@deepseek-ai/dsh-sdk-client@0.1.1-rc.2` and
+`@deepseek-ai/dsh-sdk-protocol@0.1.1-rc.2`. It does not import source modules,
 embed the agent loop, or implement JSON-RPC framing, correlation,
 subscriptions, or process teardown.
 

@@ -6,7 +6,7 @@ import {
   type HarnessClientOptions,
   type HarnessNotification,
   type NotificationSubscription,
-  type SdkPromptContentBlock,
+  type ContentBlock,
 } from "@deepseek-ai/dsh-sdk-client";
 import type {
   InitializeParams,
@@ -26,7 +26,7 @@ import type {
   UniformEventFamily,
 } from "./uniform-events.js";
 
-export const DEEPSEEK_SDK_VERSION = "0.1.2-alpha.4";
+export const DEEPSEEK_SDK_VERSION = "0.1.1-rc.2";
 export const DEEPSEEK_ADAPTER_ID = "deepseek-harness-sdk";
 export const DEEPSEEK_HARNESS_ID = "deepseek-harness";
 
@@ -57,7 +57,6 @@ export type DeepSeekRuntimeComposition = {
   route: {
     provider: string;
     model: string;
-    reasoningEffort?: string;
     maxTokens?: number;
   };
   cordis: DeepSeekFileReference;
@@ -87,7 +86,6 @@ export type DeepSeekRuntimeCompositionInput = {
   dshHome?: string;
   provider: string;
   model: string;
-  reasoningEffort?: string;
   maxTokens?: number;
   plugins: ReadonlyArray<{ name: string; configurationPath?: string }>;
   environment: { allowedKeys: readonly string[]; secretKeys: readonly string[] };
@@ -129,12 +127,13 @@ export type DeepSeekCaptureReport = {
   receiptSequence?: number;
   idleSequence?: number;
   error?: string;
+  captureError?: string;
   stderr?: string;
 };
 
 export type DeepSeekHarnessConfiguration = {
   composition: DeepSeekRuntimeComposition;
-  input: string | SdkPromptContentBlock[];
+  input: string | ContentBlock[];
   sessionId: string;
   env: NodeJS.ProcessEnv;
   requestTimeoutMs?: number;
@@ -215,7 +214,6 @@ export function createDeepSeekRuntimeComposition(input: DeepSeekRuntimeCompositi
     route: {
       provider: required(input.provider, "DeepSeek provider"),
       model: required(input.model, "DeepSeek model"),
-      ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: required(input.reasoningEffort, "DeepSeek reasoning effort") }),
       ...(input.maxTokens === undefined ? {} : { maxTokens: positiveInteger(input.maxTokens, "DeepSeek max tokens") }),
     },
     cordis: fileReference(baseDir, cordisPath),
@@ -267,7 +265,7 @@ export async function executeDeepSeekHarness(
   configuration: DeepSeekHarnessConfiguration,
   capture: DeepSeekNativeCapture,
 ): Promise<HarnessExecutionResult> {
-  validateConfiguration(configuration);
+  validateConfiguration(configuration, context);
   const composition = structuredClone(configuration.composition);
   const capabilities = deepSeekCapabilities(composition);
   const client = new HarnessClient(clientOptions(configuration));
@@ -280,6 +278,7 @@ export async function executeDeepSeekHarness(
   let idleSequence: number | undefined;
   let failure: unknown;
   let stderr: string | undefined;
+  let captureError: string | undefined;
   let shutdownResult: { status: "completed" | "failed"; error?: string } = { status: "completed" };
   context.registerShutdown(() => client.close());
 
@@ -290,7 +289,6 @@ export async function executeDeepSeekHarness(
       cwd: composition.workspaceCwd,
       provider: composition.route.provider,
       model: composition.route.model,
-      ...(composition.route.reasoningEffort === undefined ? {} : { reasoningEffort: composition.route.reasoningEffort as InitializeParams["reasoningEffort"] }),
       ...(composition.route.maxTokens === undefined ? {} : { maxTokens: composition.route.maxTokens }),
     };
     await capture.record({ kind: "request", method: "initialize", payload: initialize });
@@ -331,22 +329,42 @@ export async function executeDeepSeekHarness(
       : error instanceof DeepSeekActivityTimeoutError ? "stopped" : "failed";
     const diagnostic = sanitizedError(error, sensitiveValues);
     stderr = extractStderr(diagnostic);
-    await capture.record({ kind: "error", payload: { name: errorName(error), message: withoutStderr(diagnostic) } });
-    if (stderr !== undefined) await capture.record({ kind: "diagnostic", stream: "stderr", payload: { text: stderr } });
+    try {
+      await capture.record({ kind: "error", payload: { name: errorName(error), message: withoutStderr(diagnostic) } });
+      if (stderr !== undefined) await capture.record({ kind: "diagnostic", stream: "stderr", payload: { text: stderr } });
+    } catch (recordError) {
+      captureError = sanitizedError(recordError, sensitiveValues);
+    }
   } finally {
     subscription.close();
-    await capture.record({ kind: "request", method: "client.close" });
+    try {
+      await capture.record({ kind: "request", method: "client.close" });
+    } catch (error) {
+      captureError ??= sanitizedError(error, sensitiveValues);
+    }
     try {
       await client.close();
-      await capture.record({ kind: "response", method: "client.close", payload: { status: "runtime-reaped" } });
+      try {
+        await capture.record({ kind: "response", method: "client.close", payload: { status: "runtime-reaped" } });
+      } catch (error) {
+        captureError ??= sanitizedError(error, sensitiveValues);
+      }
     } catch (error) {
       const message = sanitizedError(error, sensitiveValues);
       shutdownResult = { status: "failed", error: message };
-      await capture.record({ kind: "error", method: "client.close", payload: { name: errorName(error), message: withoutStderr(message) } });
+      try {
+        await capture.record({ kind: "error", method: "client.close", payload: { name: errorName(error), message: withoutStderr(message) } });
+      } catch (recordError) {
+        captureError ??= sanitizedError(recordError, sensitiveValues);
+      }
       const tail = extractStderr(message);
       if (tail !== undefined) {
         stderr = tail;
-        await capture.record({ kind: "diagnostic", method: "shutdown", stream: "stderr", payload: { text: tail } });
+        try {
+          await capture.record({ kind: "diagnostic", method: "client.close", stream: "stderr", payload: { text: tail } });
+        } catch (recordError) {
+          captureError ??= sanitizedError(recordError, sensitiveValues);
+        }
       }
       if (status === "completed") {
         status = "failed";
@@ -365,6 +383,7 @@ export async function executeDeepSeekHarness(
     ...(receiptSequence === undefined ? {} : { receiptSequence }),
     ...(idleSequence === undefined ? {} : { idleSequence }),
     ...(failure === undefined ? {} : { error: sanitizedError(failure, sensitiveValues) }),
+    ...(captureError === undefined ? {} : { captureError }),
     ...(stderr === undefined ? {} : { stderr }),
   };
   return {
@@ -372,6 +391,7 @@ export async function executeDeepSeekHarness(
     ...(status === "failed" ? { failureClass: "infrastructure" as const } : {}),
     ...(status === "stopped" ? { stopReason: "budget" as const } : {}),
     ...(report.error === undefined ? {} : { error: report.error }),
+    ...(captureError === undefined ? {} : { captureError }),
     completionEvidence: {
       authority: "durable-receipt-to-whole-agent-idle",
       ...(messageId === undefined ? {} : { messageId }),
@@ -390,6 +410,7 @@ export function qualifiedDeepSeekCapture(
   report: DeepSeekCaptureReport,
   artifactId = "deepseek-session",
 ): QualifiedNativeCapture<DeepSeekNativeObservation> {
+  if (report.captureError !== undefined) throw new Error(`DeepSeek capture is unqualified: ${report.captureError}`);
   const hasSessionEvent = report.records.some((record) => record.method === "session.event");
   const has = (kind: DeepSeekNativeObservation["kind"], method?: string) => report.records.some((record) =>
     record.kind === kind && (method === undefined || record.method === method));
@@ -521,11 +542,9 @@ export function createDeepSeekHarnessAdapter(): HarnessAdapter<DeepSeekAdapterRe
 function clientOptions(configuration: DeepSeekHarnessConfiguration): HarnessClientOptions {
   const composition = configuration.composition;
   return {
-    dshBin: composition.launch.args[0],
-    profile: composition.launch.profile,
-    patches: composition.patches.map(({ locator }) => locator),
-    processCwd: composition.launch.processCwd,
-    ...(composition.launch.dshHome === undefined ? {} : { dshHome: composition.launch.dshHome }),
+    command: composition.launch.command,
+    args: [...composition.launch.args],
+    cwd: composition.launch.processCwd,
     env: structuredClone(configuration.env),
     ...(configuration.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: configuration.requestTimeoutMs }),
     ...(configuration.shutdownTimeoutMs === undefined ? {} : { shutdownTimeoutMs: configuration.shutdownTimeoutMs }),
@@ -534,7 +553,7 @@ function clientOptions(configuration: DeepSeekHarnessConfiguration): HarnessClie
   };
 }
 
-function validateConfiguration(configuration: DeepSeekHarnessConfiguration): void {
+function validateConfiguration(configuration: DeepSeekHarnessConfiguration, context: HarnessExecutionContext): void {
   assertArtifact("DeepSeek runtime composition", configuration.composition);
   if (configuration.composition.launch.command !== process.execPath
       || configuration.composition.runtime.clientVersion !== DEEPSEEK_SDK_VERSION
@@ -542,6 +561,10 @@ function validateConfiguration(configuration: DeepSeekHarnessConfiguration): voi
     throw new Error("DeepSeek runtime composition does not match the pinned public client runtime.");
   }
   if (configuration.sessionId.trim() === "") throw new Error("DeepSeek session ID is required.");
+  if (context.workspace?.status !== "ready" || context.workspace.path === undefined
+      || resolve(context.workspace.path) !== resolve(configuration.composition.workspaceCwd)) {
+    throw new Error("DeepSeek runtime workspace must match the retained ready lifecycle workspace.");
+  }
   for (const reference of [
     configuration.composition.cordis,
     ...configuration.composition.patches,

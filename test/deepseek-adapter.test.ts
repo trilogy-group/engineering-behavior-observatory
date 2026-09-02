@@ -34,7 +34,7 @@ test("records a controlled official-client run and normalizes only native-linked
   const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-adapter-"));
   const composition = fixtureComposition("minimal");
   const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
-  const context = harnessContext();
+  const context = harnessContext(undefined, undefined, undefined, composition.workspaceCwd);
   try {
     const execution = await executeDeepSeekHarness(context, configuration(composition, "success"), capture);
     await capture.close();
@@ -79,11 +79,12 @@ test("records a controlled official-client run and normalizes only native-linked
 
 test("implements the uniform adapter contract through the official public client", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-contract-"));
+  const composition = fixtureComposition("minimal");
   const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
   try {
     const result = await assertAdapterContract(createDeepSeekHarnessAdapter(), {
-      context: harnessContext(),
-      configuration: configuration(fixtureComposition("minimal"), "success"),
+      context: harnessContext(undefined, undefined, undefined, composition.workspaceCwd),
+      configuration: configuration(composition, "success"),
       capture,
     }, { resolve: ({ artifactId, recordLocator }) => artifactId === "deepseek-session" && recordLocator.startsWith("line:") });
 
@@ -104,7 +105,7 @@ test("packages a verified smoke bundle and qualifies session evidence without in
   writeFileSync(join(start, "result.txt"), "before\n");
   cpSync(start, final, { recursive: true });
   writeFileSync(join(final, "result.txt"), "after\n");
-  const composition = fixtureComposition("minimal");
+  const composition = fixtureComposition("minimal", final);
   const definition: RunBundleDefinition = {
     bundleRoot,
     bundleId: "bundle-deepseek-smoke",
@@ -126,7 +127,12 @@ test("packages a verified smoke bundle and qualifies session evidence without in
   const assembler = await createRunBundleAssembler(definition);
   const capture = new DeepSeekNativeCapture(join(bundleRoot, "deepseek/session.jsonl"));
   try {
-    const execution = await executeDeepSeekHarness(harnessContext(definition.run.id, definition.attempt.id), configuration(composition, "success"), capture);
+    const execution = await executeDeepSeekHarness(harnessContext(
+      definition.run.id,
+      definition.attempt.id,
+      undefined,
+      final,
+    ), configuration(composition, "success"), capture);
     await capture.close();
     await assembler.registerArtifact({
       id: "deepseek-session",
@@ -188,13 +194,14 @@ test("retains delivered native events and clean shutdown after interruption", as
   const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-interrupt-"));
   const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
   const controller = new AbortController();
+  const composition = fixtureComposition("minimal");
   const golden = jsonFixture("golden-interrupted.json") as {
     terminal: string;
     lastSessionEventType: string;
     requiredRetainedMethods: string[];
   };
-  const pending = executeDeepSeekHarness(harnessContext(undefined, undefined, controller.signal), configuration(
-    fixtureComposition("minimal"),
+  const pending = executeDeepSeekHarness(harnessContext(undefined, undefined, controller.signal, composition.workspaceCwd), configuration(
+    composition,
     "interrupt",
   ), capture);
   try {
@@ -221,11 +228,12 @@ test("retains delivered native events and clean shutdown after interruption", as
 
 test("times out through official close while preserving the delivered partial stream", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-timeout-"));
+  const composition = fixtureComposition("minimal");
   const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
   try {
-    const options = configuration(fixtureComposition("minimal"), "interrupt");
+    const options = configuration(composition, "interrupt");
     options.activityTimeoutMs = 40;
-    const execution = await executeDeepSeekHarness(harnessContext(), options, capture);
+    const execution = await executeDeepSeekHarness(harnessContext(undefined, undefined, undefined, composition.workspaceCwd), options, capture);
     await capture.close();
     const report = execution.evidence as DeepSeekCaptureReport;
     assert.equal(execution.status, "stopped");
@@ -240,10 +248,11 @@ test("times out through official close while preserving the delivered partial st
 
 test("fails a contaminated protocol runtime and retains only redacted stderr diagnostics", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-contaminated-"));
+  const composition = fixtureComposition("minimal");
   const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
   try {
-    const execution = await executeDeepSeekHarness(harnessContext(), configuration(
-      fixtureComposition("minimal"),
+    const execution = await executeDeepSeekHarness(harnessContext(undefined, undefined, undefined, composition.workspaceCwd), configuration(
+      composition,
       "contaminated",
       "fixture-secret",
     ), capture);
@@ -258,6 +267,41 @@ test("fails a contaminated protocol runtime and retains only redacted stderr dia
     for (const line of readFileSync(capture.path, "utf8").trim().split("\n")) assert.doesNotThrow(() => JSON.parse(line));
   } finally {
     await capture.close().catch(() => undefined);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reaps the official client when shutdown evidence recording fails", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-capture-failure-"));
+  const composition = fixtureComposition("minimal");
+  const capture = new FailingShutdownCapture(join(root, "session.jsonl"));
+  try {
+    const execution = await executeDeepSeekHarness(
+      harnessContext(undefined, undefined, undefined, composition.workspaceCwd),
+      configuration(composition, "success"),
+      capture,
+    );
+    assert.equal(execution.shutdownResult?.status, "completed");
+    assert.match(execution.captureError ?? "", /fixture shutdown evidence failure/);
+    assert.throws(() => qualifiedDeepSeekCapture("run", "attempt", execution.evidence as DeepSeekCaptureReport), /unqualified/);
+  } finally {
+    await capture.close().catch(() => undefined);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a runtime workspace that differs from the retained lifecycle workspace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-workspace-mismatch-"));
+  const composition = fixtureComposition("minimal");
+  const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
+  try {
+    await assert.rejects(executeDeepSeekHarness(
+      harnessContext(undefined, undefined, undefined, root),
+      configuration(composition, "success"),
+      capture,
+    ), /workspace must match/);
+  } finally {
+    await capture.close();
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -282,8 +326,8 @@ test("swaps named compositions by configuration and reports explicit protocol an
     result: deepSeekCapabilities(minimal).promptResult,
   }, { negotiation: "unsupported", cancellation: "unsupported", close: "unsupported", result: "unsupported" });
   const packageDocument = JSON.parse(readFileSync(join(repositoryRoot, "package.json"), "utf8")) as { dependencies: Record<string, string> };
-  assert.equal(packageDocument.dependencies["@deepseek-ai/dsh-sdk-client"], "0.1.2-alpha.4");
-  assert.equal(packageDocument.dependencies["@deepseek-ai/dsh-sdk-protocol"], "0.1.2-alpha.4");
+  assert.equal(packageDocument.dependencies["@deepseek-ai/dsh-sdk-client"], "0.1.1-rc.2");
+  assert.equal(packageDocument.dependencies["@deepseek-ai/dsh-sdk-protocol"], "0.1.1-rc.2");
   assert.equal(minimal.patches.length, 2);
   assert.ok(minimal.patches.every(({ digest }) => digest.startsWith("sha256:")));
 
@@ -302,17 +346,21 @@ test("swaps named compositions by configuration and reports explicit protocol an
   writeFileSync(join(tamperedRoot, "overlay.yml"), "plugins: {}\n");
   const capture = new DeepSeekNativeCapture(join(tamperedRoot, "session.jsonl"));
   try {
-    await assert.rejects(executeDeepSeekHarness(harnessContext(), configuration(tampered, "success"), capture), /digest mismatch/);
+    await assert.rejects(executeDeepSeekHarness(
+      harnessContext(undefined, undefined, undefined, tampered.workspaceCwd),
+      configuration(tampered, "success"),
+      capture,
+    ), /digest mismatch/);
   } finally {
     await capture.close();
     rmSync(tamperedRoot, { recursive: true, force: true });
   }
 });
 
-function fixtureComposition(name: "minimal" | "telemetry"): DeepSeekRuntimeComposition {
+function fixtureComposition(name: "minimal" | "telemetry", workspaceCwd?: string): DeepSeekRuntimeComposition {
   const baseDir = join(fixtureRoot, "compositions", name);
   const input = JSON.parse(readFileSync(join(baseDir, "composition.json"), "utf8")) as Omit<DeepSeekRuntimeCompositionInput, "baseDir">;
-  return createDeepSeekRuntimeComposition({ ...input, baseDir });
+  return createDeepSeekRuntimeComposition({ ...input, ...(workspaceCwd === undefined ? {} : { workspaceCwd }), baseDir });
 }
 
 function jsonFixture(name: string): unknown {
@@ -323,12 +371,13 @@ function harnessContext(
   runId = "run-deepseek-fixture",
   attemptId = "attempt-deepseek-fixture",
   signal = new AbortController().signal,
+  workspacePath = fixtureRoot,
 ): HarnessExecutionContext {
   return {
     run: { id: runId, taskId: "task-deepseek-fixture", modelId: "fake-model", harnessId: "deepseek-harness" },
     attempt: { id: attemptId, number: 1 },
     signal,
-    workspace: { status: "ready", path: fixtureRoot, artifactId: "workspace", retained: true },
+    workspace: { status: "ready", path: workspacePath, artifactId: "workspace", retained: true },
     registerShutdown: () => undefined,
   };
 }
@@ -373,10 +422,23 @@ async function controlledReport(composition: DeepSeekRuntimeComposition): Promis
   const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-composition-"));
   const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
   try {
-    const execution = await executeDeepSeekHarness(harnessContext(), configuration(composition, "success"), capture);
+    const execution = await executeDeepSeekHarness(
+      harnessContext(undefined, undefined, undefined, composition.workspaceCwd),
+      configuration(composition, "success"),
+      capture,
+    );
     return execution.evidence as DeepSeekCaptureReport;
   } finally {
     await capture.close().catch(() => undefined);
     rmSync(root, { recursive: true, force: true });
+  }
+}
+
+class FailingShutdownCapture extends DeepSeekNativeCapture {
+  public override async record(input: Parameters<DeepSeekNativeCapture["record"]>[0]) {
+    if (input.method === "client.close" && input.kind === "request") {
+      throw new Error("fixture shutdown evidence failure");
+    }
+    return super.record(input);
   }
 }
