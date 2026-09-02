@@ -46,6 +46,8 @@ The native JSONL evidence records:
   observations in observed order;
 - every delivered `session.event` envelope verbatim, including its native
   `seq`, `time`, surface metadata, and source-specific fields;
+- root and child session identities from each native notification, with the
+  declared session tree used during bundle qualification;
 - whole-agent `session.status` and available subagent notifications; and
 - bounded, redacted diagnostics only when the official client attributes them
   to the child stderr tail.
@@ -86,6 +88,10 @@ receipt-to-idle boundary and successful official-client close/reap evidence.
 The client does not expose whether its best-effort protocol shutdown request or
 a later EOF/signal step ended the process, so EBO does not invent a shutdown
 response.
+
+The capture report persists the required semantic-evidence kinds and related
+session IDs. Later qualification treats that declaration as authoritative and
+rejects caller overrides that would weaken or replace it.
 
 Mapped events retain a `line:N` native reference into the authoritative DeepSeek
 JSONL. Session events use their native session-local sequence/time; EBO client

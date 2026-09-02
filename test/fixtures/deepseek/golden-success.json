@@ -20,6 +20,7 @@
     "step/end",
     "validation/result",
     "artifact/changed",
+    "assistant/message",
     "plugin/private",
     "turn/end"
   ]

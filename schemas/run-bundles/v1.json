@@ -584,6 +584,11 @@
           "items": { "enum": ["session", "hook"] },
           "contains": { "const": "session" }
         },
+        "relatedSessionIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
         "agentSdk": {
           "type": "object",
           "additionalProperties": false,

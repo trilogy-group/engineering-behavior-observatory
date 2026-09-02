@@ -46,6 +46,11 @@ lines.on("line", (line) => {
     emitEvent(sessionId, 16, "validation/result", { status: "passed" }, { ignorable: true });
     emitEvent(sessionId, 17, "artifact/changed", { name: "result.txt" }, { ignorable: true });
     notify("subagent.started", { parentSessionId: sessionId, childSessionId: "child-fixture-1" });
+    emitEvent("child-fixture-1", 1, "assistant/message", {
+      turn: 1,
+      step: 1,
+      message: { role: "assistant", provider: "fake", model: "fake-model", content: [{ type: "text", text: "child done" }] },
+    }, { surfaceOp: "append" });
     notify("subagent.finished", {
       provider: "fake",
       agentId: "child-fixture-1",

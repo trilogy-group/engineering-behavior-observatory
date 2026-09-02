@@ -206,6 +206,7 @@ export type CaptureQualificationOptions = {
   agentSdkEvidence?: AgentSdkQualificationEvidence;
   expectedHooks?: readonly string[];
   semanticEvidenceKinds?: readonly ("session" | "hook")[];
+  relatedSessionIds?: readonly string[];
 };
 
 const execFileAsync = promisify(execFile);
@@ -596,9 +597,15 @@ export async function qualifyRunBundle(
   const verifiers = valid("verifier");
   const captureReports = valid("capture-report");
   const captureReport = captureReports[0]?.document;
-  const semanticEvidenceKinds = options.semanticEvidenceKinds
-    ?? captureReportSemanticEvidenceKinds(captureReport)
+  const retainedSemanticEvidenceKinds = captureReportSemanticEvidenceKinds(captureReport);
+  const semanticEvidenceKinds = retainedSemanticEvidenceKinds
+    ?? options.semanticEvidenceKinds
     ?? ["session", "hook"];
+  if (retainedSemanticEvidenceKinds !== undefined && options.semanticEvidenceKinds !== undefined
+      && !sameStringSet(retainedSemanticEvidenceKinds, options.semanticEvidenceKinds)) {
+    addQualificationReason(report, "semanticEvidence", "unqualified", "CAPTURE_REPORT_CONTRADICTS_SOURCE", captureReports[0]?.descriptor.id,
+      "Caller semantic-evidence requirements contradict the retained capture report.");
+  }
   const requiresSession = semanticEvidenceKinds.includes("session");
   const requiresHooks = semanticEvidenceKinds.includes("hook");
 
@@ -611,7 +618,16 @@ export async function qualifyRunBundle(
     addQualificationReason(report, "semanticEvidence", "unqualified", "SESSION_IDENTITY_MISSING", undefined, "Run session identity is not bound to retained session evidence.");
   }
   const nativeSessionIds = new Set(sessions.flatMap(({ sessionIds }) => sessionIds ?? []));
-  if (typeof sessionId === "string" && (nativeSessionIds.size !== 1 || !nativeSessionIds.has(sessionId))) {
+  const retainedRelatedSessionIds = captureReportRelatedSessionIds(captureReport);
+  const relatedSessionIds = retainedRelatedSessionIds ?? options.relatedSessionIds ?? [];
+  if (retainedRelatedSessionIds !== undefined && options.relatedSessionIds !== undefined
+      && !sameStringSet(retainedRelatedSessionIds, options.relatedSessionIds)) {
+    addQualificationReason(report, "semanticEvidence", "unqualified", "CAPTURE_REPORT_CONTRADICTS_SOURCE", captureReports[0]?.descriptor.id,
+      "Caller related-session identities contradict the retained capture report.");
+  }
+  const allowedSessionIds = new Set([sessionId, ...relatedSessionIds]);
+  if (typeof sessionId === "string" && (!nativeSessionIds.has(sessionId)
+      || [...nativeSessionIds].some((id) => !allowedSessionIds.has(id)))) {
     addQualificationReason(report, "semanticEvidence", "unqualified", "SESSION_RECORD_IDENTITY_MISMATCH", undefined, "Retained native session records do not bind exclusively to the run session ID.");
   }
   for (const hook of hookArtifacts.filter(({ hookNames }) => hookNames?.length === 0)) {
@@ -935,6 +951,17 @@ function captureReportSemanticEvidenceKinds(value: unknown): Array<"session" | "
   return value.semanticEvidenceKinds as Array<"session" | "hook">;
 }
 
+function captureReportRelatedSessionIds(value: unknown): string[] | undefined {
+  if (!isRecord(value) || !Array.isArray(value.relatedSessionIds)
+      || value.relatedSessionIds.some((id) => typeof id !== "string" || id.trim() === "")
+      || new Set(value.relatedSessionIds).size !== value.relatedSessionIds.length) return undefined;
+  return value.relatedSessionIds as string[];
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value) => right.includes(value));
+}
+
 function descriptorFromValidationField(manifest: RunManifest, field: string): RunBundleEvidenceDescriptor | undefined {
   if (!field.startsWith("/evidence/")) return undefined;
   const id = field.slice("/evidence/".length).split("/")[0]?.replaceAll("~1", "/").replaceAll("~0", "~");
@@ -974,6 +1001,7 @@ function captureReport(
     captureWarnings: ClaudeAgentSdkAttemptEvidence["captureWarnings"];
   };
   semanticEvidenceKinds?: Array<"session" | "hook">;
+  relatedSessionIds?: string[];
   workspaceOutcomeExcludedDirectoryNames?: string[];
   workspaceOutcomeRespectsGitignore?: boolean;
   workspaceOutcomeOmitsEmptyDirectories?: boolean;
@@ -1007,6 +1035,9 @@ function captureReport(
     missingEvidence: missing,
     ...(qualification?.semanticEvidenceKinds === undefined ? {} : {
       semanticEvidenceKinds: [...semanticEvidenceKinds],
+    }),
+    ...(qualification?.relatedSessionIds === undefined ? {} : {
+      relatedSessionIds: [...new Set(qualification.relatedSessionIds)],
     }),
     ...(qualification?.workspaceOutcomeExcludedDirectoryNames === undefined ? {} : {
       workspaceOutcomeExcludedDirectoryNames: [...qualification.workspaceOutcomeExcludedDirectoryNames],

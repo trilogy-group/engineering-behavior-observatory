@@ -13,6 +13,7 @@ import {
   deepSeekCapabilities,
   deepSeekCompositionDigest,
   DeepSeekNativeCapture,
+  digestBytes,
   executeDeepSeekHarness,
   normalizeDeepSeekCapture,
   qualifyRunBundle,
@@ -56,7 +57,11 @@ test("records a controlled official-client run and normalizes only native-linked
     assert.deepEqual([...new Set(methods(report, "notification"))], golden.notifications);
     const events = sessionEvents(report);
     assert.deepEqual(events.map((event) => event.type), golden.sessionEventTypes);
-    assert.deepEqual(events.map((event) => event.seq), Array.from({ length: 19 }, (_, index) => index + 1));
+    const rootEvents = sessionEvents(report, "session-deepseek-fixture");
+    assert.deepEqual(rootEvents.map((event) => event.seq), Array.from({ length: 19 }, (_, index) => index + 1));
+    assert.deepEqual(sessionEvents(report, "child-fixture-1").map((event) => event.seq), [1]);
+    assert.ok(report.records.some((record) => record.method === "session.event" && record.sessionId === "child-fixture-1"));
+    assert.deepEqual(report.relatedSessionIds, ["child-fixture-1"]);
     assert.equal(events.find((event) => event.type === "user/message")?.surfaceOp, "append");
     assert.equal(Object.hasOwn(events.find((event) => event.type === "turn/start")!, "surfaceOp"), false);
 
@@ -159,7 +164,11 @@ test("packages a verified smoke bundle and qualifies session evidence without in
       workspace: { artifactId: workspace.descriptor.id, digest: workspace.descriptor.digest, fingerprint: workspace.fingerprint },
       assertions: [{ id: "deepseek-smoke", status: "passed" }],
     });
-    const qualificationOptions = { startingWorkspacePath: start, semanticEvidenceKinds: ["session" as const] };
+    const qualificationOptions = {
+      startingWorkspacePath: start,
+      semanticEvidenceKinds: ["session" as const],
+      relatedSessionIds: (execution.evidence as DeepSeekCaptureReport).relatedSessionIds,
+    };
     const manifest = await assembler.finalize({
       terminal: { state: "completed", failureClass: "none", stopReason: "none", workspaceArtifactId: workspace.descriptor.id },
       missingEvidence: [{ kind: "telemetry", reason: "unsupported", affects: ["timing-resource"] }],
@@ -190,6 +199,34 @@ test("packages a verified smoke bundle and qualifies session evidence without in
   }
 });
 
+test("rejects a caller override that weakens the retained semantic evidence profile", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-qualification-override-"));
+  const bundleRoot = join(root, "bundle");
+  cpSync(join(repositoryRoot, "test/fixtures/run-bundles/complete"), bundleRoot, { recursive: true });
+  try {
+    const manifestPath = join(bundleRoot, "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      evidence: Array<{ kind: string; relativePath: string; digest: string; sizeBytes: number }>;
+    };
+    const descriptor = manifest.evidence.find(({ kind }) => kind === "capture-report")!;
+    const reportPath = join(bundleRoot, descriptor.relativePath);
+    const report = JSON.parse(readFileSync(reportPath, "utf8")) as Record<string, unknown>;
+    report.semanticEvidenceKinds = ["session", "hook"];
+    const bytes = Buffer.from(`${JSON.stringify(report)}\n`);
+    writeFileSync(reportPath, bytes);
+    descriptor.digest = `sha256:${digestBytes(bytes).value}`;
+    descriptor.sizeBytes = bytes.length;
+    writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+
+    const qualification = await qualifyRunBundle(bundleRoot, { semanticEvidenceKinds: ["session"] });
+    assert.equal(qualification.status, "unqualified");
+    assert.ok(qualification.reasons.some(({ code, detail }) =>
+      code === "CAPTURE_REPORT_CONTRADICTS_SOURCE" && detail.includes("semantic-evidence")));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("retains delivered native events and clean shutdown after interruption", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-interrupt-"));
   const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
@@ -216,7 +253,7 @@ test("retains delivered native events and clean shutdown after interruption", as
     await capture.close();
     const report = execution.evidence as DeepSeekCaptureReport;
     assert.equal(execution.status, golden.terminal);
-    assert.equal(sessionEvents(report).at(-1)?.type, golden.lastSessionEventType);
+    assert.equal(sessionEvents(report, "session-deepseek-fixture").at(-1)?.type, golden.lastSessionEventType);
     const retained = new Set(report.records.flatMap((record) => record.method ?? []));
     for (const method of golden.requiredRetainedMethods) assert.ok(retained.has(method), method);
     assert.equal(qualifiedDeepSeekCapture("run-deepseek", "attempt-deepseek", report).qualification, "qualified-with-gaps");
@@ -404,8 +441,9 @@ function methods(report: DeepSeekCaptureReport, kind: "request" | "response" | "
   return report.records.flatMap((record) => record.kind === kind && record.method !== undefined ? [record.method] : []);
 }
 
-function sessionEvents(report: DeepSeekCaptureReport): Array<Record<string, unknown>> {
+function sessionEvents(report: DeepSeekCaptureReport, sessionId?: string): Array<Record<string, unknown>> {
   return report.records.flatMap((observation) => observation.method === "session.event"
+    && (sessionId === undefined || observation.sessionId === sessionId)
     ? [(observation.payload as { event: Record<string, unknown> }).event]
     : []);
 }

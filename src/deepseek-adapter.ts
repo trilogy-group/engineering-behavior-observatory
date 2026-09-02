@@ -126,6 +126,7 @@ export type DeepSeekCaptureReport = {
   messageId?: string;
   receiptSequence?: number;
   idleSequence?: number;
+  relatedSessionIds: readonly string[];
   error?: string;
   captureError?: string;
   stderr?: string;
@@ -310,7 +311,7 @@ export async function executeDeepSeekHarness(
       const record = await capture.record({
         kind: "notification",
         method: notification.method,
-        sessionId: configuration.sessionId,
+        sessionId: notificationSessionId(notification, configuration.sessionId),
         ...(sourceIdentity === undefined ? {} : { sourceIdentity }),
         payload: notification.params,
       });
@@ -378,6 +379,7 @@ export async function executeDeepSeekHarness(
     composition,
     capabilities,
     records: capture.report(),
+    relatedSessionIds: relatedSessionIds(capture.report(), configuration.sessionId),
     ...(serverInfo === undefined ? {} : { serverInfo }),
     ...(messageId === undefined ? {} : { messageId }),
     ...(receiptSequence === undefined ? {} : { receiptSequence }),
@@ -659,6 +661,23 @@ function notificationIdentity(notification: HarnessNotification): string | undef
     if (typeof notification.params[key] === "string") return notification.params[key] as string;
   }
   return undefined;
+}
+
+function notificationSessionId(notification: HarnessNotification, rootSessionId: string): string {
+  if (typeof notification.params.sessionId === "string") return notification.params.sessionId;
+  if (typeof notification.params.childSessionId === "string") return notification.params.childSessionId;
+  return rootSessionId;
+}
+
+function relatedSessionIds(records: readonly DeepSeekNativeObservation[], rootSessionId: string): string[] {
+  const ids = new Set<string>();
+  for (const observation of records) {
+    const payload = record(observation.payload);
+    for (const value of [observation.sessionId, payload?.sessionId, payload?.childSessionId, payload?.parentSessionId]) {
+      if (typeof value === "string" && value !== rootSessionId) ids.add(value);
+    }
+  }
+  return [...ids].sort();
 }
 
 function eventFamily(recordValue: DeepSeekNativeObservation): UniformEventFamily | undefined {
