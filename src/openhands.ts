@@ -12,6 +12,8 @@ export const OPENHANDS_AGENT_SERVER_VERSION = "1.44.1";
 export const OPENHANDS_TYPESCRIPT_CLIENT_VERSION = "1.39.0";
 export const OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 export const OPENHANDS_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
+export const OPENHANDS_DEFAULT_MAX_CAPTURE_BYTES = 256 * 1024 * 1024;
+export const OPENHANDS_MAX_CAPTURE_BYTES = 1024 * 1024 * 1024;
 export const OPENHANDS_AGENT_SERVER_CAPABILITIES = {
   schemaVersion: "ebo.adapter-capability-profile/v1",
   adapterId: "openhands-agent-server-v1.44.1",
@@ -65,7 +67,7 @@ export interface OpenHandsWebSocket {
 export type OpenHandsNativeRecord = {
   schemaVersion: "ebo.openhands-native-record/v1";
   session_id?: string;
-  channel: "server-info" | "conversation-created" | "websocket-status" | "websocket-event" | "conversation-final" | "rest-event" | "capture-error" | "cleanup";
+  channel: "server-info" | "conversation-create-response" | "conversation-created" | "websocket-status" | "websocket-event" | "conversation-final" | "rest-event" | "capture-error" | "cleanup";
   sequence: number;
   channelSequence?: number;
   payload: Record<string, unknown>;
@@ -85,6 +87,7 @@ export type OpenHandsCaptureRequest = {
   maxReconnects?: number;
   reconnectDelayMs?: number;
   maxResponseBytes?: number;
+  maxCaptureBytes?: number;
   signal?: AbortSignal;
   onRecord?: (record: CapturedNativeRecord<OpenHandsNativeRecord>) => void;
 };
@@ -138,6 +141,10 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
   const maxResponseBytes = request.maxResponseBytes ?? OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES;
   if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1 || maxResponseBytes > OPENHANDS_MAX_RESPONSE_BYTES) {
     throw new Error(`OpenHands max response bytes must be between 1 and ${OPENHANDS_MAX_RESPONSE_BYTES}.`);
+  }
+  const maxCaptureBytes = request.maxCaptureBytes ?? OPENHANDS_DEFAULT_MAX_CAPTURE_BYTES;
+  if (!Number.isSafeInteger(maxCaptureBytes) || maxCaptureBytes < 1 || maxCaptureBytes > OPENHANDS_MAX_CAPTURE_BYTES) {
+    throw new Error(`OpenHands max capture bytes must be between 1 and ${OPENHANDS_MAX_CAPTURE_BYTES}.`);
   }
   assertIntegerOption(request.timeoutMs, 1, "timeout milliseconds");
   assertIntegerOption(request.pollIntervalMs, 0, "poll interval milliseconds");
@@ -212,8 +219,9 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
       method: "POST",
       body: JSON.stringify(request.startConversation),
     }, request.sessionApiKey, maxResponseBytes, request.signal, request.timeoutMs);
-    if (typeof created.id !== "string" || created.id.length === 0) {
-      throw new Error("OpenHands conversation creation did not return an ID.");
+    if (typeof created.id !== "string" || created.id.length > 255 || !/\S/u.test(created.id)) {
+      append("conversation-create-response", created);
+      throw new Error("OpenHands conversation creation did not return a projectable conversation identity.");
     }
   } catch (error) {
     const captureError = errorMessage(error);
@@ -284,7 +292,7 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
     finalConversation = await pollConversation(fetch, baseUrl, conversationId, request);
     append("conversation-final", finalConversation);
     try {
-      await readFinalEvents(fetch, baseUrl, conversationId, request.sessionApiKey, maxResponseBytes, request.signal, request.timeoutMs, (event, index) => {
+      await readFinalEvents(fetch, baseUrl, conversationId, request.sessionApiKey, maxResponseBytes, maxCaptureBytes, request.signal, request.timeoutMs, (event, index) => {
         finalEvents.push(event);
         append("rest-event", event, index);
       });
@@ -296,7 +304,7 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
     append("capture-error", { error: captureError.slice(0, 512) });
     const recoverySignal = request.signal?.aborted ? AbortSignal.timeout(100) : request.signal;
     try {
-      await readFinalEvents(fetch, baseUrl, conversationId, request.sessionApiKey, maxResponseBytes, recoverySignal, request.timeoutMs, (event, index) => {
+      await readFinalEvents(fetch, baseUrl, conversationId, request.sessionApiKey, maxResponseBytes, maxCaptureBytes, recoverySignal, request.timeoutMs, (event, index) => {
         finalEvents.push(event);
         append("rest-event", event, index);
       });
@@ -324,7 +332,7 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
   const finalOnlyEventIds = finalEventIds.filter((id) => !streamedSet.has(id));
   const transportGaps = [...new Set([
     ...records.flatMap(({ record }) => record.channel === "websocket-status"
-    && ["message-rejected", "reconnect-exhausted", "reconnect-failed", "event-limit-reached", "status-limit-reached"].includes(String(record.payload.state))
+    && ["message-rejected", "reconnect-exhausted", "reconnect-failed", "event-limit-reached", "event-byte-limit-reached", "status-limit-reached"].includes(String(record.payload.state))
       ? [String(record.payload.state)] : []),
     ...(streamed.some((event) => nativeEventId(event) === undefined) ? ["unidentified-websocket-event"] : []),
     ...(finalEvents.some((event) => nativeEventId(event) === undefined) ? ["unidentified-rest-event"] : []),
@@ -633,6 +641,8 @@ async function openEventSocket(
   let reconnects = 0;
   let stopped = false;
   let cancelPendingOpen: (() => void) | undefined;
+  let acceptedEventBytes = 0;
+  let eventByteLimitRecorded = false;
   const factory = request.webSocket ?? ((socketUrl: string) => new WebSocket(socketUrl));
 
   const connect = async (resendMode: "all" | "since"): Promise<void> => {
@@ -650,12 +660,22 @@ async function openEventSocket(
       try {
         const text = typeof data === "string" ? data : String(data);
         const maxBytes = request.maxResponseBytes ?? OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES;
-        if (Buffer.byteLength(text) > maxBytes) {
+        const frameBytes = Buffer.byteLength(text);
+        if (frameBytes > maxBytes) {
           onStatus({ state: "message-rejected", reason: `frame exceeds ${maxBytes} bytes` });
           return;
         }
         const value: unknown = JSON.parse(text);
         if (isRecord(value)) {
+          const maxCaptureBytes = request.maxCaptureBytes ?? OPENHANDS_DEFAULT_MAX_CAPTURE_BYTES;
+          if (acceptedEventBytes + frameBytes > maxCaptureBytes) {
+            if (!eventByteLimitRecorded) {
+              eventByteLimitRecorded = true;
+              onStatus({ state: "event-byte-limit-reached", limit: maxCaptureBytes });
+            }
+            return;
+          }
+          acceptedEventBytes += frameBytes;
           if (typeof value.timestamp === "string") lastTimestamp = value.timestamp;
           onEvent(value);
         } else {
@@ -784,11 +804,13 @@ async function readFinalEvents(
   conversationId: string,
   sessionApiKey?: string,
   maxResponseBytes = OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES,
+  maxCaptureBytes = OPENHANDS_DEFAULT_MAX_CAPTURE_BYTES,
   signal?: AbortSignal,
   timeoutMs?: number,
   onEvent?: (event: Record<string, unknown>, index: number) => void,
 ): Promise<Record<string, unknown>[]> {
   const events: Record<string, unknown>[] = [];
+  let capturedBytes = 0;
   const pageIds = new Set<string>();
   let pageId: string | undefined;
   do {
@@ -802,6 +824,8 @@ async function readFinalEvents(
     if (!Array.isArray(page.items) || !page.items.every(isRecord)) throw new Error("OpenHands event search returned an invalid page.");
     if (events.length + page.items.length > MAX_CAPTURE_EVENTS) throw new Error(`OpenHands event capture exceeds ${MAX_CAPTURE_EVENTS} records.`);
     for (const event of page.items) {
+      capturedBytes += Buffer.byteLength(JSON.stringify(event));
+      if (capturedBytes > maxCaptureBytes) throw new Error(`OpenHands event capture exceeds ${maxCaptureBytes} bytes.`);
       events.push(event);
       onEvent?.(event, events.length);
     }
@@ -828,7 +852,12 @@ async function requestJson(
     ...[init?.signal, signal].filter((candidate): candidate is AbortSignal => candidate !== undefined),
     AbortSignal.timeout(Math.min(timeoutMs, 2_147_483_647)),
   ]);
-  const response = await fetch(path.startsWith("http") ? path : new URL(path, baseUrl), { ...init, headers, signal: requestSignal });
+  const response = await fetch(path.startsWith("http") ? path : new URL(path, baseUrl), {
+    ...init,
+    headers,
+    signal: requestSignal,
+    redirect: "manual",
+  });
   if (!response.ok) throw new Error(`OpenHands request ${init?.method ?? "GET"} ${new URL(response.url || path, baseUrl).pathname} failed with ${response.status}.`);
   const bytes = await readBoundedResponse(response, maxResponseBytes);
   let value: unknown;

@@ -191,8 +191,24 @@ export async function captureOpenHandsAgentServerRun(
       return workspace;
     },
     cleanup: async (context) => {
-      if (workspace?.status === "ready") await captureWorkspace();
-      await options.workspace.cleanup?.(context);
+      let workspaceCaptureFailure: unknown;
+      try {
+        if (workspace?.status === "ready") await captureWorkspace();
+      } catch (error) {
+        workspaceCaptureFailure = error;
+      }
+      try {
+        await options.workspace.cleanup?.(context);
+      } catch (cleanupFailure) {
+        if (workspaceCaptureFailure !== undefined) {
+          throw new AggregateError(
+            [workspaceCaptureFailure, cleanupFailure],
+            "OpenHands workspace evidence capture and caller cleanup both failed.",
+          );
+        }
+        throw cleanupFailure;
+      }
+      if (workspaceCaptureFailure !== undefined) throw workspaceCaptureFailure;
     },
   };
   const run = createRunIdentity({
@@ -447,7 +463,7 @@ async function cleanupOpenHandsConversation(
   if (configuration.sessionApiKey !== undefined) headers.set("x-session-api-key", configuration.sessionApiKey);
   const response = await (configuration.fetch ?? globalThis.fetch)(
     new URL(`/api/conversations/${encodeURIComponent(conversationId)}`, configuration.baseUrl),
-    { method: "DELETE", headers, signal: AbortSignal.timeout(Math.max(1, timeoutMs)) },
+    { method: "DELETE", headers, signal: AbortSignal.timeout(Math.max(1, timeoutMs)), redirect: "manual" },
   );
   if (!response.ok && response.status !== 404) {
     throw new Error(`OpenHands conversation cleanup failed with ${response.status}.`);

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -46,7 +46,10 @@ test("captures the pinned REST and WebSocket event then normalizes native source
       return json({ items: [message], next_page_id: null });
     }
     if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
-    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") {
+      assert.equal(init.redirect, "manual");
+      return json({ success: true });
+    }
     throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
   };
   const sockets: FakeWebSocket[] = [];
@@ -480,6 +483,23 @@ test("retains an explicit partial record when server identity lookup fails", asy
   assert.equal(result.records[0]?.record.session_id, undefined);
 });
 
+test("retains unprojectable conversation creation responses without adopting their identity", async () => {
+  const result = await captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: {},
+    message: {},
+    fetch: async (input) => String(input).endsWith("/server_info")
+      ? json({ version: "1.44.1" }) : json({ id: "x".repeat(256) }, 201),
+  });
+
+  assert.equal(result.conversationId, undefined);
+  assert.match(result.captureError ?? "", /conversation.*identity/i);
+  assert.equal(result.records.some(({ record }) => record.channel === "conversation-create-response"), true);
+  assert.equal(result.records.every(({ record }) => record.session_id === undefined), true);
+});
+
 test("applies the configured timeout to Agent Server REST requests", async () => {
   const result = await captureOpenHandsAgentServer({
     runId: "run-1",
@@ -489,6 +509,7 @@ test("applies the configured timeout to Agent Server REST requests", async () =>
     message: {},
     timeoutMs: 10,
     fetch: async (_input, init) => new Promise<Response>((resolvePromise, reject) => {
+      assert.equal(init?.redirect, "manual");
       const timer = setTimeout(() => resolvePromise(json({ version: "1.44.1" })), 30);
       init?.signal?.addEventListener("abort", () => {
         clearTimeout(timer);
@@ -614,6 +635,45 @@ test("marks identifier-less channel records as reconciliation gaps", async () =>
   assert.deepEqual(result.reconciliation.transportGaps, ["unidentified-websocket-event"]);
   assert.equal(result.records.some(({ record }) =>
     record.channel === "websocket-event" && record.payload.kind === "FutureEvent"), true);
+});
+
+test("bounds cumulative accepted WebSocket event bytes", async () => {
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
+      return json({ id: "conversation-1", execution_status: "finished" });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [], next_page_id: null });
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+
+  const result = await captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: {},
+    message: {},
+    fetch,
+    webSocket: (url) => {
+      const socket = new FakeWebSocket(url);
+      queueMicrotask(() => {
+        socket.open();
+        socket.message({ id: "event-one", kind: "FutureEvent", source: "agent", padding: "x".repeat(120) });
+        socket.message({ id: "event-two", kind: "FutureEvent", source: "agent", padding: "x".repeat(120) });
+      });
+      return socket;
+    },
+    maxCaptureBytes: 250,
+    maxResponseBytes: 1_024,
+    pollIntervalMs: 0,
+  });
+
+  assert.deepEqual(result.reconciliation.streamedEventIds, ["event-one"]);
+  assert.equal(result.reconciliation.transportGaps.includes("event-byte-limit-reached"), true);
 });
 
 test("bounds rejected WebSocket status records", async () => {
@@ -939,6 +999,80 @@ test("packages one verified smoke attempt with native, workspace, verifier, and 
   }
 });
 
+test("runs caller workspace cleanup when workspace evidence capture fails", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-openhands-workspace-capture-failure-"));
+  const start = join(root, "start");
+  const final = join(root, "final");
+  mkdirSync(start);
+  writeFileSync(join(start, "result.txt"), "before\n");
+  cpSync(start, final, { recursive: true, preserveTimestamps: true });
+  writeFileSync(join(final, "result.txt"), "after\n");
+  symlinkSync("result.txt", join(final, "unsafe-link"));
+  const definition: RunBundleDefinition = {
+    bundleRoot: join(root, "bundle"),
+    bundleId: "bundle-openhands-workspace-capture-failure",
+    run: {
+      id: "run-openhands-workspace-capture-failure",
+      assessmentMode: "observational",
+      task: { id: "task-openhands-workspace-capture-failure" },
+      fixture: { id: "fixture-openhands-workspace-capture-failure", digest: SHA("a") },
+      model: { provider: "test", id: "test/model" },
+      harness: { id: "openhands-agent-server", version: OPENHANDS_AGENT_SERVER_VERSION },
+      runtime: [],
+    },
+    attempt: { id: "attempt-openhands-workspace-capture-failure", number: 1 },
+    configuration: { digest: SHA("b"), budgetDigest: SHA("c"), toolPolicyDigest: SHA("d") },
+  };
+  let callerCleanupRan = false;
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
+      return json({ id: "conversation-1", execution_status: "finished" });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [message], next_page_id: null });
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+
+  try {
+    const result = await captureOpenHandsAgentServerRun({
+      definition,
+      startingWorkspacePath: start,
+      workspace: {
+        setup: async () => ({ status: "ready", path: final, artifactId: "workspace", retained: true }),
+        cleanup: async () => { callerCleanupRan = true; },
+      },
+      configuration: {
+        model: "test/model",
+        baseUrl: "http://127.0.0.1:8000",
+        startConversation: { agent: { kind: "Agent", llm: { model: "test/model" } } },
+        message: { role: "user", content: [{ type: "text", text: "update result.txt" }], run: true },
+        fetch,
+        webSocket: (url) => {
+          const socket = new FakeWebSocket(url);
+          queueMicrotask(() => {
+            socket.open();
+            socket.message(message);
+          });
+          return socket;
+        },
+        pollIntervalMs: 0,
+      },
+    });
+
+    assert.equal(callerCleanupRan, true);
+    assert.equal(result.attempt.record.cleanup?.status, "failed");
+    assert.equal(result.attempt.classification.kind, "infrastructure-failure");
+    assert.equal(result.manifest.terminal.workspaceArtifactId, undefined);
+    assert.equal(result.manifest.evidence.some(({ kind }) => kind === "workspace"), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("rejects a declared model that differs from the actual conversation request", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-openhands-model-mismatch-"));
   const definition: RunBundleDefinition = {
@@ -1125,6 +1259,7 @@ test("retains progressively written native evidence when lifecycle cancellation 
     configuration: { digest: SHA("b"), budgetDigest: SHA("c"), toolPolicyDigest: SHA("d") },
   };
   const controller = new AbortController();
+  let cleanupRequests = 0;
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
     if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
@@ -1137,7 +1272,11 @@ test("retains progressively written native evidence when lifecycle cancellation 
       return json({ id: "conversation-1", execution_status: "running" });
     }
     if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [], next_page_id: null });
-    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") {
+      cleanupRequests += 1;
+      assert.equal(init.redirect, "manual");
+      return json({ success: true });
+    }
     throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
   };
 
@@ -1167,6 +1306,7 @@ test("retains progressively written native evidence when lifecycle cancellation 
     assert.equal(result.attempt.terminal.state, "interrupted");
     assert.match(result.capture!.captureError ?? "", /aborted/);
     assert.equal(session?.id, "session");
+    assert.equal(cleanupRequests, 2);
     assert.equal(readFileSync(join(bundleRoot, session!.relativePath), "utf8").includes("conversation-created"), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
