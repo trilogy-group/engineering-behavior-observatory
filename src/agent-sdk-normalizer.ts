@@ -178,6 +178,13 @@ export async function readQualifiedClaudeAgentSdkCapture(
   const records: Array<CapturedNativeRecord<AgentSdkNativeRecord>> = [];
   for (const descriptor of manifest.evidence) {
     if (descriptor.sanitizedFrom !== undefined || descriptor.kind === "export-manifest") continue;
+    if (descriptor.kind === "workspace" || descriptor.kind === "diagnostic") {
+      records.push({
+        reference: { artifactId: descriptor.id, recordLocator: "#" },
+        record: { kind: descriptor.kind, document: { descriptor: structuredClone(descriptor) } },
+      });
+      continue;
+    }
     const bytes = await readVerifiedArtifact(root, descriptor.relativePath, digestFrom(descriptor.digest), MAX_EVIDENCE_BYTES);
     if (descriptor.kind === "session" || descriptor.kind === "hook") {
       for (const [index, document] of parseJsonl(bytes).entries()) {
@@ -190,11 +197,6 @@ export async function readQualifiedClaudeAgentSdkCapture(
       records.push({
         reference: { artifactId: descriptor.id, recordLocator: "#" },
         record: { kind: descriptor.kind as "telemetry" | "verifier" | "capture-report", document: parseJson(bytes) },
-      });
-    } else if (descriptor.kind === "workspace" || descriptor.kind === "diagnostic") {
-      records.push({
-        reference: { artifactId: descriptor.id, recordLocator: "#" },
-        record: { kind: descriptor.kind, document: { descriptor: structuredClone(descriptor) } },
       });
     }
   }
