@@ -372,7 +372,13 @@ export async function readPortableRunBundleExport(
   validatePortableDiagnosticReferences(manifest, artifactBytes);
   if (sourceManifest !== undefined) await validateSourceReferences(manifest, sourceManifest, sourceRoot);
   scanPortableTree(
-    [manifestBytes, ...artifactBytes],
+    [
+      { bytes: manifestBytes, mediaType: "application/json" },
+      ...artifactBytes.map((bytes, index) => ({
+        bytes,
+        mediaType: manifest.artifacts[index]!.mediaType,
+      })),
+    ],
     effectiveSensitiveValues(policy),
     sourceManifest === undefined ? [] : sourceCorrelationValues(sourceManifest),
   );
@@ -614,17 +620,17 @@ function rewriteString(
 }
 
 function scanPortableTree(
-  buffers: readonly Buffer[],
+  buffers: ReadonlyArray<{ bytes: Buffer; mediaType: string }>,
   sensitiveValues: readonly string[],
   sourceCorrelations: readonly string[],
 ): void {
-  for (const [index, bytes] of buffers.entries()) {
+  for (const [index, { bytes, mediaType }] of buffers.entries()) {
     const text = decode(bytes, "portable export");
     const secretPatternIndex = SECRET_PATTERNS.findIndex((pattern) => pattern.test(text));
     const failure = [
       ["known sensitive value", sensitiveValues.some((value) => text.includes(value))],
       ["secret pattern", secretPatternIndex >= 0],
-      ["absolute path", LOCAL_PATH.test(text)],
+      ["absolute path", containsLocalPath(text, mediaType)],
       ["local identifier", LOCAL_IDENTIFIER_PATTERNS.some((pattern) => pattern.test(text))],
       ["source correlation", sourceCorrelations.filter((value) => value.length >= 8).some((value) => text.includes(value))],
       ["hidden content field", /"(?:chain[_-]?of[_-]?thought|extended[_-]?thinking|hidden[_-]?reasoning|reasoning|thinking|raw[_-]?(?:api|request|response)[_-]?body)"\s*:/iu.test(text)],
@@ -635,6 +641,31 @@ function scanPortableTree(
     }
     resetPatterns();
   }
+}
+
+function containsLocalPath(text: string, mediaType: string): boolean {
+  if (mediaType === "application/json") {
+    return valueContainsLocalPath(parseJson(Buffer.from(text), "Portable JSON final scan"));
+  }
+  if (mediaType === "application/x-ndjson") {
+    return text.split(/\r?\n/gu).filter(Boolean).some((line) =>
+      valueContainsLocalPath(parseJson(Buffer.from(line), "Portable JSONL final scan")));
+  }
+  return stringContainsLocalPath(text);
+}
+
+function valueContainsLocalPath(value: unknown): boolean {
+  if (typeof value === "string") return stringContainsLocalPath(value);
+  if (Array.isArray(value)) return value.some(valueContainsLocalPath);
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(([key, entry]) =>
+    stringContainsLocalPath(key) || valueContainsLocalPath(entry));
+}
+
+function stringContainsLocalPath(value: string): boolean {
+  const matched = LOCAL_PATH.test(value);
+  LOCAL_PATH.lastIndex = 0;
+  return matched;
 }
 
 async function validateSourceReferences(
