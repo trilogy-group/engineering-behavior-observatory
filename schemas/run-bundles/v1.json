@@ -577,6 +577,13 @@
         },
         "workspaceOutcomeRespectsGitignore": { "type": "boolean" },
         "workspaceOutcomeOmitsEmptyDirectories": { "type": "boolean" },
+        "semanticEvidenceKinds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["session", "hook"] },
+          "contains": { "const": "session" }
+        },
         "agentSdk": {
           "type": "object",
           "additionalProperties": false,

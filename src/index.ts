@@ -216,6 +216,30 @@ export {
   spawnProtocolProcess,
 } from "./process-protocol.js";
 export {
+  createDeepSeekHarnessAdapter,
+  createDeepSeekRuntimeComposition,
+  DEEPSEEK_ADAPTER_ID,
+  DEEPSEEK_CAPABILITY_PROFILE,
+  DEEPSEEK_HARNESS_ID,
+  DEEPSEEK_SDK_VERSION,
+  deepSeekCapabilities,
+  deepSeekCompositionDigest,
+  DeepSeekNativeCapture,
+  executeDeepSeekHarness,
+  normalizeDeepSeekCapture,
+  qualifiedDeepSeekCapture,
+} from "./deepseek-adapter.js";
+export type {
+  DeepSeekAdapterRequest,
+  DeepSeekCapabilities,
+  DeepSeekCaptureReport,
+  DeepSeekFileReference,
+  DeepSeekHarnessConfiguration,
+  DeepSeekNativeObservation,
+  DeepSeekRuntimeComposition,
+  DeepSeekRuntimeCompositionInput,
+} from "./deepseek-adapter.js";
+export {
   buildClaudeAgentSdkEnvironment,
   executeClaudeAgentSdk,
   openClaudeAgentSdkHookCapture,

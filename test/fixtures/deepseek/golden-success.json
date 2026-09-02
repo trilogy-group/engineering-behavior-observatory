@@ -1,0 +1,26 @@
+{
+  "requests": ["initialize", "session/prompt", "client.close"],
+  "responses": ["initialize", "session/prompt", "client.close"],
+  "notifications": ["session.status", "session.event", "subagent.started", "subagent.finished"],
+  "sessionEventTypes": [
+    "turn/start",
+    "agent/inbox/spliced",
+    "user/message",
+    "step/start",
+    "request/header",
+    "assistant/chunk",
+    "tool/call",
+    "tool/result",
+    "compaction/start",
+    "compaction/summary",
+    "compaction/end",
+    "hook/invoked",
+    "hook/result",
+    "assistant/message",
+    "step/end",
+    "validation/result",
+    "artifact/changed",
+    "plugin/private",
+    "turn/end"
+  ]
+}
