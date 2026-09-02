@@ -174,7 +174,7 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
 
   let serverInfo: Record<string, unknown> = {};
   try {
-    serverInfo = await requestJson(fetch, baseUrl, "/server_info", undefined, request.sessionApiKey, maxResponseBytes, request.signal);
+    serverInfo = await requestJson(fetch, baseUrl, "/server_info", undefined, request.sessionApiKey, maxResponseBytes, request.signal, request.timeoutMs);
     append("server-info", serverInfo);
     if (serverInfo.version !== OPENHANDS_AGENT_SERVER_VERSION) {
       throw new Error(`OpenHands Agent Server ${OPENHANDS_AGENT_SERVER_VERSION} is required; received ${String(serverInfo.version)}.`);
@@ -209,7 +209,7 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
     created = await requestJson(fetch, baseUrl, "/api/conversations", {
       method: "POST",
       body: JSON.stringify(request.startConversation),
-    }, request.sessionApiKey, maxResponseBytes, request.signal);
+    }, request.sessionApiKey, maxResponseBytes, request.signal, request.timeoutMs);
     if (typeof created.id !== "string" || created.id.length === 0) {
       throw new Error("OpenHands conversation creation did not return an ID.");
     }
@@ -277,12 +277,12 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
     await requestJson(fetch, baseUrl, `/api/conversations/${encodeURIComponent(conversationId)}/events`, {
       method: "POST",
       body: JSON.stringify(request.message),
-    }, request.sessionApiKey, maxResponseBytes, request.signal);
+    }, request.sessionApiKey, maxResponseBytes, request.signal, request.timeoutMs);
 
     finalConversation = await pollConversation(fetch, baseUrl, conversationId, request);
     append("conversation-final", finalConversation);
     try {
-      await readFinalEvents(fetch, baseUrl, conversationId, request.sessionApiKey, maxResponseBytes, request.signal, (event, index) => {
+      await readFinalEvents(fetch, baseUrl, conversationId, request.sessionApiKey, maxResponseBytes, request.signal, request.timeoutMs, (event, index) => {
         finalEvents.push(event);
         append("rest-event", event, index);
       });
@@ -294,7 +294,7 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
     append("capture-error", { error: captureError.slice(0, 512) });
     const recoverySignal = request.signal?.aborted ? AbortSignal.timeout(100) : request.signal;
     try {
-      await readFinalEvents(fetch, baseUrl, conversationId, request.sessionApiKey, maxResponseBytes, recoverySignal, (event, index) => {
+      await readFinalEvents(fetch, baseUrl, conversationId, request.sessionApiKey, maxResponseBytes, recoverySignal, request.timeoutMs, (event, index) => {
         finalEvents.push(event);
         append("rest-event", event, index);
       });
@@ -308,7 +308,7 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
     const cleanupSignal = request.signal?.aborted ? AbortSignal.timeout(100) : request.signal;
     await requestJson(fetch, baseUrl, `/api/conversations/${encodeURIComponent(conversationId)}`, {
       method: "DELETE",
-    }, request.sessionApiKey, maxResponseBytes, cleanupSignal);
+    }, request.sessionApiKey, maxResponseBytes, cleanupSignal, request.timeoutMs);
     append("cleanup", { success: true });
   } catch (error) {
     append("cleanup", { success: false, error: errorMessage(error).slice(0, 512) });
@@ -378,10 +378,15 @@ export async function normalizeOpenHandsCapture(
   const mappedReferences = new Set<string>();
   const eventIdByNativeId = new Map<string, string>();
   for (const [id, captured] of canonical) {
-    const kind = typeof captured.record.payload.kind === "string" ? captured.record.payload.kind : "";
-    if (mappedEvent(kind) !== undefined) eventIdByNativeId.set(id, `openhands:${id}`);
+    const native = captured.record.payload;
+    const kind = typeof native.kind === "string" ? native.kind : "";
+    const eventId = uniformEventId(id);
+    if (mappedEvent(kind) !== undefined && nativeEventSource(native.source) !== undefined && eventId !== undefined) {
+      eventIdByNativeId.set(id, eventId);
+    }
   }
   for (const [nativeId, captured] of canonical) {
+    if (!eventIdByNativeId.has(nativeId)) continue;
     const mapped = mapOpenHandsEvent(capture, conversationId, captured, nativeId, eventIdByNativeId);
     if (mapped === undefined) continue;
     events.push(mapped);
@@ -631,7 +636,9 @@ async function openEventSocket(
     if (resendMode === "since" && lastTimestamp !== undefined) url.searchParams.set("after_timestamp", lastTimestamp);
     const socket = factory(url.toString());
     current = socket;
-    socket.addEventListener("message", ({ data }) => {
+    let active = true;
+    const onMessage = ({ data }: { data?: unknown }): void => {
+      if (!active) return;
       try {
         const text = typeof data === "string" ? data : String(data);
         const maxBytes = request.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
@@ -649,8 +656,9 @@ async function openEventSocket(
       } catch (error) {
         onStatus({ state: "message-rejected", reason: errorMessage(error).slice(0, 512) });
       }
-    });
-    socket.addEventListener("close", () => {
+    };
+    const onClose = (): void => {
+      active = false;
       if (stopped) return;
       onStatus({ state: "disconnected", connection: reconnects + 1 });
       if (reconnects >= (request.maxReconnects ?? 2)) {
@@ -664,24 +672,41 @@ async function openEventSocket(
           onStatus({ state: "reconnect-failed", reason: errorMessage(error).slice(0, 512) });
         });
       }, request.reconnectDelayMs ?? 250);
-    });
+    };
+    socket.addEventListener("message", onMessage);
+    socket.addEventListener("close", onClose);
     await new Promise<void>((resolvePromise, reject) => {
-      const timeout = setTimeout(() => reject(new Error("OpenHands event WebSocket did not open before timeout.")), request.timeoutMs ?? 30_000);
-      const onAbort = (): void => {
-        clearTimeout(timeout);
-        socket.close();
-        reject(new Error("OpenHands capture was aborted."));
-      };
-      const onOpen = (): void => {
+      let settled = false;
+      const cleanupPending = (): void => {
         clearTimeout(timeout);
         request.signal?.removeEventListener("abort", onAbort);
         socket.removeEventListener("open", onOpen);
+      };
+      const fail = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        active = false;
+        stopped = true;
+        cleanupPending();
+        socket.removeEventListener("message", onMessage);
+        socket.removeEventListener("close", onClose);
+        socket.close();
+        reject(error);
+      };
+      const onAbort = (): void => {
+        fail(new Error("OpenHands capture was aborted."));
+      };
+      const onOpen = (): void => {
+        if (settled) return;
+        settled = true;
+        cleanupPending();
         if (request.sessionApiKey !== undefined) {
           socket.send(JSON.stringify({ type: "auth", session_api_key: request.sessionApiKey }));
         }
         onStatus({ state: "connected", connection: reconnects + 1, resendMode });
         resolvePromise();
       };
+      const timeout = setTimeout(() => fail(new Error("OpenHands event WebSocket did not open before timeout.")), request.timeoutMs ?? 30_000);
       request.signal?.addEventListener("abort", onAbort, { once: true });
       socket.addEventListener("open", onOpen);
     });
@@ -722,6 +747,7 @@ async function pollConversation(
       request.sessionApiKey,
       request.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
       request.signal,
+      request.timeoutMs,
     );
     if (typeof conversation.execution_status === "string" && TERMINAL_STATUSES.has(conversation.execution_status)) {
       return conversation;
@@ -738,6 +764,7 @@ async function readFinalEvents(
   sessionApiKey?: string,
   maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
   signal?: AbortSignal,
+  timeoutMs?: number,
   onEvent?: (event: Record<string, unknown>, index: number) => void,
 ): Promise<Record<string, unknown>[]> {
   const events: Record<string, unknown>[] = [];
@@ -750,7 +777,7 @@ async function readFinalEvents(
     path.searchParams.set("limit", "100");
     path.searchParams.set("sort_order", "TIMESTAMP");
     if (pageId !== undefined) path.searchParams.set("page_id", pageId);
-    const page = await requestJson(fetch, baseUrl, path.toString(), undefined, sessionApiKey, maxResponseBytes, signal);
+    const page = await requestJson(fetch, baseUrl, path.toString(), undefined, sessionApiKey, maxResponseBytes, signal, timeoutMs);
     if (!Array.isArray(page.items) || !page.items.every(isRecord)) throw new Error("OpenHands event search returned an invalid page.");
     if (events.length + page.items.length > MAX_CAPTURE_EVENTS) throw new Error(`OpenHands event capture exceeds ${MAX_CAPTURE_EVENTS} records.`);
     for (const event of page.items) {
@@ -770,12 +797,17 @@ async function requestJson(
   sessionApiKey?: string,
   maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
   signal?: AbortSignal,
+  timeoutMs = 30_000,
 ): Promise<Record<string, unknown>> {
   const headers = new Headers(init?.headers);
   headers.set("accept", "application/json");
   if (init?.body !== undefined) headers.set("content-type", "application/json");
   if (sessionApiKey !== undefined) headers.set("x-session-api-key", sessionApiKey);
-  const response = await fetch(path.startsWith("http") ? path : new URL(path, baseUrl), { ...init, headers, signal: init?.signal ?? signal });
+  const requestSignal = AbortSignal.any([
+    ...[init?.signal, signal].filter((candidate): candidate is AbortSignal => candidate !== undefined),
+    AbortSignal.timeout(Math.min(timeoutMs, 2_147_483_647)),
+  ]);
+  const response = await fetch(path.startsWith("http") ? path : new URL(path, baseUrl), { ...init, headers, signal: requestSignal });
   if (!response.ok) throw new Error(`OpenHands request ${init?.method ?? "GET"} ${new URL(response.url || path, baseUrl).pathname} failed with ${response.status}.`);
   const bytes = await readBoundedResponse(response, maxResponseBytes);
   let value: unknown;
@@ -859,6 +891,11 @@ function eventIds(events: readonly Record<string, unknown>[]): string[] {
 
 function nativeEventId(event: Record<string, unknown>): string | undefined {
   return typeof event.id === "string" && event.id.length > 0 ? event.id : undefined;
+}
+
+function uniformEventId(nativeId: string): string | undefined {
+  const eventId = `openhands:${nativeId}`;
+  return eventId.length <= 255 ? eventId : undefined;
 }
 
 function isOffsetDateTime(value: unknown): value is string {

@@ -435,6 +435,63 @@ test("retains an explicit partial record when server identity lookup fails", asy
   assert.equal(result.records[0]?.record.session_id, undefined);
 });
 
+test("applies the configured timeout to Agent Server REST requests", async () => {
+  const result = await captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: {},
+    message: {},
+    timeoutMs: 10,
+    fetch: async (_input, init) => new Promise<Response>((resolvePromise, reject) => {
+      const timer = setTimeout(() => resolvePromise(json({ version: "1.44.1" })), 30);
+      init?.signal?.addEventListener("abort", () => {
+        clearTimeout(timer);
+        reject(init.signal?.reason);
+      }, { once: true });
+    }),
+  });
+
+  assert.match(result.captureError ?? "", /abort|timeout/i);
+  assert.equal(result.records[0]?.record.channel, "capture-error");
+});
+
+test("closes and fences a WebSocket that misses its open deadline", async () => {
+  let socket: FakeWebSocket | undefined;
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
+    if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [], next_page_id: null });
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+
+  const result = await captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: {},
+    message: {},
+    sessionApiKey: "secret",
+    timeoutMs: 10,
+    fetch,
+    webSocket: (url) => {
+      socket = new FakeWebSocket(url);
+      return socket;
+    },
+  });
+  const retainedCount = result.records.length;
+  assert.equal(socket!.readyState, 3);
+  socket!.open();
+  await Promise.resolve();
+
+  assert.deepEqual(socket!.sent, []);
+  assert.equal(result.records.length, retainedCount);
+  assert.equal(result.records.some(({ record }) =>
+    record.channel === "websocket-status" && record.payload.state === "connected"), false);
+});
+
 test("retains an explicit gap for an oversized WebSocket frame", async () => {
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
@@ -674,6 +731,11 @@ test("marks missing native content unknown instead of emitting a nonexistent poi
   const missingActor = await normalizeOpenHandsCapture(capture);
   assert.equal(missingActor.events.length, 0);
   assert.equal(missingActor.unmapped.length, 1);
+  capture.records[0]!.record.payload.source = "user";
+  capture.records[0]!.record.payload.id = "x".repeat(246);
+  const oversizedIdentity = await normalizeOpenHandsCapture(capture);
+  assert.equal(oversizedIdentity.events.length, 0);
+  assert.equal(oversizedIdentity.unmapped.length, 1);
 });
 
 test("packages one verified smoke attempt with native, workspace, verifier, and normalized evidence", async () => {
