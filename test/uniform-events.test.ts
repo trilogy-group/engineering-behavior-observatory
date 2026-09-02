@@ -57,6 +57,7 @@ test("validates golden events for every initial family without inventing missing
   assert.ok(fixture.some(({ nativeTime }) => nativeTime.status === "unsupported"));
   assert.ok(fixture.some(({ relations }) => relations.parent.status === "unknown"));
   assert.ok(fixture.some(({ content }) => content.status === "unknown"));
+  assert.ok(fixture.some(({ content }) => content.status === "known" && content.value.length === 0));
   assert.equal(JSON.stringify(fixture).includes("DeepSeek"), false);
   assert.equal(JSON.stringify(fixture).includes("WebSocket"), false);
   assert.equal(JSON.stringify(fixture).includes("JSON-RPC"), false);
@@ -72,6 +73,10 @@ test("rejects unresolved native and content references", async () => {
     ...event.source,
     nativeReference: { artifactId: "session", recordLocator: "invented" },
   } }], sourceOnly), /unresolved/);
+  event.content = {
+    status: "known",
+    value: [{ nativeReference: { artifactId: "session", recordLocator: "line:1#/message/content" } }],
+  };
   await assert.rejects(validateUniformEvents([event], sourceOnly), /message\/content.*unresolved/);
 });
 

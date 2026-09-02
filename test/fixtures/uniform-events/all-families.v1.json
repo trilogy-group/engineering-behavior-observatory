@@ -17,10 +17,7 @@
     "scope": { "kind": "session", "id": "session-qualified-agent-sdk" },
     "relations": { "parent": { "status": "unknown", "reason": "native record has no parent" }, "known": [] },
     "attributes": { "role": "assistant" },
-    "content": {
-      "status": "known",
-      "value": [{ "nativeReference": { "artifactId": "session", "recordLocator": "line:1#/message/content" }, "role": "message-content" }]
-    }
+    "content": { "status": "known", "value": [] }
   },
   {
     "schemaVersion": "ebo.uniform-event/v1",

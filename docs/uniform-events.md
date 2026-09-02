@@ -22,7 +22,8 @@ semantics across harnesses.
 
 Native order, native time, parentage, and content are explicit evidence values:
 
-- `known` carries a native value or content reference.
+- `known` carries a native value, an empty list for known-empty content, or
+  content references.
 - `unknown` records that the run did not establish the value and gives a reason.
 - `unsupported` records that the source capability cannot provide it and gives
   a reason.
