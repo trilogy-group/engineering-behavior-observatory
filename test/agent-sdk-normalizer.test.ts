@@ -103,6 +103,46 @@ test("handles optional and required evidence gaps without weakening qualificatio
   }), /capture-qualified/u);
 });
 
+test("marks recognized but unprojected native payload content as unknown", async () => {
+  const input = readFixture("complete");
+  input.records = [...input.records, {
+    reference: { artifactId: "session", recordLocator: "line:4" },
+    record: {
+      kind: "session",
+      document: {
+        schemaVersion: "ebo.agent-sdk-message/v1",
+        sequence: 4,
+        nativeType: "stream_event",
+        sessionId: "session-golden",
+        message: { type: "stream_event", session_id: "session-golden", event: { type: "content_block_delta" } },
+      },
+    },
+  }, {
+    reference: { artifactId: "hooks", recordLocator: "line:10" },
+    record: {
+      kind: "hook",
+      document: {
+        schemaVersion: "ebo.claude-agent-hook/v1",
+        sequence: 10,
+        hook: "PermissionRequest",
+        sessionId: "session-golden",
+        nativePayload: { hook_event_name: "PermissionRequest", session_id: "session-golden", tool_name: "Write", tool_input: { file_path: "/private/workspace/new.txt" } },
+      },
+    },
+  }];
+  const result = await claudeAgentSdkNormalizationAdapter.normalize(input);
+
+  for (const [artifactId, locator] of [["session", "line:4"], ["hooks", "line:10"]] as const) {
+    assert.deepEqual(result.events.find(({ source }) =>
+      source.nativeReference.artifactId === artifactId && source.nativeReference.recordLocator === locator)?.content, {
+      status: "unknown",
+      reason: locator === "line:4"
+        ? "Native message content remains in the source record"
+        : "Hook payload content remains in the source record",
+    });
+  }
+});
+
 test("produces stable event identities and ordering on repeated normalization", async () => {
   const input = readFixture("complete");
   const first = await claudeAgentSdkNormalizationAdapter.normalize(input);

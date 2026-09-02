@@ -224,15 +224,14 @@ export async function readQualifiedClaudeAgentSdkCapture(
 export function createAgentSdkNativeEvidenceResolver(
   input: NormalizationInput<AgentSdkNativeRecord>,
 ): NativeEvidenceResolver {
+  const records = new Map(input.records.map((captured) => [referenceKey(captured.reference), captured]));
   return {
     resolve(reference) {
-      for (const captured of input.records) {
-        if (captured.reference.artifactId !== reference.artifactId) continue;
-        if (captured.reference.recordLocator === reference.recordLocator) return true;
-        const pointer = derivedPointer(captured.reference.recordLocator, reference.recordLocator);
-        if (pointer !== undefined && resolvesJsonPointer(captured.record.document, pointer)) return true;
-      }
-      return false;
+      if (records.has(referenceKey(reference))) return true;
+      const derived = splitDerivedLocator(reference.recordLocator);
+      if (derived === undefined) return false;
+      const captured = records.get(referenceKey({ artifactId: reference.artifactId, recordLocator: derived.base }));
+      return captured !== undefined && resolvesJsonPointer(captured.record.document, derived.pointer);
     },
   };
 }
@@ -747,7 +746,7 @@ function sessionContent(
   if (nativeType === "system" && ["local_command_output", "informational"].includes(subtype ?? "") && message.content !== undefined) {
     return knownContent(contentReference(reference, "/message/content", "system-message"));
   }
-  return { status: "known", value: [] };
+  return { status: "unknown", reason: "Native message content remains in the source record" };
 }
 
 function hookActor(family: UniformEventFamily, hook: string, payload: JsonRecord): UniformEvent["actor"] {
@@ -824,7 +823,7 @@ function hookContent(
   const selected = fields[hook];
   return selected !== undefined && payload[selected.field] !== undefined
     ? knownContent(contentReference(reference, `/nativePayload/${selected.field}`, selected.role))
-    : { status: "known", value: [] };
+    : { status: "unknown", reason: "Hook payload content remains in the source record" };
 }
 
 function parentToolKey(message: JsonRecord): string | undefined {
@@ -899,10 +898,14 @@ function unmappedReason(record: AgentSdkNativeRecord): string {
   return `Unrecognized ${record.kind} record remains in native evidence`;
 }
 
-function derivedPointer(base: string, requested: string): string | undefined {
-  if (base === "#" && requested.startsWith("#/")) return requested.slice(1);
-  if (requested.startsWith(`${base}#/`)) return requested.slice(base.length + 1);
-  return undefined;
+function referenceKey(reference: NativeEvidenceReference): string {
+  return JSON.stringify([reference.artifactId, reference.recordLocator]);
+}
+
+function splitDerivedLocator(locator: string): { base: string; pointer: string } | undefined {
+  if (locator.startsWith("#/")) return { base: "#", pointer: locator.slice(1) };
+  const marker = locator.indexOf("#/");
+  return marker === -1 ? undefined : { base: locator.slice(0, marker), pointer: locator.slice(marker + 1) };
 }
 
 function resolvesJsonPointer(document: unknown, pointer: string): boolean {
