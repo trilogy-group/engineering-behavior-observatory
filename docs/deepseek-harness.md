@@ -18,7 +18,9 @@ and [session telemetry](https://github.com/deepseek-ai/deepseek-harness/blob/mas
 `ebo.deepseek-runtime-composition/v1` records the exact Node command and
 arguments, process and workspace directories, named profile, ordered Cordis
 patches, provider/model route, pinned client/protocol versions, plugin names,
-configuration-file digests, environment policy, and telemetry selection.
+an ordered digest-bearing reference for every Cordis patch and plugin
+configuration, environment policy, and telemetry selection. Every referenced
+configuration digest is rechecked before the runtime starts.
 Environment values are not recorded. The adapter passes a replacement child
 environment to the official client and rejects keys outside the recorded
 allowlist; configured secret values are redacted from retained error and stderr

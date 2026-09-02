@@ -61,6 +61,7 @@ export type DeepSeekRuntimeComposition = {
     maxTokens?: number;
   };
   cordis: DeepSeekFileReference;
+  patches: DeepSeekFileReference[];
   plugins: Array<{ name: string; configuration?: DeepSeekFileReference }>;
   environment: {
     mode: "replace";
@@ -218,6 +219,7 @@ export function createDeepSeekRuntimeComposition(input: DeepSeekRuntimeCompositi
       ...(input.maxTokens === undefined ? {} : { maxTokens: positiveInteger(input.maxTokens, "DeepSeek max tokens") }),
     },
     cordis: fileReference(baseDir, cordisPath),
+    patches: patches.map((path) => fileReference(baseDir, path)),
     plugins: input.plugins.map((plugin, index) => ({
       name: pluginNames[index]!,
       ...(plugin.configurationPath === undefined ? {} : { configuration: fileReference(baseDir, plugin.configurationPath) }),
@@ -375,7 +377,7 @@ export async function executeDeepSeekHarness(
       ...(messageId === undefined ? {} : { messageId }),
       ...(receiptSequence === undefined ? {} : { receiptSequence }),
       ...(idleSequence === undefined ? {} : { idleSequence }),
-      promptResult: false,
+      promptResult: { status: "unsupported" },
     },
     evidence: report,
     shutdownResult,
@@ -521,7 +523,7 @@ function clientOptions(configuration: DeepSeekHarnessConfiguration): HarnessClie
   return {
     dshBin: composition.launch.args[0],
     profile: composition.launch.profile,
-    patches: composition.launch.args.flatMap((value, index, args) => args[index - 1] === "--patch" ? [value] : []),
+    patches: composition.patches.map(({ locator }) => locator),
     processCwd: composition.launch.processCwd,
     ...(composition.launch.dshHome === undefined ? {} : { dshHome: composition.launch.dshHome }),
     env: structuredClone(configuration.env),
@@ -540,6 +542,12 @@ function validateConfiguration(configuration: DeepSeekHarnessConfiguration): voi
     throw new Error("DeepSeek runtime composition does not match the pinned public client runtime.");
   }
   if (configuration.sessionId.trim() === "") throw new Error("DeepSeek session ID is required.");
+  for (const reference of [
+    configuration.composition.cordis,
+    ...configuration.composition.patches,
+    ...configuration.composition.plugins.flatMap(({ configuration: value }) => value ?? []),
+    ...(configuration.composition.telemetry.artifact === undefined ? [] : [configuration.composition.telemetry.artifact]),
+  ]) verifyFileReference(reference);
   const keys = Object.keys(configuration.env).sort();
   const allowed = configuration.composition.environment.allowedKeys;
   if (keys.some((key) => !allowed.includes(key))) throw new Error("DeepSeek child environment contains a key outside the recorded policy.");
@@ -548,6 +556,12 @@ function validateConfiguration(configuration: DeepSeekHarnessConfiguration): voi
 function fileReference(baseDir: string, path: string): DeepSeekFileReference {
   const locator = resolve(baseDir, path);
   return { locator, digest: digestString(readFileSync(locator)) };
+}
+
+function verifyFileReference(reference: DeepSeekFileReference): void {
+  if (digestString(readFileSync(reference.locator)) !== reference.digest) {
+    throw new Error(`DeepSeek configuration digest mismatch for ${reference.locator}.`);
+  }
 }
 
 function digestString(bytes: Uint8Array): DigestString {

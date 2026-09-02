@@ -3,7 +3,7 @@
   "$id": "https://ebo.dev/schemas/deepseek-runtime-composition.v1.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "id", "launch", "workspaceCwd", "runtime", "route", "cordis", "plugins", "environment", "telemetry"],
+  "required": ["schemaVersion", "id", "launch", "workspaceCwd", "runtime", "route", "cordis", "patches", "plugins", "environment", "telemetry"],
   "properties": {
     "schemaVersion": { "const": "ebo.deepseek-runtime-composition/v1" },
     "id": { "$ref": "#/$defs/nonempty" },
@@ -48,6 +48,12 @@
       }
     },
     "cordis": { "$ref": "#/$defs/fileReference" },
+    "patches": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/fileReference" }
+    },
     "plugins": {
       "type": "array",
       "minItems": 1,

@@ -50,7 +50,7 @@ test("records a controlled official-client run and normalizes only native-linked
     assert.deepEqual(report.serverInfo, { name: "deepseek-harness-sdk-runtime", version: "fake-1.0.0" });
     assert.ok(report.receiptSequence !== undefined);
     assert.ok(report.idleSequence !== undefined && report.idleSequence > report.receiptSequence);
-    assert.equal((execution.completionEvidence as { promptResult: boolean }).promptResult, false);
+    assert.deepEqual((execution.completionEvidence as { promptResult: unknown }).promptResult, { status: "unsupported" });
     assert.deepEqual(methods(report, "request"), golden.requests);
     assert.deepEqual(methods(report, "response"), golden.responses);
     assert.deepEqual([...new Set(methods(report, "notification"))], golden.notifications);
@@ -284,6 +284,8 @@ test("swaps named compositions by configuration and reports explicit protocol an
   const packageDocument = JSON.parse(readFileSync(join(repositoryRoot, "package.json"), "utf8")) as { dependencies: Record<string, string> };
   assert.equal(packageDocument.dependencies["@deepseek-ai/dsh-sdk-client"], "0.1.2-alpha.4");
   assert.equal(packageDocument.dependencies["@deepseek-ai/dsh-sdk-protocol"], "0.1.2-alpha.4");
+  assert.equal(minimal.patches.length, 2);
+  assert.ok(minimal.patches.every(({ digest }) => digest.startsWith("sha256:")));
 
   const [minimalRun, telemetryRun] = await Promise.all([
     controlledReport(minimal),
@@ -292,6 +294,19 @@ test("swaps named compositions by configuration and reports explicit protocol an
   assert.deepEqual(sessionEvents(minimalRun).map(({ type }) => type), sessionEvents(telemetryRun).map(({ type }) => type));
   assert.equal(minimalRun.capabilities.telemetry, "unsupported");
   assert.equal(telemetryRun.capabilities.telemetry, "available");
+
+  const tamperedRoot = mkdtempSync(join(tmpdir(), "ebo-deepseek-tampered-composition-"));
+  cpSync(join(fixtureRoot, "compositions", "minimal"), tamperedRoot, { recursive: true });
+  const input = JSON.parse(readFileSync(join(tamperedRoot, "composition.json"), "utf8")) as Omit<DeepSeekRuntimeCompositionInput, "baseDir">;
+  const tampered = createDeepSeekRuntimeComposition({ ...input, baseDir: tamperedRoot });
+  writeFileSync(join(tamperedRoot, "overlay.yml"), "plugins: {}\n");
+  const capture = new DeepSeekNativeCapture(join(tamperedRoot, "session.jsonl"));
+  try {
+    await assert.rejects(executeDeepSeekHarness(harnessContext(), configuration(tampered, "success"), capture), /digest mismatch/);
+  } finally {
+    await capture.close();
+    rmSync(tamperedRoot, { recursive: true, force: true });
+  }
 });
 
 function fixtureComposition(name: "minimal" | "telemetry"): DeepSeekRuntimeComposition {
