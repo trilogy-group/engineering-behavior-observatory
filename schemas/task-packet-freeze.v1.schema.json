@@ -17,6 +17,7 @@
   "properties": {
     "schemaVersion": { "const": "ebo.task-packet-freeze/v1" },
     "packetId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "assessmentMode": { "enum": ["observational", "verified"] },
     "packetLocator": {
       "type": "string",
       "maxLength": 960,
@@ -32,7 +33,12 @@
         "prompt": { "$ref": "#/$defs/digest" },
         "fixture": { "$ref": "#/$defs/digest" },
         "reference": { "$ref": "#/$defs/referenceComponent" },
-        "verifier": { "$ref": "#/$defs/digest" },
+        "verifier": {
+          "oneOf": [
+            { "$ref": "#/$defs/digest" },
+            { "type": "null" }
+          ]
+        },
         "reviewRecord": { "$ref": "#/$defs/digest" },
         "controlledPerturbation": { "$ref": "#/$defs/controlledPerturbationComponent" }
       }

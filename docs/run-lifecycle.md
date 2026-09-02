@@ -13,17 +13,21 @@ The guarded attempt phases are:
 created -> setup -> running -> verifying -> cleaning -> terminal
 ```
 
-Setup, harness execution, verifier execution, cleanup, and evidence flushing
+Setup, harness execution, optional verifier execution, cleanup, and evidence flushing
 are injected callbacks. Setup and harness drivers can register independent
 shutdown handles for in-flight processes. `executeRunAttempt` passes an
 `AbortSignal`, enforces the coordinator and harness budgets, and records phase
 timestamps in an
-`ebo.attempt/v1` record. Only a failed verifier with retained workspace
+`ebo.attempt/v1` record. Each record declares `observational` or `verified`
+assessment. An observational attempt skips the verifying phase; normal harness
+termination plus retained workspace evidence is execution completion, not task
+success. Only a failed verifier on a verified task with retained workspace
 evidence is a task failure; a harness-declared task result without verifier
 evidence remains an infrastructure failure. A verifier execution error, setup
 error, harness error, or cleanup error after an otherwise successful run is
-also infrastructure evidence. A completed attempt needs both a passed
-verifier and a retained workspace artifact. Missing capture flush support is
+also infrastructure evidence. A verified completed attempt needs both a passed
+verifier and a retained workspace artifact; an observational completed attempt
+needs the workspace artifact and carries no verifier evidence. Missing capture flush support is
 explicit as `capture-incomplete` and does not become a task failure.
 
 `src/process-protocol.ts` is a narrow process boundary, not a JSON-RPC

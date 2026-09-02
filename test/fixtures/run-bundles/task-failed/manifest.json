@@ -3,6 +3,7 @@
   "bundleId": "bundle-task-failed",
   "run": {
     "id": "run-task-failed",
+    "assessmentMode": "verified",
     "task": { "id": "task-example" },
     "fixture": {
       "id": "fixture-example",
@@ -76,8 +77,8 @@
       "kind": "capture-report",
       "authority": "capture",
       "mediaType": "application/json",
-      "digest": "sha256:9c5a8aa79ce25e573d5cb4ecd705a19d464f5fd3162b9fac0d20d69c43815c1d",
-      "sizeBytes": 406,
+      "digest": "sha256:399eb07103adf2abc0f5e300ebd886f494abeefbb991865092eb09c551eaea86",
+      "sizeBytes": 438,
       "sharingClass": "internal",
       "relativePath": "capture-report.json"
     }

@@ -1050,6 +1050,7 @@ function assertAdmittedFreezeRecords(
     if (
       packet === undefined
       || packet.packetId !== record.packetId
+      || packet.assessmentMode !== (record.assessmentMode ?? "verified")
       || !sameDigest(packet.digest, record.packetDigest)
       || packet.preAdmissionDigest === null
       || !sameDigest(packet.preAdmissionDigest, record.preAdmissionDigest)
@@ -1087,7 +1088,7 @@ function assertFreezeComponents(
   if (!sameOptionalDigest(record.components.fixture, packet.fixtureDigest)) {
     throw new Error(`Task packet "${taskId}" freeze fixture component is not bound to its admitted packet evidence.`);
   }
-  if (record.components.verifier === null || !sameDigest(record.components.verifier, packet.resolvedVerifierDigest)) {
+  if (!sameOptionalDigest(record.components.verifier, packet.resolvedVerifierDigest)) {
     throw new Error(`Task packet "${taskId}" freeze verifier component is not bound to its admitted packet evidence.`);
   }
   if (!sameOptionalDigest(record.components.reviewRecord, packet.resolvedReviewRecordDigest)) {

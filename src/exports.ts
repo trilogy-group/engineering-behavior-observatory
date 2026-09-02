@@ -58,6 +58,7 @@ export type PortableExportManifest = {
   bundleId: string;
   status: "ready" | "exported";
   sharingClass: "partner" | "public";
+  assessmentMode: RunManifest["run"]["assessmentMode"];
   policyDigest: DigestString;
   artifactIds: string[];
   sourceManifestDigest: DigestString;
@@ -70,7 +71,7 @@ export type PortableExportManifest = {
   };
   artifacts: PortableExportArtifact[];
   transformations: Array<{ artifactId: string; action: TransformationAction; count: number }>;
-  excludedArtifacts: Array<{ artifactId: string; reason: "source-export-manifest" }>;
+  excludedArtifacts: Array<{ artifactId: string; reason: "source-export-manifest" | "unsupported-workspace-snapshot" }>;
 };
 
 export type CreatePortableRunBundleExportOptions = {
@@ -120,7 +121,9 @@ const SECRET_FIELDS = new Set([
   "secretaccesskey",
   "token",
 ]);
-const CORRELATION_FIELDS = new Set(["attemptid", "bundleid", "id", "runid", "sessionid", "traceid"]);
+// "eborunid"/"eboattemptid" are the normalized EBO OTel resource-attribute keys
+// ("ebo.run.id"/"ebo.attempt.id") retained inside native telemetry evidence.
+const CORRELATION_FIELDS = new Set(["attemptid", "bundleid", "id", "runid", "sessionid", "traceid", "eborunid", "eboattemptid"]);
 const LOCAL_IDENTIFIER_FIELDS = new Set(["login", "owner", "user", "username"]);
 const TRUNCATABLE_FIELDS = new Set([
   "body",
@@ -249,6 +252,10 @@ export async function createPortableRunBundleExport(
         excludedArtifacts.push({ artifactId: descriptor.id, reason: "source-export-manifest" });
         continue;
       }
+      if (descriptor.kind === "workspace" && descriptor.mediaType === "application/gzip") {
+        excludedArtifacts.push({ artifactId: descriptor.id, reason: "unsupported-workspace-snapshot" });
+        continue;
+      }
       assertSupportedPair(descriptor.kind, descriptor.mediaType);
       const sourceBytes = await readVerifiedArtifact(
         sourceRoot,
@@ -291,6 +298,7 @@ export async function createPortableRunBundleExport(
       bundleId: correlations.bundleId,
       status: "ready",
       sharingClass: options.policy.sharingClass,
+      assessmentMode: sourceManifest.run.assessmentMode,
       policyDigest,
       artifactIds: artifacts.map(({ id }) => id),
       sourceManifestDigest,
@@ -486,6 +494,9 @@ function sanitizeValue(
 ): unknown {
   const normalizedField = fieldName === undefined ? undefined : normalizeFieldName(fieldName);
   if (typeof value === "string") {
+    // Correlation values are also rewritten as substrings: native evidence
+    // embeds session and workspace identities inside encoded path strings that
+    // survive absolute-path redaction.
     return rewriteString(
       value,
       policy,
@@ -495,7 +506,7 @@ function sanitizeValue(
       counts,
       normalizedField !== undefined && CORRELATION_FIELDS.has(normalizedField),
       truncatable,
-      false,
+      true,
       normalizedField !== undefined && LOCAL_IDENTIFIER_FIELDS.has(normalizedField),
     );
   }
@@ -547,6 +558,16 @@ function rewriteString(
   rewriteLocalIdentifier = false,
 ): string {
   let output = input;
+  // Declared sensitive values are redacted before correlation rewriting: a
+  // secret that embeds a run, attempt, bundle, session, or trace ID must not
+  // be mutated into a form the exact-secret match and final scan cannot see.
+  for (const secret of sensitiveValues) {
+    const occurrences = countOccurrences(output, secret);
+    if (occurrences > 0) {
+      output = output.replaceAll(secret, "[REDACTED_SECRET]");
+      increment(counts, "redacted-secret", occurrences);
+    }
+  }
   const correlation = rewriteCorrelation ? replacements.get(output) : undefined;
   if (correlation !== undefined) {
     output = correlation;
@@ -560,13 +581,6 @@ function rewriteString(
         output = output.replaceAll(source, replacement);
         increment(counts, "rewritten-correlation", occurrences);
       }
-    }
-  }
-  for (const secret of sensitiveValues) {
-    const occurrences = countOccurrences(output, secret);
-    if (occurrences > 0) {
-      output = output.replaceAll(secret, "[REDACTED_SECRET]");
-      increment(counts, "redacted-secret", occurrences);
     }
   }
   for (const pattern of SECRET_PATTERNS) {
@@ -604,7 +618,7 @@ function scanPortableTree(
   sensitiveValues: readonly string[],
   sourceCorrelations: readonly string[],
 ): void {
-  for (const bytes of buffers) {
+  for (const [index, bytes] of buffers.entries()) {
     const text = decode(bytes, "portable export");
     const secretPatternIndex = SECRET_PATTERNS.findIndex((pattern) => pattern.test(text));
     const failure = [
@@ -617,7 +631,7 @@ function scanPortableTree(
     ].find(([, matched]) => matched);
     if (failure !== undefined) {
       resetPatterns();
-      throw new Error(`Portable export failed the final secret scan: ${String(failure[0])}.`);
+      throw new Error(`Portable export buffer ${index} failed the final secret scan: ${String(failure[0])}.`);
     }
     resetPatterns();
   }
@@ -628,6 +642,9 @@ async function validateSourceReferences(
   source: RunManifest,
   sourceRoot?: string,
 ): Promise<void> {
+  if ((manifest.assessmentMode ?? "verified") !== (source.run.assessmentMode ?? "verified")) {
+    throw new Error("Portable export assessment mode does not match its source run.");
+  }
   const sourceById = new Map(source.evidence.map((descriptor) => [descriptor.id, descriptor]));
   if (manifest.sourceManifestDigest === undefined) throw new Error("Portable export omits its source-manifest digest.");
   for (const artifact of manifest.artifacts) {
@@ -660,8 +677,12 @@ async function validateSourceReferences(
     }
   }
   for (const excluded of manifest.excludedArtifacts) {
-    if (sourceById.get(excluded.artifactId)?.kind !== "export-manifest") {
-      throw new Error(`Portable exclusion ${excluded.artifactId} is not a source export manifest.`);
+    const source = sourceById.get(excluded.artifactId);
+    const valid = excluded.reason === "source-export-manifest"
+      ? source?.kind === "export-manifest"
+      : source?.kind === "workspace" && source.mediaType === "application/gzip";
+    if (!valid) {
+      throw new Error(`Portable exclusion ${excluded.artifactId} does not match its declared reason.`);
     }
   }
   const represented = new Set([

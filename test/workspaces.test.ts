@@ -64,7 +64,7 @@ function createBundle(
   includePaths = ["README.md", "src"],
 ): { root: string; packet: TaskPacket } {
   const root = mkdtempSync(join(tmpdir(), "ebo-workspace-bundle-"));
-  const packet = JSON.parse(readFileSync(join(repositoryRoot, "tests/fixtures/task-packet.valid.v1.json"), "utf8")) as TaskPacket;
+  const packet = JSON.parse(readFileSync(join(repositoryRoot, "tests/fixtures/task-packet.valid.v1.json"), "utf8")) as Extract<TaskPacket, { assessmentMode: "verified" }>;
   const components = {
     archive,
     perturbation: Buffer.from('{"kind":"controlled"}\n'),

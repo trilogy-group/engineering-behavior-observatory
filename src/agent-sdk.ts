@@ -244,13 +244,14 @@ const PACKAGE_NAME = "@anthropic-ai/claude-agent-sdk";
 const TELEMETRY_SIGNALS = ["traces", "metrics", "logs"] as const;
 const TELEMETRY_EXPORTER_KEYS = ["OTEL_TRACES_EXPORTER", "OTEL_METRICS_EXPORTER", "OTEL_LOGS_EXPORTER"] as const;
 const DEFAULT_EXPORT_INTERVAL_MS = 1_000;
+const MAX_HOOK_RECORD_BYTES = 8 * 1024 * 1024;
 const DETAILED_BETA_HOOK_SPAN_REASON = "Optional detailed-beta hook spans are not required; hooks.jsonl is authoritative for hook occurrence.";
 
 export async function openClaudeAgentSdkHookCapture(
   path: string,
   now: () => string = () => new Date().toISOString(),
 ): Promise<ClaudeAgentSdkHookCapture> {
-  const writer = await openJsonlEvidenceWriter(path, { exclusive: true });
+  const writer = await openJsonlEvidenceWriter(path, { exclusive: true, maxLineBytes: MAX_HOOK_RECORD_BYTES });
   let sequence = 0;
   return {
     path: writer.path,
@@ -269,7 +270,7 @@ export async function openClaudeAgentSdkHookCapture(
         ...(input.agent_type === undefined ? {} : { agentType: input.agent_type }),
         signalAborted: signal.aborted,
         callbackOutput: {},
-        nativePayload: input,
+        nativePayload: JSON.parse(JSON.stringify(input)) as HookInput,
       } satisfies ClaudeAgentSdkHookRecord);
     },
     flush: () => writer.flush(),

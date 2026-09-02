@@ -446,6 +446,31 @@ test("contains hook sink failure as a capture warning while returning neutral ou
   }
 });
 
+test("retains a multi-megabyte typed hook callback within the fixed hook bound", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-large-hook-"));
+  const capture = await openClaudeAgentSdkHookCapture(join(root, "hooks.jsonl"));
+  try {
+    await capture.hook("PostToolUse", {
+      hook_event_name: "PostToolUse",
+      session_id: "session-large-hook",
+      transcript_path: "/restricted/transcript.jsonl",
+      cwd: "/workspace",
+      tool_name: "Bash",
+      tool_input: { command: "test" },
+      tool_response: { stdout: "x".repeat(2 * 1024 * 1024), optional: undefined },
+      tool_use_id: "tool-large-hook",
+    } as HookInput, "tool-large-hook", new AbortController().signal);
+    await capture.close();
+    const record = JSON.parse(readFileSync(join(root, "hooks.jsonl"), "utf8"));
+    assert.equal(record.sequence, 1);
+    assert.equal(record.nativePayload.tool_response.stdout.length, 2 * 1024 * 1024);
+    assert.equal("optional" in record.nativePayload.tool_response, false);
+  } finally {
+    await capture.close().catch(() => undefined);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("capability probe separates hook callbacks, telemetry stability, and optional detailed-beta timing", () => {
   const capabilities = probeClaudeAgentSdkCapabilities();
   assert.equal(capabilities.sdkVersion, "0.3.251");

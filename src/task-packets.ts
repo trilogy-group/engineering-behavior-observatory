@@ -25,13 +25,15 @@ import {
   closeBundleRoot,
   openBundleRoot,
   type ArtifactReference,
+  type AssessmentMode,
   type BundleRootHandle,
   type Digest,
 } from "./contracts.js";
 
-export type TaskPacket = {
+type TaskPacketBase = {
   schemaVersion: "ebo.task-packet/v1";
   id: string;
+  assessmentMode: AssessmentMode;
   agentInput: {
     prompt: string;
     fixture: {
@@ -66,11 +68,18 @@ export type TaskPacket = {
       reviewRecord: ArtifactReference;
     } | null;
   };
+};
+
+export type TaskPacket = TaskPacketBase & ({
+  assessmentMode: "observational";
+  restricted?: never;
+} | {
+  assessmentMode: "verified";
   restricted: {
     referenceSolution: ArtifactReference | { status: "not-provided" | "unsupported" };
     verifier: ArtifactReference;
   };
-};
+});
 
 export type TaskPacketComponent =
   | { status: "referenced"; digest: Digest | null }
@@ -88,6 +97,7 @@ export type TaskPacketComponents = {
 export type TaskPacketFreezeRecord = {
   schemaVersion: "ebo.task-packet-freeze/v1";
   packetId: string;
+  assessmentMode?: AssessmentMode;
   packetLocator: string;
   preAdmissionDigest: Digest;
   packetDigest: Digest;
@@ -168,8 +178,12 @@ function inspectTaskPacketWithRoot(
     return { packetLocator, packet: null, preAdmissionDigest: null, packetDigest: null, components: null, modelVisible: null, errors };
   }
 
-  const packet = document as TaskPacket;
-  const preAdmissionPacket = structuredClone(packet) as unknown as Record<string, unknown>;
+  const serializedPacket = document as TaskPacket | Omit<Extract<TaskPacket, { assessmentMode: "verified" }>, "assessmentMode">;
+  const packet = {
+    ...structuredClone(serializedPacket),
+    assessmentMode: "assessmentMode" in serializedPacket ? serializedPacket.assessmentMode : "verified",
+  } as TaskPacket;
+  const preAdmissionPacket = structuredClone(serializedPacket) as unknown as Record<string, unknown>;
   delete preAdmissionPacket.admission;
   const preAdmissionDigest = digestMetadata(preAdmissionPacket);
   const components: TaskPacketComponents = {
@@ -187,10 +201,14 @@ function inspectTaskPacketWithRoot(
         includePaths: packet.agentInput.fixture.materializer.includePaths,
       },
     ),
-    reference: "locator" in packet.restricted.referenceSolution
-      ? { status: "referenced", digest: resolveComponent(bundleRoot, packet.restricted.referenceSolution, "/restricted/referenceSolution", packetLocator, errors, root) }
-      : { status: packet.restricted.referenceSolution.status },
-    verifier: resolveComponent(bundleRoot, packet.restricted.verifier, "/restricted/verifier", packetLocator, errors, root),
+    reference: packet.assessmentMode === "verified"
+      ? "locator" in packet.restricted.referenceSolution
+        ? { status: "referenced", digest: resolveComponent(bundleRoot, packet.restricted.referenceSolution, "/restricted/referenceSolution", packetLocator, errors, root) }
+        : { status: packet.restricted.referenceSolution.status }
+      : { status: "not-provided" },
+    verifier: packet.assessmentMode === "verified"
+      ? resolveComponent(bundleRoot, packet.restricted.verifier, "/restricted/verifier", packetLocator, errors, root)
+      : null,
     reviewRecord: packet.admission.review === null
       ? null
       : resolveReviewRecord(
@@ -212,7 +230,7 @@ function inspectTaskPacketWithRoot(
     packetLocator,
     packet,
     preAdmissionDigest,
-    packetDigest: digestMetadata(packet),
+    packetDigest: digestMetadata(serializedPacket),
     components,
     modelVisible: modelVisibleTaskPacket(packet),
     errors,
@@ -661,6 +679,7 @@ function freezeCandidate(packetLocator: string, inspection: TaskPacketInspection
   return {
     schemaVersion: TASK_PACKET_FREEZE_SCHEMA_VERSION,
     packetId: packet.id,
+    assessmentMode: packet.assessmentMode,
     packetLocator,
     preAdmissionDigest,
     packetDigest,
@@ -712,6 +731,7 @@ function aggregateDigest(
 function compareFreezeRecord(record: TaskPacketFreezeRecord, inspection: TaskPacketInspection): string[] {
   const mismatches: string[] = [];
   if (record.packetId !== inspection.packet?.id) mismatches.push("packetId");
+  if ((record.assessmentMode ?? "verified") !== inspection.packet?.assessmentMode) mismatches.push("assessmentMode");
   if (record.packetLocator !== inspection.packetLocator) mismatches.push("packetLocator");
   if (!sameDigest(record.preAdmissionDigest, inspection.preAdmissionDigest)) mismatches.push("pre-admission");
   if (!sameDigest(record.packetDigest, inspection.packetDigest)) mismatches.push("packet");

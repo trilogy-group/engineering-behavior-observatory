@@ -162,6 +162,9 @@ test("corpus CLI builds, queries, and validates the local index", () => {
     assert.equal(main(["corpus", "query", indexPath, "--failure-class", "task"], write), 0);
     assert.match(output, /attempt-task-failed-1/);
     output = "";
+    assert.equal(main(["corpus", "query", indexPath, "--assessment-mode", "verified"], write), 0);
+    assert.match(output, /attempt-task-failed-1/);
+    output = "";
     assert.equal(main(["corpus", "validate", corpus, indexPath], write), 0);
     assert.match(output, /current/);
   } finally {

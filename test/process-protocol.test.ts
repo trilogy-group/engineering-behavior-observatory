@@ -591,6 +591,26 @@ test("snapshots direct writer records when append is called", async () => {
   }
 });
 
+test("serializes concurrent direct appends without rejecting its own lock", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-protocol-concurrent-direct-"));
+  const path = join(root, "hooks.jsonl");
+  const writer = new JsonlEvidenceWriter(path);
+  try {
+    await Promise.all([
+      writer.append({ sequence: 1, hook: "first" }),
+      writer.append({ sequence: 2, hook: "second" }),
+    ]);
+    await writer.close();
+    assert.deepEqual(readFileSync(path, "utf8").trim().split("\n").map((line) => JSON.parse(line)), [
+      { sequence: 1, hook: "first" },
+      { sequence: 2, hook: "second" },
+    ]);
+  } finally {
+    await writer.close().catch(() => undefined);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("direct JSONL appends reject values that JSON cannot preserve", async () => {
   const root = temporaryRoot();
   try {

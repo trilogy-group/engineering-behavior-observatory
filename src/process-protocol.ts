@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
-import { closeSync, constants, fsyncSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, statSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, constants, fsyncSync, mkdirSync, openSync, readSync, realpathSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { mkdir, open, type FileHandle } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 
@@ -122,9 +122,6 @@ export class JsonlEvidenceWriter {
     if (this.poisoned) return Promise.reject(new Error("JSONL evidence writer is unusable after an ambiguous append."));
     if (this.claimed && token !== INTERNAL_RECORDER_TOKEN) {
       return Promise.reject(new Error("JSONL evidence writer is claimed by a protocol recorder."));
-    }
-    if (token !== INTERNAL_RECORDER_TOKEN && writerPathIsReserved(this.path)) {
-      return Promise.reject(new Error("JSONL evidence path is reserved by a protocol recorder."));
     }
     if (!isRecord(record)) return Promise.reject(new Error("JSONL evidence records must be objects."));
     let line: string;
@@ -1121,19 +1118,6 @@ function canonicalWriterPath(path: string): string {
       parent = resolve(dirname(path));
     }
     return resolve(parent, basename(path));
-  }
-}
-
-function writerPathIsReserved(path: string): boolean {
-  const canonicalPath = canonicalWriterPath(path);
-  if (CLAIMED_WRITER_PATHS.has(canonicalPath)) return true;
-  if (isHardLinkedPath(canonicalPath)) return true;
-  try {
-    lstatSync(`${canonicalPath}.protocol.lock`);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
   }
 }
 

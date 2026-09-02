@@ -3,6 +3,7 @@
   "bundleId": "bundle-complete",
   "status": "blocked",
   "sharingClass": "partner",
+  "assessmentMode": "verified",
   "policyDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
   "artifactIds": [
     "session",

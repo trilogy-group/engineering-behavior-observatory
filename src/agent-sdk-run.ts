@@ -34,6 +34,7 @@ import type { VerifierResult } from "./verifiers.js";
 export type CaptureClaudeAgentSdkVerifier = (
   context: VerifierExecutionContext,
   workspace: CapturedWorkspaceOutcome,
+  workspacePath: string,
 ) => VerifierResult | Promise<VerifierResult>;
 
 export type CaptureClaudeAgentSdkRunOptions = {
@@ -42,6 +43,9 @@ export type CaptureClaudeAgentSdkRunOptions = {
   workspace: WorkspaceCoordinator;
   configuration: ClaudeAgentSdkConfiguration;
   verifier?: CaptureClaudeAgentSdkVerifier;
+  workspaceOutcomeExcludedDirectoryNames?: readonly string[];
+  workspaceOutcomeRespectsGitignore?: boolean;
+  workspaceOutcomeOmitsEmptyDirectories?: boolean;
   expectedHooks?: readonly HookEvent[];
   query?: ClaudeAgentSdkQuery;
   traceId?: string;
@@ -80,8 +84,11 @@ export async function captureClaudeAgentSdkRun(
   let workspace: WorkspaceExecutionResult | undefined;
   let workspaceOutcome: CapturedWorkspaceOutcome | undefined;
   let workspaceOutcomePromise: Promise<CapturedWorkspaceOutcome> | undefined;
+  let workspaceCaptureError: string | undefined;
+  let verifierResult: VerifierResult | undefined;
+  let verifierError: unknown;
 
-  const captureWorkspace = async (): Promise<CapturedWorkspaceOutcome> => {
+  const captureWorkspace = async (verifierContext?: VerifierExecutionContext): Promise<CapturedWorkspaceOutcome> => {
     if (workspaceOutcome !== undefined) return workspaceOutcome;
     workspaceOutcomePromise ??= (async () => {
       if (workspace?.status !== "ready" || workspace.path === undefined || workspace.artifactId === undefined) {
@@ -91,9 +98,58 @@ export async function captureClaudeAgentSdkRun(
         startPath: options.startingWorkspacePath,
         finalPath: workspace.path,
         id: workspace.artifactId,
-      });
+        ...(options.workspaceOutcomeExcludedDirectoryNames === undefined ? {} : {
+          excludeDirectoryNames: options.workspaceOutcomeExcludedDirectoryNames,
+        }),
+        ...(options.workspaceOutcomeRespectsGitignore === undefined ? {} : {
+          respectGitignore: options.workspaceOutcomeRespectsGitignore,
+        }),
+        ...(options.workspaceOutcomeOmitsEmptyDirectories === undefined ? {} : {
+          omitEmptyDirectories: options.workspaceOutcomeOmitsEmptyDirectories,
+        }),
+      }, verifierContext === undefined || options.verifier === undefined
+        ? undefined
+        : async (projectedPath, outcome) => {
+            try {
+              const aborted = Symbol("aborted");
+              let onAbort: (() => void) | undefined;
+              const verifierPromise = Promise.resolve(options.verifier!(verifierContext, outcome, projectedPath));
+              const verifierOutcome = await Promise.race([
+                verifierPromise,
+                new Promise<typeof aborted>((resolvePromise) => {
+                  onAbort = () => resolvePromise(aborted);
+                  if (verifierContext.signal.aborted) onAbort();
+                  else verifierContext.signal.addEventListener("abort", onAbort, { once: true });
+                }),
+              ]);
+              if (onAbort !== undefined) verifierContext.signal.removeEventListener("abort", onAbort);
+              if (verifierOutcome === aborted) {
+                let graceTimer: NodeJS.Timeout | undefined;
+                const settled = await Promise.race([
+                  verifierPromise.then(
+                    (value) => ({ kind: "result" as const, value }),
+                    (error: unknown) => ({ kind: "error" as const, error }),
+                  ),
+                  new Promise<{ kind: "timed-out" }>((resolvePromise) => {
+                    graceTimer = setTimeout(() => resolvePromise({ kind: "timed-out" }), options.shutdownGraceMs ?? 250);
+                  }),
+                ]);
+                if (graceTimer !== undefined) clearTimeout(graceTimer);
+                if (settled.kind === "result") verifierResult = settled.value;
+                else if (settled.kind === "error") verifierError = settled.error;
+                else void verifierPromise.catch(() => undefined);
+              } else {
+                verifierResult = verifierOutcome;
+              }
+            } catch (error) {
+              verifierError = error;
+            }
+          });
       return workspaceOutcome;
-    })();
+    })().catch((error: unknown) => {
+      workspaceCaptureError = error instanceof Error ? error.message : String(error);
+      throw error;
+    });
     return workspaceOutcomePromise;
   };
 
@@ -123,13 +179,16 @@ export async function captureClaudeAgentSdkRun(
   try {
     attempt = await executeRunAttempt({
       run,
+      assessmentMode: definition.run.assessmentMode,
       attempt: attemptIdentity,
       workspace: coordinatedWorkspace,
       harness: (context) => executeClaudeAgentSdk(context, options.configuration, streamCapture, options.query),
       ...(options.verifier === undefined ? {} : {
         verifier: async (context) => {
-          const outcome = await captureWorkspace();
-          const result = await options.verifier!(context, outcome);
+          await captureWorkspace(context);
+          if (verifierError !== undefined) throw verifierError;
+          if (verifierResult === undefined) throw new Error("Agent SDK verifier did not return a result.");
+          const result = verifierResult;
           await assembler.writeJsonArtifact({
             id: "verifier",
             source: "ebo-verifier",
@@ -191,14 +250,24 @@ export async function captureClaudeAgentSdkRun(
       reason: attempt.terminal.state === "interrupted" ? "process-interrupted" as const : "not-emitted" as const,
       affects: ["semantic" as const],
     }]),
-    ...(agentSdkEvidence?.captureWarnings.count === 0 ? [] : [{
-      kind: "hook-callback",
+    ...(workspaceOutcome === undefined && workspaceCaptureError !== undefined ? [{
+      kind: "workspace",
       reason: "not-collected" as const,
-      affects: ["semantic" as const],
-    }]),
+      affects: ["outcome" as const],
+      detail: workspaceCaptureError.slice(0, 4096),
+    }] : []),
   ];
   const qualificationOptions = {
     startingWorkspacePath: options.startingWorkspacePath,
+    ...(options.workspaceOutcomeExcludedDirectoryNames === undefined ? {} : {
+      workspaceOutcomeExcludedDirectoryNames: options.workspaceOutcomeExcludedDirectoryNames,
+    }),
+    ...(options.workspaceOutcomeRespectsGitignore === undefined ? {} : {
+      workspaceOutcomeRespectsGitignore: options.workspaceOutcomeRespectsGitignore,
+    }),
+    ...(options.workspaceOutcomeOmitsEmptyDirectories === undefined ? {} : {
+      workspaceOutcomeOmitsEmptyDirectories: options.workspaceOutcomeOmitsEmptyDirectories,
+    }),
     ...(agentSdkEvidence === undefined ? {} : { agentSdkEvidence }),
     hookCapabilities: capabilities,
     expectedHooks,

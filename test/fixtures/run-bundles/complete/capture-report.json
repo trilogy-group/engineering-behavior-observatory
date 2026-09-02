@@ -1,6 +1,7 @@
 {
   "schemaVersion": "capture-report/v1",
   "bundleId": "bundle-complete",
+  "assessmentMode": "verified",
   "qualification": "qualified",
   "capabilities": {
     "semantic": { "status": "available" },
