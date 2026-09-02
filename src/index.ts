@@ -251,6 +251,34 @@ export type {
   CaptureClaudeAgentSdkVerifier,
 } from "./agent-sdk-run.js";
 export {
+  AdapterRegistry,
+  assertAdapterContract,
+  UNIFORM_EVENT_FAMILIES,
+  validateUniformEvents,
+} from "./uniform-events.js";
+export type {
+  AdapterCapability,
+  AdapterCapabilityProfile,
+  CapturedNativeRecord,
+  ContentReference,
+  EvidenceUnavailable,
+  EvidenceValue,
+  HarnessAdapter,
+  NativeCaptureAdapter,
+  NativeEvidenceReference,
+  NativeEvidenceResolver,
+  NativeOrderEvidence,
+  NormalizationInput,
+  NormalizationResult,
+  QualifiedNativeCapture,
+  UniformAttributeScalar,
+  UniformAttributeValue,
+  UniformEvent,
+  UniformEventFamily,
+  UniformEventNormalizationAdapter,
+  UnmappedNativeRecord,
+} from "./uniform-events.js";
+export {
   AGENT_SDK_CONFIG_SCHEMA_VERSION,
   resolveAgentSdkConfigurationRecord,
   runAgentSdkQueueEntry,

@@ -9,6 +9,11 @@ hooks, telemetry references, workspace changes, optional verified-task results, 
 capture-quality reports. Cross-harness normalization, behavioral evaluation,
 and the local Behavior Atlas build on capture-qualified bundles afterward.
 
+The first post-capture contract is now available: versioned
+[uniform events and explicit adapter interfaces](docs/uniform-events.md) project
+capture-qualified native evidence without replacing source records or transport
+semantics.
+
 ## Status
 
 M2 native Agent SDK capture is available through the public
@@ -119,8 +124,8 @@ semantics.
 
 `ebo validate` checks the supported task-packet, experiment, and run-bundle
 artifact versions. On failure it identifies the artifact, schema version, and
-failing JSON field. Adapter, evaluation, and Atlas behavior are introduced by
-their separately scoped tasks.
+failing JSON field. Harness-specific normalizers, evaluation, and Atlas
+behavior are introduced by their separately scoped tasks.
 
 Task-packet commands validate externally authored packets, enforce their
 recorded admission decision, persist a digest-based freeze record, and report

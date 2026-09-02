@@ -1133,6 +1133,7 @@ function loadValidators(): Map<string, ValidateFunction> {
   ajv.addSchema(readSchema("experiment.v1.schema.json"));
   ajv.addSchema(readSchema("run-queue.v1.schema.json"));
   ajv.addSchema(readSchema("run-bundles/v1.json"));
+  ajv.addSchema(readSchema("uniform-events/v1.json"));
 
   return new Map([
     ["ebo.task-packet/v1", requiredValidator(ajv, "https://ebo.dev/schemas/task-packet.v1.schema.json")],
@@ -1143,6 +1144,8 @@ function loadValidators(): Map<string, ValidateFunction> {
     ["verifier-result/v1", requiredValidator(ajv, `${runBundleSchemaId}#/$defs/verifierResult`)],
     ["capture-report/v1", requiredValidator(ajv, `${runBundleSchemaId}#/$defs/captureReport`)],
     ["export-manifest/v1", requiredValidator(ajv, `${runBundleSchemaId}#/$defs/exportManifest`)],
+    ["ebo.uniform-event/v1", requiredValidator(ajv, "urn:ebo:schema:uniform-events:v1#/$defs/uniformEvent")],
+    ["ebo.adapter-capability-profile/v1", requiredValidator(ajv, "urn:ebo:schema:uniform-events:v1#/$defs/capabilityProfile")],
   ]);
 }
 
