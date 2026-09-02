@@ -188,6 +188,31 @@ test("runs a minimal capture and normalization adapter contract while retaining 
     attemptId: event.attemptId,
     qualification: "qualified",
   }, resolver), /duplicate native references/);
+
+  const capturedCollision = { artifactId: "a\0", recordLocator: "b" };
+  const inventedCollision = { artifactId: "a", recordLocator: "\0b" };
+  const collisionAdapter = {
+    ...adapter,
+    capture: {
+      ...adapter.capture,
+      capture: async () => [{ reference: capturedCollision, record: { type: "message" as const } }],
+    },
+    normalization: {
+      ...adapter.normalization,
+      normalize: async () => ({
+        events: [{
+          ...event,
+          source: { ...event.source, nativeReference: inventedCollision },
+        }],
+        unmapped: [],
+      }),
+    },
+  };
+  await assert.rejects(assertAdapterContract(collisionAdapter, null, {
+    runId: event.runId,
+    attemptId: event.attemptId,
+    qualification: "qualified",
+  }, resolver), /not captured/);
 });
 
 function resolverFor(events: readonly UniformEvent[]): NativeEvidenceResolver {

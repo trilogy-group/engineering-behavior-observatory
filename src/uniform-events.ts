@@ -261,5 +261,5 @@ async function assertResolvable(
 }
 
 function referenceKey(reference: NativeEvidenceReference): string {
-  return `${reference.artifactId}\u0000${reference.recordLocator}`;
+  return JSON.stringify([reference.artifactId, reference.recordLocator]);
 }
