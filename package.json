@@ -21,7 +21,7 @@
     "ebo": "node dist/src/cli.js"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.251",
+    "@anthropic-ai/claude-agent-sdk": "0.3.258",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1"
   },
