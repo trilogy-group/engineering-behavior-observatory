@@ -49,6 +49,12 @@ keeps the streamed records and marks reconciliation partial. Unknown `kind`
 values remain in native JSONL and are listed as unmapped; they never crash the
 capture.
 
+REST responses and WebSocket frames are bounded before parsing, event capture
+has a fixed upper limit, and repeated pagination cursors fail into partial
+evidence. A coordinator abort closes the socket, stops polling, attempts final
+REST recovery and cleanup with a short independent bound, and retains the
+records already received.
+
 Matching REST and WebSocket IDs proves agreement between those two public API
 views only. The boundary does not expose enough evidence to prove delivery of
 the complete in-process `EventLog`, so every otherwise usable capture records

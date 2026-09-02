@@ -5,6 +5,7 @@ import {
   OPENHANDS_AGENT_SERVER_VERSION,
   type OpenHandsCapture,
   type OpenHandsCaptureRequest,
+  type OpenHandsNativeRecord,
 } from "./openhands.js";
 import {
   createAttemptIdentity,
@@ -24,9 +25,10 @@ import {
   type RunBundleDefinition,
   type RunManifest,
 } from "./run-bundles.js";
-import type { NormalizationResult, NativeEvidenceReference } from "./uniform-events.js";
+import type { CapturedNativeRecord, NormalizationResult, NativeEvidenceReference } from "./uniform-events.js";
 import { validateUniformEvents } from "./uniform-events.js";
 import type { VerifierResult } from "./verifiers.js";
+import { openJsonlEvidenceWriter } from "./process-protocol.js";
 
 export type CaptureOpenHandsAgentServerVerifier = (
   context: VerifierExecutionContext,
@@ -36,7 +38,7 @@ export type CaptureOpenHandsAgentServerVerifier = (
 
 export type OpenHandsAgentServerRunConfiguration = Omit<
   OpenHandsCaptureRequest,
-  "runId" | "attemptId" | "startConversation"
+  "runId" | "attemptId" | "startConversation" | "signal" | "onRecord"
 > & {
   model: string;
   startConversation: Record<string, unknown>;
@@ -75,12 +77,18 @@ export async function captureOpenHandsAgentServerRun(
   }
   const definition = withPinnedRuntime(options.definition);
   const assembler = await createRunBundleAssembler(definition);
+  const sessionWriter = await openJsonlEvidenceWriter(`${assembler.bundleRoot}/session.jsonl`, { exclusive: true });
   let workspace: WorkspaceExecutionResult | undefined;
   let workspaceOutcome: CapturedWorkspaceOutcome | undefined;
   let workspaceOutcomePromise: Promise<CapturedWorkspaceOutcome> | undefined;
   let verifierResult: VerifierResult | undefined;
   let capture: OpenHandsCapture | undefined;
   let nativeEvidenceWritten = false;
+  let captureSettled = false;
+  let progressiveSessionId: string | undefined;
+  let progressiveWriteError: string | undefined;
+  let acceptingRecords = true;
+  const progressiveRecords: Array<CapturedNativeRecord<OpenHandsNativeRecord>> = [];
   const workspaceOutcomeExcludedDirectoryNames = [
     ".git",
     ...(options.workspaceOutcomeExcludedDirectoryNames ?? []).filter((name) => name !== ".git"),
@@ -113,9 +121,10 @@ export async function captureOpenHandsAgentServerRun(
 
   const writeNativeEvidence = async (): Promise<void> => {
     if (nativeEvidenceWritten) return;
-    if (capture === undefined) return;
-    const sessionBytes = Buffer.from(`${capture.records.map(({ record }) => JSON.stringify(record)).join("\n")}\n`);
-    await writeArtifactAtomically(assembler.bundleRoot, "session.jsonl", sessionBytes, undefined, { overwrite: false });
+    await sessionWriter.flush();
+    if (progressiveWriteError !== undefined) throw new Error(progressiveWriteError);
+    if (!captureSettled || sessionWriter.count === 0 || progressiveSessionId === undefined) return;
+    await sessionWriter.close();
     await assembler.registerArtifact({
       id: "session",
       source: "openhands-agent-server",
@@ -123,8 +132,12 @@ export async function captureOpenHandsAgentServerRun(
       mediaType: "application/x-ndjson",
       sharingClass: "restricted",
       relativePath: "session.jsonl",
-      nativeReference: { type: "session", id: capture.conversationId },
+      nativeReference: { type: "session", id: progressiveSessionId },
     });
+    if (capture === undefined) {
+      nativeEvidenceWritten = true;
+      return;
+    }
     const hooks = capture.records.filter(({ record }) => record.payload.kind === "HookExecutionEvent");
     if (hooks.length > 0) {
       const hookBytes = Buffer.from(`${hooks.map(({ record }) => JSON.stringify({
@@ -172,20 +185,37 @@ export async function captureOpenHandsAgentServerRun(
     assessmentMode: definition.run.assessmentMode,
     attempt: attemptIdentity,
     workspace: coordinatedWorkspace,
-    harness: async () => {
+    harness: async ({ signal, registerShutdown }) => {
       if (workspace?.status !== "ready" || workspace.path === undefined) {
         throw new Error("OpenHands run requires a ready workspace path.");
       }
       const { serverWorkspacePath, ...configuration } = options.configuration;
-      capture = await captureOpenHandsAgentServer({
-        ...configuration,
-        runId: definition.run.id,
-        attemptId: definition.attempt.id,
-        startConversation: {
-          ...options.configuration.startConversation,
-          workspace: { type: "local", working_dir: serverWorkspacePath ?? workspace.path },
-        },
+      registerShutdown(async () => {
+        if (progressiveSessionId === undefined) return;
+        await cleanupOpenHandsConversation(configuration, progressiveSessionId, options.shutdownGraceMs ?? 250);
       });
+      try {
+        capture = await captureOpenHandsAgentServer({
+          ...configuration,
+          runId: definition.run.id,
+          attemptId: definition.attempt.id,
+          signal,
+          onRecord: (captured) => {
+            if (!acceptingRecords) return;
+            if (captured.record.session_id !== "pending") progressiveSessionId = captured.record.session_id;
+            progressiveRecords.push(captured);
+            void sessionWriter.append(captured.record).catch((error: unknown) => {
+              progressiveWriteError ??= error instanceof Error ? error.message : String(error);
+            });
+          },
+          startConversation: {
+            ...options.configuration.startConversation,
+            workspace: { type: "local", working_dir: serverWorkspacePath ?? workspace.path },
+          },
+        });
+      } finally {
+        captureSettled = true;
+      }
       if (capture.captureError !== undefined) {
         return {
           status: "failed",
@@ -232,7 +262,20 @@ export async function captureOpenHandsAgentServerRun(
     ...(options.harnessBudgetMs === undefined ? {} : { harnessBudgetMs: options.harnessBudgetMs }),
     ...(options.shutdownGraceMs === undefined ? {} : { shutdownGraceMs: options.shutdownGraceMs }),
   });
-  if (capture === undefined) throw new Error("OpenHands attempt ended without native capture evidence.");
+  if (capture === undefined) {
+    acceptingRecords = false;
+    await sessionWriter.close();
+    if (progressiveSessionId === undefined || sessionWriter.count === 0) {
+      throw new Error("OpenHands attempt ended before producing identified native capture evidence.");
+    }
+    capture = interruptedCapture(
+      definition.run.id,
+      definition.attempt.id,
+      progressiveSessionId,
+      progressiveRecords.slice(0, sessionWriter.count),
+    );
+    captureSettled = true;
+  }
   await writeNativeEvidence();
   const normalized = await normalizeOpenHandsCapture(capture);
   await validateUniformEvents(normalized.events, {
@@ -253,12 +296,24 @@ export async function captureOpenHandsAgentServerRun(
       affects: ["semantic"],
       detail: capture.eventLogCompleteness.reason,
     },
-    ...(capture.reconciliation.status === "partial" ? [{
+    ...(capture.captureError === undefined ? [] : [{
+      kind: "agent-server-control",
+      reason: "not-collected" as const,
+      affects: ["semantic" as const],
+      detail: capture.captureError,
+    }]),
+    ...(capture.reconciliation.finalReadError === undefined ? [] : [{
       kind: "final-rest-events",
       reason: "not-collected" as const,
       affects: ["semantic" as const],
       detail: capture.reconciliation.finalReadError,
-    }] : []),
+    }]),
+    ...(capture.reconciliation.transportGaps.length === 0 ? [] : [{
+      kind: "websocket-events",
+      reason: "not-collected" as const,
+      affects: ["semantic" as const],
+      detail: `Transport gaps: ${capture.reconciliation.transportGaps.join(", ")}`,
+    }]),
   ];
   const qualificationOptions = {
     startingWorkspacePath: options.startingWorkspacePath,
@@ -282,6 +337,44 @@ function resolvesCaptureReference(capture: OpenHandsCapture, reference: NativeEv
     && (reference.recordLocator === base.recordLocator || reference.recordLocator.startsWith(`${base.recordLocator}#`)));
 }
 
+function interruptedCapture(
+  runId: string,
+  attemptId: string,
+  conversationId: string,
+  records: readonly CapturedNativeRecord<OpenHandsNativeRecord>[],
+): OpenHandsCapture {
+  const events = (channel: OpenHandsNativeRecord["channel"]): Record<string, unknown>[] => records
+    .filter(({ record }) => record.channel === channel)
+    .map(({ record }) => record.payload);
+  const ids = (values: readonly Record<string, unknown>[]): string[] => [...new Set(values.flatMap(({ id }) =>
+    typeof id === "string" && id !== "" ? [id] : []))];
+  const streamedEventIds = ids(events("websocket-event"));
+  const finalEventIds = ids(events("rest-event"));
+  const streamedSet = new Set(streamedEventIds);
+  const finalSet = new Set(finalEventIds);
+  return {
+    runId,
+    attemptId,
+    qualification: "qualified-with-gaps",
+    records: structuredClone(records),
+    conversationId,
+    serverInfo: structuredClone(events("server-info")[0] ?? {}),
+    captureError: "OpenHands capture was aborted before returning.",
+    reconciliation: {
+      status: "partial",
+      streamedEventIds,
+      finalEventIds,
+      streamedOnlyEventIds: streamedEventIds.filter((id) => !finalSet.has(id)),
+      finalOnlyEventIds: finalEventIds.filter((id) => !streamedSet.has(id)),
+      transportGaps: ["capture-aborted"],
+    },
+    eventLogCompleteness: {
+      status: "unknown",
+      reason: "REST/WebSocket reconciliation cannot prove complete in-process EventLog delivery.",
+    },
+  };
+}
+
 function withPinnedRuntime(definition: RunBundleDefinition): RunBundleDefinition {
   const runtime = definition.run.runtime.filter(({ name }) => name !== "openhands-agent-server");
   runtime.push({ source: "OpenHands", name: "openhands-agent-server", version: OPENHANDS_AGENT_SERVER_VERSION });
@@ -293,4 +386,20 @@ function withPinnedRuntime(definition: RunBundleDefinition): RunBundleDefinition
       runtime,
     },
   };
+}
+
+async function cleanupOpenHandsConversation(
+  configuration: OpenHandsAgentServerRunConfiguration,
+  conversationId: string,
+  timeoutMs: number,
+): Promise<void> {
+  const headers = new Headers();
+  if (configuration.sessionApiKey !== undefined) headers.set("x-session-api-key", configuration.sessionApiKey);
+  const response = await (configuration.fetch ?? globalThis.fetch)(
+    new URL(`/api/conversations/${encodeURIComponent(conversationId)}`, configuration.baseUrl),
+    { method: "DELETE", headers, signal: AbortSignal.timeout(Math.max(1, timeoutMs)) },
+  );
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`OpenHands conversation cleanup failed with ${response.status}.`);
+  }
 }

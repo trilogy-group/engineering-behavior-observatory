@@ -159,7 +159,7 @@ test("maps supported event facts, error scopes, and exposed relationships while 
     "utf8",
   )) as Array<Record<string, unknown>>;
   const records = native.map((payload, index) => ({
-    reference: { artifactId: "openhands-native", recordLocator: `line:${index + 1}` },
+    reference: { artifactId: "session", recordLocator: `line:${index + 1}` },
     record: {
       schemaVersion: "ebo.openhands-native-record/v1" as const,
       session_id: "conversation-1",
@@ -183,6 +183,7 @@ test("maps supported event facts, error scopes, and exposed relationships while 
       finalEventIds: native.map(({ id }) => String(id)),
       streamedOnlyEventIds: [],
       finalOnlyEventIds: [],
+      transportGaps: [],
     },
     eventLogCompleteness: { status: "unknown", reason: "REST does not prove EventLog completeness." },
   };
@@ -317,6 +318,48 @@ test("retains and cleans up a partial attempt when message submission fails", as
   assert.equal(deleted, true);
 });
 
+test("aborts an in-flight conversation capture and retains the partial evidence", async () => {
+  const controller = new AbortController();
+  let deleted = false;
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
+      return json({ id: "conversation-1", execution_status: "running" });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [], next_page_id: null });
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") {
+      deleted = true;
+      return json({ success: true });
+    }
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+  setTimeout(() => controller.abort(), 1);
+
+  const result = await captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: {},
+    message: {},
+    fetch,
+    webSocket: (url) => {
+      const socket = new FakeWebSocket(url);
+      queueMicrotask(() => socket.open());
+      return socket;
+    },
+    signal: controller.signal,
+    timeoutMs: 1_000,
+    pollIntervalMs: 50,
+  });
+
+  assert.match(result.captureError ?? "", /aborted/);
+  assert.equal(result.reconciliation.status, "partial");
+  assert.equal(deleted, true);
+});
+
 test("bounds untrusted Agent Server JSON responses before parsing", async () => {
   await assert.rejects(captureOpenHandsAgentServer({
     runId: "run-1",
@@ -419,7 +462,7 @@ test("satisfies the uniform adapter contract with resolvable retained native rec
     attemptId: "attempt-1",
     qualification: "qualified-with-gaps",
     records: native.map((payload, index) => ({
-      reference: { artifactId: "openhands-native", recordLocator: `line:${index + 1}` },
+      reference: { artifactId: "session", recordLocator: `line:${index + 1}` },
       record: {
         schemaVersion: "ebo.openhands-native-record/v1",
         session_id: "conversation-1",
@@ -438,6 +481,7 @@ test("satisfies the uniform adapter contract with resolvable retained native rec
       finalEventIds: native.map(({ id }) => String(id)),
       streamedOnlyEventIds: [],
       finalOnlyEventIds: [],
+      transportGaps: [],
     },
     eventLogCompleteness: { status: "unknown", reason: "REST does not prove EventLog completeness." },
   };
@@ -446,7 +490,7 @@ test("satisfies the uniform adapter contract with resolvable retained native rec
     ...adapter,
     capture: { ...adapter.capture, capture: async () => capture },
   }, null, {
-    resolve: ({ artifactId, recordLocator }) => artifactId === "openhands-native" && /^line:\d+(#\/payload(?:\/.*)?)?$/.test(recordLocator),
+    resolve: ({ artifactId, recordLocator }) => artifactId === "session" && /^line:\d+(#\/payload(?:\/.*)?)?$/.test(recordLocator),
   });
 
   assert.equal(result.events.length, 10);
@@ -459,7 +503,7 @@ test("preserves timezone-naive native timestamps without inventing a uniform tim
     attemptId: "attempt-1",
     qualification: "qualified-with-gaps",
     records: [{
-      reference: { artifactId: "openhands-native", recordLocator: "line:1" },
+      reference: { artifactId: "session", recordLocator: "line:1" },
       record: {
         schemaVersion: "ebo.openhands-native-record/v1",
         session_id: "conversation-1",
@@ -478,6 +522,7 @@ test("preserves timezone-naive native timestamps without inventing a uniform tim
       finalEventIds: ["event-message"],
       streamedOnlyEventIds: [],
       finalOnlyEventIds: [],
+      transportGaps: [],
     },
     eventLogCompleteness: { status: "unknown", reason: "not exposed" },
   };
@@ -589,8 +634,83 @@ test("packages one verified smoke attempt with native, workspace, verifier, and 
       "workspace", "verifier", "session", "hook",
     ]);
     assert.equal(result.normalized.events.every(({ attemptId }) => attemptId === definition.attempt.id), true);
+    assert.equal(result.normalized.events.every(({ source }) => source.nativeReference.artifactId === "session"), true);
+    assert.equal(result.normalized.events.flatMap(({ content }) => content.status === "known" ? content.value : [])
+      .every(({ nativeReference }) => nativeReference.artifactId === "session"), true);
     assert.equal(result.qualification.status, "qualified-with-gaps");
     assert.equal(result.qualification.reasons.some(({ code }) => code === "EVENT_LOG_COMPLETENESS_UNPROVEN"), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("retains progressively written native evidence when lifecycle cancellation interrupts polling", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-openhands-interrupted-run-"));
+  const start = join(root, "start");
+  const final = join(root, "final");
+  const bundleRoot = join(root, "bundle");
+  mkdirSync(start);
+  writeFileSync(join(start, "result.txt"), "before\n");
+  cpSync(start, final, { recursive: true, preserveTimestamps: true });
+  const definition: RunBundleDefinition = {
+    bundleRoot,
+    bundleId: "bundle-openhands-interrupted",
+    run: {
+      id: "run-openhands-interrupted",
+      assessmentMode: "observational",
+      task: { id: "task-openhands-interrupted" },
+      fixture: { id: "fixture-openhands-interrupted", digest: SHA("a") },
+      model: { provider: "test", id: "test/model" },
+      harness: { id: "openhands-agent-server", version: OPENHANDS_AGENT_SERVER_VERSION },
+      runtime: [],
+    },
+    attempt: { id: "attempt-openhands-interrupted", number: 1 },
+    configuration: { digest: SHA("b"), budgetDigest: SHA("c"), toolPolicyDigest: SHA("d") },
+  };
+  const controller = new AbortController();
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") {
+      setTimeout(() => controller.abort(), 1);
+      return json({ success: true });
+    }
+    if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
+      return json({ id: "conversation-1", execution_status: "running" });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [], next_page_id: null });
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+
+  try {
+    const result = await captureOpenHandsAgentServerRun({
+      definition,
+      startingWorkspacePath: start,
+      workspace: { setup: async () => ({ status: "ready", path: final, artifactId: "workspace", retained: true }) },
+      configuration: {
+        model: "test/model",
+        baseUrl: "http://127.0.0.1:8000",
+        startConversation: {},
+        message: {},
+        fetch,
+        webSocket: (url) => {
+          const socket = new FakeWebSocket(url);
+          queueMicrotask(() => socket.open());
+          return socket;
+        },
+        pollIntervalMs: 50,
+      },
+      signal: controller.signal,
+      shutdownGraceMs: 250,
+    });
+    const session = result.manifest.evidence.find(({ kind }) => kind === "session");
+
+    assert.equal(result.attempt.terminal.state, "interrupted");
+    assert.match(result.capture.captureError ?? "", /aborted/);
+    assert.equal(session?.id, "session");
+    assert.equal(readFileSync(join(bundleRoot, session!.relativePath), "utf8").includes("conversation-created"), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
