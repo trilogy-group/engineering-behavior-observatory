@@ -130,7 +130,7 @@ test("marks recognized but unprojected native payload content as unknown", async
         sessionId: "session-golden",
         message: {
           type: "assistant",
-          uuid: "assistant-invalid-time",
+          uuid: "m".repeat(513),
           session_id: "session-golden",
           timestamp: "2026-01-01T24:00:00Z",
           message: { role: "assistant", content: [] },
@@ -166,6 +166,8 @@ test("marks recognized but unprojected native payload content as unknown", async
     status: "unknown",
     reason: "Agent SDK message has no originating timestamp",
   });
+  assert.equal(result.events.find(({ source }) =>
+    source.nativeReference.artifactId === "session" && source.nativeReference.recordLocator === "line:5")?.attributes.messageId, undefined);
 });
 
 test("correlates task lifecycle hooks by task ID before a shared agent ID", async () => {
@@ -207,10 +209,22 @@ test("accepts capture-qualified 256-character run and attempt identities", async
   const input = readFixture("complete");
   input.runId = "r".repeat(256);
   input.attemptId = "a".repeat(256);
+  input.records = input.records.map((captured) => ({
+    ...captured,
+    reference: {
+      ...captured.reference,
+      artifactId: captured.record.kind === "session" ? "s".repeat(256)
+        : captured.record.kind === "hook" ? "h".repeat(256) : captured.reference.artifactId,
+    },
+  }));
   const result = await claudeAgentSdkNormalizationAdapter.normalize(input);
 
   await validateUniformEvents(result.events, createAgentSdkNativeEvidenceResolver(input));
   assert.equal(result.events.every(({ runId, attemptId }) => runId.length === 256 && attemptId.length === 256), true);
+  const orderDomains = result.events.flatMap(({ nativeOrder }) => nativeOrder.status === "known" ? [nativeOrder.domain] : []);
+  assert.equal(orderDomains.every((domain) => domain.length <= 256), true);
+  assert.equal(orderDomains.some((domain) => domain.startsWith("session:sha256:")), true);
+  assert.equal(orderDomains.some((domain) => domain.startsWith("hooks:sha256:")), true);
 });
 
 test("produces stable event identities and ordering on repeated normalization", async () => {
@@ -281,14 +295,24 @@ test("loads a retained bundle only after structural qualification and validates 
     });
     assert.ok(captured.qualification.semanticAnalysisUsable);
 
-    const normalized = await normalizeClaudeAgentSdkRunBundle(bundleRoot);
-    assert.equal(normalized.events.every(({ source }) => source.harness === CLAUDE_AGENT_SDK_HARNESS), true);
-    assert.equal(normalized.events.some(({ family }) => family === "outcome"), true);
-
     const manifestPath = join(bundleRoot, "manifest.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
       evidence: Array<{ kind: string; relativePath: string; digest: `sha256:${string}`; sizeBytes: number }>;
     };
+    const sessionDescriptor = manifest.evidence.find(({ kind }) => kind === "session")!;
+    const sessionPath = join(bundleRoot, sessionDescriptor.relativePath);
+    const sessionBytes = Buffer.concat([Buffer.from("\n"), readFileSync(sessionPath)]);
+    writeFileSync(sessionPath, sessionBytes);
+    sessionDescriptor.digest = `sha256:${digestBytes(sessionBytes).value}`;
+    sessionDescriptor.sizeBytes = sessionBytes.length;
+    writeFileSync(manifestPath, canonicalizeMetadata(manifest));
+
+    const normalized = await normalizeClaudeAgentSdkRunBundle(bundleRoot);
+    assert.equal(normalized.events.every(({ source }) => source.harness === CLAUDE_AGENT_SDK_HARNESS), true);
+    assert.equal(normalized.events.some(({ family }) => family === "outcome"), true);
+    assert.deepEqual(normalized.events.filter(({ source }) => source.nativeReference.artifactId === "session")
+      .map(({ source }) => source.nativeReference.recordLocator), ["line:2", "line:3"]);
+
     const reportDescriptor = manifest.evidence.find(({ kind }) => kind === "capture-report")!;
     const reportPath = join(bundleRoot, reportDescriptor.relativePath);
     const report = JSON.parse(readFileSync(reportPath, "utf8")) as {

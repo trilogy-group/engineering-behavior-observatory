@@ -188,9 +188,9 @@ export async function readQualifiedClaudeAgentSdkCapture(
     }
     const bytes = await readVerifiedArtifact(root, descriptor.relativePath, digestFrom(descriptor.digest), MAX_EVIDENCE_BYTES);
     if (descriptor.kind === "session" || descriptor.kind === "hook") {
-      for (const [index, document] of parseJsonl(bytes).entries()) {
+      for (const { line, document } of parseJsonl(bytes)) {
         records.push({
-          reference: { artifactId: descriptor.id, recordLocator: `line:${index + 1}` },
+          reference: { artifactId: descriptor.id, recordLocator: `line:${line}` },
           record: { kind: descriptor.kind, document },
         });
       }
@@ -264,7 +264,7 @@ function mapSessionRecord(
   const drafts: DraftEvent[] = [];
   const subtype = text(wrapper.nativeSubtype) ?? text(message.subtype);
   const sessionId = text(wrapper.sessionId) ?? text(message.session_id);
-  const nativeOrder = sourceOrder(wrapper, `session:${captured.reference.artifactId}`);
+  const nativeOrder = sourceOrder(wrapper, orderDomain("session", captured.reference.artifactId));
   const nativeTime = originTime(message.timestamp, "Agent SDK message has no originating timestamp");
   const common = { input, captured, nativeType, nativeOrder, nativeTime, sessionId };
 
@@ -404,7 +404,7 @@ function mapHookRecord(
     captured,
     discriminator: "record",
     nativeType: hook,
-    nativeOrder: sourceOrder(wrapper, `hooks:${captured.reference.artifactId}`),
+    nativeOrder: sourceOrder(wrapper, orderDomain("hooks", captured.reference.artifactId)),
     nativeTime: { status: "unknown", reason: "Hook callback record has no native occurrence timestamp" },
     family: shape.family,
     phase: shape.phase,
@@ -476,6 +476,7 @@ function mapWorkspaceRecord(
 ): DraftEvent[] {
   const descriptor = asRecord(asRecord(captured.record.document)?.descriptor) as RunBundleEvidenceDescriptor | undefined;
   if (descriptor?.kind !== "workspace") return [];
+  const mediaType = text(descriptor.mediaType);
   return [draftEvent({
     input,
     captured,
@@ -488,7 +489,11 @@ function mapWorkspaceRecord(
     actor: { kind: "system", id: "ebo-workspace" },
     scope: { kind: "workspace", id: descriptor.id },
     attributes: compactAttributes({ mediaType: descriptor.mediaType, fingerprint: descriptor.fingerprint }),
-    content: knownContent({ nativeReference: captured.reference, mediaType: descriptor.mediaType, role: "workspace-outcome" }),
+    content: knownContent({
+      nativeReference: captured.reference,
+      ...(mediaType === undefined ? {} : { mediaType }),
+      role: "workspace-outcome",
+    }),
     anchors: [{ key: `artifact:${descriptor.id}`, rank: 0 }],
   })];
 }
@@ -694,12 +699,14 @@ async function assertPersistedStructuralQualification(root: string, manifest: Ru
   }
 }
 
-function parseJsonl(bytes: Buffer): unknown[] {
+function parseJsonl(bytes: Buffer): Array<{ line: number; document: unknown }> {
   const textValue = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  return textValue.split(/\r?\n/u).filter((line) => line.trim() !== "").map((line) => {
-    assertNoDuplicateJsonKeys(line);
-    return JSON.parse(line) as unknown;
-  });
+  return textValue.split(/\r?\n/u).map((value, index) => ({ value, line: index + 1 }))
+    .filter(({ value }) => value.trim() !== "")
+    .map(({ value, line }) => {
+      assertNoDuplicateJsonKeys(value);
+      return { line, document: JSON.parse(value) as unknown };
+    });
 }
 
 function parseJson(bytes: Buffer): unknown {
@@ -717,6 +724,13 @@ function sourceOrder(document: JsonRecord, domain: string): UniformEvent["native
   return Number.isSafeInteger(sequence) && Number(sequence) >= 0
     ? { status: "known", value: Number(sequence), domain }
     : { status: "unknown", reason: `${domain} record has no valid source-local sequence` };
+}
+
+function orderDomain(kind: "session" | "hooks", artifactId: string): string {
+  const readable = `${kind}:${artifactId}`;
+  return [...readable].length <= 256
+    ? readable
+    : `${kind}:sha256:${createHash("sha256").update(artifactId).digest("hex")}`;
 }
 
 function originTime(value: unknown, reason: string): UniformEvent["nativeTime"] {
@@ -903,19 +917,28 @@ function knownContent(...content: ContentReference[]): UniformEvent["content"] {
 }
 
 function compactAttributes(values: Record<string, UniformAttributeValue | undefined>): Record<string, UniformAttributeValue> {
-  return Object.fromEntries(Object.entries(values).filter((entry): entry is [string, UniformAttributeValue] => entry[1] !== undefined));
+  return Object.fromEntries(Object.entries(values).filter((entry): entry is [string, UniformAttributeValue] =>
+    entry[1] !== undefined && validAttributeValue(entry[1])));
 }
 
 function scalar(value: unknown): UniformAttributeValue | undefined {
-  return value === null || ["string", "number", "boolean"].includes(typeof value)
+  return validAttributeScalar(value) ? value : undefined;
+}
+
+function scalarList(value: unknown): UniformAttributeValue | undefined {
+  return Array.isArray(value) && value.length <= 16 && value.every(validAttributeScalar)
     ? value as UniformAttributeValue
     : undefined;
 }
 
-function scalarList(value: unknown): UniformAttributeValue | undefined {
-  return Array.isArray(value) && value.every((entry) => entry === null || ["string", "number", "boolean"].includes(typeof entry))
-    ? value as UniformAttributeValue
-    : undefined;
+function validAttributeValue(value: UniformAttributeValue): boolean {
+  return Array.isArray(value) ? value.length <= 16 && value.every(validAttributeScalar) : validAttributeScalar(value);
+}
+
+function validAttributeScalar(value: unknown): value is string | number | boolean | null {
+  return value === null || typeof value === "boolean"
+    || typeof value === "number" && Number.isFinite(value)
+    || typeof value === "string" && [...value].length <= 512;
 }
 
 function asRecord(value: unknown): JsonRecord | undefined {
@@ -923,7 +946,7 @@ function asRecord(value: unknown): JsonRecord | undefined {
 }
 
 function text(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+  return typeof value === "string" && value.trim() !== "" && [...value].length <= 256 ? value : undefined;
 }
 
 function unmappedReason(record: AgentSdkNativeRecord): string {
