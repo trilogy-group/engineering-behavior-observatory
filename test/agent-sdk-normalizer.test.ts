@@ -101,6 +101,14 @@ test("handles optional and required evidence gaps without weakening qualificatio
   await assert.rejects(claudeAgentSdkNormalizationAdapter.normalize(withoutSession), /required session evidence/u);
   await assert.rejects(claudeAgentSdkNormalizationAdapter.normalize({
     ...complete,
+    records: complete.records.filter(({ record }) => record.kind !== "verifier"),
+  }), /verified input is missing required verifier evidence/u);
+  await assert.rejects(claudeAgentSdkNormalizationAdapter.normalize({
+    ...complete,
+    records: complete.records.filter(({ record }) => !["assessment-mode", "verifier"].includes(record.kind)),
+  }), /verified input is missing required verifier evidence/u);
+  await assert.rejects(claudeAgentSdkNormalizationAdapter.normalize({
+    ...complete,
     qualification: "unqualified" as never,
   }), /capture-qualified/u);
 });
@@ -355,6 +363,8 @@ test("loads a retained bundle only after structural qualification and validates 
     const normalized = await normalizeClaudeAgentSdkRunBundle(bundleRoot);
     assert.equal(normalized.events.every(({ source }) => source.harness === CLAUDE_AGENT_SDK_HARNESS), true);
     assert.equal(normalized.events.some(({ family }) => family === "outcome"), true);
+    assert.deepEqual(normalized.events.find(({ source }) => source.nativeType === "assessment-mode")?.attributes,
+      { assessmentMode: "observational" });
     assert.deepEqual(normalized.events.filter(({ source }) => source.nativeReference.artifactId === "session")
       .map(({ source }) => source.nativeReference.recordLocator), ["line:2", "line:3"]);
     assert.equal(normalized.events.find(({ source }) => source.nativeReference.artifactId === "hooks")

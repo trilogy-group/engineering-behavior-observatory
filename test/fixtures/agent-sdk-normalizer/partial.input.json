@@ -63,6 +63,10 @@
       }
     },
     {
+      "reference": { "artifactId": "manifest", "recordLocator": "#/run/assessmentMode" },
+      "record": { "kind": "assessment-mode", "document": "observational" }
+    },
+    {
       "reference": { "artifactId": "manifest", "recordLocator": "#/terminal" },
       "record": {
         "kind": "manifest",

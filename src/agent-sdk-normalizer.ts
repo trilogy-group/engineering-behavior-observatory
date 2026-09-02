@@ -44,6 +44,7 @@ type AgentSdkNativeKind =
   | "verifier"
   | "diagnostic"
   | "capture-report"
+  | "assessment-mode"
   | "manifest";
 
 export type AgentSdkNativeRecord = {
@@ -84,6 +85,7 @@ const ADAPTER_NATIVE_TYPES = [
   "agent-sdk-telemetry",
   "workspace-outcome",
   "verifier-result",
+  "assessment-mode",
   "terminal-record",
 ] as const;
 
@@ -208,6 +210,12 @@ export async function readQualifiedClaudeAgentSdkCapture(
       });
     }
   }
+  if (manifest.run.assessmentMode !== undefined) {
+    records.push({
+      reference: { artifactId: "manifest", recordLocator: "#/run/assessmentMode" },
+      record: { kind: "assessment-mode", document: manifest.run.assessmentMode },
+    });
+  }
   records.push({
     reference: { artifactId: "manifest", recordLocator: "#/terminal" },
     record: {
@@ -257,6 +265,7 @@ function mapRecord(
     case "telemetry": return mapTelemetryRecord(input, captured);
     case "workspace": return mapWorkspaceRecord(input, captured);
     case "verifier": return mapVerifierRecord(input, captured);
+    case "assessment-mode": return mapAssessmentModeRecord(input, captured);
     case "manifest": return mapManifestRecord(input, captured);
     case "diagnostic":
     case "capture-report": return [];
@@ -571,6 +580,29 @@ function mapManifestRecord(
   })];
 }
 
+function mapAssessmentModeRecord(
+  input: NormalizationInput<AgentSdkNativeRecord>,
+  captured: CapturedNativeRecord<AgentSdkNativeRecord>,
+): DraftEvent[] {
+  if (!["observational", "verified"].includes(String(captured.record.document))
+      || captured.reference.artifactId !== "manifest"
+      || captured.reference.recordLocator !== "#/run/assessmentMode") return [];
+  return [draftEvent({
+    input,
+    captured,
+    discriminator: "record",
+    nativeType: "assessment-mode",
+    nativeOrder: { status: "unknown", reason: "Run assessment mode has no native event order" },
+    nativeTime: { status: "unknown", reason: "Run assessment mode has no native occurrence timestamp" },
+    family: "outcome",
+    phase: "instant",
+    actor: { kind: "system", id: "ebo" },
+    scope: { kind: "attempt", id: input.attemptId },
+    attributes: { assessmentMode: captured.record.document as "observational" | "verified" },
+    content: { status: "known", value: [] },
+  })];
+}
+
 function draftEvent(input: {
   input: NormalizationInput<AgentSdkNativeRecord>;
   captured: CapturedNativeRecord<AgentSdkNativeRecord>;
@@ -674,6 +706,10 @@ function assertQualifiedInput(input: NormalizationInput<AgentSdkNativeRecord>): 
   const kinds = new Set(input.records.map(({ record }) => record.kind));
   for (const required of ["session", "hook", "workspace", "manifest"] as const) {
     if (!kinds.has(required)) throw new Error(`Capture-qualified Agent SDK input is missing required ${required} evidence.`);
+  }
+  const assessmentMode = input.records.find(({ record }) => record.kind === "assessment-mode")?.record.document;
+  if (assessmentMode !== "observational" && !kinds.has("verifier")) {
+    throw new Error("Capture-qualified verified input is missing required verifier evidence.");
   }
 }
 

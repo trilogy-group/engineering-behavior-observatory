@@ -92,7 +92,7 @@ normalization.
 | Agent SDK callback records | `message`, `model-request`, `tool`, `context`, `permission`, `delegation`, `artifact`, `runtime` |
 | Agent SDK telemetry summary | `runtime` |
 | Workspace manifest descriptor and verifier artifact | `artifact`, `validation` |
-| Run-manifest terminal record | `outcome` |
+| Run-manifest assessment mode and terminal records | `outcome` |
 
 Session and callback sequence numbers keep separate
 `session:<artifact-id>` and `hooks:<artifact-id>` order domains. An originating

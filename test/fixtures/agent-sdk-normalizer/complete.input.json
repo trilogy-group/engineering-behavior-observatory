@@ -268,6 +268,10 @@
       }
     },
     {
+      "reference": { "artifactId": "manifest", "recordLocator": "#/run/assessmentMode" },
+      "record": { "kind": "assessment-mode", "document": "verified" }
+    },
+    {
       "reference": { "artifactId": "manifest", "recordLocator": "#/terminal" },
       "record": {
         "kind": "manifest",
