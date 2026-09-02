@@ -72,6 +72,9 @@ export type CaptureOpenHandsAgentServerRunResult = {
 export async function captureOpenHandsAgentServerRun(
   options: CaptureOpenHandsAgentServerRunOptions,
 ): Promise<CaptureOpenHandsAgentServerRunResult> {
+  if (options.definition.run.harness.id !== "openhands-agent-server") {
+    throw new Error(`OpenHands run harness must be openhands-agent-server; received ${options.definition.run.harness.id}.`);
+  }
   if (options.definition.run.model.id !== options.configuration.model) {
     throw new Error("The declared model must match the OpenHands run configuration.");
   }

@@ -403,7 +403,7 @@ test("aborts an in-flight conversation capture and retains the partial evidence"
 });
 
 test("bounds untrusted Agent Server JSON responses before parsing", async () => {
-  await assert.rejects(captureOpenHandsAgentServer({
+  const result = await captureOpenHandsAgentServer({
     runId: "run-1",
     attemptId: "attempt-1",
     baseUrl: "http://127.0.0.1:8000",
@@ -412,7 +412,27 @@ test("bounds untrusted Agent Server JSON responses before parsing", async () => 
     fetch: async () => json({ version: "1.44.1", padding: "x".repeat(256) }),
     webSocket: (url) => new FakeWebSocket(url),
     maxResponseBytes: 100,
-  }), /response exceeds 100 bytes/);
+  });
+
+  assert.match(result.captureError ?? "", /response exceeds 100 bytes/);
+  assert.equal(result.records[0]?.record.channel, "capture-error");
+});
+
+test("retains an explicit partial record when server identity lookup fails", async () => {
+  const result = await captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: {},
+    message: {},
+    fetch: async () => json({ detail: "server info failed" }, 503),
+  });
+
+  assert.equal(result.conversationId, undefined);
+  assert.match(result.captureError ?? "", /503/);
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0]?.record.channel, "capture-error");
+  assert.equal(result.records[0]?.record.session_id, undefined);
 });
 
 test("retains an explicit gap for an oversized WebSocket frame", async () => {
@@ -451,6 +471,45 @@ test("retains an explicit gap for an oversized WebSocket frame", async () => {
   assert.equal(result.reconciliation.status, "partial");
   assert.equal(result.records.some(({ record }) =>
     record.channel === "websocket-status" && record.payload.state === "message-rejected"), true);
+});
+
+test("bounds rejected WebSocket status records", async () => {
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
+      return json({ id: "conversation-1", execution_status: "finished" });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [], next_page_id: null });
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+
+  const result = await captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: {},
+    message: {},
+    fetch,
+    webSocket: (url) => {
+      const socket = new FakeWebSocket(url);
+      queueMicrotask(() => {
+        socket.open();
+        for (let index = 0; index < 300; index += 1) socket.rawMessage("x".repeat(2_000));
+      });
+      return socket;
+    },
+    maxResponseBytes: 1_024,
+    pollIntervalMs: 0,
+  });
+  const statuses = result.records.filter(({ record }) => record.channel === "websocket-status");
+
+  assert.equal(statuses.length, 257);
+  assert.equal(statuses.at(-1)?.record.payload.state, "status-limit-reached");
+  assert.equal(result.reconciliation.transportGaps.includes("status-limit-reached"), true);
 });
 
 test("records an exhausted stream disconnect while final REST preserves the event", async () => {
@@ -608,6 +667,10 @@ test("marks missing native content unknown instead of emitting a nonexistent poi
   const normalized = await normalizeOpenHandsCapture(capture);
 
   assert.equal(normalized.events[0]?.content.status, "unknown");
+  delete capture.records[0]!.record.payload.source;
+  const missingActor = await normalizeOpenHandsCapture(capture);
+  assert.equal(missingActor.events.length, 0);
+  assert.equal(missingActor.unmapped.length, 1);
 });
 
 test("packages one verified smoke attempt with native, workspace, verifier, and normalized evidence", async () => {
@@ -751,6 +814,41 @@ test("rejects a declared model that differs from the actual conversation request
         message: {},
       },
     }), /actual conversation request model/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a run definition attributed to another harness", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-openhands-harness-mismatch-"));
+  const definition: RunBundleDefinition = {
+    bundleRoot: join(root, "bundle"),
+    bundleId: "bundle-openhands-harness-mismatch",
+    run: {
+      id: "run-openhands-harness-mismatch",
+      assessmentMode: "observational",
+      task: { id: "task-openhands-harness-mismatch" },
+      fixture: { id: "fixture-openhands-harness-mismatch", digest: SHA("a") },
+      model: { provider: "test", id: "test/model" },
+      harness: { id: "agent-sdk", version: "1.44.1" },
+      runtime: [],
+    },
+    attempt: { id: "attempt-openhands-harness-mismatch", number: 1 },
+    configuration: { digest: SHA("b"), budgetDigest: SHA("c"), toolPolicyDigest: SHA("d") },
+  };
+
+  try {
+    await assert.rejects(captureOpenHandsAgentServerRun({
+      definition,
+      startingWorkspacePath: root,
+      workspace: { setup: async () => { throw new Error("workspace must not start"); } },
+      configuration: {
+        model: "test/model",
+        baseUrl: "http://127.0.0.1:8000",
+        startConversation: { agent: { kind: "Agent", llm: { model: "test/model" } } },
+        message: {},
+      },
+    }), /harness.*openhands-agent-server/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1034,6 +1132,10 @@ class FakeWebSocket implements OpenHandsWebSocket {
 
   public message(data: unknown): void {
     this.emit("message", { data: JSON.stringify(data) });
+  }
+
+  public rawMessage(data: string): void {
+    this.emit("message", { data });
   }
 
   public disconnect(): void {

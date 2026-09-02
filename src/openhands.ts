@@ -111,6 +111,7 @@ const TERMINAL_STATUSES = new Set(["finished", "error", "stuck"]);
 const DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 const MAX_CAPTURE_EVENTS = 10_000;
+const MAX_TRANSPORT_STATUS_RECORDS = 256;
 
 export function createOpenHandsHarnessAdapter(): HarnessAdapter<OpenHandsCaptureRequest, OpenHandsNativeRecord> {
   return {
@@ -171,11 +172,37 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
     publish(captured);
   };
 
-  const serverInfo = await requestJson(fetch, baseUrl, "/server_info", undefined, request.sessionApiKey, maxResponseBytes, request.signal);
-  if (serverInfo.version !== OPENHANDS_AGENT_SERVER_VERSION) {
-    throw new Error(`OpenHands Agent Server ${OPENHANDS_AGENT_SERVER_VERSION} is required; received ${String(serverInfo.version)}.`);
+  let serverInfo: Record<string, unknown> = {};
+  try {
+    serverInfo = await requestJson(fetch, baseUrl, "/server_info", undefined, request.sessionApiKey, maxResponseBytes, request.signal);
+    append("server-info", serverInfo);
+    if (serverInfo.version !== OPENHANDS_AGENT_SERVER_VERSION) {
+      throw new Error(`OpenHands Agent Server ${OPENHANDS_AGENT_SERVER_VERSION} is required; received ${String(serverInfo.version)}.`);
+    }
+  } catch (error) {
+    const captureError = errorMessage(error);
+    append("capture-error", { error: captureError.slice(0, 512) });
+    return {
+      runId: request.runId,
+      attemptId: request.attemptId,
+      qualification: "qualified-with-gaps",
+      records,
+      serverInfo,
+      captureError,
+      reconciliation: {
+        status: "partial",
+        streamedEventIds: [],
+        finalEventIds: [],
+        streamedOnlyEventIds: [],
+        finalOnlyEventIds: [],
+        transportGaps: ["server-info-unavailable"],
+      },
+      eventLogCompleteness: {
+        status: "unknown",
+        reason: "REST/WebSocket reconciliation cannot prove complete in-process EventLog delivery.",
+      },
+    };
   }
-  append("server-info", serverInfo);
 
   let created: Record<string, unknown>;
   try {
@@ -215,6 +242,17 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
 
   const streamed: Record<string, unknown>[] = [];
   const finalEvents: Record<string, unknown>[] = [];
+  let transportStatusRecords = 0;
+  let transportStatusLimitRecorded = false;
+  const retainTransportStatus = (status: Record<string, unknown>): void => {
+    if (transportStatusRecords < MAX_TRANSPORT_STATUS_RECORDS) {
+      transportStatusRecords += 1;
+      append("websocket-status", status);
+    } else if (!transportStatusLimitRecorded) {
+      transportStatusLimitRecorded = true;
+      append("websocket-status", { state: "status-limit-reached", limit: MAX_TRANSPORT_STATUS_RECORDS });
+    }
+  };
   let finalConversation: Record<string, unknown> | undefined;
   let finalReadError: string | undefined;
   let captureError: string | undefined;
@@ -227,14 +265,14 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
       (event) => {
         if (streamed.length >= MAX_CAPTURE_EVENTS) {
           if (!records.some(({ record }) => record.channel === "websocket-status" && record.payload.state === "event-limit-reached")) {
-            append("websocket-status", { state: "event-limit-reached", limit: MAX_CAPTURE_EVENTS });
+            retainTransportStatus({ state: "event-limit-reached", limit: MAX_CAPTURE_EVENTS });
           }
           return;
         }
         streamed.push(event);
         append("websocket-event", event, streamed.length);
       },
-      (status) => append("websocket-status", status),
+      retainTransportStatus,
     );
     await requestJson(fetch, baseUrl, `/api/conversations/${encodeURIComponent(conversationId)}/events`, {
       method: "POST",
@@ -283,7 +321,7 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
   const streamedOnlyEventIds = streamedEventIds.filter((id) => !finalSet.has(id));
   const finalOnlyEventIds = finalEventIds.filter((id) => !streamedSet.has(id));
   const transportGaps = records.flatMap(({ record }) => record.channel === "websocket-status"
-    && ["message-rejected", "reconnect-exhausted", "reconnect-failed", "event-limit-reached"].includes(String(record.payload.state))
+    && ["message-rejected", "reconnect-exhausted", "reconnect-failed", "event-limit-reached", "status-limit-reached"].includes(String(record.payload.state))
     ? [String(record.payload.state)] : []);
   return {
     runId: request.runId,
@@ -425,7 +463,8 @@ function mapOpenHandsEvent(
   if (kind === undefined) return undefined;
   const mapping = mappedEvent(kind);
   if (mapping === undefined) return undefined;
-  const source = typeof native.source === "string" ? native.source : "unknown";
+  const source = nativeEventSource(native.source);
+  if (source === undefined) return undefined;
   const parentId = typeof native.parent_id === "string" ? eventIdByNativeId.get(native.parent_id) : undefined;
   const knownRelations: Array<UniformEvent["relations"]["known"][number]> = [];
   if (kind === "ObservationEvent" && typeof native.action_id === "string") {
@@ -458,7 +497,7 @@ function mapOpenHandsEvent(
     nativeTime: isOffsetDateTime(native.timestamp)
       ? { status: "known", value: native.timestamp }
       : { status: "unknown", reason: "Agent Server event omitted an RFC 3339 timestamp with an explicit offset." },
-    actor: { kind: actorForSource(source), ...(source === "unknown" ? {} : { id: source }) },
+    actor: { kind: actorForSource(source), id: source },
     family: mapping.family,
     phase: mapping.phase,
     scope: { kind: "session", id: conversationId },
@@ -558,11 +597,17 @@ function eventContent(
       };
 }
 
-function actorForSource(source: string): UniformEvent["actor"]["kind"] {
+type OpenHandsEventSource = "user" | "agent" | "environment" | "hook";
+
+function nativeEventSource(value: unknown): OpenHandsEventSource | undefined {
+  return ["user", "agent", "environment", "hook"].includes(String(value))
+    ? value as OpenHandsEventSource : undefined;
+}
+
+function actorForSource(source: OpenHandsEventSource): UniformEvent["actor"]["kind"] {
   if (source === "user") return "user";
   if (source === "agent") return "agent";
-  if (source === "environment" || source === "hook") return "harness";
-  return "system";
+  return "harness";
 }
 
 async function openEventSocket(
