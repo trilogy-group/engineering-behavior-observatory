@@ -80,15 +80,17 @@ export type CapturedNativeRecord<NativeRecord> = {
 export interface NativeCaptureAdapter<Request, NativeRecord> {
   readonly id: string;
   readonly harness: string;
-  capture(request: Request): Promise<readonly CapturedNativeRecord<NativeRecord>[]>;
+  capture(request: Request): Promise<QualifiedNativeCapture<NativeRecord>>;
 }
 
-export type NormalizationInput<NativeRecord> = {
+export type QualifiedNativeCapture<NativeRecord> = {
   runId: string;
   attemptId: string;
   qualification: "qualified" | "qualified-with-gaps";
   records: readonly CapturedNativeRecord<NativeRecord>[];
 };
+
+export type NormalizationInput<NativeRecord> = QualifiedNativeCapture<NativeRecord>;
 
 export type UnmappedNativeRecord = {
   reference: NativeEvidenceReference;
@@ -167,21 +169,20 @@ export async function validateUniformEvents(
 export async function assertAdapterContract<Request, NativeRecord>(
   adapter: HarnessAdapter<Request, NativeRecord>,
   request: Request,
-  context: Omit<NormalizationInput<NativeRecord>, "records">,
   resolver: NativeEvidenceResolver,
 ): Promise<NormalizationResult> {
-  if (!["qualified", "qualified-with-gaps"].includes(context.qualification as string)) {
-    throw new Error("Uniform event normalization requires capture-qualified evidence.");
-  }
   assertAdapterIdentity(adapter);
   assertValidArtifact(`adapter capability profile ${adapter.normalization.id}`, adapter.normalization.capabilityProfile);
-  const records = await adapter.capture.capture(request);
-  const result = await adapter.normalization.normalize({ ...context, records });
+  const capture = await adapter.capture.capture(request);
+  if (!["qualified", "qualified-with-gaps"].includes(capture.qualification as string)) {
+    throw new Error("Uniform event normalization requires capture-qualified evidence.");
+  }
+  const result = await adapter.normalization.normalize(capture);
   await validateUniformEvents(result.events, resolver);
 
-  for (const { reference } of records) await assertResolvable(reference, resolver);
+  for (const { reference } of capture.records) await assertResolvable(reference, resolver);
   for (const event of result.events) {
-    if (event.runId !== context.runId || event.attemptId !== context.attemptId) {
+    if (event.runId !== capture.runId || event.attemptId !== capture.attemptId) {
       throw new Error("Normalized event identity does not match the qualified attempt.");
     }
     if (event.source.harness !== adapter.normalization.harness) {
@@ -203,7 +204,7 @@ export async function assertAdapterContract<Request, NativeRecord>(
     }
   }
 
-  const capturedKeys = records.map(({ reference }) => referenceKey(reference));
+  const capturedKeys = capture.records.map(({ reference }) => referenceKey(reference));
   if (new Set(capturedKeys).size !== capturedKeys.length) {
     throw new Error("Capture adapter returned duplicate native references.");
   }

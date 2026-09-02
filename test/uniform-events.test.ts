@@ -118,7 +118,12 @@ test("runs a minimal capture and normalization adapter contract while retaining 
     capture: {
       id: "fake-adapter",
       harness: "fake-harness",
-      capture: async () => captured,
+      capture: async () => ({
+        runId: event.runId,
+        attemptId: event.attemptId,
+        qualification: "qualified",
+        records: captured,
+      }),
     },
     normalization: {
       id: "fake-adapter",
@@ -132,22 +137,26 @@ test("runs a minimal capture and normalization adapter contract while retaining 
   };
   const resolver: NativeEvidenceResolver = { resolve: () => true };
 
-  const result = await assertAdapterContract(adapter, null, {
-    runId: event.runId,
-    attemptId: event.attemptId,
-    qualification: "qualified",
-  }, resolver);
+  const result = await assertAdapterContract(adapter, null, resolver);
   const registry = new AdapterRegistry([adapter]);
 
   assert.equal(result.events.length, 1);
   assert.deepEqual(result.unmapped, [{ reference: captured[1]!.reference, reason: "no uniform mapping" }]);
   assert.equal(registry.get("fake-harness")?.normalization.id, "fake-adapter");
 
-  await assert.rejects(assertAdapterContract(adapter, null, {
-    runId: event.runId,
-    attemptId: event.attemptId,
-    qualification: "unqualified",
-  } as never, resolver), /capture-qualified/);
+  const unqualified = {
+    ...adapter,
+    capture: {
+      ...adapter.capture,
+      capture: async () => ({
+        runId: event.runId,
+        attemptId: event.attemptId,
+        qualification: "unqualified" as never,
+        records: captured,
+      }),
+    },
+  };
+  await assert.rejects(assertAdapterContract(unqualified, null, resolver), /capture-qualified/);
 
   for (const [field, capabilityProfile] of [
     ["nativeOrder", { ...profile, evidence: { ...profile.evidence, nativeOrder: { status: "unsupported" as const } } }],
@@ -159,11 +168,7 @@ test("runs a minimal capture and normalization adapter contract while retaining 
       ...adapter,
       normalization: { ...adapter.normalization, capabilityProfile },
     };
-    await assert.rejects(assertAdapterContract(contradictory, null, {
-      runId: event.runId,
-      attemptId: event.attemptId,
-      qualification: "qualified",
-    }, resolver), new RegExp(field));
+    await assert.rejects(assertAdapterContract(contradictory, null, resolver), new RegExp(field));
   }
 
   const undeclaredType = {
@@ -173,21 +178,21 @@ test("runs a minimal capture and normalization adapter contract while retaining 
       capabilityProfile: { ...profile, nativeTypes: ["other.event"] },
     },
   };
-  await assert.rejects(assertAdapterContract(undeclaredType, null, {
-    runId: event.runId,
-    attemptId: event.attemptId,
-    qualification: "qualified",
-  }, resolver), /undeclared native type/);
+  await assert.rejects(assertAdapterContract(undeclaredType, null, resolver), /undeclared native type/);
 
   const duplicateCapture = {
     ...adapter,
-    capture: { ...adapter.capture, capture: async () => [...captured, captured[0]!] },
+    capture: {
+      ...adapter.capture,
+      capture: async () => ({
+        runId: event.runId,
+        attemptId: event.attemptId,
+        qualification: "qualified" as const,
+        records: [...captured, captured[0]!],
+      }),
+    },
   };
-  await assert.rejects(assertAdapterContract(duplicateCapture, null, {
-    runId: event.runId,
-    attemptId: event.attemptId,
-    qualification: "qualified",
-  }, resolver), /duplicate native references/);
+  await assert.rejects(assertAdapterContract(duplicateCapture, null, resolver), /duplicate native references/);
 
   const capturedCollision = { artifactId: "a\0", recordLocator: "b" };
   const inventedCollision = { artifactId: "a", recordLocator: "\0b" };
@@ -195,7 +200,12 @@ test("runs a minimal capture and normalization adapter contract while retaining 
     ...adapter,
     capture: {
       ...adapter.capture,
-      capture: async () => [{ reference: capturedCollision, record: { type: "message" as const } }],
+      capture: async () => ({
+        runId: event.runId,
+        attemptId: event.attemptId,
+        qualification: "qualified" as const,
+        records: [{ reference: capturedCollision, record: { type: "message" as const } }],
+      }),
     },
     normalization: {
       ...adapter.normalization,
@@ -208,11 +218,7 @@ test("runs a minimal capture and normalization adapter contract while retaining 
       }),
     },
   };
-  await assert.rejects(assertAdapterContract(collisionAdapter, null, {
-    runId: event.runId,
-    attemptId: event.attemptId,
-    qualification: "qualified",
-  }, resolver), /not captured/);
+  await assert.rejects(assertAdapterContract(collisionAdapter, null, resolver), /not captured/);
 });
 
 function resolverFor(events: readonly UniformEvent[]): NativeEvidenceResolver {

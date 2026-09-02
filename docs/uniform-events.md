@@ -49,11 +49,11 @@ applies to Agent SDK message and hook names.
 ## Adapter boundary
 
 `NativeCaptureAdapter<Request, NativeRecord>` owns a typed, source-specific
-request and its native records. It does not impose shared methods, tool names,
-limits, or completion states. `UniformEventNormalizationAdapter<NativeRecord>`
-accepts those records only with a `qualified` or `qualified-with-gaps` capture
-status and produces uniform events plus an explicit list of unmapped native
-references.
+request and returns one `QualifiedNativeCapture`: the run and attempt identity,
+qualification status, and the native records qualified under that identity. It
+does not impose shared methods, tool names, limits, or completion states.
+`UniformEventNormalizationAdapter<NativeRecord>` consumes that same envelope
+and produces uniform events plus an explicit list of unmapped native references.
 
 `assertAdapterContract` checks that:
 

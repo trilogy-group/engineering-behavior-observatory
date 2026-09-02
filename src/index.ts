@@ -269,6 +269,7 @@ export type {
   NativeEvidenceResolver,
   NormalizationInput,
   NormalizationResult,
+  QualifiedNativeCapture,
   UniformAttributeScalar,
   UniformAttributeValue,
   UniformEvent,
