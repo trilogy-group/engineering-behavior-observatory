@@ -461,6 +461,7 @@ test("retains an explicit gap for an oversized WebSocket frame", async () => {
       queueMicrotask(() => {
         socket.open();
         socket.message({ id: "oversized", kind: "FutureEvent", padding: "x".repeat(300) });
+        socket.rawMessage("[]");
       });
       return socket;
     },
@@ -471,6 +472,8 @@ test("retains an explicit gap for an oversized WebSocket frame", async () => {
   assert.equal(result.reconciliation.status, "partial");
   assert.equal(result.records.some(({ record }) =>
     record.channel === "websocket-status" && record.payload.state === "message-rejected"), true);
+  assert.equal(result.records.some(({ record }) =>
+    record.channel === "websocket-status" && String(record.payload.reason).includes("JSON object")), true);
 });
 
 test("bounds rejected WebSocket status records", async () => {
@@ -768,7 +771,7 @@ test("packages one verified smoke attempt with native, workspace, verifier, and 
     });
 
     assert.equal(result.attempt.classification.kind, "completed");
-    assert.equal(result.capture.conversationId, "conversation-1");
+    assert.equal(result.capture!.conversationId, "conversation-1");
     assert.equal(result.manifest.run.native?.sessionId, "conversation-1");
     assert.deepEqual(result.manifest.evidence.filter(({ kind }) => ["session", "hook", "workspace", "verifier"].includes(kind)).map(({ kind }) => kind), [
       "workspace", "verifier", "session", "hook",
@@ -854,6 +857,48 @@ test("rejects a run definition attributed to another harness", async () => {
   }
 });
 
+test("finalizes the actual terminal record when workspace setup fails before capture", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-openhands-workspace-failure-"));
+  const definition: RunBundleDefinition = {
+    bundleRoot: join(root, "bundle"),
+    bundleId: "bundle-openhands-workspace-failure",
+    run: {
+      id: "run-openhands-workspace-failure",
+      assessmentMode: "observational",
+      task: { id: "task-openhands-workspace-failure" },
+      fixture: { id: "fixture-openhands-workspace-failure", digest: SHA("a") },
+      model: { provider: "test", id: "test/model" },
+      harness: { id: "openhands-agent-server", version: OPENHANDS_AGENT_SERVER_VERSION },
+      runtime: [],
+    },
+    attempt: { id: "attempt-openhands-workspace-failure", number: 1 },
+    configuration: { digest: SHA("b"), budgetDigest: SHA("c"), toolPolicyDigest: SHA("d") },
+  };
+
+  try {
+    const result = await captureOpenHandsAgentServerRun({
+      definition,
+      startingWorkspacePath: root,
+      workspace: { setup: async () => { throw new Error("fixture setup failed"); } },
+      configuration: {
+        model: "test/model",
+        baseUrl: "http://127.0.0.1:8000",
+        startConversation: { agent: { kind: "Agent", llm: { model: "test/model" } } },
+        message: {},
+      },
+    });
+
+    assert.equal(result.capture, undefined);
+    assert.equal(result.attempt.classification.kind, "infrastructure-failure");
+    assert.equal(result.manifest.terminal.state, "failed");
+    assert.equal(result.manifest.terminal.failureClass, "infrastructure");
+    assert.equal(result.manifest.evidence.some(({ kind }) => kind === "session"), false);
+    assert.equal(result.qualification.status, "unqualified");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("retains pre-session evidence when conversation creation fails", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-openhands-create-failure-"));
   const start = join(root, "start");
@@ -893,8 +938,8 @@ test("retains pre-session evidence when conversation creation fails", async () =
     const session = result.manifest.evidence.find(({ kind }) => kind === "session")!;
     const native = readFileSync(join(definition.bundleRoot, session.relativePath), "utf8");
 
-    assert.equal(result.capture.conversationId, undefined);
-    assert.match(result.capture.captureError ?? "", /503/);
+    assert.equal(result.capture!.conversationId, undefined);
+    assert.match(result.capture!.captureError ?? "", /503/);
     assert.equal(session.nativeReference, undefined);
     assert.equal(native.includes("server-info"), true);
     assert.equal(native.includes("capture-error"), true);
@@ -968,7 +1013,7 @@ test("retains progressively written native evidence when lifecycle cancellation 
     const session = result.manifest.evidence.find(({ kind }) => kind === "session");
 
     assert.equal(result.attempt.terminal.state, "interrupted");
-    assert.match(result.capture.captureError ?? "", /aborted/);
+    assert.match(result.capture!.captureError ?? "", /aborted/);
     assert.equal(session?.id, "session");
     assert.equal(readFileSync(join(bundleRoot, session!.relativePath), "utf8").includes("conversation-created"), true);
   } finally {

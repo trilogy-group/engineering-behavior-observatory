@@ -64,7 +64,7 @@ export type CaptureOpenHandsAgentServerRunResult = {
   attempt: RunAttemptResult;
   manifest: RunManifest;
   qualification: CaptureQualificationReport;
-  capture: OpenHandsCapture;
+  capture?: OpenHandsCapture;
   normalized: NormalizationResult;
 };
 
@@ -100,6 +100,18 @@ export async function captureOpenHandsAgentServerRun(
     ".git",
     ...(options.workspaceOutcomeExcludedDirectoryNames ?? []).filter((name) => name !== ".git"),
   ];
+  const qualificationOptions = {
+    startingWorkspacePath: options.startingWorkspacePath,
+    ...(options.workspaceOutcomeExcludedDirectoryNames === undefined ? {} : {
+      workspaceOutcomeExcludedDirectoryNames: options.workspaceOutcomeExcludedDirectoryNames,
+    }),
+    ...(options.workspaceOutcomeRespectsGitignore === undefined ? {} : {
+      workspaceOutcomeRespectsGitignore: options.workspaceOutcomeRespectsGitignore,
+    }),
+    ...(options.workspaceOutcomeOmitsEmptyDirectories === undefined ? {} : {
+      workspaceOutcomeOmitsEmptyDirectories: options.workspaceOutcomeOmitsEmptyDirectories,
+    }),
+  };
 
   const captureWorkspace = async (verifierContext?: VerifierExecutionContext): Promise<CapturedWorkspaceOutcome> => {
     if (workspaceOutcome !== undefined) return workspaceOutcome;
@@ -274,16 +286,40 @@ export async function captureOpenHandsAgentServerRun(
   if (capture === undefined) {
     acceptingRecords = false;
     await sessionWriter.close();
-    if (progressiveSessionId === undefined || sessionWriter.count === 0) {
-      throw new Error("OpenHands attempt ended before producing identified native capture evidence.");
-    }
-    capture = interruptedCapture(
-      definition.run.id,
-      definition.attempt.id,
-      progressiveSessionId,
-      progressiveRecords.slice(0, sessionWriter.count),
-    );
     captureSettled = true;
+    if (progressiveSessionId !== undefined && sessionWriter.count > 0) {
+      capture = interruptedCapture(
+        definition.run.id,
+        definition.attempt.id,
+        progressiveSessionId,
+        progressiveRecords.slice(0, sessionWriter.count),
+      );
+    }
+  }
+  if (capture === undefined) {
+    await writeNativeEvidence();
+    const terminal = structuredClone(attempt.terminal);
+    if (workspaceOutcome === undefined) delete terminal.workspaceArtifactId;
+    const manifest = await assembler.finalize({
+      terminal,
+      missingEvidence: [
+        {
+          kind: sessionWriter.count === 0 ? "session" : "session-identity",
+          reason: "not-collected",
+          affects: ["semantic"],
+          detail: "The attempt ended before the OpenHands harness produced an identified native session.",
+        },
+        {
+          kind: "telemetry",
+          reason: "unsupported",
+          affects: ["timing-resource"],
+          detail: "The pinned Agent Server REST/WebSocket boundary does not expose native OpenTelemetry records.",
+        },
+      ],
+      qualification: qualificationOptions,
+    });
+    const qualification = await qualifyRunBundle(assembler.bundleRoot, qualificationOptions);
+    return { attempt, manifest, qualification, normalized: { events: [], unmapped: [] } };
   }
   await writeNativeEvidence();
   const normalized = await normalizeOpenHandsCapture(capture);
@@ -324,18 +360,6 @@ export async function captureOpenHandsAgentServerRun(
       detail: `Transport gaps: ${capture.reconciliation.transportGaps.join(", ")}`,
     }]),
   ];
-  const qualificationOptions = {
-    startingWorkspacePath: options.startingWorkspacePath,
-    ...(options.workspaceOutcomeExcludedDirectoryNames === undefined ? {} : {
-      workspaceOutcomeExcludedDirectoryNames: options.workspaceOutcomeExcludedDirectoryNames,
-    }),
-    ...(options.workspaceOutcomeRespectsGitignore === undefined ? {} : {
-      workspaceOutcomeRespectsGitignore: options.workspaceOutcomeRespectsGitignore,
-    }),
-    ...(options.workspaceOutcomeOmitsEmptyDirectories === undefined ? {} : {
-      workspaceOutcomeOmitsEmptyDirectories: options.workspaceOutcomeOmitsEmptyDirectories,
-    }),
-  };
   const manifest = await assembler.finalize({ terminal, missingEvidence, qualification: qualificationOptions });
   const qualification = await qualifyRunBundle(assembler.bundleRoot, qualificationOptions);
   return { attempt, manifest, qualification, capture, normalized };

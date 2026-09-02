@@ -643,6 +643,8 @@ async function openEventSocket(
         if (isRecord(value)) {
           if (typeof value.timestamp === "string") lastTimestamp = value.timestamp;
           onEvent(value);
+        } else {
+          onStatus({ state: "message-rejected", reason: "frame is not a JSON object" });
         }
       } catch (error) {
         onStatus({ state: "message-rejected", reason: errorMessage(error).slice(0, 512) });
