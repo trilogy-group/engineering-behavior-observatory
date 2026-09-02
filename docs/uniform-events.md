@@ -94,8 +94,9 @@ normalization.
 | Workspace and verifier artifacts | `artifact`, `validation` |
 | Run-manifest terminal record | `outcome` |
 
-Session and callback sequence numbers keep separate `session` and `hooks`
-order domains. An originating SDK message timestamp is retained when present;
+Session and callback sequence numbers keep separate
+`session:<artifact-id>` and `hooks:<artifact-id>` order domains. An originating
+SDK message timestamp is retained when present and valid RFC 3339;
 the adapter never promotes the stream capture clock or hook callback clock to a
 native occurrence time. Tool call/result and hook relations are added only when
 one unique emitted call is supported by the same `tool_use_id`; the same rule

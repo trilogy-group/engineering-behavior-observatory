@@ -263,7 +263,7 @@ function mapSessionRecord(
   const drafts: DraftEvent[] = [];
   const subtype = text(wrapper.nativeSubtype) ?? text(message.subtype);
   const sessionId = text(wrapper.sessionId) ?? text(message.session_id);
-  const nativeOrder = sourceOrder(wrapper, "session");
+  const nativeOrder = sourceOrder(wrapper, `session:${captured.reference.artifactId}`);
   const nativeTime = originTime(message.timestamp, "Agent SDK message has no originating timestamp");
   const common = { input, captured, nativeType, nativeOrder, nativeTime, sessionId };
 
@@ -403,7 +403,7 @@ function mapHookRecord(
     captured,
     discriminator: "record",
     nativeType: hook,
-    nativeOrder: sourceOrder(wrapper, "hooks"),
+    nativeOrder: sourceOrder(wrapper, `hooks:${captured.reference.artifactId}`),
     nativeTime: { status: "unknown", reason: "Hook callback record has no native occurrence timestamp" },
     family: shape.family,
     phase: shape.phase,
@@ -704,7 +704,9 @@ function sourceOrder(document: JsonRecord, domain: string): UniformEvent["native
 }
 
 function originTime(value: unknown, reason: string): UniformEvent["nativeTime"] {
-  if (typeof value === "string" && !Number.isNaN(Date.parse(value))) return { status: "known", value };
+  if (typeof value === "string"
+      && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(value)
+      && !Number.isNaN(Date.parse(value))) return { status: "known", value };
   return { status: "unknown", reason };
 }
 
@@ -769,7 +771,7 @@ function hookScope(
 ): UniformEvent["scope"] {
   if ((family === "tool" || family === "permission") && toolUseId !== undefined) return { kind: "operation", id: toolUseId };
   if (family === "delegation" && (agentId ?? taskId) !== undefined) return { kind: "operation", id: agentId ?? taskId };
-  if (family === "artifact") return { kind: "workspace", id: "workspace" };
+  if (family === "artifact") return { kind: "workspace" };
   const turnId = text(payload.turn_id);
   if (family === "message" && turnId !== undefined) return { kind: "turn", id: turnId };
   const sessionId = text(wrapper.sessionId) ?? text(payload.session_id);

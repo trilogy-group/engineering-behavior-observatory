@@ -118,6 +118,24 @@ test("marks recognized but unprojected native payload content as unknown", async
       },
     },
   }, {
+    reference: { artifactId: "session", recordLocator: "line:5" },
+    record: {
+      kind: "session",
+      document: {
+        schemaVersion: "ebo.agent-sdk-message/v1",
+        sequence: 5,
+        nativeType: "assistant",
+        sessionId: "session-golden",
+        message: {
+          type: "assistant",
+          uuid: "assistant-invalid-time",
+          session_id: "session-golden",
+          timestamp: "2026-09-01",
+          message: { role: "assistant", content: [] },
+        },
+      },
+    },
+  }, {
     reference: { artifactId: "hooks", recordLocator: "line:10" },
     record: {
       kind: "hook",
@@ -141,6 +159,11 @@ test("marks recognized but unprojected native payload content as unknown", async
         : "Hook payload content remains in the source record",
     });
   }
+  assert.deepEqual(result.events.find(({ source }) =>
+    source.nativeReference.artifactId === "session" && source.nativeReference.recordLocator === "line:5")?.nativeTime, {
+    status: "unknown",
+    reason: "Agent SDK message has no originating timestamp",
+  });
 });
 
 test("produces stable event identities and ordering on repeated normalization", async () => {
@@ -152,8 +175,9 @@ test("produces stable event identities and ordering on repeated normalization", 
   assert.equal(new Set(first.events.map(({ id }) => id)).size, first.events.length);
   assert.deepEqual(first.events.filter(({ nativeOrder }) => nativeOrder.status === "known")
     .map(({ nativeOrder }) => nativeOrder.status === "known" ? nativeOrder.domain : ""), [
-    "session", "session", "session", "session", "session",
-    "hooks", "hooks", "hooks", "hooks", "hooks", "hooks", "hooks", "hooks", "hooks",
+    "session:session", "session:session", "session:session", "session:session", "session:session",
+    "hooks:hooks", "hooks:hooks", "hooks:hooks", "hooks:hooks", "hooks:hooks",
+    "hooks:hooks", "hooks:hooks", "hooks:hooks", "hooks:hooks",
   ]);
 });
 
