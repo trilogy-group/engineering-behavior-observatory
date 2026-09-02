@@ -624,6 +624,9 @@ function validateConfiguration(configuration: DeepSeekHarnessConfiguration, cont
   if (keys.some((key) => !allowed.includes(key))) throw new Error("DeepSeek child environment contains a key outside the recorded policy.");
   const suppliedHome = configuration.env.DSH_HOME;
   const retainedHome = configuration.composition.launch.dshHome;
+  if (retainedHome !== undefined && !allowed.includes("DSH_HOME")) {
+    throw new Error("DeepSeek effective child DSH_HOME is outside the recorded environment allowlist.");
+  }
   if (retainedHome === undefined ? suppliedHome !== undefined
     : suppliedHome !== undefined && resolve(suppliedHome) !== resolve(retainedHome)) {
     throw new Error("DeepSeek child DSH_HOME does not match the retained runtime composition.");

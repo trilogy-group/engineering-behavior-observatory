@@ -407,11 +407,16 @@ test("rejects a child home that differs from the retained composition", async ()
   const composition = fixtureComposition("minimal");
   const retained = structuredClone(composition);
   retained.launch.dshHome = join(root, "retained-home");
-  retained.environment.allowedKeys.push("DSH_HOME");
-  const options = configuration(retained, "success");
-  options.env.DSH_HOME = join(root, "other-home");
   const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
   try {
+    await assert.rejects(executeDeepSeekHarness(
+      harnessContext(undefined, undefined, undefined, composition.workspaceCwd),
+      configuration(retained, "success"),
+      capture,
+    ), /outside the recorded environment allowlist/);
+    retained.environment.allowedKeys.push("DSH_HOME");
+    const options = configuration(retained, "success");
+    options.env.DSH_HOME = join(root, "other-home");
     await assert.rejects(executeDeepSeekHarness(
       harnessContext(undefined, undefined, undefined, composition.workspaceCwd),
       options,
