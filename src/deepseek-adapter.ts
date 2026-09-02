@@ -240,6 +240,9 @@ export function createDeepSeekRuntimeComposition(input: DeepSeekRuntimeCompositi
   if (composition.environment.secretKeys.some((key) => !composition.environment.allowedKeys.includes(key))) {
     throw new Error("DeepSeek secret environment keys must also be allowlisted.");
   }
+  if (composition.launch.dshHome !== undefined && !composition.environment.allowedKeys.includes("DSH_HOME")) {
+    throw new Error("DeepSeek DSH_HOME must be included in the recorded environment allowlist.");
+  }
   return composition;
 }
 
@@ -577,7 +580,10 @@ function clientOptions(configuration: DeepSeekHarnessConfiguration): HarnessClie
     command: composition.launch.command,
     args: [...composition.launch.args],
     cwd: composition.launch.processCwd,
-    env: structuredClone(configuration.env),
+    env: {
+      ...structuredClone(configuration.env),
+      ...(composition.launch.dshHome === undefined ? {} : { DSH_HOME: composition.launch.dshHome }),
+    },
     ...(configuration.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: configuration.requestTimeoutMs }),
     ...(configuration.shutdownTimeoutMs === undefined ? {} : { shutdownTimeoutMs: configuration.shutdownTimeoutMs }),
     ...(configuration.disposeEofGraceMs === undefined ? {} : { disposeEofGraceMs: configuration.disposeEofGraceMs }),
@@ -616,6 +622,12 @@ function validateConfiguration(configuration: DeepSeekHarnessConfiguration, cont
   const keys = Object.keys(configuration.env).sort();
   const allowed = configuration.composition.environment.allowedKeys;
   if (keys.some((key) => !allowed.includes(key))) throw new Error("DeepSeek child environment contains a key outside the recorded policy.");
+  const suppliedHome = configuration.env.DSH_HOME;
+  const retainedHome = configuration.composition.launch.dshHome;
+  if (retainedHome === undefined ? suppliedHome !== undefined
+    : suppliedHome !== undefined && resolve(suppliedHome) !== resolve(retainedHome)) {
+    throw new Error("DeepSeek child DSH_HOME does not match the retained runtime composition.");
+  }
 }
 
 function fileReference(baseDir: string, path: string): DeepSeekFileReference {

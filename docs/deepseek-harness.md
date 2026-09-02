@@ -25,7 +25,8 @@ before the process starts.
 Environment values are not recorded. The adapter passes a replacement child
 environment to the official client and rejects keys outside the recorded
 allowlist; configured secret values are redacted from retained error and stderr
-tails.
+tails. When a Harness home is selected, the child `DSH_HOME` is set from that
+retained path and any caller-supplied value must match it.
 
 Two fixtures demonstrate configuration-only swaps:
 

@@ -402,6 +402,27 @@ test("rejects launch arguments that diverge from retained runtime and patch arti
   }
 });
 
+test("rejects a child home that differs from the retained composition", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-home-mismatch-"));
+  const composition = fixtureComposition("minimal");
+  const retained = structuredClone(composition);
+  retained.launch.dshHome = join(root, "retained-home");
+  retained.environment.allowedKeys.push("DSH_HOME");
+  const options = configuration(retained, "success");
+  options.env.DSH_HOME = join(root, "other-home");
+  const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
+  try {
+    await assert.rejects(executeDeepSeekHarness(
+      harnessContext(undefined, undefined, undefined, composition.workspaceCwd),
+      options,
+      capture,
+    ), /DSH_HOME does not match/);
+  } finally {
+    await capture.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("swaps named compositions by configuration and reports explicit protocol and telemetry gaps", async () => {
   const minimal = fixtureComposition("minimal");
   const telemetry = fixtureComposition("telemetry");
