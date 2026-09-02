@@ -88,6 +88,10 @@ test("bounds attributes and requires explicit unknown evidence", async () => {
   const oversized = structuredClone(fixture[0]!);
   oversized.attributes = Object.fromEntries(Array.from({ length: 33 }, (_, index) => [`field${index}`, index]));
   await assert.rejects(validateUniformEvents([oversized], resolverFor(fixture)), /attributes/);
+
+  const inventedRelation = structuredClone(fixture[0]!);
+  inventedRelation.relations.parent = { status: "known", value: "event-not-emitted" };
+  await assert.rejects(validateUniformEvents([inventedRelation], resolverFor(fixture)), /unresolved event relation/);
 });
 
 test("runs a minimal capture and normalization adapter contract while retaining unmapped records", async () => {
@@ -102,6 +106,11 @@ test("runs a minimal capture and normalization adapter contract while retaining 
       harness: "fake-harness",
       nativeType: "fake.event",
       nativeReference: captured[0]!.reference,
+    },
+    nativeTime: { status: "unsupported", reason: "fake source has no native timestamp" },
+    relations: {
+      parent: { status: "unsupported", reason: "fake source has no parent relation" },
+      known: [],
     },
     content: { status: "unknown", reason: "fake source does not expose content" },
   };
@@ -133,6 +142,52 @@ test("runs a minimal capture and normalization adapter contract while retaining 
   assert.equal(result.events.length, 1);
   assert.deepEqual(result.unmapped, [{ reference: captured[1]!.reference, reason: "no uniform mapping" }]);
   assert.equal(registry.get("fake-harness")?.normalization.id, "fake-adapter");
+
+  await assert.rejects(assertAdapterContract(adapter, null, {
+    runId: event.runId,
+    attemptId: event.attemptId,
+    qualification: "unqualified",
+  } as never, resolver), /capture-qualified/);
+
+  for (const [field, capabilityProfile] of [
+    ["nativeOrder", { ...profile, evidence: { ...profile.evidence, nativeOrder: { status: "unsupported" as const } } }],
+    ["nativeTime", { ...profile, evidence: { ...profile.evidence, nativeTime: { status: "available" as const } } }],
+    ["parentage", { ...profile, evidence: { ...profile.evidence, parentage: { status: "available" as const } } }],
+    ["content", { ...profile, evidence: { ...profile.evidence, content: { status: "unsupported" as const } } }],
+  ] as const) {
+    const contradictory = {
+      ...adapter,
+      normalization: { ...adapter.normalization, capabilityProfile },
+    };
+    await assert.rejects(assertAdapterContract(contradictory, null, {
+      runId: event.runId,
+      attemptId: event.attemptId,
+      qualification: "qualified",
+    }, resolver), new RegExp(field));
+  }
+
+  const undeclaredType = {
+    ...adapter,
+    normalization: {
+      ...adapter.normalization,
+      capabilityProfile: { ...profile, nativeTypes: ["other.event"] },
+    },
+  };
+  await assert.rejects(assertAdapterContract(undeclaredType, null, {
+    runId: event.runId,
+    attemptId: event.attemptId,
+    qualification: "qualified",
+  }, resolver), /undeclared native type/);
+
+  const duplicateCapture = {
+    ...adapter,
+    capture: { ...adapter.capture, capture: async () => [...captured, captured[0]!] },
+  };
+  await assert.rejects(assertAdapterContract(duplicateCapture, null, {
+    runId: event.runId,
+    attemptId: event.attemptId,
+    qualification: "qualified",
+  }, resolver), /duplicate native references/);
 });
 
 function resolverFor(events: readonly UniformEvent[]): NativeEvidenceResolver {

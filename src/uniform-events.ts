@@ -148,9 +148,18 @@ export async function validateUniformEvents(
     assertValidArtifact(`uniform event ${event.id}`, event);
     if (ids.has(event.id)) throw new Error(`Duplicate uniform event ID "${event.id}".`);
     ids.add(event.id);
+  }
+  for (const event of events) {
     await assertResolvable(event.source.nativeReference, resolver);
     if (event.content.status === "known") {
       for (const content of event.content.value) await assertResolvable(content.nativeReference, resolver);
+    }
+    const relationTargets = [
+      ...(event.relations.parent.status === "known" ? [event.relations.parent.value] : []),
+      ...event.relations.known.map(({ eventId }) => eventId),
+    ];
+    if (relationTargets.some((eventId) => !ids.has(eventId))) {
+      throw new Error(`Uniform event "${event.id}" has an unresolved event relation.`);
     }
   }
 }
@@ -161,6 +170,9 @@ export async function assertAdapterContract<Request, NativeRecord>(
   context: Omit<NormalizationInput<NativeRecord>, "records">,
   resolver: NativeEvidenceResolver,
 ): Promise<NormalizationResult> {
+  if (!["qualified", "qualified-with-gaps"].includes(context.qualification as string)) {
+    throw new Error("Uniform event normalization requires capture-qualified evidence.");
+  }
   assertAdapterIdentity(adapter);
   assertValidArtifact(`adapter capability profile ${adapter.normalization.id}`, adapter.normalization.capabilityProfile);
   const records = await adapter.capture.capture(request);
@@ -175,12 +187,27 @@ export async function assertAdapterContract<Request, NativeRecord>(
     if (event.source.harness !== adapter.normalization.harness) {
       throw new Error("Normalized event source does not match its adapter harness.");
     }
+    if (!adapter.normalization.capabilityProfile.nativeTypes.includes(event.source.nativeType)) {
+      throw new Error(`Adapter emitted undeclared native type "${event.source.nativeType}".`);
+    }
     if (adapter.normalization.capabilityProfile.families[event.family].status === "unsupported") {
       throw new Error(`Adapter mapped unsupported event family "${event.family}".`);
     }
+    const capabilities = adapter.normalization.capabilityProfile.evidence;
+    assertEvidenceCapability(capabilities.nativeOrder, event.nativeOrder.status, "nativeOrder");
+    assertEvidenceCapability(capabilities.nativeTime, event.nativeTime.status, "nativeTime");
+    assertEvidenceCapability(capabilities.content, event.content.status, "content");
+    assertEvidenceCapability(capabilities.parentage, event.relations.parent.status, "parentage");
+    if (capabilities.parentage.status === "unsupported" && event.relations.known.length > 0) {
+      throw new Error("Adapter evidence capability contradicts event parentage.");
+    }
   }
 
-  const captured = new Set(records.map(({ reference }) => referenceKey(reference)));
+  const capturedKeys = records.map(({ reference }) => referenceKey(reference));
+  if (new Set(capturedKeys).size !== capturedKeys.length) {
+    throw new Error("Capture adapter returned duplicate native references.");
+  }
+  const captured = new Set(capturedKeys);
   const mapped = new Set(result.events.map(({ source }) => referenceKey(source.nativeReference)));
   const unmapped = result.unmapped.map(({ reference }) => referenceKey(reference));
   if (new Set(unmapped).size !== unmapped.length) throw new Error("Normalizer returned a native record as unmapped more than once.");
@@ -203,6 +230,17 @@ function assertAdapterIdentity(adapter: HarnessAdapter): void {
   const profile = adapter.normalization.capabilityProfile;
   if (profile.adapterId !== adapter.normalization.id || profile.harness !== adapter.normalization.harness) {
     throw new Error("Adapter capability profile does not match its adapter identity.");
+  }
+}
+
+function assertEvidenceCapability(
+  capability: AdapterCapability,
+  evidenceStatus: EvidenceValue<unknown>["status"],
+  field: string,
+): void {
+  if ((capability.status === "unsupported") !== (evidenceStatus === "unsupported")
+      && capability.status !== "partial") {
+    throw new Error(`Adapter evidence capability contradicts event ${field}.`);
   }
 }
 
