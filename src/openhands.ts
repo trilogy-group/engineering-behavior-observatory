@@ -301,6 +301,7 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
     }
   } catch (error) {
     captureError = errorMessage(error);
+    if (socket === undefined) retainTransportStatus({ state: "socket-open-failed", reason: captureError.slice(0, 512) });
     append("capture-error", { error: captureError.slice(0, 512) });
     const recoverySignal = request.signal?.aborted ? AbortSignal.timeout(100) : request.signal;
     try {
@@ -332,7 +333,7 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
   const finalOnlyEventIds = finalEventIds.filter((id) => !streamedSet.has(id));
   const transportGaps = [...new Set([
     ...records.flatMap(({ record }) => record.channel === "websocket-status"
-    && ["message-rejected", "reconnect-exhausted", "reconnect-failed", "event-limit-reached", "event-byte-limit-reached", "status-limit-reached"].includes(String(record.payload.state))
+    && ["message-rejected", "socket-open-failed", "reconnect-exhausted", "reconnect-failed", "event-limit-reached", "event-byte-limit-reached", "status-limit-reached"].includes(String(record.payload.state))
       ? [String(record.payload.state)] : []),
     ...(streamed.some((event) => nativeEventId(event) === undefined) ? ["unidentified-websocket-event"] : []),
     ...(finalEvents.some((event) => nativeEventId(event) === undefined) ? ["unidentified-rest-event"] : []),
@@ -436,7 +437,7 @@ function mapOpenHandsOutcome(
   }
   return {
     schemaVersion: "ebo.uniform-event/v1",
-    id: `openhands:conversation-final:${captured.record.sequence}`,
+    id: `openhands:control:conversation-final:${captured.record.sequence}`,
     runId: capture.runId,
     attemptId: capture.attemptId,
     source: {
@@ -571,7 +572,8 @@ function eventAttributes(
     copyScalar(attributes, "stateValue", native.value);
   }
   if (kind === "Condensation" && Array.isArray(native.forgotten_event_ids)
-      && native.forgotten_event_ids.length <= 16 && native.forgotten_event_ids.every((value) => typeof value === "string")) {
+      && native.forgotten_event_ids.length <= 16
+      && native.forgotten_event_ids.every((value) => typeof value === "string" && value.length <= 512)) {
     attributes.forgottenEventIds = native.forgotten_event_ids;
   }
   return attributes;
@@ -619,7 +621,7 @@ function eventContent(
 type OpenHandsEventSource = "user" | "agent" | "environment" | "hook";
 
 function nativeEventSource(value: unknown): OpenHandsEventSource | undefined {
-  return ["user", "agent", "environment", "hook"].includes(String(value))
+  return typeof value === "string" && ["user", "agent", "environment", "hook"].includes(value)
     ? value as OpenHandsEventSource : undefined;
 }
 
@@ -944,7 +946,7 @@ function nativeEventId(event: Record<string, unknown>): string | undefined {
 }
 
 function uniformEventId(nativeId: string): string | undefined {
-  const eventId = `openhands:${nativeId}`;
+  const eventId = `openhands:native:${nativeId}`;
   return eventId.length <= 255 ? eventId : undefined;
 }
 

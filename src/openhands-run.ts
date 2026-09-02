@@ -104,10 +104,10 @@ export async function captureOpenHandsAgentServerRun(
   let progressiveWriteError: string | undefined;
   let acceptingRecords = true;
   const progressiveRecords: Array<CapturedNativeRecord<OpenHandsNativeRecord>> = [];
-  const workspaceOutcomeExcludedDirectoryNames = [
+  const workspaceOutcomeExcludedDirectoryNames = [...new Set([
     ".git",
     ...(options.workspaceOutcomeExcludedDirectoryNames ?? []).filter((name) => name !== ".git"),
-  ];
+  ])];
   const qualificationOptions = {
     startingWorkspacePath: options.startingWorkspacePath,
     workspaceOutcomeExcludedDirectoryNames,

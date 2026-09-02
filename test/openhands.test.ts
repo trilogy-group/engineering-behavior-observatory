@@ -250,7 +250,7 @@ test("maps supported event facts, error scopes, and exposed relationships while 
   );
   assert.deepEqual(
     normalized.events.find(({ source }) => source.nativeType === "ObservationEvent")?.relations.known,
-    [{ kind: "caused-by", eventId: "openhands:action-1" }],
+    [{ kind: "caused-by", eventId: "openhands:native:action-1" }],
   );
   assert.equal(normalized.unmapped.some(({ reference }) => reference.recordLocator === "line:11"), true);
 });
@@ -556,6 +556,7 @@ test("closes and fences a WebSocket that misses its open deadline", async () => 
   assert.equal(result.records.length, retainedCount);
   assert.equal(result.records.some(({ record }) =>
     record.channel === "websocket-status" && record.payload.state === "connected"), false);
+  assert.equal(result.reconciliation.transportGaps.includes("socket-open-failed"), true);
 });
 
 test("retains an explicit gap for an oversized WebSocket frame", async () => {
@@ -874,11 +875,71 @@ test("marks missing native content unknown instead of emitting a nonexistent poi
   const missingActor = await normalizeOpenHandsCapture(capture);
   assert.equal(missingActor.events.length, 0);
   assert.equal(missingActor.unmapped.length, 1);
+  capture.records[0]!.record.payload.source = ["user"];
+  const malformedActor = await normalizeOpenHandsCapture(capture);
+  assert.equal(malformedActor.events.length, 0);
+  assert.equal(malformedActor.unmapped.length, 1);
   capture.records[0]!.record.payload.source = "user";
   capture.records[0]!.record.payload.id = "x".repeat(246);
   const oversizedIdentity = await normalizeOpenHandsCapture(capture);
   assert.equal(oversizedIdentity.events.length, 0);
   assert.equal(oversizedIdentity.unmapped.length, 1);
+});
+
+test("keeps bounded condensation attributes and synthetic outcome IDs in separate namespaces", async () => {
+  const capture: OpenHandsCapture = {
+    runId: "run-1",
+    attemptId: "attempt-1",
+    qualification: "qualified-with-gaps",
+    records: [
+      {
+        reference: { artifactId: "session", recordLocator: "line:1" },
+        record: {
+          schemaVersion: "ebo.openhands-native-record/v1",
+          session_id: "conversation-1",
+          channel: "rest-event",
+          sequence: 1,
+          channelSequence: 1,
+          payload: {
+            id: "control:conversation-final:2",
+            kind: "Condensation",
+            source: "environment",
+            forgotten_event_ids: ["x".repeat(513)],
+          },
+        },
+      },
+      {
+        reference: { artifactId: "session", recordLocator: "line:2" },
+        record: {
+          schemaVersion: "ebo.openhands-native-record/v1",
+          session_id: "conversation-1",
+          channel: "conversation-final",
+          sequence: 2,
+          payload: { id: "conversation-1", execution_status: "finished" },
+        },
+      },
+    ],
+    conversationId: "conversation-1",
+    serverInfo: { version: "1.44.1" },
+    finalConversation: { id: "conversation-1", execution_status: "finished" },
+    reconciliation: {
+      status: "matched",
+      streamedEventIds: [],
+      finalEventIds: ["control:conversation-final:2"],
+      streamedOnlyEventIds: [],
+      finalOnlyEventIds: [],
+      transportGaps: [],
+    },
+    eventLogCompleteness: { status: "unknown", reason: "not exposed" },
+  };
+
+  const normalized = await normalizeOpenHandsCapture(capture);
+
+  assert.deepEqual(normalized.events.map(({ id }) => id), [
+    "openhands:native:control:conversation-final:2",
+    "openhands:control:conversation-final:2",
+  ]);
+  assert.equal(normalized.events[0]?.attributes.forgottenEventIds, undefined);
 });
 
 test("packages one verified smoke attempt with native, workspace, verifier, and normalized evidence", async () => {
@@ -938,6 +999,7 @@ test("packages one verified smoke attempt with native, workspace, verifier, and 
     const result = await captureOpenHandsAgentServerRun({
       definition,
       startingWorkspacePath: start,
+      workspaceOutcomeExcludedDirectoryNames: ["node_modules", "node_modules"],
       workspace: {
         setup: async () => ({ status: "ready", path: final, artifactId: "workspace", retained: true }),
         cleanup: async () => undefined,
@@ -992,7 +1054,7 @@ test("packages one verified smoke attempt with native, workspace, verifier, and 
       (JSON.parse(readFileSync(join(bundleRoot, captureReport.relativePath), "utf8")) as {
         workspaceOutcomeExcludedDirectoryNames: string[];
       }).workspaceOutcomeExcludedDirectoryNames,
-      [".git"],
+      [".git", "node_modules"],
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
