@@ -16,6 +16,7 @@ export const UNIFORM_EVENT_FAMILIES = [
 export type UniformEventFamily = typeof UNIFORM_EVENT_FAMILIES[number];
 export type EvidenceUnavailable = { status: "unknown" | "unsupported"; reason: string };
 export type EvidenceValue<Value> = { status: "known"; value: Value } | EvidenceUnavailable;
+export type NativeOrderEvidence = { status: "known"; value: number; domain: string } | EvidenceUnavailable;
 export type NativeEvidenceReference = { artifactId: string; recordLocator: string };
 export type ContentReference = {
   nativeReference: NativeEvidenceReference;
@@ -35,7 +36,7 @@ export type UniformEvent = {
     nativeType: string;
     nativeReference: NativeEvidenceReference;
   };
-  nativeOrder: EvidenceValue<number>;
+  nativeOrder: NativeOrderEvidence;
   nativeTime: EvidenceValue<string>;
   actor: {
     kind: "user" | "agent" | "model" | "tool" | "harness" | "operator" | "system";

@@ -267,6 +267,7 @@ export type {
   NativeCaptureAdapter,
   NativeEvidenceReference,
   NativeEvidenceResolver,
+  NativeOrderEvidence,
   NormalizationInput,
   NormalizationResult,
   QualifiedNativeCapture,

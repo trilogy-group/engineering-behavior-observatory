@@ -33,6 +33,10 @@ false parent for missing native evidence. Attributes accept at most 32 shallow
 scalar fields, strings are bounded, and nested or large content is represented
 only through a native evidence reference.
 
+A known native order includes its source-local `domain`. Sequence values from
+independent session, hook, protocol, or telemetry streams are never compared or
+combined unless retained native evidence establishes that ordering.
+
 ## Native references
 
 A native reference contains the retained `artifactId` and a source-owned

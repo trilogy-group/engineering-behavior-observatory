@@ -55,6 +55,9 @@ test("validates golden events for every initial family without inventing missing
   assert.deepEqual([...new Set(fixture.map(({ family }) => family))].sort(), [...UNIFORM_EVENT_FAMILIES].sort());
   assert.ok(fixture.some(({ nativeTime }) => nativeTime.status === "unknown"));
   assert.ok(fixture.some(({ nativeTime }) => nativeTime.status === "unsupported"));
+  assert.deepEqual(fixture.filter(({ nativeOrder }) => nativeOrder.status === "known")
+    .map(({ nativeOrder }) => nativeOrder.status === "known" ? nativeOrder.domain : ""),
+  ["session", "hooks", "hooks", "hooks", "hooks", "hooks", "hooks"]);
   assert.ok(fixture.some(({ relations }) => relations.parent.status === "unknown"));
   assert.ok(fixture.some(({ content }) => content.status === "unknown"));
   assert.ok(fixture.some(({ content }) => content.status === "known" && content.value.length === 0));
@@ -107,6 +110,7 @@ test("runs a minimal capture and normalization adapter contract while retaining 
       nativeType: "fake.event",
       nativeReference: captured[0]!.reference,
     },
+    nativeOrder: { status: "known", value: 1, domain: "fake-stream" },
     nativeTime: { status: "unsupported", reason: "fake source has no native timestamp" },
     relations: {
       parent: { status: "unsupported", reason: "fake source has no parent relation" },
