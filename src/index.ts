@@ -279,6 +279,27 @@ export type {
   UnmappedNativeRecord,
 } from "./uniform-events.js";
 export {
+  captureOpenHandsAgentServer,
+  createOpenHandsHarnessAdapter,
+  normalizeOpenHandsCapture,
+  OPENHANDS_AGENT_SERVER_CAPABILITIES,
+  OPENHANDS_AGENT_SERVER_VERSION,
+  OPENHANDS_TYPESCRIPT_CLIENT_VERSION,
+} from "./openhands.js";
+export type {
+  OpenHandsCapture,
+  OpenHandsCaptureRequest,
+  OpenHandsNativeRecord,
+  OpenHandsWebSocket,
+} from "./openhands.js";
+export { captureOpenHandsAgentServerRun } from "./openhands-run.js";
+export type {
+  CaptureOpenHandsAgentServerRunOptions,
+  CaptureOpenHandsAgentServerRunResult,
+  CaptureOpenHandsAgentServerVerifier,
+  OpenHandsAgentServerRunConfiguration,
+} from "./openhands-run.js";
+export {
   AGENT_SDK_CONFIG_SCHEMA_VERSION,
   resolveAgentSdkConfigurationRecord,
   runAgentSdkQueueEntry,

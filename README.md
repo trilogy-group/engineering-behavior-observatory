@@ -14,6 +14,10 @@ The first post-capture contract is now available: versioned
 capture-qualified native evidence without replacing source records or transport
 semantics.
 
+The [OpenHands Agent Server adapter](docs/openhands-agent-server.md) implements
+the pinned `1.44.1` REST/WebSocket boundary with native-first reconciliation,
+explicit completeness gaps, and verified run-bundle packaging.
+
 ## Status
 
 M2 native Agent SDK capture is available through the public

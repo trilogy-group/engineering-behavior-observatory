@@ -1,0 +1,765 @@
+import assert from "node:assert/strict";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import {
+  assertAdapterContract,
+  captureOpenHandsAgentServer,
+  captureOpenHandsAgentServerRun,
+  createOpenHandsHarnessAdapter,
+  normalizeOpenHandsCapture,
+  OPENHANDS_AGENT_SERVER_CAPABILITIES,
+  OPENHANDS_AGENT_SERVER_VERSION,
+  OPENHANDS_TYPESCRIPT_CLIENT_VERSION,
+  type OpenHandsCapture,
+  type RunBundleDefinition,
+  type OpenHandsWebSocket,
+} from "../src/index.js";
+
+const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
+const SHA = (value: string): `sha256:${string}` => `sha256:${value.repeat(64).slice(0, 64)}`;
+
+const message = {
+  id: "event-message",
+  kind: "MessageEvent",
+  source: "user",
+  timestamp: "2026-09-02T07:00:00Z",
+  llm_message: { role: "assistant", content: [{ type: "text", text: "hello" }] },
+};
+
+test("captures the pinned REST and WebSocket event then normalizes native source", async () => {
+  const requests: string[] = [];
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    requests.push(`${init?.method ?? "GET"} ${new URL(url).pathname}`);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1", sdk_version: "1.44.1", tools_version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") {
+      return json({ id: "conversation-1", execution_status: "running", workspace: { type: "local", working_dir: "/workspace" } }, 201);
+    }
+    if (url.endsWith("/api/conversations/conversation-1")) {
+      return json({ id: "conversation-1", execution_status: "finished", workspace: { type: "local", working_dir: "/workspace" } });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) {
+      return json({ items: [message], next_page_id: null });
+    }
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+  const sockets: FakeWebSocket[] = [];
+  const result = await captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: { workspace: { type: "local", working_dir: "/workspace" } },
+    message: { role: "user", content: [{ type: "text", text: "hello" }], run: true },
+    fetch,
+    webSocket: (url) => {
+      const socket = new FakeWebSocket(url);
+      sockets.push(socket);
+      queueMicrotask(() => {
+        socket.open();
+        socket.message(message);
+      });
+      return socket;
+    },
+    pollIntervalMs: 0,
+  });
+  const normalized = await normalizeOpenHandsCapture(result);
+
+  assert.equal(result.qualification, "qualified-with-gaps");
+  assert.equal(result.reconciliation.status, "matched");
+  assert.deepEqual(result.reconciliation.streamedEventIds, ["event-message"]);
+  assert.deepEqual(result.reconciliation.finalEventIds, ["event-message"]);
+  assert.equal(result.eventLogCompleteness.status, "unknown");
+  assert.equal(sockets[0]?.url, "ws://127.0.0.1:8000/sockets/events/conversation-1?resend_mode=all");
+  assert.deepEqual(requests, [
+    "GET /server_info",
+    "POST /api/conversations",
+    "POST /api/conversations/conversation-1/events",
+    "GET /api/conversations/conversation-1",
+    "GET /api/conversations/conversation-1/events/search",
+    "DELETE /api/conversations/conversation-1",
+  ]);
+  assert.deepEqual(normalized.events.map(({ family }) => family), ["message", "outcome"]);
+  assert.equal(normalized.events[0]?.actor.kind, "user");
+  assert.equal(normalized.events[0]?.source.nativeType, "MessageEvent");
+  assert.equal(normalized.unmapped.length > 0, true);
+});
+
+test("reconnects from the last native timestamp and reconciles duplicate streamed events", async () => {
+  const second = { ...message, id: "event-second", timestamp: "2026-09-02T07:00:01Z" };
+  const sockets: FakeWebSocket[] = [];
+  let conversationPolls = 0;
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/api/conversations") && init?.method === "POST") {
+      assert.equal(new Headers(init.headers).get("x-session-api-key"), "secret");
+    }
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") {
+      return json({ id: "conversation-1", execution_status: "running", workspace: {} }, 201);
+    }
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1")) {
+      conversationPolls += 1;
+      return json({ id: "conversation-1", execution_status: conversationPolls < 2 ? "running" : "finished", workspace: {} });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) {
+      return json({ items: [message, second], next_page_id: null });
+    }
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+
+  const result = await captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: { workspace: {} },
+    message: { role: "user", content: [], run: true },
+    sessionApiKey: "secret",
+    fetch,
+    webSocket: (url) => {
+      const socket = new FakeWebSocket(url);
+      sockets.push(socket);
+      queueMicrotask(() => {
+        socket.open();
+        if (sockets.length === 1) {
+          socket.message(message);
+          socket.disconnect();
+        } else {
+          socket.message(message);
+          socket.message(second);
+        }
+      });
+      return socket;
+    },
+    maxReconnects: 1,
+    reconnectDelayMs: 0,
+    pollIntervalMs: 1,
+  });
+
+  assert.equal(sockets.length, 2);
+  assert.equal(sockets[1]?.url.includes("resend_mode=since"), true);
+  assert.equal(sockets[1]?.url.includes("after_timestamp=2026-09-02T07%3A00%3A00Z"), true);
+  assert.equal(sockets.some(({ url }) => url.includes("secret")), false);
+  assert.deepEqual(sockets.map((socket) => socket.sent), [[JSON.stringify({ type: "auth", session_api_key: "secret" })], [JSON.stringify({ type: "auth", session_api_key: "secret" })]]);
+  assert.deepEqual(result.reconciliation.streamedEventIds, ["event-message", "event-second"]);
+  assert.equal(result.records.filter(({ record }) => record.channel === "websocket-event").length, 3);
+  assert.equal(result.reconciliation.status, "matched");
+});
+
+test("maps supported event facts, error scopes, and exposed relationships while retaining unknown kinds", async () => {
+  const native = JSON.parse(readFileSync(
+    join(repositoryRoot, "test/fixtures/openhands/v1.44.1/final-events.json"),
+    "utf8",
+  )) as Array<Record<string, unknown>>;
+  const records = native.map((payload, index) => ({
+    reference: { artifactId: "openhands-native", recordLocator: `line:${index + 1}` },
+    record: {
+      schemaVersion: "ebo.openhands-native-record/v1" as const,
+      session_id: "conversation-1",
+      channel: "rest-event" as const,
+      sequence: index + 1,
+      channelSequence: index + 1,
+      payload,
+    },
+  }));
+  const capture: OpenHandsCapture = {
+    runId: "run-1",
+    attemptId: "attempt-1",
+    qualification: "qualified-with-gaps",
+    records,
+    conversationId: "conversation-1",
+    serverInfo: { version: "1.44.1" },
+    finalConversation: { id: "conversation-1", execution_status: "finished" },
+    reconciliation: {
+      status: "matched",
+      streamedEventIds: [],
+      finalEventIds: native.map(({ id }) => String(id)),
+      streamedOnlyEventIds: [],
+      finalOnlyEventIds: [],
+    },
+    eventLogCompleteness: { status: "unknown", reason: "REST does not prove EventLog completeness." },
+  };
+  const normalized = await normalizeOpenHandsCapture(capture);
+
+  assert.deepEqual(normalized.events.map(({ family }) => family), [
+    "message", "tool", "tool", "tool", "runtime", "runtime", "context", "context", "runtime", "runtime",
+  ]);
+  assert.deepEqual(
+    normalized.events.filter(({ source }) => source.nativeType.includes("Error")).map(({ attributes }) => attributes.errorScope),
+    ["agent-tool", "conversation", "server"],
+  );
+  assert.deepEqual(
+    normalized.events.find(({ source }) => source.nativeType === "Condensation")?.attributes.forgottenEventIds,
+    ["message-1", "action-1"],
+  );
+  assert.deepEqual(
+    normalized.events.find(({ source }) => source.nativeType === "ObservationEvent")?.relations.known,
+    [{ kind: "caused-by", eventId: "openhands:action-1" }],
+  );
+  assert.equal(normalized.unmapped.some(({ reference }) => reference.recordLocator === "line:11"), true);
+});
+
+test("declares source-specific capabilities without behavioral comparison claims", () => {
+  const adapter = createOpenHandsHarnessAdapter();
+  const agentSdk = {
+    families: {
+      ...OPENHANDS_AGENT_SERVER_CAPABILITIES.families,
+      context: { status: "unsupported" as const },
+      permission: { status: "available" as const },
+    },
+  };
+
+  assert.equal(adapter.capture.id, "openhands-agent-server-v1.44.1");
+  assert.equal(adapter.normalization.capabilityProfile, OPENHANDS_AGENT_SERVER_CAPABILITIES);
+  assert.deepEqual(
+    Object.keys(OPENHANDS_AGENT_SERVER_CAPABILITIES.families).filter((family) =>
+      OPENHANDS_AGENT_SERVER_CAPABILITIES.families[family as keyof typeof OPENHANDS_AGENT_SERVER_CAPABILITIES.families].status
+        !== agentSdk.families[family as keyof typeof agentSdk.families].status),
+    ["context", "permission"],
+  );
+});
+
+test("retains streamed evidence and a capture gap when final REST reconciliation fails", async () => {
+  let deleted = false;
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") {
+      return json({ id: "conversation-1", execution_status: "running", workspace: {} }, 201);
+    }
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
+      return json({ id: "conversation-1", execution_status: "error", workspace: {} });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) return json({ detail: "unavailable" }, 503);
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") {
+      deleted = true;
+      return json({ success: true });
+    }
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+  const agentError = {
+    id: "agent-error-1",
+    kind: "AgentErrorEvent",
+    source: "agent",
+    timestamp: "2026-09-02T07:00:00Z",
+    tool_name: "terminal",
+    tool_call_id: "call-1",
+    error: "failed",
+  };
+
+  const result = await captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: { workspace: {} },
+    message: { role: "user", content: [], run: true },
+    fetch,
+    webSocket: (url) => {
+      const socket = new FakeWebSocket(url);
+      queueMicrotask(() => {
+        socket.open();
+        socket.message(agentError);
+      });
+      return socket;
+    },
+    pollIntervalMs: 0,
+  });
+  const normalized = await normalizeOpenHandsCapture(result);
+
+  assert.equal(result.reconciliation.status, "partial");
+  assert.match(result.reconciliation.finalReadError ?? "", /503/);
+  assert.deepEqual(result.reconciliation.streamedOnlyEventIds, ["agent-error-1"]);
+  assert.equal(normalized.events[0]?.attributes.errorScope, "agent-tool");
+  assert.equal(deleted, true);
+});
+
+test("retains and cleans up a partial attempt when message submission fails", async () => {
+  let deleted = false;
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ detail: "failed" }, 500);
+    if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [], next_page_id: null });
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") {
+      deleted = true;
+      return json({ success: true });
+    }
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+
+  const result = await captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: { workspace: {} },
+    message: { role: "user", content: [], run: true },
+    fetch,
+    webSocket: (url) => {
+      const socket = new FakeWebSocket(url);
+      queueMicrotask(() => socket.open());
+      return socket;
+    },
+  });
+
+  assert.equal(result.reconciliation.status, "partial");
+  assert.match(result.captureError ?? "", /500/);
+  assert.equal(result.finalConversation, undefined);
+  assert.equal(result.records.some(({ record }) => record.channel === "capture-error"), true);
+  assert.equal(deleted, true);
+});
+
+test("bounds untrusted Agent Server JSON responses before parsing", async () => {
+  await assert.rejects(captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: {},
+    message: {},
+    fetch: async () => json({ version: "1.44.1", padding: "x".repeat(256) }),
+    webSocket: (url) => new FakeWebSocket(url),
+    maxResponseBytes: 100,
+  }), /response exceeds 100 bytes/);
+});
+
+test("retains an explicit gap for an oversized WebSocket frame", async () => {
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
+      return json({ id: "conversation-1", execution_status: "finished" });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [], next_page_id: null });
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+
+  const result = await captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: {},
+    message: {},
+    fetch,
+    webSocket: (url) => {
+      const socket = new FakeWebSocket(url);
+      queueMicrotask(() => {
+        socket.open();
+        socket.message({ id: "oversized", kind: "FutureEvent", padding: "x".repeat(300) });
+      });
+      return socket;
+    },
+    maxResponseBytes: 200,
+    pollIntervalMs: 0,
+  });
+
+  assert.equal(result.reconciliation.status, "partial");
+  assert.equal(result.records.some(({ record }) =>
+    record.channel === "websocket-status" && record.payload.state === "message-rejected"), true);
+});
+
+test("records an exhausted stream disconnect while final REST preserves the event", async () => {
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
+      return json({ id: "conversation-1", execution_status: "finished", workspace: {} });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [message], next_page_id: null });
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+
+  const result = await captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: { workspace: {} },
+    message: { role: "user", content: [], run: true },
+    fetch,
+    webSocket: (url) => {
+      const socket = new FakeWebSocket(url);
+      queueMicrotask(() => {
+        socket.open();
+        socket.disconnect();
+      });
+      return socket;
+    },
+    maxReconnects: 0,
+    pollIntervalMs: 0,
+  });
+
+  assert.equal(result.reconciliation.status, "partial");
+  assert.deepEqual(result.reconciliation.finalOnlyEventIds, ["event-message"]);
+  assert.deepEqual(
+    result.records.filter(({ record }) => record.channel === "websocket-status").map(({ record }) => record.payload.state),
+    ["connected", "disconnected", "reconnect-exhausted"],
+  );
+});
+
+test("satisfies the uniform adapter contract with resolvable retained native records", async () => {
+  const native = JSON.parse(readFileSync(
+    join(repositoryRoot, "test/fixtures/openhands/v1.44.1/final-events.json"),
+    "utf8",
+  )) as Array<Record<string, unknown>>;
+  const capture: OpenHandsCapture = {
+    runId: "run-1",
+    attemptId: "attempt-1",
+    qualification: "qualified-with-gaps",
+    records: native.map((payload, index) => ({
+      reference: { artifactId: "openhands-native", recordLocator: `line:${index + 1}` },
+      record: {
+        schemaVersion: "ebo.openhands-native-record/v1",
+        session_id: "conversation-1",
+        channel: "rest-event",
+        sequence: index + 1,
+        channelSequence: index + 1,
+        payload,
+      },
+    })),
+    conversationId: "conversation-1",
+    serverInfo: { version: "1.44.1" },
+    finalConversation: { id: "conversation-1", execution_status: "finished" },
+    reconciliation: {
+      status: "matched",
+      streamedEventIds: [],
+      finalEventIds: native.map(({ id }) => String(id)),
+      streamedOnlyEventIds: [],
+      finalOnlyEventIds: [],
+    },
+    eventLogCompleteness: { status: "unknown", reason: "REST does not prove EventLog completeness." },
+  };
+  const adapter = createOpenHandsHarnessAdapter();
+  const result = await assertAdapterContract({
+    ...adapter,
+    capture: { ...adapter.capture, capture: async () => capture },
+  }, null, {
+    resolve: ({ artifactId, recordLocator }) => artifactId === "openhands-native" && /^line:\d+(#\/payload(?:\/.*)?)?$/.test(recordLocator),
+  });
+
+  assert.equal(result.events.length, 10);
+  assert.equal(result.unmapped.length, 1);
+});
+
+test("preserves timezone-naive native timestamps without inventing a uniform timezone", async () => {
+  const capture: OpenHandsCapture = {
+    runId: "run-1",
+    attemptId: "attempt-1",
+    qualification: "qualified-with-gaps",
+    records: [{
+      reference: { artifactId: "openhands-native", recordLocator: "line:1" },
+      record: {
+        schemaVersion: "ebo.openhands-native-record/v1",
+        session_id: "conversation-1",
+        channel: "rest-event",
+        sequence: 1,
+        channelSequence: 1,
+        payload: { ...message, timestamp: "2026-09-02T07:00:00" },
+      },
+    }],
+    conversationId: "conversation-1",
+    serverInfo: { version: "1.44.1" },
+    finalConversation: { execution_status: "finished" },
+    reconciliation: {
+      status: "matched",
+      streamedEventIds: [],
+      finalEventIds: ["event-message"],
+      streamedOnlyEventIds: [],
+      finalOnlyEventIds: [],
+    },
+    eventLogCompleteness: { status: "unknown", reason: "not exposed" },
+  };
+
+  const normalized = await normalizeOpenHandsCapture(capture);
+
+  assert.equal(normalized.events[0]?.nativeTime.status, "unknown");
+  assert.equal(capture.records[0]?.record.payload.timestamp, "2026-09-02T07:00:00");
+});
+
+test("packages one verified smoke attempt with native, workspace, verifier, and normalized evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-openhands-run-"));
+  const start = join(root, "start");
+  const final = join(root, "final");
+  const bundleRoot = join(root, "bundle");
+  mkdirSync(start);
+  writeFileSync(join(start, "result.txt"), "before\n");
+  cpSync(start, final, { recursive: true, preserveTimestamps: true });
+  writeFileSync(join(final, "result.txt"), "after\n");
+  mkdirSync(join(final, ".git"));
+  writeFileSync(join(final, ".git", "HEAD"), "ref: refs/heads/main\n");
+  const hook = {
+    id: "hook-1",
+    kind: "HookExecutionEvent",
+    source: "hook",
+    timestamp: "2026-09-02T07:00:00Z",
+    hook_event_type: "SessionEnd",
+    hook_command: "echo done",
+    success: true,
+    exit_code: 0,
+  };
+  const definition: RunBundleDefinition = {
+    bundleRoot,
+    bundleId: "bundle-openhands-smoke",
+    run: {
+      id: "run-openhands-smoke",
+      assessmentMode: "verified",
+      task: { id: "task-openhands-smoke" },
+      fixture: { id: "fixture-openhands-smoke", digest: SHA("a") },
+      model: { provider: "test", id: "test/model" },
+      harness: { id: "openhands-agent-server", version: "1.44.1" },
+      runtime: [],
+    },
+    attempt: { id: "attempt-openhands-smoke", number: 1 },
+    configuration: { digest: SHA("b"), budgetDigest: SHA("c"), toolPolicyDigest: SHA("d") },
+  };
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1", sdk_version: "1.44.1", tools_version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") {
+      const body = JSON.parse(String(init.body)) as { workspace: { working_dir: string } };
+      assert.equal(body.workspace.working_dir, "/server/workspace");
+      return json({ id: "conversation-1", workspace: { type: "local", working_dir: "/server/workspace" } }, 201);
+    }
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
+      return json({ id: "conversation-1", execution_status: "finished", workspace: { type: "local", working_dir: final } });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [message, hook], next_page_id: null });
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+
+  try {
+    const result = await captureOpenHandsAgentServerRun({
+      definition,
+      startingWorkspacePath: start,
+      workspace: {
+        setup: async () => ({ status: "ready", path: final, artifactId: "workspace", retained: true }),
+        cleanup: async () => undefined,
+      },
+      configuration: {
+        model: "test/model",
+        baseUrl: "http://127.0.0.1:8000",
+        serverWorkspacePath: "/server/workspace",
+        startConversation: { agent: { kind: "Agent" } },
+        message: { role: "user", content: [{ type: "text", text: "update result.txt" }], run: true },
+        fetch,
+        webSocket: (url) => {
+          const socket = new FakeWebSocket(url);
+          queueMicrotask(() => {
+            socket.open();
+            socket.message(message);
+            socket.message(hook);
+          });
+          return socket;
+        },
+        pollIntervalMs: 0,
+      },
+      verifier: async (_context, workspace) => ({
+        schemaVersion: "verifier-result/v1",
+        bundleId: definition.bundleId,
+        status: "passed",
+        exitCode: 0,
+        workspace: {
+          artifactId: workspace.descriptor.id,
+          digest: workspace.descriptor.digest,
+          fingerprint: workspace.fingerprint,
+        },
+        assertions: [{ id: "result", status: "passed" }],
+        diagnostics: [],
+      }),
+    });
+
+    assert.equal(result.attempt.classification.kind, "completed");
+    assert.equal(result.capture.conversationId, "conversation-1");
+    assert.equal(result.manifest.run.native?.sessionId, "conversation-1");
+    assert.deepEqual(result.manifest.evidence.filter(({ kind }) => ["session", "hook", "workspace", "verifier"].includes(kind)).map(({ kind }) => kind), [
+      "workspace", "verifier", "session", "hook",
+    ]);
+    assert.equal(result.normalized.events.every(({ attemptId }) => attemptId === definition.attempt.id), true);
+    assert.equal(result.qualification.status, "qualified-with-gaps");
+    assert.equal(result.qualification.reasons.some(({ code }) => code === "EVENT_LOG_COMPLETENESS_UNPROVEN"), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("pins the exact upstream OpenAPI and TypeScript-client comparison artifacts", () => {
+  const contract = JSON.parse(readFileSync(
+    join(repositoryRoot, "contracts/openhands-agent-server-v1.44.1.json"),
+    "utf8",
+  )) as {
+    server: { version: string; openapiSha256: string };
+    typescriptClient: { version: string; generatedForServer: string; decision: string };
+    websocket: { path: string; authentication: string };
+  };
+
+  assert.equal(contract.server.version, OPENHANDS_AGENT_SERVER_VERSION);
+  assert.equal(contract.server.openapiSha256, "718a6e6e658ead0aba4457ad5fc083df0436b3bfddfdac646cd8eb2f22c973f1");
+  assert.equal(contract.typescriptClient.version, OPENHANDS_TYPESCRIPT_CLIENT_VERSION);
+  assert.equal(contract.typescriptClient.generatedForServer, "1.44.0");
+  assert.equal(contract.typescriptClient.decision, "direct-rest-websocket");
+  assert.equal(contract.websocket.path, "/sockets/events/{conversation_id}");
+  assert.equal(contract.websocket.authentication, "first-message");
+});
+
+test("approved live Agent Server smoke produces a verified run bundle", {
+  skip: process.env.EBO_LIVE_OPENHANDS_SMOKE !== "1",
+  timeout: 300_000,
+}, async () => {
+  const workspaceRoot = process.env.EBO_LIVE_OPENHANDS_WORKSPACE_ROOT;
+  const model = process.env.LLM_MODEL;
+  const apiKey = process.env.LLM_API_KEY;
+  if (workspaceRoot === undefined || model === undefined || apiKey === undefined) {
+    throw new Error("Live OpenHands smoke requires EBO_LIVE_OPENHANDS_WORKSPACE_ROOT, LLM_MODEL, and LLM_API_KEY.");
+  }
+  mkdirSync(workspaceRoot, { recursive: true });
+  const root = mkdtempSync(join(workspaceRoot, "attempt-"));
+  const start = join(root, "start");
+  const final = join(root, "final");
+  const bundleRoot = join(root, "bundle");
+  mkdirSync(start);
+  writeFileSync(join(start, "result.txt"), "before\n");
+  cpSync(start, final, { recursive: true, preserveTimestamps: true });
+  const definition: RunBundleDefinition = {
+    bundleRoot,
+    bundleId: "bundle-openhands-live-smoke",
+    run: {
+      id: "run-openhands-live-smoke",
+      assessmentMode: "verified",
+      task: { id: "task-openhands-live-smoke" },
+      fixture: { id: "fixture-openhands-live-smoke", digest: SHA("a") },
+      model: { provider: model.split("/", 1)[0] ?? "unknown", id: model },
+      harness: { id: "openhands-agent-server", version: OPENHANDS_AGENT_SERVER_VERSION },
+      runtime: [],
+    },
+    attempt: { id: "attempt-openhands-live-smoke", number: 1 },
+    configuration: { digest: SHA("b"), budgetDigest: SHA("c"), toolPolicyDigest: SHA("d") },
+  };
+
+  try {
+    const result = await captureOpenHandsAgentServerRun({
+      definition,
+      startingWorkspacePath: start,
+      workspace: { setup: async () => ({ status: "ready", path: final, artifactId: "workspace", retained: true }) },
+      configuration: {
+        model,
+        baseUrl: process.env.EBO_OPENHANDS_SERVER_URL ?? "http://127.0.0.1:8010",
+        startConversation: {
+          agent: {
+            kind: "Agent",
+            llm: {
+              model,
+              api_key: apiKey,
+              ...(process.env.LLM_BASE_URL === undefined ? {} : { base_url: process.env.LLM_BASE_URL }),
+            },
+            tools: [
+              { name: "terminal", params: {} },
+              { name: "file_editor", params: {} },
+            ],
+          },
+          hook_config: {
+            session_start: [{ matcher: "*", hooks: [{ command: "true" }] }],
+            session_end: [{ matcher: "*", hooks: [{ command: "true" }] }],
+          },
+          max_iterations: 20,
+          stuck_detection: true,
+        },
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "Replace result.txt with exactly the single line: after" }],
+          run: true,
+        },
+        sessionApiKey: process.env.EBO_OPENHANDS_SESSION_API_KEY,
+        timeoutMs: 240_000,
+        pollIntervalMs: 250,
+      },
+      verifier: async (_context, workspace, workspacePath) => {
+        const passed = readFileSync(join(workspacePath, "result.txt"), "utf8").trim() === "after";
+        const base = {
+          schemaVersion: "verifier-result/v1" as const,
+          bundleId: definition.bundleId,
+          workspace: {
+            artifactId: workspace.descriptor.id,
+            digest: workspace.descriptor.digest,
+            fingerprint: workspace.fingerprint,
+          },
+          diagnostics: [],
+        };
+        return passed
+          ? { ...base, status: "passed", exitCode: 0, assertions: [{ id: "result-file", status: "passed" }] }
+          : { ...base, status: "failed", exitCode: 1, assertions: [{ id: "result-file", status: "failed" }] };
+      },
+    });
+
+    assert.equal(result.attempt.classification.kind, "completed");
+    assert.equal(result.manifest.terminal.state, "completed");
+    assert.equal(result.qualification.status, "qualified-with-gaps");
+    assert.equal(result.normalized.events.length > 0, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+class FakeWebSocket implements OpenHandsWebSocket {
+  public readyState = 0;
+  public readonly sent: string[] = [];
+  readonly #listeners = new Map<string, Set<(event: { data?: unknown }) => void>>();
+
+  public constructor(public readonly url: string) {}
+
+  public addEventListener(type: string, listener: (event: { data?: unknown }) => void): void {
+    const listeners = this.#listeners.get(type) ?? new Set();
+    listeners.add(listener);
+    this.#listeners.set(type, listeners);
+  }
+
+  public removeEventListener(type: string, listener: (event: { data?: unknown }) => void): void {
+    this.#listeners.get(type)?.delete(listener);
+  }
+
+  public send(data: string): void {
+    this.sent.push(data);
+  }
+
+  public close(): void {
+    this.readyState = 3;
+  }
+
+  public open(): void {
+    this.readyState = 1;
+    this.emit("open", {});
+  }
+
+  public message(data: unknown): void {
+    this.emit("message", { data: JSON.stringify(data) });
+  }
+
+  public disconnect(): void {
+    this.readyState = 3;
+    this.emit("close", {});
+  }
+
+  private emit(type: string, event: { data?: unknown }): void {
+    for (const listener of this.#listeners.get(type) ?? []) listener(event);
+  }
+}
