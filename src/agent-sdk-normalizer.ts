@@ -285,6 +285,9 @@ function mapSessionRecord(
         ...(stableToolId === undefined ? [] : [`tool:${stableToolId}`]),
         ...(stableTaskId === undefined ? [] : [`task:${stableTaskId}`]),
       ],
+      anchors: nativeType === "system" && subtype === "task_started" && stableTaskId !== undefined
+        ? [{ key: `task:${stableTaskId}`, rank: 1 }]
+        : [],
       parentKey: parentToolKey(message),
     }));
   }
@@ -739,7 +742,7 @@ function originTime(value: unknown, reason: string): UniformEvent["nativeTime"] 
 }
 
 function isRfc3339DateTime(value: string): boolean {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/u.exec(value);
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/iu.exec(value);
   if (match === null) return false;
   const [, yearText, monthText, dayText, hourText, minuteText, secondText, offsetHourText, offsetMinuteText] = match;
   const year = Number(yearText);

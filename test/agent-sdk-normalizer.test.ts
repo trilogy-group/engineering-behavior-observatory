@@ -205,6 +205,44 @@ test("correlates task lifecycle hooks by task ID before a shared agent ID", asyn
   }
 });
 
+test("uses session task starts as fallback anchors when task hooks are absent", async () => {
+  const input = readFixture("complete");
+  input.records = [...input.records, ...["task_started", "task_progress"].map((subtype, index) => ({
+    reference: { artifactId: "session", recordLocator: `line:${4 + index}` },
+    record: {
+      kind: "session" as const,
+      document: {
+        schemaVersion: "ebo.agent-sdk-message/v1",
+        sequence: 4 + index,
+        nativeType: "system",
+        nativeSubtype: subtype,
+        sessionId: "session-golden",
+        message: { type: "system", subtype, session_id: "session-golden", task_id: "task-session" },
+      },
+    },
+  }))];
+  const result = await claudeAgentSdkNormalizationAdapter.normalize(input);
+  const started = result.events.find(({ source }) =>
+    source.nativeReference.artifactId === "session" && source.nativeReference.recordLocator === "line:4")!;
+  const progress = result.events.find(({ source }) =>
+    source.nativeReference.artifactId === "session" && source.nativeReference.recordLocator === "line:5")!;
+
+  assert.deepEqual(progress.relations.known, [{ kind: "correlates-with", eventId: started.id }]);
+});
+
+test("preserves lowercase RFC 3339 native timestamps", async () => {
+  const input = readFixture("complete");
+  const wrapper = input.records.find(({ reference }) =>
+    reference.artifactId === "session" && reference.recordLocator === "line:1")!.record.document as {
+    message: { timestamp: string };
+  };
+  wrapper.message.timestamp = "2026-01-01t00:00:00z";
+  const result = await claudeAgentSdkNormalizationAdapter.normalize(input);
+
+  await validateUniformEvents(result.events, createAgentSdkNativeEvidenceResolver(input));
+  assert.deepEqual(result.events[0]!.nativeTime, { status: "known", value: wrapper.message.timestamp });
+});
+
 test("accepts capture-qualified 256-character run and attempt identities", async () => {
   const input = readFixture("complete");
   input.runId = "r".repeat(256);
