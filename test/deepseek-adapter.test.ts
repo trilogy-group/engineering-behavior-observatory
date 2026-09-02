@@ -263,6 +263,31 @@ test("retains delivered native events and clean shutdown after interruption", as
   }
 });
 
+test("never prompts an already-aborted or initialize-aborted attempt", async () => {
+  for (const scenario of ["already-aborted", "initialize-aborted"] as const) {
+    const root = mkdtempSync(join(tmpdir(), `ebo-deepseek-${scenario}-`));
+    const composition = fixtureComposition("minimal");
+    const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
+    const controller = new AbortController();
+    if (scenario === "already-aborted") controller.abort("before launch");
+    else setTimeout(() => controller.abort("during initialize"), 50);
+    try {
+      const execution = await executeDeepSeekHarness(
+        harnessContext(undefined, undefined, controller.signal, composition.workspaceCwd),
+        configuration(composition, scenario === "already-aborted" ? "success" : "slow-initialize"),
+        capture,
+      );
+      const report = execution.evidence as DeepSeekCaptureReport;
+      assert.equal(execution.status, "interrupted");
+      assert.equal(report.records.some((record) => record.method === "session/prompt"), false);
+      assert.equal(execution.shutdownResult?.status, "completed");
+    } finally {
+      await capture.close().catch(() => undefined);
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
 test("times out through official close while preserving the delivered partial stream", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-timeout-"));
   const composition = fixtureComposition("minimal");
@@ -443,7 +468,7 @@ function harnessContext(
 
 function configuration(
   composition: DeepSeekRuntimeComposition,
-  scenario: "success" | "interrupt" | "contaminated",
+  scenario: "success" | "interrupt" | "contaminated" | "slow-initialize",
   secret = "",
 ): DeepSeekHarnessConfiguration {
   return {

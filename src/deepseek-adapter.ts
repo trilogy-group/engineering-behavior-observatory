@@ -284,10 +284,13 @@ export async function executeDeepSeekHarness(
   let captureError: string | undefined;
   let shutdownResult: { status: "completed" | "failed"; error?: string } = { status: "completed" };
   context.registerShutdown(() => client.close());
+  const closeOnAbort = () => { void client.close().catch(() => undefined); };
+  if (!context.signal.aborted) context.signal.addEventListener("abort", closeOnAbort, { once: true });
 
   await capture.record({ kind: "composition", payload: composition });
   await capture.record({ kind: "capability", payload: capabilities });
   try {
+    throwIfAborted(context.signal);
     const initialize: InitializeParams = {
       cwd: composition.workspaceCwd,
       provider: composition.route.provider,
@@ -298,11 +301,13 @@ export async function executeDeepSeekHarness(
     client.start();
     ({ serverInfo } = await client.initialize(initialize));
     await capture.record({ kind: "response", method: "initialize", payload: { serverInfo } });
+    throwIfAborted(context.signal);
 
     const contentBlocks = typeof configuration.input === "string"
       ? [{ type: "text" as const, text: configuration.input }]
       : configuration.input;
     await capture.record({ kind: "request", method: "session/prompt", sessionId: configuration.sessionId, payload: { contentBlocks } });
+    throwIfAborted(context.signal);
     messageId = await client.prompt(configuration.sessionId, contentBlocks);
     await capture.record({ kind: "response", method: "session/prompt", sessionId: configuration.sessionId, sourceIdentity: messageId, payload: { messageId } });
 
@@ -339,6 +344,7 @@ export async function executeDeepSeekHarness(
       captureError = sanitizedError(recordError, sensitiveValues);
     }
   } finally {
+    context.signal.removeEventListener("abort", closeOnAbort);
     subscription.close();
     try {
       await capture.record({ kind: "request", method: "client.close" });
@@ -622,6 +628,10 @@ function positiveInteger(value: number, label: string): number {
 
 class DeepSeekActivityTimeoutError extends Error {}
 class DeepSeekInterruptedError extends Error {}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw new DeepSeekInterruptedError("DeepSeek activity was interrupted.");
+}
 
 async function nextNotification(
   subscription: NotificationSubscription,

@@ -16,6 +16,10 @@ lines.on("line", (line) => {
       setImmediate(() => process.exit(2));
       return;
     }
+    if (scenario === "slow-initialize") {
+      setTimeout(() => respond(request.id, { serverInfo: { name: "deepseek-harness-sdk-runtime", version: "fake-1.0.0" } }), 200);
+      return;
+    }
     respond(request.id, { serverInfo: { name: "deepseek-harness-sdk-runtime", version: "fake-1.0.0" } });
     return;
   }
