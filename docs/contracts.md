@@ -1,5 +1,9 @@
 # Task-packet and experiment contracts
 
+The post-capture uniform event and adapter boundary is documented separately in
+[uniform-events.md](uniform-events.md). Its schemas consume capture-qualified
+native evidence; they are not task-authorship or experiment inputs.
+
 EBO accepts externally authored task packets and experiment configurations as
 versioned JSON documents. The schemas are the contract; this repository does
 not contain an evaluation corpus or a fixed operating matrix.

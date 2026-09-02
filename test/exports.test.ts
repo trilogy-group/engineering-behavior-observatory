@@ -185,6 +185,40 @@ test("fails closed on unknown inputs and a final secret-scan finding", async (t)
   });
 });
 
+test("does not treat JSON escaping as an absolute path", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-export-quoted-labels-"));
+  const source = join(root, "source");
+  const destination = join(root, "portable");
+  try {
+    stageSource(source, {
+      "session.jsonl": `${JSON.stringify({
+        type: "assistant.message",
+        id: "session-complete-1",
+        content: [
+          'Use "Open"/"Invite-only" as one combined list.',
+          "In this session segment I:\n1. Read the remaining files.",
+          "if m:\n    indent = m.group(1)",
+        ].join("\n"),
+      })}\n`,
+    });
+
+    const manifest = await createPortableRunBundleExport({
+      sourceRoot: source,
+      destinationRoot: destination,
+      policy: policy({ maxStringBytes: 512 }),
+    });
+    const session = firstJsonlRecord(destination, manifest, "session");
+
+    assert.equal(session.content, [
+      'Use "Open"/"Invite-only" as one combined list.',
+      "In this session segment I:\n1. Read the remaining files.",
+      "if m:\n    indent = m.group(1)",
+    ].join("\n"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("sanitizes untruncated text evidence and preserves pre-existing destinations", async (t) => {
   await t.test("text evidence", async () => {
     const root = mkdtempSync(join(tmpdir(), "ebo-export-text-"));
