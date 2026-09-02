@@ -911,7 +911,7 @@ function resolvesJsonPointer(document: unknown, pointer: string): boolean {
     const segment = encoded.replace(/~1/gu, "/").replace(/~0/gu, "~");
     if (Array.isArray(current)) {
       if (!/^(0|[1-9][0-9]*)$/u.test(segment) || Number(segment) >= current.length) return false;
-      current = current[Number(segment)];
+      current = current.at(Number(segment));
     } else {
       const record = asRecord(current);
       const property = record === undefined ? undefined : Object.getOwnPropertyDescriptor(record, segment);
