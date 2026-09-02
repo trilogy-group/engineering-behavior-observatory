@@ -77,3 +77,39 @@ cover all initial families using the retained Agent SDK, verifier, telemetry,
 workspace, and terminal evidence shapes. They deliberately preserve unknown
 time, parentage, and content where the qualified fixtures do not establish
 those facts.
+
+## Agent SDK mapping
+
+`normalizeClaudeAgentSdkRunBundle` applies the concrete Agent SDK adapter to a
+retained bundle. It runs structural capture qualification first, verifies every
+artifact digest, normalizes the qualified native records, and resolves every
+emitted source/content reference. An unqualified bundle is rejected before
+normalization.
+
+| Native evidence | Uniform families |
+| --- | --- |
+| SDK assistant/user/result and structural system records | `message`, `tool`, `context`, `delegation`, `permission`, `runtime`, `outcome` |
+| Agent SDK callback records | `message`, `model-request`, `tool`, `context`, `permission`, `delegation`, `artifact`, `runtime` |
+| Agent SDK telemetry summary | `runtime` |
+| Workspace and verifier artifacts | `artifact`, `validation` |
+| Run-manifest terminal record | `outcome` |
+
+Session and callback sequence numbers keep separate `session` and `hooks`
+order domains. An originating SDK message timestamp is retained when present;
+the adapter never promotes the stream capture clock or hook callback clock to a
+native occurrence time. Tool call/result and hook relations are added only when
+one unique emitted call is supported by the same `tool_use_id`; the same rule
+applies to stable subagent/task and workspace artifact identities.
+
+Raw prompts, messages, tool inputs/results, compact summaries, and verifier
+assertions stay in their native artifacts. Events contain bounded structural
+attributes and pointers to those bytes. Unknown message/hook records and
+qualification metadata remain reachable through the returned `unmapped`
+report.
+
+The returned per-run capability profile records whether detailed-beta hook
+spans were configured. This never changes semantic hook events because
+`hooks.jsonl` is the occurrence authority. That separation follows the Agent
+SDK's documented [callback correlation](https://code.claude.com/docs/en/agent-sdk/hooks)
+and [beta tracing](https://code.claude.com/docs/en/agent-sdk/observability)
+boundaries.

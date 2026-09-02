@@ -1,0 +1,78 @@
+{
+  "runId": "run-agent-sdk-partial",
+  "attemptId": "attempt-agent-sdk-partial",
+  "qualification": "qualified-with-gaps",
+  "records": [
+    {
+      "reference": { "artifactId": "session", "recordLocator": "line:1" },
+      "record": {
+        "kind": "session",
+        "document": {
+          "schemaVersion": "ebo.agent-sdk-message/v1",
+          "sequence": 1,
+          "capturedAt": "2026-09-01T01:00:00.000Z",
+          "nativeType": "assistant",
+          "sessionId": "session-partial",
+          "message": { "type": "assistant", "uuid": "assistant-partial", "session_id": "session-partial", "parent_tool_use_id": null, "message": { "role": "assistant", "content": [] } }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "session", "recordLocator": "line:2" },
+      "record": {
+        "kind": "session",
+        "document": {
+          "schemaVersion": "ebo.agent-sdk-message/v1",
+          "sequence": 2,
+          "capturedAt": "2026-09-01T01:00:01.000Z",
+          "nativeType": "future_message",
+          "sessionId": "session-partial",
+          "message": { "type": "future_message", "session_id": "session-partial", "private_payload": "retained only in native evidence" }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "hooks", "recordLocator": "line:1" },
+      "record": {
+        "kind": "hook",
+        "document": {
+          "schemaVersion": "ebo.claude-agent-hook/v1",
+          "sequence": 1,
+          "callbackAt": "2026-09-01T01:00:00.100Z",
+          "hook": "SessionStart",
+          "sessionId": "session-partial",
+          "nativePayload": { "hook_event_name": "SessionStart", "session_id": "session-partial", "source": "resume" }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "workspace", "recordLocator": "#" },
+      "record": {
+        "kind": "workspace",
+        "document": {
+          "descriptor": {
+            "id": "workspace",
+            "source": "workspace-snapshot",
+            "kind": "workspace",
+            "authority": "outcome",
+            "mediaType": "application/gzip",
+            "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "sizeBytes": 10,
+            "sharingClass": "restricted",
+            "relativePath": "workspace.tar.gz"
+          }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "manifest", "recordLocator": "#/terminal" },
+      "record": {
+        "kind": "manifest",
+        "document": {
+          "assessmentMode": "observational",
+          "terminal": { "state": "stopped", "failureClass": "none", "stopReason": "budget", "workspaceArtifactId": "workspace" }
+        }
+      }
+    }
+  ]
+}
