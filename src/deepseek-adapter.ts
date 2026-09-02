@@ -564,6 +564,15 @@ function validateConfiguration(configuration: DeepSeekHarnessConfiguration, cont
       || configuration.composition.runtime.protocolVersion !== DEEPSEEK_SDK_VERSION) {
     throw new Error("DeepSeek runtime composition does not match the pinned public client runtime.");
   }
+  const expectedArgs = [
+    configuration.composition.launch.runtimeArtifact.locator,
+    "--profile",
+    configuration.composition.launch.profile,
+    ...configuration.composition.patches.flatMap(({ locator }) => ["--patch", locator]),
+  ];
+  if (JSON.stringify(configuration.composition.launch.args) !== JSON.stringify(expectedArgs)) {
+    throw new Error("DeepSeek launch arguments do not match the retained runtime and patch artifacts.");
+  }
   if (configuration.sessionId.trim() === "") throw new Error("DeepSeek session ID is required.");
   if (context.workspace?.status !== "ready" || context.workspace.path === undefined
       || resolve(context.workspace.path) !== resolve(configuration.composition.workspaceCwd)) {

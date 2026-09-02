@@ -343,6 +343,25 @@ test("rejects a runtime workspace that differs from the retained lifecycle works
   }
 });
 
+test("rejects launch arguments that diverge from retained runtime and patch artifacts", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-argv-mismatch-"));
+  const composition = fixtureComposition("minimal");
+  const changed = structuredClone(composition);
+  changed.launch.args[0] = join(root, "other-runtime.mjs");
+  cpSync(join(fixtureRoot, "fake-runtime.mjs"), changed.launch.args[0]!);
+  const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
+  try {
+    await assert.rejects(executeDeepSeekHarness(
+      harnessContext(undefined, undefined, undefined, composition.workspaceCwd),
+      configuration(changed, "success"),
+      capture,
+    ), /launch arguments do not match/);
+  } finally {
+    await capture.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("swaps named compositions by configuration and reports explicit protocol and telemetry gaps", async () => {
   const minimal = fixtureComposition("minimal");
   const telemetry = fixtureComposition("telemetry");
