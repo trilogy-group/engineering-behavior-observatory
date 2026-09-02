@@ -107,6 +107,20 @@ test("handles optional and required evidence gaps without weakening qualificatio
     ...complete,
     records: complete.records.filter(({ record }) => !["assessment-mode", "verifier"].includes(record.kind)),
   }), /verified input is missing required verifier evidence/u);
+  const invalidMode = structuredClone(complete.records.find(({ record }) => record.kind === "assessment-mode")!);
+  invalidMode.record.document = "observational";
+  invalidMode.reference.recordLocator = "#/not-assessment-mode";
+  await assert.rejects(claudeAgentSdkNormalizationAdapter.normalize({
+    ...complete,
+    records: [...complete.records.filter(({ record }) => !["assessment-mode", "verifier"].includes(record.kind)), invalidMode],
+  }), /verified input is missing required verifier evidence/u);
+  await assert.rejects(claudeAgentSdkNormalizationAdapter.normalize({
+    ...complete,
+    records: [...complete.records.filter(({ record }) => record.kind !== "verifier"), {
+      reference: { artifactId: "verifier", recordLocator: "#" },
+      record: { kind: "verifier", document: null },
+    }],
+  }), /verified input is missing required verifier evidence/u);
   await assert.rejects(claudeAgentSdkNormalizationAdapter.normalize({
     ...complete,
     qualification: "unqualified" as never,

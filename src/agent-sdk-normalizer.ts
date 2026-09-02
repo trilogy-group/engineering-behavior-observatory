@@ -526,7 +526,7 @@ function mapVerifierRecord(
   captured: CapturedNativeRecord<AgentSdkNativeRecord>,
 ): DraftEvent[] {
   const document = asRecord(captured.record.document);
-  if (document?.schemaVersion !== "verifier-result/v1") return [];
+  if (!isVerifierRecord(captured) || document === undefined) return [];
   return [draftEvent({
     input,
     captured,
@@ -584,9 +584,8 @@ function mapAssessmentModeRecord(
   input: NormalizationInput<AgentSdkNativeRecord>,
   captured: CapturedNativeRecord<AgentSdkNativeRecord>,
 ): DraftEvent[] {
-  if (!["observational", "verified"].includes(String(captured.record.document))
-      || captured.reference.artifactId !== "manifest"
-      || captured.reference.recordLocator !== "#/run/assessmentMode") return [];
+  const assessmentMode = assessmentModeOf(captured);
+  if (assessmentMode === undefined) return [];
   return [draftEvent({
     input,
     captured,
@@ -598,7 +597,7 @@ function mapAssessmentModeRecord(
     phase: "instant",
     actor: { kind: "system", id: "ebo" },
     scope: { kind: "attempt", id: input.attemptId },
-    attributes: { assessmentMode: captured.record.document as "observational" | "verified" },
+    attributes: { assessmentMode },
     content: { status: "known", value: [] },
   })];
 }
@@ -707,10 +706,27 @@ function assertQualifiedInput(input: NormalizationInput<AgentSdkNativeRecord>): 
   for (const required of ["session", "hook", "workspace", "manifest"] as const) {
     if (!kinds.has(required)) throw new Error(`Capture-qualified Agent SDK input is missing required ${required} evidence.`);
   }
-  const assessmentMode = input.records.find(({ record }) => record.kind === "assessment-mode")?.record.document;
-  if (assessmentMode !== "observational" && !kinds.has("verifier")) {
+  const assessmentMode = input.records.map(assessmentModeOf).find((value) => value !== undefined);
+  if (assessmentMode !== "observational" && !input.records.some(isVerifierRecord)) {
     throw new Error("Capture-qualified verified input is missing required verifier evidence.");
   }
+}
+
+function assessmentModeOf(
+  captured: CapturedNativeRecord<AgentSdkNativeRecord>,
+): "observational" | "verified" | undefined {
+  return captured.record.kind === "assessment-mode"
+    && captured.reference.artifactId === "manifest"
+    && captured.reference.recordLocator === "#/run/assessmentMode"
+    && (captured.record.document === "observational" || captured.record.document === "verified")
+    ? captured.record.document
+    : undefined;
+}
+
+function isVerifierRecord(captured: CapturedNativeRecord<AgentSdkNativeRecord>): boolean {
+  return captured.record.kind === "verifier"
+    && captured.reference.recordLocator === "#"
+    && asRecord(captured.record.document)?.schemaVersion === "verifier-result/v1";
 }
 
 function assertValidCapabilityProfile(profile: AdapterCapabilityProfile): void {
