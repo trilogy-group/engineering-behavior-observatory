@@ -165,6 +165,18 @@ export async function validateUniformEvents(
       throw new Error(`Uniform event "${event.id}" has an unresolved event relation.`);
     }
   }
+  const parentById = new Map(events.flatMap((event) => event.relations.parent.status === "known"
+    ? [[event.id, event.relations.parent.value] as const]
+    : []));
+  for (const event of events) {
+    const ancestry = new Set<string>();
+    let current: string | undefined = event.id;
+    while (current !== undefined) {
+      if (ancestry.has(current)) throw new Error(`Uniform event "${event.id}" has cyclic parentage.`);
+      ancestry.add(current);
+      current = parentById.get(current);
+    }
+  }
 }
 
 export async function assertAdapterContract<Request, NativeRecord>(

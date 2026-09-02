@@ -95,6 +95,12 @@ test("bounds attributes and requires explicit unknown evidence", async () => {
   const inventedRelation = structuredClone(fixture[0]!);
   inventedRelation.relations.parent = { status: "known", value: "event-not-emitted" };
   await assert.rejects(validateUniformEvents([inventedRelation], resolverFor(fixture)), /unresolved event relation/);
+
+  const cycleA = { ...structuredClone(fixture[0]!), id: "cycle-a" };
+  const cycleB = { ...structuredClone(fixture[0]!), id: "cycle-b" };
+  cycleA.relations.parent = { status: "known", value: cycleB.id };
+  cycleB.relations.parent = { status: "known", value: cycleA.id };
+  await assert.rejects(validateUniformEvents([cycleA, cycleB], resolverFor([cycleA, cycleB])), /cyclic parentage/);
 });
 
 test("runs a minimal capture and normalization adapter contract while retaining unmapped records", async () => {
