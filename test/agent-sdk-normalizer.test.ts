@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,9 +9,11 @@ import type { HookInput, SDKMessage, SDKResultMessage } from "@anthropic-ai/clau
 
 import {
   CLAUDE_AGENT_SDK_HARNESS,
+  canonicalizeMetadata,
   claudeAgentSdkNormalizationAdapter,
   captureClaudeAgentSdkRun,
   createAgentSdkNativeEvidenceResolver,
+  digestBytes,
   normalizeClaudeAgentSdkRunBundle,
   probeClaudeAgentSdkCapabilities,
   validateUniformEvents,
@@ -130,7 +132,7 @@ test("marks recognized but unprojected native payload content as unknown", async
           type: "assistant",
           uuid: "assistant-invalid-time",
           session_id: "session-golden",
-          timestamp: "2026-09-01",
+          timestamp: "2026-01-01T24:00:00Z",
           message: { role: "assistant", content: [] },
         },
       },
@@ -164,6 +166,51 @@ test("marks recognized but unprojected native payload content as unknown", async
     status: "unknown",
     reason: "Agent SDK message has no originating timestamp",
   });
+});
+
+test("correlates task lifecycle hooks by task ID before a shared agent ID", async () => {
+  const input = readFixture("complete");
+  const taskRecords = ["task-a", "task-b"].flatMap((taskId, taskIndex) =>
+    ["TaskCreated", "TaskCompleted"].map((hook, hookIndex) => ({
+      reference: { artifactId: "hooks", recordLocator: `line:${10 + taskIndex * 2 + hookIndex}` },
+      record: {
+        kind: "hook" as const,
+        document: {
+          schemaVersion: "ebo.claude-agent-hook/v1",
+          sequence: 10 + taskIndex * 2 + hookIndex,
+          hook,
+          sessionId: "session-golden",
+          agentId: "shared-agent",
+          nativePayload: {
+            hook_event_name: hook,
+            session_id: "session-golden",
+            agent_id: "shared-agent",
+            task_id: taskId,
+            task_subject: "retained subject",
+          },
+        },
+      },
+    })));
+  input.records = [...input.records, ...taskRecords];
+  const result = await claudeAgentSdkNormalizationAdapter.normalize(input);
+
+  for (const taskId of ["task-a", "task-b"]) {
+    const started = result.events.find(({ source, attributes }) =>
+      source.nativeType === "TaskCreated" && attributes.taskId === taskId)!;
+    const completed = result.events.find(({ source, attributes }) =>
+      source.nativeType === "TaskCompleted" && attributes.taskId === taskId)!;
+    assert.deepEqual(completed.relations.known, [{ kind: "correlates-with", eventId: started.id }]);
+  }
+});
+
+test("accepts capture-qualified 256-character run and attempt identities", async () => {
+  const input = readFixture("complete");
+  input.runId = "r".repeat(256);
+  input.attemptId = "a".repeat(256);
+  const result = await claudeAgentSdkNormalizationAdapter.normalize(input);
+
+  await validateUniformEvents(result.events, createAgentSdkNativeEvidenceResolver(input));
+  assert.equal(result.events.every(({ runId, attemptId }) => runId.length === 256 && attemptId.length === 256), true);
 });
 
 test("produces stable event identities and ordering on repeated normalization", async () => {
@@ -238,8 +285,24 @@ test("loads a retained bundle only after structural qualification and validates 
     assert.equal(normalized.events.every(({ source }) => source.harness === CLAUDE_AGENT_SDK_HARNESS), true);
     assert.equal(normalized.events.some(({ family }) => family === "outcome"), true);
 
-    unlinkSync(join(bundleRoot, "session.jsonl"));
-    await assert.rejects(normalizeClaudeAgentSdkRunBundle(bundleRoot), /capture-qualified/u);
+    const manifestPath = join(bundleRoot, "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      evidence: Array<{ kind: string; relativePath: string; digest: `sha256:${string}`; sizeBytes: number }>;
+    };
+    const reportDescriptor = manifest.evidence.find(({ kind }) => kind === "capture-report")!;
+    const reportPath = join(bundleRoot, reportDescriptor.relativePath);
+    const report = JSON.parse(readFileSync(reportPath, "utf8")) as {
+      structuralQualification: { status: string; semanticAnalysisUsable: boolean };
+    };
+    report.structuralQualification.status = "unqualified";
+    report.structuralQualification.semanticAnalysisUsable = false;
+    const reportBytes = Buffer.from(canonicalizeMetadata(report));
+    writeFileSync(reportPath, reportBytes);
+    reportDescriptor.digest = `sha256:${digestBytes(reportBytes).value}`;
+    reportDescriptor.sizeBytes = reportBytes.length;
+    writeFileSync(manifestPath, canonicalizeMetadata(manifest));
+
+    await assert.rejects(normalizeClaudeAgentSdkRunBundle(bundleRoot), /persisted unqualified structural/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -162,6 +162,8 @@ export async function readQualifiedClaudeAgentSdkCapture(
   bundleRoot: string,
 ): Promise<NormalizationInput<AgentSdkNativeRecord>> {
   const root = resolve(bundleRoot);
+  const manifest = readManifest(root);
+  await assertPersistedStructuralQualification(root, manifest);
   const qualification = await qualifyRunBundle(root);
   if (!qualification.semanticAnalysisUsable
       || !["qualified", "qualified-with-gaps"].includes(qualification.status)) {
@@ -169,7 +171,6 @@ export async function readQualifiedClaudeAgentSdkCapture(
     throw new Error(`Agent SDK normalization requires capture-qualified evidence: ${reasons}.`);
   }
 
-  const manifest = readManifest(root);
   if (manifest.run.harness.id !== "agent-sdk"
       || !manifest.run.runtime.some(({ source, name }) => source === "anthropic" && name === "agent-sdk")) {
     throw new Error("Run bundle is not an Agent SDK capture.");
@@ -394,7 +395,7 @@ function mapHookRecord(
   const toolUseId = text(wrapper.toolUseId) ?? text(payload.tool_use_id);
   const agentId = text(wrapper.agentId) ?? text(payload.agent_id);
   const taskId = text(payload.task_id);
-  const stable = toolUseId === undefined ? agentId === undefined ? taskId === undefined ? undefined : `task:${taskId}` : `agent:${agentId}` : `tool:${toolUseId}`;
+  const stable = toolUseId === undefined ? taskId === undefined ? agentId === undefined ? undefined : `agent:${agentId}` : `task:${taskId}` : `tool:${toolUseId}`;
   const anchorRank = hook === "PreToolUse" ? 1
     : hook === "SubagentStart" || hook === "TaskCreated" ? 0
       : undefined;
@@ -678,6 +679,21 @@ function readManifest(root: string): RunManifest {
   return document as RunManifest;
 }
 
+async function assertPersistedStructuralQualification(root: string, manifest: RunManifest): Promise<void> {
+  const descriptor = manifest.evidence.find(({ kind, sanitizedFrom }) => kind === "capture-report" && sanitizedFrom === undefined);
+  if (descriptor === undefined) return;
+  const report = asRecord(parseJson(await readVerifiedArtifact(
+    root,
+    descriptor.relativePath,
+    digestFrom(descriptor.digest),
+    MAX_EVIDENCE_BYTES,
+  )));
+  const structural = asRecord(report?.structuralQualification);
+  if (structural?.status === "unqualified" || structural?.semanticAnalysisUsable === false) {
+    throw new Error("Agent SDK normalization rejects the persisted unqualified structural capture report.");
+  }
+}
+
 function parseJsonl(bytes: Buffer): unknown[] {
   const textValue = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   return textValue.split(/\r?\n/u).filter((line) => line.trim() !== "").map((line) => {
@@ -704,10 +720,28 @@ function sourceOrder(document: JsonRecord, domain: string): UniformEvent["native
 }
 
 function originTime(value: unknown, reason: string): UniformEvent["nativeTime"] {
-  if (typeof value === "string"
-      && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(value)
-      && !Number.isNaN(Date.parse(value))) return { status: "known", value };
+  if (typeof value === "string" && isRfc3339DateTime(value)) return { status: "known", value };
   return { status: "unknown", reason };
+}
+
+function isRfc3339DateTime(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/u.exec(value);
+  if (match === null) return false;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, offsetHourText, offsetMinuteText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const offsetHour = offsetHourText === undefined ? 0 : Number(offsetHourText);
+  const offsetMinute = offsetMinuteText === undefined ? 0 : Number(offsetMinuteText);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const monthDays = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return month >= 1 && month <= 12
+    && day >= 1 && day <= monthDays[month - 1]!
+    && hour <= 23 && minute <= 59 && second <= 59
+    && offsetHour <= 23 && offsetMinute <= 59;
 }
 
 function sessionAttributes(nativeType: string, subtype: string | undefined, message: JsonRecord): Record<string, UniformAttributeValue> {
@@ -770,7 +804,7 @@ function hookScope(
   taskId: string | undefined,
 ): UniformEvent["scope"] {
   if ((family === "tool" || family === "permission") && toolUseId !== undefined) return { kind: "operation", id: toolUseId };
-  if (family === "delegation" && (agentId ?? taskId) !== undefined) return { kind: "operation", id: agentId ?? taskId };
+  if (family === "delegation" && (taskId ?? agentId) !== undefined) return { kind: "operation", id: taskId ?? agentId };
   if (family === "artifact") return { kind: "workspace" };
   const turnId = text(payload.turn_id);
   if (family === "message" && turnId !== undefined) return { kind: "turn", id: turnId };
