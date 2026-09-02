@@ -229,27 +229,20 @@ test("rejects a caller override that weakens the retained semantic evidence prof
 
 test("retains delivered native events and clean shutdown after interruption", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-interrupt-"));
-  const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
   const controller = new AbortController();
+  const capture = new SlowAbortCapture(join(root, "session.jsonl"), controller);
   const composition = fixtureComposition("minimal");
   const golden = jsonFixture("golden-interrupted.json") as {
     terminal: string;
     lastSessionEventType: string;
     requiredRetainedMethods: string[];
   };
-  const pending = executeDeepSeekHarness(harnessContext(undefined, undefined, controller.signal, composition.workspaceCwd), configuration(
-    composition,
-    "interrupt",
-  ), capture);
   try {
-    await waitUntil(() => {
-      const records = capture.report();
-      return records.some((record) => record.method === "session.event"
-        && (record.payload as { event?: { type?: string } }).event?.type === golden.lastSessionEventType)
-        && records.some((record) => record.method === "subagent.finished");
-    });
-    controller.abort("fixture interruption");
-    const execution = await pending;
+    const execution = await executeDeepSeekHarness(
+      harnessContext(undefined, undefined, controller.signal, composition.workspaceCwd),
+      configuration(composition, "interrupt"),
+      capture,
+    );
     await capture.close();
     const report = execution.evidence as DeepSeekCaptureReport;
     assert.equal(execution.status, golden.terminal);
@@ -257,6 +250,28 @@ test("retains delivered native events and clean shutdown after interruption", as
     const retained = new Set(report.records.flatMap((record) => record.method ?? []));
     for (const method of golden.requiredRetainedMethods) assert.ok(retained.has(method), method);
     assert.equal(qualifiedDeepSeekCapture("run-deepseek", "attempt-deepseek", report).qualification, "qualified-with-gaps");
+  } finally {
+    await capture.close().catch(() => undefined);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("marks a native notification append failure as unqualified capture loss", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-notification-failure-"));
+  const composition = fixtureComposition("minimal");
+  const capture = new FailingNotificationCapture(join(root, "session.jsonl"));
+  try {
+    const execution = await executeDeepSeekHarness(
+      harnessContext(undefined, undefined, undefined, composition.workspaceCwd),
+      configuration(composition, "success"),
+      capture,
+    );
+    const report = execution.evidence as DeepSeekCaptureReport;
+    assert.equal(execution.status, "failed");
+    assert.match(execution.captureError ?? "", /fixture notification evidence failure/);
+    assert.ok(report.records.some((record) => record.method === "session.event"));
+    assert.throws(() => qualifiedDeepSeekCapture("run", "attempt", report), /unqualified/);
+    assert.equal(execution.shutdownResult?.status, "completed");
   } finally {
     await capture.close().catch(() => undefined);
     rmSync(root, { recursive: true, force: true });
@@ -495,14 +510,6 @@ function sessionEvents(report: DeepSeekCaptureReport, sessionId?: string): Array
     : []);
 }
 
-async function waitUntil(predicate: () => boolean): Promise<void> {
-  const deadline = Date.now() + 2_000;
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error("Timed out waiting for the controlled runtime fixture.");
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
-
 async function controlledReport(composition: DeepSeekRuntimeComposition): Promise<DeepSeekCaptureReport> {
   const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-composition-"));
   const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
@@ -523,6 +530,36 @@ class FailingShutdownCapture extends DeepSeekNativeCapture {
   public override async record(input: Parameters<DeepSeekNativeCapture["record"]>[0]) {
     if (input.method === "client.close" && input.kind === "request") {
       throw new Error("fixture shutdown evidence failure");
+    }
+    return super.record(input);
+  }
+}
+
+class SlowAbortCapture extends DeepSeekNativeCapture {
+  #delayed = false;
+
+  public constructor(path: string, private readonly controller: AbortController) {
+    super(path);
+  }
+
+  public override async record(input: Parameters<DeepSeekNativeCapture["record"]>[0]) {
+    if (!this.#delayed && input.kind === "notification") {
+      this.#delayed = true;
+      setTimeout(() => this.controller.abort("fixture interruption with queued notifications"), 10);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return super.record(input);
+  }
+}
+
+class FailingNotificationCapture extends DeepSeekNativeCapture {
+  #failed = false;
+
+  public override async record(input: Parameters<DeepSeekNativeCapture["record"]>[0]) {
+    const event = (input.payload as { event?: { seq?: number } } | undefined)?.event;
+    if (!this.#failed && input.kind === "notification" && input.method === "session.event" && event?.seq === 8) {
+      this.#failed = true;
+      throw new Error("fixture notification evidence failure");
     }
     return super.record(input);
   }

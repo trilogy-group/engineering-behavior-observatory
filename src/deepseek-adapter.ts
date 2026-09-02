@@ -286,6 +286,29 @@ export async function executeDeepSeekHarness(
   context.registerShutdown(() => client.close());
   const closeOnAbort = () => { void client.close().catch(() => undefined); };
   if (!context.signal.aborted) context.signal.addEventListener("abort", closeOnAbort, { once: true });
+  const retainNotification = async (notification: HarnessNotification): Promise<void> => {
+    const sourceIdentity = notificationIdentity(notification);
+    let retained: DeepSeekNativeObservation;
+    try {
+      retained = await capture.record({
+        kind: "notification",
+        method: notification.method,
+        sessionId: notificationSessionId(notification, configuration.sessionId),
+        ...(sourceIdentity === undefined ? {} : { sourceIdentity }),
+        payload: notification.params,
+      });
+    } catch (error) {
+      captureError ??= sanitizedError(error, sensitiveValues);
+      throw error;
+    }
+    if (receiptSequence === undefined && messageId !== undefined
+        && isInboxReceipt(notification, configuration.sessionId, messageId)) {
+      receiptSequence = retained.sequence;
+    }
+    if (receiptSequence !== undefined && isRootIdle(notification, configuration.sessionId)) {
+      idleSequence = retained.sequence;
+    }
+  };
 
   await capture.record({ kind: "composition", payload: composition });
   await capture.record({ kind: "capability", payload: capabilities });
@@ -313,21 +336,7 @@ export async function executeDeepSeekHarness(
 
     const deadline = Date.now() + (configuration.activityTimeoutMs ?? context.budgetMs ?? 60_000);
     while (idleSequence === undefined) {
-      const notification = await nextNotification(subscription, context.signal, deadline);
-      const sourceIdentity = notificationIdentity(notification);
-      const record = await capture.record({
-        kind: "notification",
-        method: notification.method,
-        sessionId: notificationSessionId(notification, configuration.sessionId),
-        ...(sourceIdentity === undefined ? {} : { sourceIdentity }),
-        payload: notification.params,
-      });
-      if (receiptSequence === undefined && isInboxReceipt(notification, configuration.sessionId, messageId)) {
-        receiptSequence = record.sequence;
-      }
-      if (receiptSequence !== undefined && isRootIdle(notification, configuration.sessionId)) {
-        idleSequence = record.sequence;
-      }
+      await retainNotification(await nextNotification(subscription, context.signal, deadline));
     }
     status = "completed";
   } catch (error) {
@@ -345,20 +354,33 @@ export async function executeDeepSeekHarness(
     }
   } finally {
     context.signal.removeEventListener("abort", closeOnAbort);
-    subscription.close();
     try {
       await capture.record({ kind: "request", method: "client.close" });
     } catch (error) {
       captureError ??= sanitizedError(error, sensitiveValues);
     }
+    let closeFailure: unknown;
     try {
       await client.close();
+    } catch (error) {
+      closeFailure = error;
+    }
+    for (let notification = subscription.tryNext(); notification !== undefined; notification = subscription.tryNext()) {
+      try {
+        await retainNotification(notification);
+      } catch (error) {
+        captureError ??= sanitizedError(error, sensitiveValues);
+      }
+    }
+    subscription.close();
+    if (closeFailure === undefined) {
       try {
         await capture.record({ kind: "response", method: "client.close", payload: { status: "runtime-reaped" } });
       } catch (error) {
         captureError ??= sanitizedError(error, sensitiveValues);
       }
-    } catch (error) {
+    } else {
+      const error = closeFailure;
       const message = sanitizedError(error, sensitiveValues);
       shutdownResult = { status: "failed", error: message };
       try {
