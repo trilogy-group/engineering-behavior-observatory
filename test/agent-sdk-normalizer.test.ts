@@ -335,7 +335,7 @@ test("loads a retained bundle only after structural qualification and validates 
 
     const manifestPath = join(bundleRoot, "manifest.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
-      evidence: Array<{ kind: string; relativePath: string; digest: `sha256:${string}`; sizeBytes: number }>;
+      evidence: Array<{ kind: string; relativePath: string; mediaType: string; digest: `sha256:${string}`; sizeBytes: number }>;
     };
     const sessionDescriptor = manifest.evidence.find(({ kind }) => kind === "session")!;
     const sessionPath = join(bundleRoot, sessionDescriptor.relativePath);
@@ -343,6 +343,13 @@ test("loads a retained bundle only after structural qualification and validates 
     writeFileSync(sessionPath, sessionBytes);
     sessionDescriptor.digest = `sha256:${digestBytes(sessionBytes).value}`;
     sessionDescriptor.sizeBytes = sessionBytes.length;
+    const hookDescriptor = manifest.evidence.find(({ kind }) => kind === "hook")!;
+    const hookPath = join(bundleRoot, hookDescriptor.relativePath);
+    const hookBytes = Buffer.from(JSON.stringify(JSON.parse(readFileSync(hookPath, "utf8")), null, 2));
+    writeFileSync(hookPath, hookBytes);
+    hookDescriptor.mediaType = "application/json";
+    hookDescriptor.digest = `sha256:${digestBytes(hookBytes).value}`;
+    hookDescriptor.sizeBytes = hookBytes.length;
     writeFileSync(manifestPath, canonicalizeMetadata(manifest));
 
     const normalized = await normalizeClaudeAgentSdkRunBundle(bundleRoot);
@@ -350,6 +357,8 @@ test("loads a retained bundle only after structural qualification and validates 
     assert.equal(normalized.events.some(({ family }) => family === "outcome"), true);
     assert.deepEqual(normalized.events.filter(({ source }) => source.nativeReference.artifactId === "session")
       .map(({ source }) => source.nativeReference.recordLocator), ["line:2", "line:3"]);
+    assert.equal(normalized.events.find(({ source }) => source.nativeReference.artifactId === "hooks")
+      ?.source.nativeReference.recordLocator, "#");
 
     const reportDescriptor = manifest.evidence.find(({ kind }) => kind === "capture-report")!;
     const reportPath = join(bundleRoot, reportDescriptor.relativePath);

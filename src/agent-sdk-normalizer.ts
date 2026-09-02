@@ -187,13 +187,20 @@ export async function readQualifiedClaudeAgentSdkCapture(
       continue;
     }
     const bytes = await readVerifiedArtifact(root, descriptor.relativePath, digestFrom(descriptor.digest), MAX_EVIDENCE_BYTES);
-    if (descriptor.kind === "session" || descriptor.kind === "hook") {
+    if ((descriptor.kind === "session" || descriptor.kind === "hook")
+        && descriptor.mediaType === "application/x-ndjson") {
       for (const { line, document } of parseJsonl(bytes)) {
         records.push({
           reference: { artifactId: descriptor.id, recordLocator: `line:${line}` },
           record: { kind: descriptor.kind, document },
         });
       }
+    } else if ((descriptor.kind === "session" || descriptor.kind === "hook")
+        && descriptor.mediaType === "application/json") {
+      records.push({
+        reference: { artifactId: descriptor.id, recordLocator: "#" },
+        record: { kind: descriptor.kind, document: parseJson(bytes) },
+      });
     } else if (["telemetry", "verifier", "capture-report"].includes(descriptor.kind)) {
       records.push({
         reference: { artifactId: descriptor.id, recordLocator: "#" },
