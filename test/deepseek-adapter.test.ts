@@ -367,6 +367,8 @@ test("swaps named compositions by configuration and reports explicit protocol an
   assert.equal(packageDocument.dependencies["@deepseek-ai/dsh-sdk-protocol"], "0.1.1-rc.2");
   assert.equal(minimal.patches.length, 2);
   assert.ok(minimal.patches.every(({ digest }) => digest.startsWith("sha256:")));
+  assert.equal(minimal.launch.runtimeArtifact.locator, minimal.launch.args[0]);
+  assert.ok(minimal.launch.runtimeArtifact.digest.startsWith("sha256:"));
 
   const [minimalRun, telemetryRun] = await Promise.all([
     controlledReport(minimal),
@@ -379,6 +381,7 @@ test("swaps named compositions by configuration and reports explicit protocol an
   const tamperedRoot = mkdtempSync(join(tmpdir(), "ebo-deepseek-tampered-composition-"));
   cpSync(join(fixtureRoot, "compositions", "minimal"), tamperedRoot, { recursive: true });
   const input = JSON.parse(readFileSync(join(tamperedRoot, "composition.json"), "utf8")) as Omit<DeepSeekRuntimeCompositionInput, "baseDir">;
+  input.dshBin = join(fixtureRoot, "fake-runtime.mjs");
   const tampered = createDeepSeekRuntimeComposition({ ...input, baseDir: tamperedRoot });
   writeFileSync(join(tamperedRoot, "overlay.yml"), "plugins: {}\n");
   const capture = new DeepSeekNativeCapture(join(tamperedRoot, "session.jsonl"));

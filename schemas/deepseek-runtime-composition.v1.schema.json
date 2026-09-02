@@ -10,7 +10,7 @@
     "launch": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["command", "args", "processCwd", "profile"],
+      "required": ["command", "args", "processCwd", "profile", "runtimeArtifact"],
       "properties": {
         "command": { "$ref": "#/$defs/nonempty" },
         "args": {
@@ -21,7 +21,8 @@
         },
         "processCwd": { "$ref": "#/$defs/nonempty" },
         "profile": { "$ref": "#/$defs/nonempty" },
-        "dshHome": { "$ref": "#/$defs/nonempty" }
+        "dshHome": { "$ref": "#/$defs/nonempty" },
+        "runtimeArtifact": { "$ref": "#/$defs/fileReference" }
       }
     },
     "workspaceCwd": { "$ref": "#/$defs/nonempty" },

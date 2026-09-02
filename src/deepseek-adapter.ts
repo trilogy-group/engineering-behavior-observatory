@@ -46,6 +46,7 @@ export type DeepSeekRuntimeComposition = {
     processCwd: string;
     profile: string;
     dshHome?: string;
+    runtimeArtifact: DeepSeekFileReference;
   };
   workspaceCwd: string;
   runtime: {
@@ -204,6 +205,7 @@ export function createDeepSeekRuntimeComposition(input: DeepSeekRuntimeCompositi
       processCwd,
       profile,
       ...(input.dshHome === undefined ? {} : { dshHome: resolve(baseDir, input.dshHome) }),
+      runtimeArtifact: fileReference(baseDir, dshBin),
     },
     workspaceCwd,
     runtime: {
@@ -569,6 +571,7 @@ function validateConfiguration(configuration: DeepSeekHarnessConfiguration, cont
   }
   for (const reference of [
     configuration.composition.cordis,
+    configuration.composition.launch.runtimeArtifact,
     ...configuration.composition.patches,
     ...configuration.composition.plugins.flatMap(({ configuration: value }) => value ?? []),
     ...(configuration.composition.telemetry.artifact === undefined ? [] : [configuration.composition.telemetry.artifact]),

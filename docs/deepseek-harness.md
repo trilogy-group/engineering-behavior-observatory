@@ -19,8 +19,9 @@ and [session telemetry](https://github.com/deepseek-ai/deepseek-harness/blob/mas
 arguments, process and workspace directories, named profile, ordered Cordis
 patches, provider/model route, pinned client/protocol versions, plugin names,
 an ordered digest-bearing reference for every Cordis patch and plugin
-configuration, environment policy, and telemetry selection. Every referenced
-configuration digest is rechecked before the runtime starts.
+configuration, the launched runtime artifact, environment policy, and telemetry
+selection. Every referenced configuration and runtime digest is rechecked
+before the process starts.
 Environment values are not recorded. The adapter passes a replacement child
 environment to the official client and rejects keys outside the recorded
 allowlist; configured secret values are redacted from retained error and stderr

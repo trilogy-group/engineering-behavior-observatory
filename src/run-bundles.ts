@@ -1033,9 +1033,7 @@ function captureReport(
       outcome: { status: outcome },
     },
     missingEvidence: missing,
-    ...(qualification?.semanticEvidenceKinds === undefined ? {} : {
-      semanticEvidenceKinds: [...semanticEvidenceKinds],
-    }),
+    semanticEvidenceKinds: [...semanticEvidenceKinds],
     ...(qualification?.relatedSessionIds === undefined ? {} : {
       relatedSessionIds: [...new Set(qualification.relatedSessionIds)],
     }),
