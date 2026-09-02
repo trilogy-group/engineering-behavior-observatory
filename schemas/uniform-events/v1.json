@@ -1,0 +1,289 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ebo:schema:uniform-events:v1",
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": ".*\\S.*"
+    },
+    "unavailable": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason"],
+          "properties": {
+            "status": { "const": "unknown" },
+            "reason": { "$ref": "#/$defs/identifier" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason"],
+          "properties": {
+            "status": { "const": "unsupported" },
+            "reason": { "$ref": "#/$defs/identifier" }
+          }
+        }
+      ]
+    },
+    "nativeReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactId", "recordLocator"],
+      "properties": {
+        "artifactId": { "$ref": "#/$defs/identifier" },
+        "recordLocator": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "nativeOrder": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "value"],
+          "properties": {
+            "status": { "const": "known" },
+            "value": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+          }
+        },
+        { "$ref": "#/$defs/unavailable" }
+      ]
+    },
+    "nativeTime": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "value"],
+          "properties": {
+            "status": { "const": "known" },
+            "value": { "type": "string", "format": "date-time" }
+          }
+        },
+        { "$ref": "#/$defs/unavailable" }
+      ]
+    },
+    "eventIdentity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "value"],
+          "properties": {
+            "status": { "const": "known" },
+            "value": { "$ref": "#/$defs/identifier" }
+          }
+        },
+        { "$ref": "#/$defs/unavailable" }
+      ]
+    },
+    "contentReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nativeReference"],
+      "properties": {
+        "nativeReference": { "$ref": "#/$defs/nativeReference" },
+        "mediaType": { "$ref": "#/$defs/identifier" },
+        "role": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "content": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "value"],
+          "properties": {
+            "status": { "const": "known" },
+            "value": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "items": { "$ref": "#/$defs/contentReference" }
+            }
+          }
+        },
+        { "$ref": "#/$defs/unavailable" }
+      ]
+    },
+    "attributeScalar": {
+      "oneOf": [
+        { "type": "string", "maxLength": 512 },
+        { "type": "number" },
+        { "type": "boolean" },
+        { "type": "null" }
+      ]
+    },
+    "attributeValue": {
+      "oneOf": [
+        { "$ref": "#/$defs/attributeScalar" },
+        {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/attributeScalar" }
+        }
+      ]
+    },
+    "uniformEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "id",
+        "runId",
+        "attemptId",
+        "source",
+        "nativeOrder",
+        "nativeTime",
+        "actor",
+        "family",
+        "phase",
+        "scope",
+        "relations",
+        "attributes",
+        "content"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "ebo.uniform-event/v1" },
+        "id": { "$ref": "#/$defs/identifier" },
+        "runId": { "$ref": "#/$defs/identifier" },
+        "attemptId": { "$ref": "#/$defs/identifier" },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["harness", "nativeType", "nativeReference"],
+          "properties": {
+            "harness": { "$ref": "#/$defs/identifier" },
+            "nativeType": { "$ref": "#/$defs/identifier" },
+            "nativeReference": { "$ref": "#/$defs/nativeReference" }
+          }
+        },
+        "nativeOrder": { "$ref": "#/$defs/nativeOrder" },
+        "nativeTime": { "$ref": "#/$defs/nativeTime" },
+        "actor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": { "enum": ["user", "agent", "model", "tool", "harness", "operator", "system"] },
+            "id": { "$ref": "#/$defs/identifier" }
+          }
+        },
+        "family": {
+          "enum": [
+            "message",
+            "model-request",
+            "tool",
+            "context",
+            "permission",
+            "delegation",
+            "artifact",
+            "validation",
+            "runtime",
+            "outcome"
+          ]
+        },
+        "phase": { "enum": ["before", "during", "after", "instant"] },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": { "enum": ["run", "attempt", "session", "turn", "operation", "workspace", "artifact"] },
+            "id": { "$ref": "#/$defs/identifier" }
+          }
+        },
+        "relations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["parent", "known"],
+          "properties": {
+            "parent": { "$ref": "#/$defs/eventIdentity" },
+            "known": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "eventId"],
+                "properties": {
+                  "kind": { "enum": ["child", "caused-by", "correlates-with"] },
+                  "eventId": { "$ref": "#/$defs/identifier" }
+                }
+              }
+            }
+          }
+        },
+        "attributes": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z][A-Za-z0-9._-]*$" },
+          "additionalProperties": { "$ref": "#/$defs/attributeValue" }
+        },
+        "content": { "$ref": "#/$defs/content" }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["available", "partial", "unsupported"] },
+        "detail": { "type": "string", "minLength": 1, "maxLength": 1024 }
+      }
+    },
+    "capabilityProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "adapterId", "harness", "nativeTypes", "families", "evidence"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.adapter-capability-profile/v1" },
+        "adapterId": { "$ref": "#/$defs/identifier" },
+        "harness": { "$ref": "#/$defs/identifier" },
+        "nativeTypes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "families": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["message", "model-request", "tool", "context", "permission", "delegation", "artifact", "validation", "runtime", "outcome"],
+          "properties": {
+            "message": { "$ref": "#/$defs/capability" },
+            "model-request": { "$ref": "#/$defs/capability" },
+            "tool": { "$ref": "#/$defs/capability" },
+            "context": { "$ref": "#/$defs/capability" },
+            "permission": { "$ref": "#/$defs/capability" },
+            "delegation": { "$ref": "#/$defs/capability" },
+            "artifact": { "$ref": "#/$defs/capability" },
+            "validation": { "$ref": "#/$defs/capability" },
+            "runtime": { "$ref": "#/$defs/capability" },
+            "outcome": { "$ref": "#/$defs/capability" }
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["nativeOrder", "nativeTime", "parentage", "content"],
+          "properties": {
+            "nativeOrder": { "$ref": "#/$defs/capability" },
+            "nativeTime": { "$ref": "#/$defs/capability" },
+            "parentage": { "$ref": "#/$defs/capability" },
+            "content": { "$ref": "#/$defs/capability" }
+          }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/uniformEvent" },
+    { "$ref": "#/$defs/capabilityProfile" }
+  ]
+}
