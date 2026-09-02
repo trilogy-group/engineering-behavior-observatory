@@ -914,8 +914,9 @@ function resolvesJsonPointer(document: unknown, pointer: string): boolean {
       current = current[Number(segment)];
     } else {
       const record = asRecord(current);
-      if (record === undefined || !Object.hasOwn(record, segment)) return false;
-      current = record[segment];
+      const property = record === undefined ? undefined : Object.getOwnPropertyDescriptor(record, segment);
+      if (property === undefined || !("value" in property)) return false;
+      current = property.value;
     }
   }
   return true;
