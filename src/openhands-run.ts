@@ -3,6 +3,8 @@ import {
   captureOpenHandsAgentServer,
   normalizeOpenHandsCapture,
   OPENHANDS_AGENT_SERVER_VERSION,
+  OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES,
+  OPENHANDS_MAX_RESPONSE_BYTES,
   type OpenHandsCapture,
   type OpenHandsCaptureRequest,
   type OpenHandsNativeRecord,
@@ -84,7 +86,13 @@ export async function captureOpenHandsAgentServerRun(
   }
   const definition = withPinnedRuntime(options.definition);
   const assembler = await createRunBundleAssembler(definition);
-  const sessionWriter = await openJsonlEvidenceWriter(`${assembler.bundleRoot}/session.jsonl`, { exclusive: true });
+  const sessionWriter = await openJsonlEvidenceWriter(`${assembler.bundleRoot}/session.jsonl`, {
+    exclusive: true,
+    maxLineBytes: Math.min(
+      Math.max(1, options.configuration.maxResponseBytes ?? OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES),
+      OPENHANDS_MAX_RESPONSE_BYTES,
+    ) + 64 * 1024,
+  });
   let workspace: WorkspaceExecutionResult | undefined;
   let workspaceOutcome: CapturedWorkspaceOutcome | undefined;
   let workspaceOutcomePromise: Promise<CapturedWorkspaceOutcome> | undefined;
@@ -102,9 +110,7 @@ export async function captureOpenHandsAgentServerRun(
   ];
   const qualificationOptions = {
     startingWorkspacePath: options.startingWorkspacePath,
-    ...(options.workspaceOutcomeExcludedDirectoryNames === undefined ? {} : {
-      workspaceOutcomeExcludedDirectoryNames: options.workspaceOutcomeExcludedDirectoryNames,
-    }),
+    workspaceOutcomeExcludedDirectoryNames,
     ...(options.workspaceOutcomeRespectsGitignore === undefined ? {} : {
       workspaceOutcomeRespectsGitignore: options.workspaceOutcomeRespectsGitignore,
     }),

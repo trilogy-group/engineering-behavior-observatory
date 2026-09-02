@@ -10,6 +10,8 @@ import type {
 
 export const OPENHANDS_AGENT_SERVER_VERSION = "1.44.1";
 export const OPENHANDS_TYPESCRIPT_CLIENT_VERSION = "1.39.0";
+export const OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+export const OPENHANDS_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 export const OPENHANDS_AGENT_SERVER_CAPABILITIES = {
   schemaVersion: "ebo.adapter-capability-profile/v1",
   adapterId: "openhands-agent-server-v1.44.1",
@@ -108,10 +110,10 @@ export type OpenHandsCapture = QualifiedNativeCapture<OpenHandsNativeRecord> & {
 };
 
 const TERMINAL_STATUSES = new Set(["finished", "error", "stuck"]);
-const DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
-const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 const MAX_CAPTURE_EVENTS = 10_000;
 const MAX_TRANSPORT_STATUS_RECORDS = 256;
+
+class CaptureClosedSocket extends Error {}
 
 export function createOpenHandsHarnessAdapter(): HarnessAdapter<OpenHandsCaptureRequest, OpenHandsNativeRecord> {
   return {
@@ -133,9 +135,9 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
   if (request.runId.trim() === "" || request.attemptId.trim() === "") {
     throw new Error("OpenHands capture requires non-empty run and attempt identities.");
   }
-  const maxResponseBytes = request.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
-  if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1 || maxResponseBytes > MAX_RESPONSE_BYTES) {
-    throw new Error(`OpenHands max response bytes must be between 1 and ${MAX_RESPONSE_BYTES}.`);
+  const maxResponseBytes = request.maxResponseBytes ?? OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES;
+  if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1 || maxResponseBytes > OPENHANDS_MAX_RESPONSE_BYTES) {
+    throw new Error(`OpenHands max response bytes must be between 1 and ${OPENHANDS_MAX_RESPONSE_BYTES}.`);
   }
   assertIntegerOption(request.timeoutMs, 1, "timeout milliseconds");
   assertIntegerOption(request.pollIntervalMs, 0, "poll interval milliseconds");
@@ -320,9 +322,13 @@ export async function captureOpenHandsAgentServer(request: OpenHandsCaptureReque
   const finalSet = new Set(finalEventIds);
   const streamedOnlyEventIds = streamedEventIds.filter((id) => !finalSet.has(id));
   const finalOnlyEventIds = finalEventIds.filter((id) => !streamedSet.has(id));
-  const transportGaps = records.flatMap(({ record }) => record.channel === "websocket-status"
+  const transportGaps = [...new Set([
+    ...records.flatMap(({ record }) => record.channel === "websocket-status"
     && ["message-rejected", "reconnect-exhausted", "reconnect-failed", "event-limit-reached", "status-limit-reached"].includes(String(record.payload.state))
-    ? [String(record.payload.state)] : []);
+      ? [String(record.payload.state)] : []),
+    ...(streamed.some((event) => nativeEventId(event) === undefined) ? ["unidentified-websocket-event"] : []),
+    ...(finalEvents.some((event) => nativeEventId(event) === undefined) ? ["unidentified-rest-event"] : []),
+  ])];
   return {
     runId: request.runId,
     attemptId: request.attemptId,
@@ -626,6 +632,7 @@ async function openEventSocket(
   let lastTimestamp: string | undefined;
   let reconnects = 0;
   let stopped = false;
+  let cancelPendingOpen: (() => void) | undefined;
   const factory = request.webSocket ?? ((socketUrl: string) => new WebSocket(socketUrl));
 
   const connect = async (resendMode: "all" | "since"): Promise<void> => {
@@ -637,11 +644,12 @@ async function openEventSocket(
     const socket = factory(url.toString());
     current = socket;
     let active = true;
+    let rejectPendingOpen: ((error: Error) => void) | undefined;
     const onMessage = ({ data }: { data?: unknown }): void => {
       if (!active) return;
       try {
         const text = typeof data === "string" ? data : String(data);
-        const maxBytes = request.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+        const maxBytes = request.maxResponseBytes ?? OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES;
         if (Buffer.byteLength(text) > maxBytes) {
           onStatus({ state: "message-rejected", reason: `frame exceeds ${maxBytes} bytes` });
           return;
@@ -659,6 +667,12 @@ async function openEventSocket(
     };
     const onClose = (): void => {
       active = false;
+      if (rejectPendingOpen !== undefined) {
+        rejectPendingOpen(stopped
+          ? new CaptureClosedSocket("OpenHands capture closed its pending WebSocket.")
+          : new Error("OpenHands event WebSocket closed before opening."));
+        return;
+      }
       if (stopped) return;
       onStatus({ state: "disconnected", connection: reconnects + 1 });
       if (reconnects >= (request.maxReconnects ?? 2)) {
@@ -669,7 +683,9 @@ async function openEventSocket(
       onStatus({ state: "reconnecting", connection: reconnects + 1 });
       setTimeout(() => {
         if (!stopped) void connect(lastTimestamp === undefined ? "all" : "since").catch((error: unknown) => {
-          onStatus({ state: "reconnect-failed", reason: errorMessage(error).slice(0, 512) });
+          if (!(error instanceof CaptureClosedSocket)) {
+            onStatus({ state: "reconnect-failed", reason: errorMessage(error).slice(0, 512) });
+          }
         });
       }, request.reconnectDelayMs ?? 250);
     };
@@ -678,6 +694,8 @@ async function openEventSocket(
     await new Promise<void>((resolvePromise, reject) => {
       let settled = false;
       const cleanupPending = (): void => {
+        cancelPendingOpen = undefined;
+        rejectPendingOpen = undefined;
         clearTimeout(timeout);
         request.signal?.removeEventListener("abort", onAbort);
         socket.removeEventListener("open", onOpen);
@@ -707,6 +725,8 @@ async function openEventSocket(
         resolvePromise();
       };
       const timeout = setTimeout(() => fail(new Error("OpenHands event WebSocket did not open before timeout.")), request.timeoutMs ?? 30_000);
+      rejectPendingOpen = fail;
+      cancelPendingOpen = () => fail(new CaptureClosedSocket("OpenHands capture closed its pending WebSocket."));
       request.signal?.addEventListener("abort", onAbort, { once: true });
       socket.addEventListener("open", onOpen);
     });
@@ -726,6 +746,7 @@ async function openEventSocket(
     close: () => {
       stopped = true;
       request.signal?.removeEventListener("abort", onAbort);
+      cancelPendingOpen?.();
       current?.close();
     },
   };
@@ -745,7 +766,7 @@ async function pollConversation(
       `/api/conversations/${encodeURIComponent(conversationId)}`,
       undefined,
       request.sessionApiKey,
-      request.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
+      request.maxResponseBytes ?? OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES,
       request.signal,
       request.timeoutMs,
     );
@@ -762,7 +783,7 @@ async function readFinalEvents(
   baseUrl: URL,
   conversationId: string,
   sessionApiKey?: string,
-  maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
+  maxResponseBytes = OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES,
   signal?: AbortSignal,
   timeoutMs?: number,
   onEvent?: (event: Record<string, unknown>, index: number) => void,
@@ -795,7 +816,7 @@ async function requestJson(
   path: string,
   init?: RequestInit,
   sessionApiKey?: string,
-  maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
+  maxResponseBytes = OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES,
   signal?: AbortSignal,
   timeoutMs = 30_000,
 ): Promise<Record<string, unknown>> {

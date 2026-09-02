@@ -153,6 +153,51 @@ test("reconnects from the last native timestamp and reconciles duplicate streame
   assert.equal(result.reconciliation.status, "matched");
 });
 
+test("fences a pending reconnect when capture closes", async () => {
+  const sockets: FakeWebSocket[] = [];
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
+      return json({ id: "conversation-1", execution_status: "finished" });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [], next_page_id: null });
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+
+  const result = await captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: {},
+    message: {},
+    fetch,
+    webSocket: (url) => {
+      const socket = new FakeWebSocket(url);
+      sockets.push(socket);
+      if (sockets.length === 1) queueMicrotask(() => {
+        socket.open();
+        socket.disconnect();
+      });
+      return socket;
+    },
+    reconnectDelayMs: 0,
+    timeoutMs: 10,
+    pollIntervalMs: 0,
+  });
+  const retainedCount = result.records.length;
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+
+  assert.equal(sockets.length, 2);
+  assert.equal(sockets[1]?.readyState, 3);
+  assert.equal(result.records.length, retainedCount);
+  assert.equal(result.records.some(({ record }) => record.payload.state === "reconnect-failed"), false);
+});
+
 test("maps supported event facts, error scopes, and exposed relationships while retaining unknown kinds", async () => {
   const native = JSON.parse(readFileSync(
     join(repositoryRoot, "test/fixtures/openhands/v1.44.1/final-events.json"),
@@ -533,6 +578,44 @@ test("retains an explicit gap for an oversized WebSocket frame", async () => {
     record.channel === "websocket-status" && String(record.payload.reason).includes("JSON object")), true);
 });
 
+test("marks identifier-less channel records as reconciliation gaps", async () => {
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
+      return json({ id: "conversation-1", execution_status: "finished" });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [], next_page_id: null });
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+
+  const result = await captureOpenHandsAgentServer({
+    runId: "run-1",
+    attemptId: "attempt-1",
+    baseUrl: "http://127.0.0.1:8000",
+    startConversation: {},
+    message: {},
+    fetch,
+    webSocket: (url) => {
+      const socket = new FakeWebSocket(url);
+      queueMicrotask(() => {
+        socket.open();
+        socket.message({ kind: "FutureEvent", source: "agent" });
+      });
+      return socket;
+    },
+    pollIntervalMs: 0,
+  });
+
+  assert.equal(result.reconciliation.status, "partial");
+  assert.deepEqual(result.reconciliation.transportGaps, ["unidentified-websocket-event"]);
+  assert.equal(result.records.some(({ record }) =>
+    record.channel === "websocket-event" && record.payload.kind === "FutureEvent"), true);
+});
+
 test("bounds rejected WebSocket status records", async () => {
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
@@ -844,6 +927,13 @@ test("packages one verified smoke attempt with native, workspace, verifier, and 
       .every(({ nativeReference }) => nativeReference.artifactId === "session"), true);
     assert.equal(result.qualification.status, "qualified-with-gaps");
     assert.equal(result.qualification.reasons.some(({ code }) => code === "EVENT_LOG_COMPLETENESS_UNPROVEN"), true);
+    const captureReport = result.manifest.evidence.find(({ kind }) => kind === "capture-report")!;
+    assert.deepEqual(
+      (JSON.parse(readFileSync(join(bundleRoot, captureReport.relativePath), "utf8")) as {
+        workspaceOutcomeExcludedDirectoryNames: string[];
+      }).workspaceOutcomeExcludedDirectoryNames,
+      [".git"],
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
