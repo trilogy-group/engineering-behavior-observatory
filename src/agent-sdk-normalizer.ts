@@ -8,7 +8,7 @@ import {
   readVerifiedArtifact,
   validateArtifact,
 } from "./artifacts.js";
-import type { AssessmentMode, Digest } from "./contracts.js";
+import type { Digest } from "./contracts.js";
 import type { TerminalRecord } from "./lifecycle.js";
 import {
   qualifyRunBundle,
@@ -177,12 +177,12 @@ export async function readQualifiedClaudeAgentSdkCapture(
   }
 
   const records: Array<CapturedNativeRecord<AgentSdkNativeRecord>> = [];
-  for (const descriptor of manifest.evidence) {
+  for (const [evidenceIndex, descriptor] of manifest.evidence.entries()) {
     if (descriptor.sanitizedFrom !== undefined || descriptor.kind === "export-manifest") continue;
     if (descriptor.kind === "workspace" || descriptor.kind === "diagnostic") {
       records.push({
-        reference: { artifactId: descriptor.id, recordLocator: "#" },
-        record: { kind: descriptor.kind, document: { descriptor: structuredClone(descriptor) } },
+        reference: { artifactId: "manifest", recordLocator: `#/evidence/${evidenceIndex}` },
+        record: { kind: descriptor.kind, document: structuredClone(descriptor) },
       });
       continue;
     }
@@ -212,10 +212,7 @@ export async function readQualifiedClaudeAgentSdkCapture(
     reference: { artifactId: "manifest", recordLocator: "#/terminal" },
     record: {
       kind: "manifest",
-      document: {
-        assessmentMode: manifest.run.assessmentMode,
-        terminal: structuredClone(manifest.terminal),
-      },
+      document: structuredClone(manifest.terminal),
     },
   });
 
@@ -233,9 +230,15 @@ export function createAgentSdkNativeEvidenceResolver(
   input: NormalizationInput<AgentSdkNativeRecord>,
 ): NativeEvidenceResolver {
   const records = new Map(input.records.map((captured) => [referenceKey(captured.reference), captured]));
+  const manifestArtifacts = new Set(input.records.flatMap(({ record, reference }) => {
+    if (record.kind !== "workspace" && record.kind !== "diagnostic") return [];
+    if (reference.artifactId !== "manifest" || !/^#\/evidence\/(0|[1-9][0-9]*)$/u.test(reference.recordLocator)) return [];
+    const id = text(asRecord(record.document)?.id);
+    return id === undefined ? [] : [referenceKey({ artifactId: id, recordLocator: "#" })];
+  }));
   return {
     resolve(reference) {
-      if (records.has(referenceKey(reference))) return true;
+      if (records.has(referenceKey(reference)) || manifestArtifacts.has(referenceKey(reference))) return true;
       const derived = splitDerivedLocator(reference.recordLocator);
       if (derived === undefined) return false;
       const captured = records.get(referenceKey({ artifactId: reference.artifactId, recordLocator: derived.base }));
@@ -484,8 +487,9 @@ function mapWorkspaceRecord(
   input: NormalizationInput<AgentSdkNativeRecord>,
   captured: CapturedNativeRecord<AgentSdkNativeRecord>,
 ): DraftEvent[] {
-  const descriptor = asRecord(asRecord(captured.record.document)?.descriptor) as RunBundleEvidenceDescriptor | undefined;
-  if (descriptor?.kind !== "workspace") return [];
+  const descriptor = asRecord(captured.record.document) as RunBundleEvidenceDescriptor | undefined;
+  if (descriptor?.kind !== "workspace" || captured.reference.artifactId !== "manifest"
+      || !/^#\/evidence\/(0|[1-9][0-9]*)$/u.test(captured.reference.recordLocator)) return [];
   const mediaType = text(descriptor.mediaType);
   return [draftEvent({
     input,
@@ -500,7 +504,7 @@ function mapWorkspaceRecord(
     scope: { kind: "workspace", id: descriptor.id },
     attributes: compactAttributes({ mediaType: descriptor.mediaType, fingerprint: descriptor.fingerprint }),
     content: knownContent({
-      nativeReference: captured.reference,
+      nativeReference: { artifactId: descriptor.id, recordLocator: "#" },
       ...(mediaType === undefined ? {} : { mediaType }),
       role: "workspace-outcome",
     }),
@@ -540,9 +544,9 @@ function mapManifestRecord(
   input: NormalizationInput<AgentSdkNativeRecord>,
   captured: CapturedNativeRecord<AgentSdkNativeRecord>,
 ): DraftEvent[] {
-  const document = asRecord(captured.record.document);
-  const terminal = asRecord(document?.terminal) as TerminalRecord | undefined;
-  if (terminal === undefined || typeof terminal.state !== "string") return [];
+  const terminal = asRecord(captured.record.document) as TerminalRecord | undefined;
+  if (terminal === undefined || typeof terminal.state !== "string"
+      || captured.reference.artifactId !== "manifest" || captured.reference.recordLocator !== "#/terminal") return [];
   const workspaceId = text(terminal.workspaceArtifactId);
   return [draftEvent({
     input,
@@ -559,7 +563,6 @@ function mapManifestRecord(
       state: scalar(terminal.state),
       failureClass: scalar(terminal.failureClass),
       stopReason: scalar(terminal.stopReason),
-      assessmentMode: scalar(document!.assessmentMode),
     }),
     content: workspaceId === undefined
       ? { status: "unknown", reason: "Terminal record does not identify a workspace artifact" }
@@ -671,11 +674,6 @@ function assertQualifiedInput(input: NormalizationInput<AgentSdkNativeRecord>): 
   const kinds = new Set(input.records.map(({ record }) => record.kind));
   for (const required of ["session", "hook", "workspace", "manifest"] as const) {
     if (!kinds.has(required)) throw new Error(`Capture-qualified Agent SDK input is missing required ${required} evidence.`);
-  }
-  const manifest = input.records.find(({ record }) => record.kind === "manifest");
-  const assessmentMode = asRecord(manifest?.record.document)?.assessmentMode as AssessmentMode | undefined;
-  if (assessmentMode === "verified" && !kinds.has("verifier")) {
-    throw new Error("Capture-qualified verified input is missing required verifier evidence.");
   }
 }
 

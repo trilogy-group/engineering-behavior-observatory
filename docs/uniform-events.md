@@ -91,7 +91,7 @@ normalization.
 | SDK assistant/user/result and structural system records | `message`, `tool`, `context`, `delegation`, `permission`, `runtime`, `outcome` |
 | Agent SDK callback records | `message`, `model-request`, `tool`, `context`, `permission`, `delegation`, `artifact`, `runtime` |
 | Agent SDK telemetry summary | `runtime` |
-| Workspace and verifier artifacts | `artifact`, `validation` |
+| Workspace manifest descriptor and verifier artifact | `artifact`, `validation` |
 | Run-manifest terminal record | `outcome` |
 
 Session and callback sequence numbers keep separate
@@ -102,7 +102,9 @@ native occurrence time. Tool call/result and hook relations are added only when
 one unique emitted call is supported by the same `tool_use_id`; the same rule
 applies to stable subagent/task and workspace artifact identities.
 
-Raw prompts, messages, tool inputs/results, compact summaries, and verifier
+Workspace metadata is sourced from its exact run-manifest evidence-descriptor
+pointer; the qualified workspace bytes remain a content reference. Raw prompts,
+messages, tool inputs/results, compact summaries, and verifier
 assertions stay in their native artifacts. Events contain bounded structural
 attributes and pointers to those bytes. Unknown message/hook records and
 qualification metadata remain reachable through the returned `unmapped`

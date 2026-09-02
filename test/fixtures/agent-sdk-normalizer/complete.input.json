@@ -230,22 +230,20 @@
       }
     },
     {
-      "reference": { "artifactId": "workspace", "recordLocator": "#" },
+      "reference": { "artifactId": "manifest", "recordLocator": "#/evidence/0" },
       "record": {
         "kind": "workspace",
         "document": {
-          "descriptor": {
-            "id": "workspace",
-            "source": "workspace-snapshot",
-            "kind": "workspace",
-            "authority": "outcome",
-            "mediaType": "text/x-diff",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "sizeBytes": 10,
-            "sharingClass": "restricted",
-            "relativePath": "workspace.patch",
-            "fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-          }
+          "id": "workspace",
+          "source": "workspace-snapshot",
+          "kind": "workspace",
+          "authority": "outcome",
+          "mediaType": "text/x-diff",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "sizeBytes": 10,
+          "sharingClass": "restricted",
+          "relativePath": "workspace.patch",
+          "fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         }
       }
     },
@@ -273,10 +271,7 @@
       "reference": { "artifactId": "manifest", "recordLocator": "#/terminal" },
       "record": {
         "kind": "manifest",
-        "document": {
-          "assessmentMode": "verified",
-          "terminal": { "state": "completed", "failureClass": "none", "stopReason": "none", "workspaceArtifactId": "workspace" }
-        }
+        "document": { "state": "completed", "failureClass": "none", "stopReason": "none", "workspaceArtifactId": "workspace" }
       }
     }
   ]

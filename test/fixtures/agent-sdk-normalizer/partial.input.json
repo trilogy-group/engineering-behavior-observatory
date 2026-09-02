@@ -46,21 +46,19 @@
       }
     },
     {
-      "reference": { "artifactId": "workspace", "recordLocator": "#" },
+      "reference": { "artifactId": "manifest", "recordLocator": "#/evidence/0" },
       "record": {
         "kind": "workspace",
         "document": {
-          "descriptor": {
-            "id": "workspace",
-            "source": "workspace-snapshot",
-            "kind": "workspace",
-            "authority": "outcome",
-            "mediaType": "application/gzip",
-            "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-            "sizeBytes": 10,
-            "sharingClass": "restricted",
-            "relativePath": "workspace.tar.gz"
-          }
+          "id": "workspace",
+          "source": "workspace-snapshot",
+          "kind": "workspace",
+          "authority": "outcome",
+          "mediaType": "application/gzip",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "sizeBytes": 10,
+          "sharingClass": "restricted",
+          "relativePath": "workspace.tar.gz"
         }
       }
     },
@@ -68,10 +66,7 @@
       "reference": { "artifactId": "manifest", "recordLocator": "#/terminal" },
       "record": {
         "kind": "manifest",
-        "document": {
-          "assessmentMode": "observational",
-          "terminal": { "state": "stopped", "failureClass": "none", "stopReason": "budget", "workspaceArtifactId": "workspace" }
-        }
+        "document": { "state": "stopped", "failureClass": "none", "stopReason": "budget", "workspaceArtifactId": "workspace" }
       }
     }
   ]
