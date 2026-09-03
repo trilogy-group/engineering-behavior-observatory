@@ -279,6 +279,18 @@ export type {
   UnmappedNativeRecord,
 } from "./uniform-events.js";
 export {
+  CLAUDE_AGENT_SDK_HARNESS,
+  CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_ID,
+  claudeAgentSdkNormalizationAdapter,
+  createAgentSdkNativeEvidenceResolver,
+  normalizeClaudeAgentSdkRunBundle,
+  readQualifiedClaudeAgentSdkCapture,
+} from "./agent-sdk-normalizer.js";
+export type {
+  AgentSdkNativeRecord,
+  AgentSdkNormalizationResult,
+} from "./agent-sdk-normalizer.js";
+export {
   AGENT_SDK_CONFIG_SCHEMA_VERSION,
   resolveAgentSdkConfigurationRecord,
   runAgentSdkQueueEntry,

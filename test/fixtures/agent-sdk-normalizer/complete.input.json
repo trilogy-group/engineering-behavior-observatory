@@ -1,0 +1,282 @@
+{
+  "runId": "run-agent-sdk-golden",
+  "attemptId": "attempt-agent-sdk-golden",
+  "qualification": "qualified",
+  "records": [
+    {
+      "reference": { "artifactId": "session", "recordLocator": "line:1" },
+      "record": {
+        "kind": "session",
+        "document": {
+          "schemaVersion": "ebo.agent-sdk-message/v1",
+          "sequence": 1,
+          "capturedAt": "2026-09-01T00:00:00.100Z",
+          "nativeType": "assistant",
+          "sessionId": "session-golden",
+          "message": {
+            "type": "assistant",
+            "uuid": "message-assistant",
+            "session_id": "session-golden",
+            "parent_tool_use_id": null,
+            "timestamp": "2026-09-01T00:00:00.000Z",
+            "message": {
+              "role": "assistant",
+              "model": "claude-test",
+              "content": [
+                { "type": "tool_use", "id": "tool-1", "name": "Read", "input": { "file_path": "/private/workspace/result.txt" } }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "session", "recordLocator": "line:2" },
+      "record": {
+        "kind": "session",
+        "document": {
+          "schemaVersion": "ebo.agent-sdk-message/v1",
+          "sequence": 2,
+          "capturedAt": "2026-09-01T00:00:01.100Z",
+          "nativeType": "user",
+          "sessionId": "session-golden",
+          "message": {
+            "type": "user",
+            "uuid": "message-tool-result",
+            "session_id": "session-golden",
+            "parent_tool_use_id": null,
+            "timestamp": "2026-09-01T00:00:01.000Z",
+            "message": {
+              "role": "user",
+              "content": [
+                { "type": "tool_result", "tool_use_id": "tool-1", "content": "private tool output", "is_error": false }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "session", "recordLocator": "line:3" },
+      "record": {
+        "kind": "session",
+        "document": {
+          "schemaVersion": "ebo.agent-sdk-message/v1",
+          "sequence": 3,
+          "capturedAt": "2026-09-01T00:00:02.100Z",
+          "nativeType": "result",
+          "nativeSubtype": "success",
+          "sessionId": "session-golden",
+          "message": {
+            "type": "result",
+            "subtype": "success",
+            "uuid": "message-result",
+            "session_id": "session-golden",
+            "is_error": false,
+            "num_turns": 1,
+            "stop_reason": "end_turn",
+            "total_cost_usd": 0.25,
+            "result": "private final answer"
+          }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "hooks", "recordLocator": "line:1" },
+      "record": {
+        "kind": "hook",
+        "document": {
+          "schemaVersion": "ebo.claude-agent-hook/v1",
+          "sequence": 1,
+          "callbackAt": "2026-09-01T00:00:00.200Z",
+          "hook": "PreToolUse",
+          "sessionId": "session-golden",
+          "toolUseId": "tool-1",
+          "nativePayload": { "hook_event_name": "PreToolUse", "session_id": "session-golden", "tool_name": "Read", "tool_input": { "file_path": "/private/workspace/result.txt" }, "tool_use_id": "tool-1" }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "hooks", "recordLocator": "line:2" },
+      "record": {
+        "kind": "hook",
+        "document": {
+          "schemaVersion": "ebo.claude-agent-hook/v1",
+          "sequence": 2,
+          "callbackAt": "2026-09-01T00:00:01.200Z",
+          "hook": "PostToolUse",
+          "sessionId": "session-golden",
+          "toolUseId": "tool-1",
+          "nativePayload": { "hook_event_name": "PostToolUse", "session_id": "session-golden", "tool_name": "Read", "tool_input": {}, "tool_response": { "content": "private" }, "tool_use_id": "tool-1" }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "hooks", "recordLocator": "line:3" },
+      "record": {
+        "kind": "hook",
+        "document": {
+          "schemaVersion": "ebo.claude-agent-hook/v1",
+          "sequence": 3,
+          "callbackAt": "2026-09-01T00:00:01.300Z",
+          "hook": "PostCompact",
+          "sessionId": "session-golden",
+          "nativePayload": { "hook_event_name": "PostCompact", "session_id": "session-golden", "trigger": "auto", "compact_summary": "private summary" }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "hooks", "recordLocator": "line:4" },
+      "record": {
+        "kind": "hook",
+        "document": {
+          "schemaVersion": "ebo.claude-agent-hook/v1",
+          "sequence": 4,
+          "callbackAt": "2026-09-01T00:00:01.400Z",
+          "hook": "PreModelSwitch",
+          "sessionId": "session-golden",
+          "nativePayload": { "hook_event_name": "PreModelSwitch", "session_id": "session-golden", "from_model": "claude-a", "to_model": "claude-b", "requested_model": "claude-b", "source": "sdk" }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "hooks", "recordLocator": "line:5" },
+      "record": {
+        "kind": "hook",
+        "document": {
+          "schemaVersion": "ebo.claude-agent-hook/v1",
+          "sequence": 5,
+          "callbackAt": "2026-09-01T00:00:01.500Z",
+          "hook": "PermissionDenied",
+          "sessionId": "session-golden",
+          "toolUseId": "tool-denied",
+          "nativePayload": { "hook_event_name": "PermissionDenied", "session_id": "session-golden", "tool_name": "Write", "tool_input": {}, "tool_use_id": "tool-denied", "reason": "policy" }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "hooks", "recordLocator": "line:6" },
+      "record": {
+        "kind": "hook",
+        "document": {
+          "schemaVersion": "ebo.claude-agent-hook/v1",
+          "sequence": 6,
+          "callbackAt": "2026-09-01T00:00:01.600Z",
+          "hook": "SubagentStart",
+          "sessionId": "session-golden",
+          "agentId": "agent-1",
+          "agentType": "worker",
+          "nativePayload": { "hook_event_name": "SubagentStart", "session_id": "session-golden", "agent_id": "agent-1", "agent_type": "worker" }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "hooks", "recordLocator": "line:7" },
+      "record": {
+        "kind": "hook",
+        "document": {
+          "schemaVersion": "ebo.claude-agent-hook/v1",
+          "sequence": 7,
+          "callbackAt": "2026-09-01T00:00:01.700Z",
+          "hook": "SubagentStop",
+          "sessionId": "session-golden",
+          "agentId": "agent-1",
+          "agentType": "worker",
+          "nativePayload": { "hook_event_name": "SubagentStop", "session_id": "session-golden", "agent_id": "agent-1", "agent_type": "worker", "stop_hook_active": false }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "hooks", "recordLocator": "line:8" },
+      "record": {
+        "kind": "hook",
+        "document": {
+          "schemaVersion": "ebo.claude-agent-hook/v1",
+          "sequence": 8,
+          "callbackAt": "2026-09-01T00:00:01.800Z",
+          "hook": "FileChanged",
+          "sessionId": "session-golden",
+          "nativePayload": { "hook_event_name": "FileChanged", "session_id": "session-golden", "file_path": "/private/workspace/result.txt", "event": "change" }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "hooks", "recordLocator": "line:9" },
+      "record": {
+        "kind": "hook",
+        "document": {
+          "schemaVersion": "ebo.claude-agent-hook/v1",
+          "sequence": 9,
+          "callbackAt": "2026-09-01T00:00:01.900Z",
+          "hook": "SessionStart",
+          "sessionId": "session-golden",
+          "nativePayload": { "hook_event_name": "SessionStart", "session_id": "session-golden", "source": "startup" }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "telemetry", "recordLocator": "#" },
+      "record": {
+        "kind": "telemetry",
+        "document": {
+          "schemaVersion": "ebo.agent-sdk-telemetry/v1",
+          "attemptId": "attempt-agent-sdk-golden",
+          "telemetry": {
+            "hookSpans": { "status": "enabled", "stability": "detailed-beta", "endpoint": "http://collector.invalid" },
+            "receipt": { "status": "received", "signals": ["traces", "metrics", "logs"] }
+          },
+          "usage": { "source": "sdk-result", "totalCostUsd": 0.25, "numTurns": 1 }
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "manifest", "recordLocator": "#/evidence/0" },
+      "record": {
+        "kind": "workspace",
+        "document": {
+          "id": "workspace",
+          "source": "workspace-snapshot",
+          "kind": "workspace",
+          "authority": "outcome",
+          "mediaType": "text/x-diff",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "sizeBytes": 10,
+          "sharingClass": "restricted",
+          "relativePath": "workspace.patch",
+          "fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "verifier", "recordLocator": "#" },
+      "record": {
+        "kind": "verifier",
+        "document": {
+          "schemaVersion": "verifier-result/v1",
+          "bundleId": "bundle-golden",
+          "status": "passed",
+          "exitCode": 0,
+          "assertions": [{ "id": "golden", "status": "passed" }]
+        }
+      }
+    },
+    {
+      "reference": { "artifactId": "capture-report", "recordLocator": "#" },
+      "record": {
+        "kind": "capture-report",
+        "document": { "schemaVersion": "capture-report/v1", "qualification": "qualified" }
+      }
+    },
+    {
+      "reference": { "artifactId": "manifest", "recordLocator": "#/run/assessmentMode" },
+      "record": { "kind": "assessment-mode", "document": "verified" }
+    },
+    {
+      "reference": { "artifactId": "manifest", "recordLocator": "#/terminal" },
+      "record": {
+        "kind": "manifest",
+        "document": { "state": "completed", "failureClass": "none", "stopReason": "none", "workspaceArtifactId": "workspace" }
+      }
+    }
+  ]
+}
