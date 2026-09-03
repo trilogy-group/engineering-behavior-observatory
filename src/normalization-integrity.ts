@@ -66,6 +66,7 @@ export type ComparisonCapability = `family:${UniformEventFamily}`
 
 export type ComparisonCandidate = {
   id: string;
+  adapterVersion: string;
   task: { id: string; digest: DigestString };
   fixture: { id: string; digest: DigestString };
   model: { id: string; configurationDigest: DigestString };
@@ -300,7 +301,8 @@ export function assessComparisonEligibility(request: ComparisonRequest): Compari
   compareDeclaredCondition("model", request.left.model, request.right.model, request.policy.declaredDifferences, blockers, caveats);
   compareDeclaredCondition("harness", request.left.harness, request.right.harness, request.policy.declaredDifferences, blockers, caveats);
   if (request.left.harness.id === request.right.harness.id
-      && request.left.capabilityProfile.adapterId !== request.right.capabilityProfile.adapterId) {
+      && (request.left.capabilityProfile.adapterId !== request.right.capabilityProfile.adapterId
+        || request.left.adapterVersion !== request.right.adapterVersion)) {
     blockers.push({
       code: "material-configuration-mismatch",
       dimension: "normalization adapter",

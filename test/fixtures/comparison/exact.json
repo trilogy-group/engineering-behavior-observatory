@@ -2,6 +2,7 @@
   "schemaVersion": "ebo.comparison-request/v1",
   "left": {
     "id": "run-left",
+    "adapterVersion": "1.0.0",
     "task": { "id": "task-a", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
     "fixture": { "id": "fixture-a", "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
     "model": { "id": "model-a", "configurationDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
@@ -37,6 +38,7 @@
   },
   "right": {
     "id": "run-right",
+    "adapterVersion": "1.0.0",
     "task": { "id": "task-a", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
     "fixture": { "id": "fixture-a", "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
     "model": { "id": "model-a", "configurationDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },

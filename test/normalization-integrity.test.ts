@@ -239,6 +239,12 @@ test("reports exact, declared harness, fixture mismatch, material mismatch, and 
     code: "material-configuration-mismatch",
     dimension: "normalization adapter",
   }]);
+  const adapterVersionMismatch = structuredClone(exact);
+  adapterVersionMismatch.right.adapterVersion = "2.0.0";
+  assert.deepEqual(assessComparisonEligibility(adapterVersionMismatch).reasons.map(({ code, dimension }) => ({ code, dimension })), [{
+    code: "material-configuration-mismatch",
+    dimension: "normalization adapter",
+  }]);
 
   const missingCapability = structuredClone(exact);
   missingCapability.right.capabilityProfile.families.tool = { status: "unsupported", detail: "not exposed" };
