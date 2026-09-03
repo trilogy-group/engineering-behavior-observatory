@@ -21,6 +21,11 @@ export type NormalizedNativeRecord = {
   digest: DigestString;
 };
 
+export type NormalizedContentReference = {
+  reference: NativeEvidenceReference;
+  digest: DigestString;
+};
+
 export type NormalizedDataset = NormalizationResult & {
   schemaVersion: "ebo.normalized-dataset/v1";
   runId: string;
@@ -32,6 +37,7 @@ export type NormalizedDataset = NormalizationResult & {
   };
   capabilityProfile: AdapterCapabilityProfile;
   nativeRecords: readonly NormalizedNativeRecord[];
+  contentReferences: readonly NormalizedContentReference[];
 };
 
 export type AdapterCoverageReport = {
@@ -59,6 +65,7 @@ export type NormalizedDatasetInput<NativeRecord> = {
   capabilityProfile: AdapterCapabilityProfile;
   adapterVersion: string;
   nativeType(record: NativeRecord): string;
+  contentDigest?(reference: NativeEvidenceReference): DigestString | undefined;
 };
 
 export type ComparisonCapability = `family:${UniformEventFamily}`
@@ -116,6 +123,29 @@ export function describeNormalizedDataset<NativeRecord>(
   if (!(["qualified", "qualified-with-gaps"] as const).includes(input.capture.qualification)) {
     throw new Error("Normalized datasets require capture-qualified evidence.");
   }
+  const nativeRecords = input.capture.records.map(({ reference, record }) => ({
+    reference: structuredClone(reference),
+    nativeType: required(input.nativeType(record), "Native record type"),
+    digest: digestString(digestMetadata(record)),
+  }));
+  const nativeDigests = new Map(nativeRecords.map((record) => [referenceKey(record.reference), record.digest]));
+  const contentReferences = new Map<string, NormalizedContentReference>();
+  for (const event of input.normalization.events) {
+    if (event.content.status !== "known") continue;
+    for (const { nativeReference: reference } of event.content.value) {
+      const key = referenceKey(reference);
+      const containing = containingReference(reference);
+      const digest = nativeDigests.get(key)
+        ?? (containing === undefined ? undefined : nativeDigests.get(referenceKey(containing)))
+        ?? input.contentDigest?.(reference);
+      if (digest === undefined) throw new Error(`Content reference ${formatReference(reference)} requires a trusted digest.`);
+      const existing = contentReferences.get(key);
+      if (existing !== undefined && existing.digest !== digest) {
+        throw new Error(`Content reference ${formatReference(reference)} has conflicting digests.`);
+      }
+      contentReferences.set(key, { reference: structuredClone(reference), digest });
+    }
+  }
   return {
     schemaVersion: "ebo.normalized-dataset/v1",
     runId: input.capture.runId,
@@ -126,11 +156,8 @@ export function describeNormalizedDataset<NativeRecord>(
       harness: input.capabilityProfile.harness,
     },
     capabilityProfile: structuredClone(input.capabilityProfile),
-    nativeRecords: input.capture.records.map(({ reference, record }) => ({
-      reference: structuredClone(reference),
-      nativeType: required(input.nativeType(record), "Native record type"),
-      digest: digestString(digestMetadata(record)),
-    })),
+    nativeRecords,
+    contentReferences: [...contentReferences.values()],
     events: structuredClone(input.normalization.events),
     unmapped: structuredClone(input.normalization.unmapped),
   };
@@ -185,17 +212,6 @@ export async function validateNormalizedDataset(
       || dataset.adapter.harness !== dataset.capabilityProfile.harness) {
     throw new Error("Normalized dataset adapter identity does not match its capability profile.");
   }
-  const ownedResolver: NativeEvidenceResolver = {
-    async resolve(reference) {
-      const resolution = await resolver.resolve(reference);
-      return typeof resolution === "object"
-        && resolution.runId === dataset.runId
-        && resolution.attemptId === dataset.attemptId
-        ? resolution
-        : false;
-    },
-  };
-
   const recordByReference = new Map<string, NormalizedNativeRecord>();
   for (const record of dataset.nativeRecords) {
     const key = referenceKey(record.reference);
@@ -208,6 +224,39 @@ export async function validateNormalizedDataset(
     }
     assertResolution(dataset, record, resolution);
   }
+
+  const contentByReference = new Map<string, NormalizedContentReference>();
+  for (const content of dataset.contentReferences) {
+    const key = referenceKey(content.reference);
+    if (contentByReference.has(key)) throw new Error("Normalized dataset contains duplicate content references.");
+    contentByReference.set(key, content);
+  }
+  const usedContent = new Set<string>();
+  for (const event of dataset.events) {
+    if (event.content.status !== "known") continue;
+    for (const content of event.content.value) {
+      const key = referenceKey(content.nativeReference);
+      if (!contentByReference.has(key)) {
+        throw new Error(`Content reference ${formatReference(content.nativeReference)} has no expected digest.`);
+      }
+      usedContent.add(key);
+    }
+  }
+  if ([...contentByReference.keys()].some((key) => !usedContent.has(key))) {
+    throw new Error("Normalized dataset contains an unreferenced content digest.");
+  }
+  const ownedResolver: NativeEvidenceResolver = {
+    async resolve(reference) {
+      const resolution = await resolver.resolve(reference);
+      const expectedContent = contentByReference.get(referenceKey(reference));
+      return typeof resolution === "object"
+        && resolution.runId === dataset.runId
+        && resolution.attemptId === dataset.attemptId
+        && (expectedContent === undefined || resolution.digest === expectedContent.digest)
+        ? resolution
+        : false;
+    },
+  };
 
   await validateUniformEvents(dataset.events, ownedResolver);
   const mapped = new Set<string>();
@@ -470,11 +519,15 @@ function containingNativeRecord<NativeRecord>(
   records: ReadonlyMap<string, { record: NativeRecord; resolution: NativeEvidenceResolution }>,
   reference: NativeEvidenceReference,
 ): { record: NativeRecord; resolution: NativeEvidenceResolution } | undefined {
+  const containing = containingReference(reference);
+  return containing === undefined ? undefined : records.get(referenceKey(containing));
+}
+
+function containingReference(reference: NativeEvidenceReference): NativeEvidenceReference | undefined {
   const pointer = reference.recordLocator.indexOf("#");
   const base = pointer > 0 ? reference.recordLocator.slice(0, pointer)
     : pointer === 0 && reference.recordLocator.startsWith("#/") ? "#" : undefined;
-  return base === undefined ? undefined
-    : records.get(referenceKey({ ...reference, recordLocator: base }));
+  return base === undefined ? undefined : { ...reference, recordLocator: base };
 }
 
 function resolvesJsonPointer(document: unknown, locator: string): boolean {

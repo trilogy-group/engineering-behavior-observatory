@@ -8,12 +8,14 @@ normalized dataset retains only its source reference, native type, and digest.
 
 `describeNormalizedDataset` combines a qualified capture, its normalization
 result, the adapter capability profile, and the pinned adapter version into an
-`ebo.normalized-dataset/v1` record. It rejects input that is not explicitly
-`qualified` or `qualified-with-gaps`. `validateNormalizedDataset` then checks:
+`ebo.normalized-dataset/v1` record. Source and content references retain
+separate expected digests without copying native records. It rejects input that
+is not explicitly `qualified` or `qualified-with-gaps`.
+`validateNormalizedDataset` then checks:
 
 - the dataset, event, and capability-profile schemas;
 - stable run, attempt, adapter, harness, and native-type identity;
-- resolver-provided run/attempt ownership and each native record digest;
+- resolver-provided run/attempt ownership and every source/content digest;
 - source and content references, event relations, and acyclic parentage;
 - nondecreasing order within each native order domain;
 - that every native record is mapped or explicitly retained as unmapped; and

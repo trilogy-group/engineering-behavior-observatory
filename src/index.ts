@@ -319,6 +319,7 @@ export type {
   ComparisonRequest,
   NormalizedDataset,
   NormalizedDatasetInput,
+  NormalizedContentReference,
   NormalizedNativeRecord,
 } from "./normalization-integrity.js";
 export {

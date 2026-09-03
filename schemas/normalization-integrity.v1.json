@@ -37,7 +37,7 @@
     "normalizedDataset": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "runId", "attemptId", "adapter", "capabilityProfile", "nativeRecords", "events", "unmapped"],
+      "required": ["schemaVersion", "runId", "attemptId", "adapter", "capabilityProfile", "nativeRecords", "contentReferences", "events", "unmapped"],
       "properties": {
         "schemaVersion": { "const": "ebo.normalized-dataset/v1" },
         "runId": { "$ref": "#/$defs/identifier" },
@@ -54,6 +54,19 @@
             "properties": {
               "reference": { "$ref": "#/$defs/reference" },
               "nativeType": { "$ref": "#/$defs/identifier" },
+              "digest": { "$ref": "#/$defs/digest" }
+            }
+          }
+        },
+        "contentReferences": {
+          "type": "array",
+          "maxItems": 1000000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["reference", "digest"],
+            "properties": {
+              "reference": { "$ref": "#/$defs/reference" },
               "digest": { "$ref": "#/$defs/digest" }
             }
           }

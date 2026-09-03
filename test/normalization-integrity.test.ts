@@ -38,6 +38,7 @@ test("validates Agent SDK golden data and rejects unresolved, wrong-run, and dig
     capabilityProfile: normalization.capabilityProfile,
     adapterVersion: "0.3.258",
     nativeType: agentSdkNativeType,
+    contentDigest: (reference) => agentSdkContentDigest(capture, reference),
   });
   const resolver = createCapturedNativeEvidenceResolver(capture, createAgentSdkNativeEvidenceResolver(capture));
 
@@ -70,7 +71,17 @@ test("validates Agent SDK golden data and rejects unresolved, wrong-run, and dig
       recordLocator: `${withContent.source.nativeReference.recordLocator}#/missing`,
     },
   }];
-  await assert.rejects(validateNormalizedDataset(inventedContent, resolver), /unresolved/u);
+  await assert.rejects(validateNormalizedDataset(inventedContent, resolver), /expected digest|unresolved/u);
+
+  const contentTarget = dataset.contentReferences[0]!;
+  await assert.rejects(validateNormalizedDataset(dataset, {
+    async resolve(reference) {
+      const resolution = await resolver.resolve(reference);
+      return sameReference(reference, contentTarget.reference) && typeof resolution === "object"
+        ? { ...resolution, digest: SHA("8") }
+        : resolution;
+    },
+  }), /unresolved/u);
 
   const foreignContent = structuredClone(dataset);
   const contentEvent = foreignContent.events.find(({ content }) => content.status === "known" && content.value.length > 0)!;
@@ -78,15 +89,19 @@ test("validates Agent SDK golden data and rejects unresolved, wrong-run, and dig
     status: "known",
     value: [{ nativeReference: { artifactId: "foreign", recordLocator: "#" } }],
   };
+  foreignContent.contentReferences = [{
+    reference: { artifactId: "foreign", recordLocator: "#" },
+    digest: SHA("9"),
+  }];
   const sourceResolver = createAgentSdkNativeEvidenceResolver(capture);
   await assert.rejects(validateNormalizedDataset(foreignContent, createCapturedNativeEvidenceResolver(capture, {
     resolve: (reference) => reference.artifactId === "foreign"
       ? { runId: "another-run", attemptId: "another-attempt", digest: SHA("9") }
       : sourceResolver.resolve(reference),
-  })), /unresolved/u);
+  })), /expected digest|unresolved/u);
   await assert.rejects(validateNormalizedDataset(foreignContent, {
     resolve: (reference) => reference.artifactId === "foreign" ? true : resolver.resolve(reference),
-  }), /unresolved/u);
+  }), /expected digest|unresolved/u);
 
   const reversed = structuredClone(dataset);
   const events = [...reversed.events];
@@ -137,6 +152,7 @@ test("keeps unknown Agent SDK records reachable and distinguishes unsupported ca
     capabilityProfile: normalization.capabilityProfile,
     adapterVersion: "0.3.258",
     nativeType: agentSdkNativeType,
+    contentDigest: (reference) => agentSdkContentDigest(capture, reference),
   });
   const coverage = await validateNormalizedDataset(
     dataset,
@@ -170,6 +186,7 @@ test("applies the same normalization and native-reference gate to Agent SDK, Ope
         capabilityProfile: agentNormalization.capabilityProfile,
         adapterVersion: "0.3.258",
         nativeType: agentSdkNativeType,
+        contentDigest: (reference) => agentSdkContentDigest(agentCapture, reference),
       }),
       resolver: createCapturedNativeEvidenceResolver(agentCapture, createAgentSdkNativeEvidenceResolver(agentCapture)),
     },
@@ -298,6 +315,21 @@ function agentSdkNativeType(record: AgentSdkNativeRecord): string {
     "assessment-mode": "assessment-mode",
     manifest: "terminal-record",
   } as Partial<Record<AgentSdkNativeRecord["kind"], string>>)[record.kind] ?? record.kind;
+}
+
+function agentSdkContentDigest(
+  capture: NormalizationInput<AgentSdkNativeRecord>,
+  reference: { artifactId: string },
+): `sha256:${string}` | undefined {
+  for (const { record } of capture.records) {
+    if (record.kind !== "workspace" && record.kind !== "diagnostic") continue;
+    const descriptor = record.document as { id?: unknown; digest?: unknown } | null;
+    if (descriptor?.id === reference.artifactId && typeof descriptor.digest === "string"
+        && /^sha256:[a-f0-9]{64}$/u.test(descriptor.digest)) {
+      return descriptor.digest as `sha256:${string}`;
+    }
+  }
+  return undefined;
 }
 
 function openHandsFixture(): NormalizationInput<OpenHandsNativeRecord> {
