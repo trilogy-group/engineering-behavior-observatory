@@ -61,6 +61,17 @@ test("validates Agent SDK golden data and rejects unresolved, wrong-run, and dig
   mismatched.nativeRecords[0]!.digest = SHA("0");
   await assert.rejects(validateNormalizedDataset(mismatched, resolver), /digest mismatch/u);
 
+  const inventedContent = structuredClone(dataset);
+  const withContent = inventedContent.events.find(({ content }) => content.status === "known" && content.value.length > 0)!;
+  if (withContent.content.status !== "known") throw new Error("Expected known content fixture.");
+  withContent.content.value = [{
+    nativeReference: {
+      ...withContent.source.nativeReference,
+      recordLocator: `${withContent.source.nativeReference.recordLocator}#/missing`,
+    },
+  }];
+  await assert.rejects(validateNormalizedDataset(inventedContent, resolver), /unresolved/u);
+
   const reversed = structuredClone(dataset);
   const events = [...reversed.events];
   const ordered = events.filter(({ nativeOrder }) => nativeOrder.status === "known"
@@ -70,6 +81,18 @@ test("validates Agent SDK golden data and rejects unresolved, wrong-run, and dig
   [events[first], events[last]] = [events[last]!, events[first]!];
   reversed.events = events;
   await assert.rejects(validateNormalizedDataset(reversed, resolver), /source-local order/u);
+});
+
+test("refuses to describe a dataset before capture qualification", () => {
+  const capture = agentSdkFixture("partial");
+  capture.qualification = "unqualified" as never;
+  assert.throws(() => describeNormalizedDataset({
+    capture,
+    normalization: { events: [], unmapped: [] },
+    capabilityProfile: claudeAgentSdkNormalizationAdapter.capabilityProfile,
+    adapterVersion: "0.3.258",
+    nativeType: agentSdkNativeType,
+  }), /capture-qualified/u);
 });
 
 test("keeps unknown Agent SDK records reachable and distinguishes unsupported capabilities from observed zero", async () => {

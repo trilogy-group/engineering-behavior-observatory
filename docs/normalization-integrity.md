@@ -8,7 +8,8 @@ normalized dataset retains only its source reference, native type, and digest.
 
 `describeNormalizedDataset` combines a qualified capture, its normalization
 result, the adapter capability profile, and the pinned adapter version into an
-`ebo.normalized-dataset/v1` record. `validateNormalizedDataset` then checks:
+`ebo.normalized-dataset/v1` record. It rejects input that is not explicitly
+`qualified` or `qualified-with-gaps`. `validateNormalizedDataset` then checks:
 
 - the dataset, event, and capability-profile schemas;
 - stable run, attempt, adapter, harness, and native-type identity;
@@ -23,7 +24,9 @@ references. A boolean resolver remains supported by the lower-level uniform
 event validator, but it is insufficient for dataset integrity validation.
 `createCapturedNativeEvidenceResolver` supplies the stronger metadata for an
 in-memory qualified capture and can delegate other content references to an
-adapter-specific resolver.
+adapter-specific resolver. Derived JSON Pointer locators are resolved against
+the source record; the helper never treats a containing record as proof that an
+arbitrary child locator exists.
 
 Successful validation returns an `ebo.adapter-coverage-report/v1` report. It
 counts mapped and unmapped native records by adapter version and native type.

@@ -112,6 +112,9 @@ export type ComparisonReport = {
 export function describeNormalizedDataset<NativeRecord>(
   input: NormalizedDatasetInput<NativeRecord>,
 ): NormalizedDataset {
+  if (!(["qualified", "qualified-with-gaps"] as const).includes(input.capture.qualification)) {
+    throw new Error("Normalized datasets require capture-qualified evidence.");
+  }
   return {
     schemaVersion: "ebo.normalized-dataset/v1",
     runId: input.capture.runId,
@@ -139,20 +142,29 @@ export function createCapturedNativeEvidenceResolver<NativeRecord>(
   const records = new Map(capture.records.map(({ reference, record }) => [
     referenceKey(reference),
     {
-      runId: capture.runId,
-      attemptId: capture.attemptId,
-      digest: digestString(digestMetadata(record)),
-    } satisfies NativeEvidenceResolution,
+      record,
+      resolution: {
+        runId: capture.runId,
+        attemptId: capture.attemptId,
+        digest: digestString(digestMetadata(record)),
+      } satisfies NativeEvidenceResolution,
+    },
   ]));
   return {
     async resolve(reference) {
       const exact = records.get(referenceKey(reference));
-      if (exact !== undefined) return exact;
-      const pointer = reference.recordLocator.indexOf("#");
-      const containingRecord = pointer > 0
-        ? records.get(referenceKey({ ...reference, recordLocator: reference.recordLocator.slice(0, pointer) }))
-        : undefined;
-      return containingRecord ?? await fallback?.resolve(reference) ?? false;
+      if (exact !== undefined) return exact.resolution;
+      const fallbackResolution = await fallback?.resolve(reference);
+      if (fallbackResolution) {
+        if (typeof fallbackResolution !== "boolean") return fallbackResolution;
+        const containing = containingNativeRecord(records, reference);
+        return containing?.resolution ?? true;
+      }
+      const containing = containingNativeRecord(records, reference);
+      if (containing !== undefined && resolvesJsonPointer(containing.record, reference.recordLocator)) {
+        return containing.resolution;
+      }
+      return false;
     },
   };
 }
@@ -425,6 +437,36 @@ function required(value: string, label: string): string {
 
 function referenceKey(reference: NativeEvidenceReference): string {
   return JSON.stringify([reference.artifactId, reference.recordLocator]);
+}
+
+function containingNativeRecord<NativeRecord>(
+  records: ReadonlyMap<string, { record: NativeRecord; resolution: NativeEvidenceResolution }>,
+  reference: NativeEvidenceReference,
+): { record: NativeRecord; resolution: NativeEvidenceResolution } | undefined {
+  const pointer = reference.recordLocator.indexOf("#");
+  return pointer > 0
+    ? records.get(referenceKey({ ...reference, recordLocator: reference.recordLocator.slice(0, pointer) }))
+    : undefined;
+}
+
+function resolvesJsonPointer(document: unknown, locator: string): boolean {
+  const hash = locator.indexOf("#");
+  if (hash < 0) return false;
+  const pointer = locator.slice(hash + 1);
+  if (pointer === "") return true;
+  if (!pointer.startsWith("/")) return false;
+  let current = document;
+  for (const encoded of pointer.slice(1).split("/")) {
+    if (/~(?:[^01]|$)/u.test(encoded)) return false;
+    const key = encoded.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (Array.isArray(current)) {
+      if (!/^(?:0|[1-9][0-9]*)$/u.test(key) || Number(key) >= current.length) return false;
+      current = current[Number(key)];
+    } else if (typeof current === "object" && current !== null && Object.hasOwn(current, key)) {
+      current = (current as Record<string, unknown>)[key];
+    } else return false;
+  }
+  return true;
 }
 
 function formatReference(reference: NativeEvidenceReference): string {
