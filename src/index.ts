@@ -216,6 +216,30 @@ export {
   spawnProtocolProcess,
 } from "./process-protocol.js";
 export {
+  createDeepSeekHarnessAdapter,
+  createDeepSeekRuntimeComposition,
+  DEEPSEEK_ADAPTER_ID,
+  DEEPSEEK_CAPABILITY_PROFILE,
+  DEEPSEEK_HARNESS_ID,
+  DEEPSEEK_SDK_VERSION,
+  deepSeekCapabilities,
+  deepSeekCompositionDigest,
+  DeepSeekNativeCapture,
+  executeDeepSeekHarness,
+  normalizeDeepSeekCapture,
+  qualifiedDeepSeekCapture,
+} from "./deepseek-adapter.js";
+export type {
+  DeepSeekAdapterRequest,
+  DeepSeekCapabilities,
+  DeepSeekCaptureReport,
+  DeepSeekFileReference,
+  DeepSeekHarnessConfiguration,
+  DeepSeekNativeObservation,
+  DeepSeekRuntimeComposition,
+  DeepSeekRuntimeCompositionInput,
+} from "./deepseek-adapter.js";
+export {
   buildClaudeAgentSdkEnvironment,
   executeClaudeAgentSdk,
   openClaudeAgentSdkHookCapture,
@@ -303,6 +327,18 @@ export type {
   CaptureOpenHandsAgentServerVerifier,
   OpenHandsAgentServerRunConfiguration,
 } from "./openhands-run.js";
+export {
+  CLAUDE_AGENT_SDK_HARNESS,
+  CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_ID,
+  claudeAgentSdkNormalizationAdapter,
+  createAgentSdkNativeEvidenceResolver,
+  normalizeClaudeAgentSdkRunBundle,
+  readQualifiedClaudeAgentSdkCapture,
+} from "./agent-sdk-normalizer.js";
+export type {
+  AgentSdkNativeRecord,
+  AgentSdkNormalizationResult,
+} from "./agent-sdk-normalizer.js";
 export {
   AGENT_SDK_CONFIG_SCHEMA_VERSION,
   resolveAgentSdkConfigurationRecord,

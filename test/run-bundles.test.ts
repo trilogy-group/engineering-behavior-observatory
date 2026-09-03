@@ -103,9 +103,11 @@ for (const scenario of [
       const report = JSON.parse(readFileSync(join(bundleRoot, reportDescriptor.relativePath), "utf8")) as {
         qualification: string;
         capabilities: { timingResource: { status: string } };
+        semanticEvidenceKinds: string[];
       };
       assert.equal(report.qualification, scenario.qualification);
       assert.equal(report.capabilities.timingResource.status, scenario.timingStatus);
+      assert.deepEqual(report.semanticEvidenceKinds, ["session", "hook"]);
       assert.equal(JSON.stringify(manifest).includes("persistence"), false);
       assert.equal(JSON.stringify(manifest).includes("input_tokens"), false, "usage remains in native evidence, not manifest attributes");
       if (scenario.telemetry) {

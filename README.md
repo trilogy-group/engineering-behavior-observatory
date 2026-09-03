@@ -18,6 +18,10 @@ The [OpenHands Agent Server adapter](docs/openhands-agent-server.md) implements
 the pinned `1.44.1` REST/WebSocket boundary with native-first reconciliation,
 explicit completeness gaps, and verified run-bundle packaging.
 
+The [DeepSeek Harness adapter](docs/deepseek-harness.md) uses the official
+out-of-process TypeScript client, retains native session evidence and explicit
+receipt-to-idle completion boundaries, and normalizes only qualified records.
+
 ## Status
 
 M2 native Agent SDK capture is available through the public
