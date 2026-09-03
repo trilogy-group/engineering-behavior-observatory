@@ -108,6 +108,23 @@ test("refuses to describe a dataset before capture qualification", () => {
   }), /capture-qualified/u);
 });
 
+test("resolves valid pointers derived from a root native record without accepting boolean-only fallbacks", async () => {
+  const capture = {
+    runId: "run-root",
+    attemptId: "attempt-root",
+    qualification: "qualified" as const,
+    records: [{
+      reference: { artifactId: "root", recordLocator: "#" },
+      record: { field: { value: true } },
+    }],
+  };
+  const resolver = createCapturedNativeEvidenceResolver(capture, { resolve: () => true });
+
+  assert.equal(typeof await resolver.resolve({ artifactId: "root", recordLocator: "#/field/value" }), "object");
+  assert.equal(await resolver.resolve({ artifactId: "foreign", recordLocator: "#" }), false);
+  assert.equal(await resolver.resolve({ artifactId: "root", recordLocator: "#/missing" }), false);
+});
+
 test("keeps unknown Agent SDK records reachable and distinguishes unsupported capabilities from observed zero", async () => {
   const capture = agentSdkFixture("partial");
   const normalization = await claudeAgentSdkNormalizationAdapter.normalize(capture);

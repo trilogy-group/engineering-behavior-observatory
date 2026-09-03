@@ -162,7 +162,9 @@ export function createCapturedNativeEvidenceResolver<NativeRecord>(
             : false;
         }
         const containing = containingNativeRecord(records, reference);
-        return containing?.resolution ?? true;
+        return containing !== undefined && resolvesJsonPointer(containing.record, reference.recordLocator)
+          ? containing.resolution
+          : false;
       }
       const containing = containingNativeRecord(records, reference);
       if (containing !== undefined && resolvesJsonPointer(containing.record, reference.recordLocator)) {
@@ -456,9 +458,10 @@ function containingNativeRecord<NativeRecord>(
   reference: NativeEvidenceReference,
 ): { record: NativeRecord; resolution: NativeEvidenceResolution } | undefined {
   const pointer = reference.recordLocator.indexOf("#");
-  return pointer > 0
-    ? records.get(referenceKey({ ...reference, recordLocator: reference.recordLocator.slice(0, pointer) }))
-    : undefined;
+  const base = pointer > 0 ? reference.recordLocator.slice(0, pointer)
+    : pointer === 0 && reference.recordLocator.startsWith("#/") ? "#" : undefined;
+  return base === undefined ? undefined
+    : records.get(referenceKey({ ...reference, recordLocator: base }));
 }
 
 function resolvesJsonPointer(document: unknown, locator: string): boolean {
