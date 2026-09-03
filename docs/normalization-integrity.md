@@ -19,9 +19,11 @@ result, the adapter capability profile, and the pinned adapter version into an
 - that every native record is mapped or explicitly retained as unmapped; and
 - that emitted families and evidence do not contradict adapter capabilities.
 
-The resolver must return `{ runId, attemptId, digest }` for native record
-references. A boolean resolver remains supported by the lower-level uniform
-event validator, but it is insufficient for dataset integrity validation.
+The resolver must return `{ runId, attemptId, digest }` for every source and
+content reference. A boolean resolver remains supported by the lower-level
+uniform event validator, but it is insufficient for dataset integrity
+validation. The dataset validator rejects resolution metadata owned by another
+run or attempt.
 `createCapturedNativeEvidenceResolver` supplies the stronger metadata for an
 in-memory qualified capture and can delegate other content references to an
 adapter-specific resolver. Derived JSON Pointer locators are resolved against

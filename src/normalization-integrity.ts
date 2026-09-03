@@ -184,6 +184,16 @@ export async function validateNormalizedDataset(
       || dataset.adapter.harness !== dataset.capabilityProfile.harness) {
     throw new Error("Normalized dataset adapter identity does not match its capability profile.");
   }
+  const ownedResolver: NativeEvidenceResolver = {
+    async resolve(reference) {
+      const resolution = await resolver.resolve(reference);
+      return typeof resolution === "object"
+        && resolution.runId === dataset.runId
+        && resolution.attemptId === dataset.attemptId
+        ? resolution
+        : false;
+    },
+  };
 
   const recordByReference = new Map<string, NormalizedNativeRecord>();
   for (const record of dataset.nativeRecords) {
@@ -198,7 +208,7 @@ export async function validateNormalizedDataset(
     assertResolution(dataset, record, resolution);
   }
 
-  await validateUniformEvents(dataset.events, resolver);
+  await validateUniformEvents(dataset.events, ownedResolver);
   const mapped = new Set<string>();
   for (const event of dataset.events) {
     if (event.runId !== dataset.runId || event.attemptId !== dataset.attemptId) {

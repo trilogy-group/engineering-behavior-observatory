@@ -84,6 +84,9 @@ test("validates Agent SDK golden data and rejects unresolved, wrong-run, and dig
       ? { runId: "another-run", attemptId: "another-attempt", digest: SHA("9") }
       : sourceResolver.resolve(reference),
   })), /unresolved/u);
+  await assert.rejects(validateNormalizedDataset(foreignContent, {
+    resolve: (reference) => reference.artifactId === "foreign" ? true : resolver.resolve(reference),
+  }), /unresolved/u);
 
   const reversed = structuredClone(dataset);
   const events = [...reversed.events];
