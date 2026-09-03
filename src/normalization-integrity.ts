@@ -461,10 +461,13 @@ function resolvesJsonPointer(document: unknown, locator: string): boolean {
     const key = encoded.replaceAll("~1", "/").replaceAll("~0", "~");
     if (Array.isArray(current)) {
       if (!/^(?:0|[1-9][0-9]*)$/u.test(key) || Number(key) >= current.length) return false;
-      current = current[Number(key)];
-    } else if (typeof current === "object" && current !== null && Object.hasOwn(current, key)) {
-      current = (current as Record<string, unknown>)[key];
-    } else return false;
+      current = current.at(Number(key));
+      continue;
+    }
+    if (typeof current !== "object" || current === null) return false;
+    const property = Object.getOwnPropertyDescriptor(current, key);
+    if (property === undefined || !("value" in property)) return false;
+    current = property.value;
   }
   return true;
 }
