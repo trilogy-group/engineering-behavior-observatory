@@ -267,8 +267,9 @@ export async function validateNormalizedCorpus(
     if (attempts.has(dataset.attemptId)) throw new Error(`Normalized corpus contains duplicate attempt ID "${dataset.attemptId}".`);
     attempts.add(dataset.attemptId);
     for (const event of dataset.events) {
-      if (events.has(event.id)) throw new Error(`Normalized corpus contains duplicate event ID "${event.id}".`);
-      events.add(event.id);
+      const key = JSON.stringify([dataset.attemptId, event.id]);
+      if (events.has(key)) throw new Error(`Normalized corpus contains duplicate event ID "${event.id}" in attempt "${dataset.attemptId}".`);
+      events.add(key);
     }
     reports.push(await validateNormalizedDataset(dataset, resolver));
   }

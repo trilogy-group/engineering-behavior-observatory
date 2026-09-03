@@ -155,6 +155,10 @@ test("applies the same normalization and native-reference gate to Agent SDK, Ope
   const agentNormalization = await claudeAgentSdkNormalizationAdapter.normalize(agentCapture);
   const openHandsCapture = openHandsFixture();
   const openHandsNormalization = await normalizeOpenHandsCapture(openHandsCapture);
+  const secondOpenHandsCapture = openHandsFixture();
+  secondOpenHandsCapture.runId = "run-openhands-2";
+  secondOpenHandsCapture.attemptId = "attempt-openhands-2";
+  const secondOpenHandsNormalization = await normalizeOpenHandsCapture(secondOpenHandsCapture);
   const deepSeekCapture = deepSeekFixture();
   const deepSeekNormalization = normalizeDeepSeekCapture(deepSeekCapture);
 
@@ -181,6 +185,16 @@ test("applies the same normalization and native-reference gate to Agent SDK, Ope
     },
     {
       dataset: describeNormalizedDataset({
+        capture: secondOpenHandsCapture,
+        normalization: secondOpenHandsNormalization,
+        capabilityProfile: OPENHANDS_AGENT_SERVER_CAPABILITIES,
+        adapterVersion: OPENHANDS_AGENT_SERVER_VERSION,
+        nativeType: ({ payload, channel }) => typeof payload.kind === "string" ? payload.kind : channel,
+      }),
+      resolver: createCapturedNativeEvidenceResolver(secondOpenHandsCapture),
+    },
+    {
+      dataset: describeNormalizedDataset({
         capture: deepSeekCapture,
         normalization: deepSeekNormalization,
         capabilityProfile: DEEPSEEK_CAPABILITY_PROFILE,
@@ -194,14 +208,15 @@ test("applies the same normalization and native-reference gate to Agent SDK, Ope
   assert.deepEqual(reports.map(({ adapter }) => adapter.harness), [
     "claude-agent-sdk",
     "openhands-agent-server",
+    "openhands-agent-server",
     "deepseek-harness",
   ]);
   assert.ok(reports[1]!.nativeTypes.some(({ nativeType }) => nativeType === "server-info"));
-  assert.ok(reports[2]!.nativeTypes.some(({ nativeType }) => nativeType === "session/prompt"));
+  assert.ok(reports[3]!.nativeTypes.some(({ nativeType }) => nativeType === "session/prompt"));
   assert.equal(reports[1]!.families["model-request"].capability.status, "unsupported");
   assert.equal(reports[1]!.families["model-request"].observedEvents, 0);
-  assert.equal(reports[2]!.families.permission.capability.status, "unsupported");
-  assert.equal(reports[2]!.families.permission.observedEvents, 0);
+  assert.equal(reports[3]!.families.permission.capability.status, "unsupported");
+  assert.equal(reports[3]!.families.permission.observedEvents, 0);
 });
 
 test("reports exact, declared harness, fixture mismatch, material mismatch, and missing capability comparisons", () => {
