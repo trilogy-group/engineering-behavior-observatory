@@ -156,7 +156,11 @@ export function createCapturedNativeEvidenceResolver<NativeRecord>(
       if (exact !== undefined) return exact.resolution;
       const fallbackResolution = await fallback?.resolve(reference);
       if (fallbackResolution) {
-        if (typeof fallbackResolution !== "boolean") return fallbackResolution;
+        if (typeof fallbackResolution !== "boolean") {
+          return fallbackResolution.runId === capture.runId && fallbackResolution.attemptId === capture.attemptId
+            ? fallbackResolution
+            : false;
+        }
         const containing = containingNativeRecord(records, reference);
         return containing?.resolution ?? true;
       }
@@ -283,6 +287,14 @@ export function assessComparisonEligibility(request: ComparisonRequest): Compari
   }
   compareDeclaredCondition("model", request.left.model, request.right.model, request.policy.declaredDifferences, blockers, caveats);
   compareDeclaredCondition("harness", request.left.harness, request.right.harness, request.policy.declaredDifferences, blockers, caveats);
+  if (request.left.harness.id === request.right.harness.id
+      && request.left.capabilityProfile.adapterId !== request.right.capabilityProfile.adapterId) {
+    blockers.push({
+      code: "material-configuration-mismatch",
+      dimension: "normalization adapter",
+      detail: "normalization adapter identity differs for the same harness condition.",
+    });
+  }
   for (const capability of request.policy.requiredCapabilities) {
     for (const candidate of [request.left, request.right]) {
       const value = candidateCapability(candidate, capability);

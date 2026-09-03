@@ -72,6 +72,19 @@ test("validates Agent SDK golden data and rejects unresolved, wrong-run, and dig
   }];
   await assert.rejects(validateNormalizedDataset(inventedContent, resolver), /unresolved/u);
 
+  const foreignContent = structuredClone(dataset);
+  const contentEvent = foreignContent.events.find(({ content }) => content.status === "known" && content.value.length > 0)!;
+  contentEvent.content = {
+    status: "known",
+    value: [{ nativeReference: { artifactId: "foreign", recordLocator: "#" } }],
+  };
+  const sourceResolver = createAgentSdkNativeEvidenceResolver(capture);
+  await assert.rejects(validateNormalizedDataset(foreignContent, createCapturedNativeEvidenceResolver(capture, {
+    resolve: (reference) => reference.artifactId === "foreign"
+      ? { runId: "another-run", attemptId: "another-attempt", digest: SHA("9") }
+      : sourceResolver.resolve(reference),
+  })), /unresolved/u);
+
   const reversed = structuredClone(dataset);
   const events = [...reversed.events];
   const ordered = events.filter(({ nativeOrder }) => nativeOrder.status === "known"
@@ -199,6 +212,13 @@ test("reports exact, declared harness, fixture mismatch, material mismatch, and 
   assert.deepEqual(assessComparisonEligibility(materialMismatch).reasons.map(({ code }) => code), [
     "material-configuration-mismatch",
   ]);
+
+  const adapterMismatch = structuredClone(exact);
+  adapterMismatch.right.capabilityProfile.adapterId = "adapter-b";
+  assert.deepEqual(assessComparisonEligibility(adapterMismatch).reasons.map(({ code, dimension }) => ({ code, dimension })), [{
+    code: "material-configuration-mismatch",
+    dimension: "normalization adapter",
+  }]);
 
   const missingCapability = structuredClone(exact);
   missingCapability.right.capabilityProfile.families.tool = { status: "unsupported", detail: "not exposed" };

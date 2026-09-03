@@ -50,8 +50,9 @@ node dist/src/cli.js comparison check <request.json>
 
 The request names both candidates, their task and fixture digests, model and
 harness configuration identities, material capture/budget/tool-policy digests,
-capability profiles, required capabilities, and any declared model or harness
-difference. The command prints an `ebo.comparison-report/v1` JSON object and
+normalization-adapter identities, capability profiles, required capabilities,
+and any declared model or harness difference. The command prints an
+`ebo.comparison-report/v1` JSON object and
 returns nonzero when its status is `unsupported`.
 
 Statuses are:
