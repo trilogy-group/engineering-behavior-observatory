@@ -570,9 +570,14 @@
           "type": "array",
           "uniqueItems": true,
           "items": {
-            "type": "string",
-            "maxLength": 255,
-            "pattern": "^(?!\\.{1,2}$)(?!\\.[Gg][Ii][Tt]$)(?!(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\..*)?$)[A-Za-z0-9._@+()\\[\\]-]+$"
+            "oneOf": [
+              { "const": ".git" },
+              {
+                "type": "string",
+                "maxLength": 255,
+                "pattern": "^(?!\\.{1,2}$)(?!\\.[Gg][Ii][Tt]$)(?!(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\..*)?$)[A-Za-z0-9._@+()\\[\\]-]+$"
+              }
+            ]
           }
         },
         "workspaceOutcomeRespectsGitignore": { "type": "boolean" },

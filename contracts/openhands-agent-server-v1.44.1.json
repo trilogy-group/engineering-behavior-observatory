@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "ebo.openhands-agent-server-contract/v1",
+  "server": {
+    "version": "1.44.1",
+    "gitCommit": "9d143aac35c2dcec9cbb046ff9f35ac5eb072f6a",
+    "image": "ghcr.io/openhands/agent-server:1.44.1-python",
+    "openapiUrl": "https://github.com/OpenHands/software-agent-sdk/releases/download/v1.44.1/openapi.json",
+    "openapiSha256": "718a6e6e658ead0aba4457ad5fc083df0436b3bfddfdac646cd8eb2f22c973f1"
+  },
+  "rest": {
+    "authenticationHeader": "X-Session-API-Key",
+    "serverIdentity": "GET /server_info",
+    "createConversation": "POST /api/conversations",
+    "sendMessage": "POST /api/conversations/{conversation_id}/events",
+    "readConversation": "GET /api/conversations/{conversation_id}",
+    "searchEvents": "GET /api/conversations/{conversation_id}/events/search",
+    "deleteConversation": "DELETE /api/conversations/{conversation_id}",
+    "eventSearchSortOrder": "TIMESTAMP",
+    "eventSearchPageLimit": 100
+  },
+  "websocket": {
+    "sourceUrl": "https://github.com/OpenHands/software-agent-sdk/blob/9d143aac35c2dcec9cbb046ff9f35ac5eb072f6a/openhands-agent-server/openhands/agent_server/sockets.py",
+    "path": "/sockets/events/{conversation_id}",
+    "authentication": "first-message",
+    "initialResendMode": "all",
+    "reconnectResendMode": "since",
+    "reconnectCursor": "after_timestamp"
+  },
+  "eventKinds": [
+    "ServerErrorEvent",
+    "ACPToolCallEvent",
+    "Condensation",
+    "CondensationRequest",
+    "CondensationSummaryEvent",
+    "ConversationErrorEvent",
+    "ConversationStateUpdateEvent",
+    "HookExecutionEvent",
+    "LLMCompletionLogEvent",
+    "ActionEvent",
+    "MessageEvent",
+    "AgentErrorEvent",
+    "ObservationEvent",
+    "UserRejectObservation",
+    "SystemPromptEvent",
+    "StreamingDeltaEvent",
+    "TokenEvent",
+    "InterruptEvent",
+    "PauseEvent"
+  ],
+  "typescriptClient": {
+    "version": "1.39.0",
+    "gitCommit": "2028b752ad2f243b63ffce6b185d32d5e12ca8a8",
+    "generatedForServer": "1.44.0",
+    "generatedSchemaSource": "ghcr.io/openhands/agent-server:1.44.0-python",
+    "websocketAuthentication": "deprecated-query-parameter",
+    "reconnectLifecycleObservable": false,
+    "decision": "direct-rest-websocket",
+    "reason": "The published client is not generated from the exact 1.44.1 contract and does not expose connection lifecycle evidence required for capture reconciliation."
+  },
+  "completeness": {
+    "restWebsocketReconciliation": "available",
+    "completeInProcessEventLogDelivery": "unknown",
+    "reason": "The pinned public REST and WebSocket surfaces do not prove equivalence with the complete in-process EventLog."
+  }
+}

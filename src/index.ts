@@ -303,6 +303,31 @@ export type {
   UnmappedNativeRecord,
 } from "./uniform-events.js";
 export {
+  captureOpenHandsAgentServer,
+  createOpenHandsHarnessAdapter,
+  normalizeOpenHandsCapture,
+  OPENHANDS_AGENT_SERVER_CAPABILITIES,
+  OPENHANDS_AGENT_SERVER_VERSION,
+  OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES,
+  OPENHANDS_MAX_RESPONSE_BYTES,
+  OPENHANDS_DEFAULT_MAX_CAPTURE_BYTES,
+  OPENHANDS_MAX_CAPTURE_BYTES,
+  OPENHANDS_TYPESCRIPT_CLIENT_VERSION,
+} from "./openhands.js";
+export type {
+  OpenHandsCapture,
+  OpenHandsCaptureRequest,
+  OpenHandsNativeRecord,
+  OpenHandsWebSocket,
+} from "./openhands.js";
+export { captureOpenHandsAgentServerRun } from "./openhands-run.js";
+export type {
+  CaptureOpenHandsAgentServerRunOptions,
+  CaptureOpenHandsAgentServerRunResult,
+  CaptureOpenHandsAgentServerVerifier,
+  OpenHandsAgentServerRunConfiguration,
+} from "./openhands-run.js";
+export {
   CLAUDE_AGENT_SDK_HARNESS,
   CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_ID,
   claudeAgentSdkNormalizationAdapter,

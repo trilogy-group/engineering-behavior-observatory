@@ -1,0 +1,101 @@
+[
+  {
+    "id": "message-1",
+    "kind": "MessageEvent",
+    "source": "user",
+    "timestamp": "2026-09-02T07:00:00Z",
+    "llm_message": { "role": "assistant", "content": [{ "type": "text", "text": "hello" }] }
+  },
+  {
+    "id": "action-1",
+    "parent_id": "message-1",
+    "kind": "ActionEvent",
+    "source": "agent",
+    "timestamp": "2026-09-02T07:00:01Z",
+    "tool_name": "terminal",
+    "tool_call_id": "call-1",
+    "tool_call": { "id": "call-1" },
+    "llm_response_id": "response-1",
+    "thought": [],
+    "action": { "kind": "TerminalAction", "command": "pwd" }
+  },
+  {
+    "id": "observation-1",
+    "parent_id": "action-1",
+    "kind": "ObservationEvent",
+    "source": "environment",
+    "timestamp": "2026-09-02T07:00:02Z",
+    "tool_name": "terminal",
+    "tool_call_id": "call-1",
+    "action_id": "action-1",
+    "observation": { "kind": "TerminalObservation", "output": "/workspace" }
+  },
+  {
+    "id": "agent-error-1",
+    "kind": "AgentErrorEvent",
+    "source": "agent",
+    "timestamp": "2026-09-02T07:00:03Z",
+    "tool_name": "terminal",
+    "tool_call_id": "call-2",
+    "error": "tool failed"
+  },
+  {
+    "id": "conversation-error-1",
+    "kind": "ConversationErrorEvent",
+    "source": "environment",
+    "timestamp": "2026-09-02T07:00:04Z",
+    "code": "RuntimeError",
+    "detail": "conversation failed"
+  },
+  {
+    "id": "server-error-1",
+    "kind": "ServerErrorEvent",
+    "source": "environment",
+    "timestamp": "2026-09-02T07:00:05Z",
+    "code": "WebSocketError",
+    "detail": "socket failed"
+  },
+  {
+    "id": "condensation-1",
+    "kind": "Condensation",
+    "source": "environment",
+    "timestamp": "2026-09-02T07:00:06Z",
+    "llm_response_id": "response-2",
+    "forgotten_event_ids": ["message-1", "action-1"],
+    "summary": "older work"
+  },
+  {
+    "id": "condensation-summary-1",
+    "kind": "CondensationSummaryEvent",
+    "source": "environment",
+    "timestamp": "2026-09-02T07:00:07Z",
+    "summary": "older work"
+  },
+  {
+    "id": "hook-1",
+    "kind": "HookExecutionEvent",
+    "source": "hook",
+    "timestamp": "2026-09-02T07:00:08Z",
+    "hook_event_type": "PostToolUse",
+    "hook_command": "echo done",
+    "success": true,
+    "exit_code": 0,
+    "action_id": "action-1",
+    "tool_name": "terminal"
+  },
+  {
+    "id": "state-1",
+    "kind": "ConversationStateUpdateEvent",
+    "source": "environment",
+    "timestamp": "2026-09-02T07:00:09Z",
+    "key": "execution_status",
+    "value": "finished"
+  },
+  {
+    "id": "future-1",
+    "kind": "FutureEvent",
+    "source": "agent",
+    "timestamp": "2026-09-02T07:00:10Z",
+    "future": true
+  }
+]

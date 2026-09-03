@@ -170,6 +170,7 @@ export type CaptureQualificationReasonCode =
   | "CAPTURE_REPORT_MISSING"
   | "CAPTURE_REPORT_INVALID"
   | "CAPTURE_REPORT_CONTRADICTS_SOURCE"
+  | "EVENT_LOG_COMPLETENESS_UNPROVEN"
   | "EXPORT_MANIFEST_INVALID";
 
 export type CaptureQualificationReason = {
@@ -466,7 +467,9 @@ async function withWorkspaceOutcomeProjection<T>(
   const finalPath = resolve(options.finalPath);
   const exclusions = [...new Set(options.excludeDirectoryNames ?? [])];
   for (const name of exclusions) {
-    if (name.includes("/") || !isSafeArtifactRelativePath(name)) throw new Error(`Workspace outcome exclusion "${name}" is invalid.`);
+    if (name.includes("/") || name !== ".git" && !isSafeArtifactRelativePath(name)) {
+      throw new Error(`Workspace outcome exclusion "${name}" is invalid.`);
+    }
   }
   if (exclusions.length === 0 && options.respectGitignore !== true && options.omitEmptyDirectories !== true) {
     return use(startPath, finalPath);
@@ -638,6 +641,17 @@ export async function qualifyRunBundle(
   }
   if (requiresHooks) qualifyHooks(report, manifest, hooks, options);
 
+  if (captureMissingEvidence(captureReport).some((entry) =>
+    entry.kind === "event-log-completeness" && entry.reason === "not-checked")) {
+    addQualificationReason(
+      report,
+      "semanticEvidence",
+      "gap",
+      "EVENT_LOG_COMPLETENESS_UNPROVEN",
+      captureReports[0]?.descriptor.id,
+      "The pinned Agent Server API reconciliation cannot prove complete in-process EventLog delivery.",
+    );
+  }
   qualifyTelemetry(report, telemetry, captureMissingEvidence(captureReport));
   const captureWarnings = isRecord(captureReport) && isRecord(captureReport.agentSdk)
     && isRecord(captureReport.agentSdk.captureWarnings)
@@ -916,7 +930,8 @@ function crossCheckCaptureReport(
   for (const [area, available] of Object.entries(actual) as Array<[keyof typeof actual, boolean]>) {
     const capability = value.capabilities[area];
     const claimsAvailable = isRecord(capability) && capability.status === "available";
-    if (claimsAvailable !== available) {
+    const claimsUnsupported = isRecord(capability) && capability.status === "unsupported";
+    if (!available && claimsAvailable || available && claimsUnsupported) {
       const dimension = area === "semantic" ? "semanticEvidence" : area === "timingResource" ? "telemetry" : "workspace";
       addQualificationReason(report, dimension, "unqualified", "CAPTURE_REPORT_CONTRADICTS_SOURCE", evidenceId, `Capture report ${area}=${String(isRecord(capability) ? capability.status : undefined)} contradicts retained source evidence.`);
     }
