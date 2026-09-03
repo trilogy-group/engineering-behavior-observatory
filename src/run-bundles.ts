@@ -205,6 +205,8 @@ export type CaptureQualificationOptions = {
   hookCapabilities?: Pick<ClaudeAgentSdkCapabilities, "sdkVersion" | "hooks" | "unsupportedHooks">;
   agentSdkEvidence?: AgentSdkQualificationEvidence;
   expectedHooks?: readonly string[];
+  semanticEvidenceKinds?: readonly ("session" | "hook")[];
+  relatedSessionIds?: readonly string[];
 };
 
 const execFileAsync = promisify(execFile);
@@ -594,8 +596,20 @@ export async function qualifyRunBundle(
   const workspaces = valid("workspace");
   const verifiers = valid("verifier");
   const captureReports = valid("capture-report");
+  const captureReport = captureReports[0]?.document;
+  const retainedSemanticEvidenceKinds = captureReportSemanticEvidenceKinds(captureReport);
+  const semanticEvidenceKinds = retainedSemanticEvidenceKinds
+    ?? options.semanticEvidenceKinds
+    ?? ["session", "hook"];
+  if (retainedSemanticEvidenceKinds !== undefined && options.semanticEvidenceKinds !== undefined
+      && !sameStringSet(retainedSemanticEvidenceKinds, options.semanticEvidenceKinds)) {
+    addQualificationReason(report, "semanticEvidence", "unqualified", "CAPTURE_REPORT_CONTRADICTS_SOURCE", captureReports[0]?.descriptor.id,
+      "Caller semantic-evidence requirements contradict the retained capture report.");
+  }
+  const requiresSession = semanticEvidenceKinds.includes("session");
+  const requiresHooks = semanticEvidenceKinds.includes("hook");
 
-  if (sessions.length === 0) {
+  if (requiresSession && sessions.length === 0) {
     addQualificationReason(report, "semanticEvidence", "unqualified", "SESSION_EVIDENCE_MISSING", undefined, "No valid native session evidence is retained.");
   }
   const sessionId = manifest.run?.native?.sessionId;
@@ -604,18 +618,26 @@ export async function qualifyRunBundle(
     addQualificationReason(report, "semanticEvidence", "unqualified", "SESSION_IDENTITY_MISSING", undefined, "Run session identity is not bound to retained session evidence.");
   }
   const nativeSessionIds = new Set(sessions.flatMap(({ sessionIds }) => sessionIds ?? []));
-  if (typeof sessionId === "string" && (nativeSessionIds.size !== 1 || !nativeSessionIds.has(sessionId))) {
+  const retainedRelatedSessionIds = captureReportRelatedSessionIds(captureReport);
+  const relatedSessionIds = retainedRelatedSessionIds ?? options.relatedSessionIds ?? [];
+  if (retainedRelatedSessionIds !== undefined && options.relatedSessionIds !== undefined
+      && !sameStringSet(retainedRelatedSessionIds, options.relatedSessionIds)) {
+    addQualificationReason(report, "semanticEvidence", "unqualified", "CAPTURE_REPORT_CONTRADICTS_SOURCE", captureReports[0]?.descriptor.id,
+      "Caller related-session identities contradict the retained capture report.");
+  }
+  const allowedSessionIds = new Set([sessionId, ...relatedSessionIds]);
+  if (typeof sessionId === "string" && (!nativeSessionIds.has(sessionId)
+      || [...nativeSessionIds].some((id) => !allowedSessionIds.has(id)))) {
     addQualificationReason(report, "semanticEvidence", "unqualified", "SESSION_RECORD_IDENTITY_MISMATCH", undefined, "Retained native session records do not bind exclusively to the run session ID.");
   }
   for (const hook of hookArtifacts.filter(({ hookNames }) => hookNames?.length === 0)) {
     addQualificationReason(report, "hooks", "unqualified", "HOOK_RECORDS_MISSING", hook.descriptor.id, "Hook evidence contains no recognized callback records.");
   }
-  if (hooks.length === 0) {
+  if (requiresHooks && hooks.length === 0) {
     addQualificationReason(report, "semanticEvidence", "unqualified", "HOOK_EVIDENCE_MISSING", undefined, "No valid native hook evidence is retained.");
   }
-  qualifyHooks(report, manifest, hooks, options);
+  if (requiresHooks) qualifyHooks(report, manifest, hooks, options);
 
-  const captureReport = captureReports[0]?.document;
   qualifyTelemetry(report, telemetry, captureMissingEvidence(captureReport));
   const captureWarnings = isRecord(captureReport) && isRecord(captureReport.agentSdk)
     && isRecord(captureReport.agentSdk.captureWarnings)
@@ -669,13 +691,13 @@ export async function qualifyRunBundle(
       addQualificationReason(report, "semanticEvidence", "unqualified", "CAPTURE_REPORT_INVALID", captureReports[0]!.descriptor.id, `${error.field}: ${error.message}`);
     }
     crossCheckCaptureReport(report, captureReports[0]!.descriptor.id, captureReport, {
-      semantic: sessions.length > 0 && hooks.length > 0,
+      semantic: (!requiresSession || sessions.length > 0) && (!requiresHooks || hooks.length > 0),
       timingResource: telemetry.length > 0 && telemetry.every(({ document }) => {
         const receipt = isRecord(document) && isRecord(document.telemetry) ? document.telemetry.receipt : undefined;
         return isRecord(receipt) && receipt.status === "received";
       }),
       outcome: workspaces.length > 0 && (assessmentMode === "observational" || verifiers.length > 0),
-    }, assessmentMode);
+    }, assessmentMode, semanticEvidenceKinds);
   }
 
   return finishQualificationReport(report);
@@ -885,6 +907,7 @@ function crossCheckCaptureReport(
   value: unknown,
   actual: Record<"semantic" | "timingResource" | "outcome", boolean>,
   assessmentMode: AssessmentMode = "verified",
+  semanticEvidenceKinds: readonly ("session" | "hook")[] = ["session", "hook"],
 ): void {
   if (!isRecord(value) || !isRecord(value.capabilities)) return;
   if ((value.assessmentMode ?? "verified") !== assessmentMode) {
@@ -898,10 +921,13 @@ function crossCheckCaptureReport(
       addQualificationReason(report, dimension, "unqualified", "CAPTURE_REPORT_CONTRADICTS_SOURCE", evidenceId, `Capture report ${area}=${String(isRecord(capability) ? capability.status : undefined)} contradicts retained source evidence.`);
     }
   }
-  const retainedKinds = new Set<unknown>(Object.entries(actual).filter(([, available]) => available).flatMap(([area]) =>
-    area === "semantic" ? ["session", "hook"]
-      : area === "timingResource" ? ["telemetry"]
-        : assessmentMode === "observational" ? ["workspace"] : ["workspace", "verifier"]));
+  const retainedKinds = new Set<unknown>();
+  if (actual.semantic) for (const kind of semanticEvidenceKinds) retainedKinds.add(kind);
+  if (actual.timingResource) retainedKinds.add("telemetry");
+  if (actual.outcome) {
+    retainedKinds.add("workspace");
+    if (assessmentMode === "verified") retainedKinds.add("verifier");
+  }
   for (const entry of captureMissingEvidence(value)) {
     if (retainedKinds.has(entry.kind) && entry.reason !== "optional-beta-unavailable") {
       const dimension = entry.kind === "telemetry" ? "telemetry" : ["workspace", "verifier"].includes(String(entry.kind)) ? "workspace" : "semanticEvidence";
@@ -914,6 +940,26 @@ function captureMissingEvidence(value: unknown): Array<Record<string, unknown>> 
   return isRecord(value) && Array.isArray(value.missingEvidence)
     ? value.missingEvidence.filter(isRecord)
     : [];
+}
+
+function captureReportSemanticEvidenceKinds(value: unknown): Array<"session" | "hook"> | undefined {
+  if (!isRecord(value) || !Array.isArray(value.semanticEvidenceKinds)
+      || value.semanticEvidenceKinds.length === 0
+      || new Set(value.semanticEvidenceKinds).size !== value.semanticEvidenceKinds.length
+      || !value.semanticEvidenceKinds.includes("session")
+      || value.semanticEvidenceKinds.some((kind) => kind !== "session" && kind !== "hook")) return undefined;
+  return value.semanticEvidenceKinds as Array<"session" | "hook">;
+}
+
+function captureReportRelatedSessionIds(value: unknown): string[] | undefined {
+  if (!isRecord(value) || !Array.isArray(value.relatedSessionIds)
+      || value.relatedSessionIds.some((id) => typeof id !== "string" || id.trim() === "")
+      || new Set(value.relatedSessionIds).size !== value.relatedSessionIds.length) return undefined;
+  return value.relatedSessionIds as string[];
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value) => right.includes(value));
 }
 
 function descriptorFromValidationField(manifest: RunManifest, field: string): RunBundleEvidenceDescriptor | undefined {
@@ -954,17 +1000,20 @@ function captureReport(
     expectedHooks: string[];
     captureWarnings: ClaudeAgentSdkAttemptEvidence["captureWarnings"];
   };
+  semanticEvidenceKinds?: Array<"session" | "hook">;
+  relatedSessionIds?: string[];
   workspaceOutcomeExcludedDirectoryNames?: string[];
   workspaceOutcomeRespectsGitignore?: boolean;
   workspaceOutcomeOmitsEmptyDirectories?: boolean;
   structuralQualification?: Pick<CaptureQualificationReport, "status" | "semanticAnalysisUsable" | "dimensions" | "reasons">;
 } {
   const kinds = new Set(evidence.map((descriptor) => descriptor.kind));
+  const semanticEvidenceKinds = qualification?.semanticEvidenceKinds ?? ["session", "hook"];
   const missing = deduplicateMissing([
     ...structuredClone(suppliedMissing),
-    ...defaultMissing(kinds, suppliedMissing, assessmentMode),
+    ...defaultMissing(kinds, suppliedMissing, assessmentMode, semanticEvidenceKinds),
   ]);
-  const semantic = capability(kinds.has("session") && kinds.has("hook"), "semantic", missing);
+  const semantic = capability(semanticEvidenceKinds.every((kind) => kinds.has(kind)), "semantic", missing);
   const timingResource = capability(kinds.has("telemetry"), "timing-resource", missing);
   const outcome = capability(kinds.has("workspace") && (assessmentMode === "observational" || kinds.has("verifier")), "outcome", missing);
   const qualified = semantic === "available"
@@ -984,6 +1033,10 @@ function captureReport(
       outcome: { status: outcome },
     },
     missingEvidence: missing,
+    semanticEvidenceKinds: [...semanticEvidenceKinds],
+    ...(qualification?.relatedSessionIds === undefined ? {} : {
+      relatedSessionIds: [...new Set(qualification.relatedSessionIds)],
+    }),
     ...(qualification?.workspaceOutcomeExcludedDirectoryNames === undefined ? {} : {
       workspaceOutcomeExcludedDirectoryNames: [...qualification.workspaceOutcomeExcludedDirectoryNames],
     }),
@@ -1016,10 +1069,10 @@ function defaultMissing(
   kinds: ReadonlySet<RunBundleEvidenceDescriptor["kind"]>,
   supplied: readonly CaptureMissingEvidence[],
   assessmentMode: AssessmentMode,
+  semanticEvidenceKinds: readonly ("session" | "hook")[] = ["session", "hook"],
 ): CaptureMissingEvidence[] {
   const expected: Array<[EvidenceKind, CaptureMissingEvidence["affects"][number]]> = [
-    ["session", "semantic"],
-    ["hook", "semantic"],
+    ...semanticEvidenceKinds.map((kind) => [kind, "semantic"] as [EvidenceKind, "semantic"]),
     ["telemetry", "timing-resource"],
     ["workspace", "outcome"],
     ...(assessmentMode === "verified" ? [["verifier", "outcome"] as [EvidenceKind, CaptureMissingEvidence["affects"][number]]] : []),

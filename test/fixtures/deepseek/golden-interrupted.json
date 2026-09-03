@@ -1,0 +1,5 @@
+{
+  "terminal": "interrupted",
+  "lastSessionEventType": "artifact/changed",
+  "requiredRetainedMethods": ["initialize", "session/prompt", "session.event", "subagent.started", "subagent.finished", "client.close"]
+}

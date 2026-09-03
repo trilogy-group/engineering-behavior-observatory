@@ -14,6 +14,10 @@ The first post-capture contract is now available: versioned
 capture-qualified native evidence without replacing source records or transport
 semantics.
 
+The [DeepSeek Harness adapter](docs/deepseek-harness.md) uses the official
+out-of-process TypeScript client, retains native session evidence and explicit
+receipt-to-idle completion boundaries, and normalizes only qualified records.
+
 ## Status
 
 M2 native Agent SDK capture is available through the public
