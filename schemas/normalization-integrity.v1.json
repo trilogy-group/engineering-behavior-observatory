@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ebo:schema:normalization-integrity:v1",
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": ".*\\S.*"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "reference": {
+      "$ref": "urn:ebo:schema:uniform-events:v1#/$defs/nativeReference"
+    },
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "harness"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "version": { "$ref": "#/$defs/identifier" },
+        "harness": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "unmapped": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference", "reason"],
+      "properties": {
+        "reference": { "$ref": "#/$defs/reference" },
+        "reason": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "normalizedDataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "runId", "attemptId", "adapter", "capabilityProfile", "nativeRecords", "events", "unmapped"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.normalized-dataset/v1" },
+        "runId": { "$ref": "#/$defs/identifier" },
+        "attemptId": { "$ref": "#/$defs/identifier" },
+        "adapter": { "$ref": "#/$defs/adapter" },
+        "capabilityProfile": { "$ref": "urn:ebo:schema:uniform-events:v1#/$defs/capabilityProfile" },
+        "nativeRecords": {
+          "type": "array",
+          "maxItems": 1000000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["reference", "nativeType", "digest"],
+            "properties": {
+              "reference": { "$ref": "#/$defs/reference" },
+              "nativeType": { "$ref": "#/$defs/identifier" },
+              "digest": { "$ref": "#/$defs/digest" }
+            }
+          }
+        },
+        "events": {
+          "type": "array",
+          "maxItems": 1000000,
+          "items": { "$ref": "urn:ebo:schema:uniform-events:v1#/$defs/uniformEvent" }
+        },
+        "unmapped": {
+          "type": "array",
+          "maxItems": 1000000,
+          "items": { "$ref": "#/$defs/unmapped" }
+        }
+      }
+    },
+    "coverageReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "runId", "attemptId", "adapter", "records", "nativeTypes", "families", "evidence"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.adapter-coverage-report/v1" },
+        "runId": { "$ref": "#/$defs/identifier" },
+        "attemptId": { "$ref": "#/$defs/identifier" },
+        "adapter": { "$ref": "#/$defs/adapter" },
+        "records": { "$ref": "#/$defs/counts" },
+        "nativeTypes": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["nativeType", "total", "mapped", "unmapped"],
+            "properties": {
+              "nativeType": { "$ref": "#/$defs/identifier" },
+              "total": { "type": "integer", "minimum": 0 },
+              "mapped": { "type": "integer", "minimum": 0 },
+              "unmapped": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "families": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["message", "model-request", "tool", "context", "permission", "delegation", "artifact", "validation", "runtime", "outcome"],
+          "properties": {
+            "message": { "$ref": "#/$defs/familyCoverage" },
+            "model-request": { "$ref": "#/$defs/familyCoverage" },
+            "tool": { "$ref": "#/$defs/familyCoverage" },
+            "context": { "$ref": "#/$defs/familyCoverage" },
+            "permission": { "$ref": "#/$defs/familyCoverage" },
+            "delegation": { "$ref": "#/$defs/familyCoverage" },
+            "artifact": { "$ref": "#/$defs/familyCoverage" },
+            "validation": { "$ref": "#/$defs/familyCoverage" },
+            "runtime": { "$ref": "#/$defs/familyCoverage" },
+            "outcome": { "$ref": "#/$defs/familyCoverage" }
+          }
+        },
+        "evidence": {
+          "$ref": "urn:ebo:schema:uniform-events:v1#/$defs/capabilityProfile/properties/evidence"
+        }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "mapped", "unmapped"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "mapped": { "type": "integer", "minimum": 0 },
+        "unmapped": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "familyCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability", "observedEvents"],
+      "properties": {
+        "capability": { "$ref": "urn:ebo:schema:uniform-events:v1#/$defs/capability" },
+        "observedEvents": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "comparisonCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "task", "fixture", "model", "harness", "assessmentMode", "captureProfileDigest", "budgetDigest", "toolPolicyDigest", "capabilityProfile"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "task": { "$ref": "#/$defs/condition" },
+        "fixture": { "$ref": "#/$defs/condition" },
+        "model": { "$ref": "#/$defs/configuredCondition" },
+        "harness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "version", "configurationDigest"],
+          "properties": {
+            "id": { "$ref": "#/$defs/identifier" },
+            "version": { "$ref": "#/$defs/identifier" },
+            "configurationDigest": { "$ref": "#/$defs/digest" }
+          }
+        },
+        "assessmentMode": { "enum": ["observational", "verified"] },
+        "captureProfileDigest": { "$ref": "#/$defs/digest" },
+        "budgetDigest": { "$ref": "#/$defs/digest" },
+        "toolPolicyDigest": { "$ref": "#/$defs/digest" },
+        "capabilityProfile": { "$ref": "urn:ebo:schema:uniform-events:v1#/$defs/capabilityProfile" }
+      }
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "digest"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "configuredCondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "configurationDigest"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "configurationDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "comparisonRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "left", "right", "policy"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.comparison-request/v1" },
+        "left": { "$ref": "#/$defs/comparisonCandidate" },
+        "right": { "$ref": "#/$defs/comparisonCandidate" },
+        "policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["declaredDifferences", "requiredCapabilities"],
+          "properties": {
+            "declaredDifferences": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "enum": ["model", "harness"] }
+            },
+            "requiredCapabilities": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "pattern": "^(?:family:(?:message|model-request|tool|context|permission|delegation|artifact|validation|runtime|outcome)|evidence:(?:nativeOrder|nativeTime|parentage|content))$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "comparisonReason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "dimension", "detail"],
+      "properties": {
+        "code": {
+          "enum": ["task-mismatch", "fixture-mismatch", "material-configuration-mismatch", "undeclared-model-difference", "declared-model-difference", "undeclared-harness-difference", "declared-harness-difference", "capability-unsupported", "capability-partial"]
+        },
+        "dimension": { "$ref": "#/$defs/identifier" },
+        "detail": { "type": "string", "minLength": 1, "maxLength": 1024 }
+      }
+    },
+    "comparisonReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "status", "candidates", "reasons"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.comparison-report/v1" },
+        "status": { "enum": ["supported", "qualified-with-caveats", "unsupported"] },
+        "candidates": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "reasons": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/comparisonReason" }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/normalizedDataset" },
+    { "$ref": "#/$defs/coverageReport" },
+    { "$ref": "#/$defs/comparisonRequest" },
+    { "$ref": "#/$defs/comparisonReport" }
+  ]
+}

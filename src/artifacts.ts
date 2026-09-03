@@ -1134,6 +1134,7 @@ function loadValidators(): Map<string, ValidateFunction> {
   ajv.addSchema(readSchema("run-queue.v1.schema.json"));
   ajv.addSchema(readSchema("run-bundles/v1.json"));
   ajv.addSchema(readSchema("uniform-events/v1.json"));
+  ajv.addSchema(readSchema("normalization-integrity.v1.json"));
   ajv.addSchema(readSchema("deepseek-runtime-composition.v1.schema.json"));
 
   return new Map([
@@ -1147,6 +1148,10 @@ function loadValidators(): Map<string, ValidateFunction> {
     ["export-manifest/v1", requiredValidator(ajv, `${runBundleSchemaId}#/$defs/exportManifest`)],
     ["ebo.uniform-event/v1", requiredValidator(ajv, "urn:ebo:schema:uniform-events:v1#/$defs/uniformEvent")],
     ["ebo.adapter-capability-profile/v1", requiredValidator(ajv, "urn:ebo:schema:uniform-events:v1#/$defs/capabilityProfile")],
+    ["ebo.normalized-dataset/v1", requiredValidator(ajv, "urn:ebo:schema:normalization-integrity:v1#/$defs/normalizedDataset")],
+    ["ebo.adapter-coverage-report/v1", requiredValidator(ajv, "urn:ebo:schema:normalization-integrity:v1#/$defs/coverageReport")],
+    ["ebo.comparison-request/v1", requiredValidator(ajv, "urn:ebo:schema:normalization-integrity:v1#/$defs/comparisonRequest")],
+    ["ebo.comparison-report/v1", requiredValidator(ajv, "urn:ebo:schema:normalization-integrity:v1#/$defs/comparisonReport")],
     ["ebo.deepseek-runtime-composition/v1", requiredValidator(ajv, "https://ebo.dev/schemas/deepseek-runtime-composition.v1.schema.json")],
   ]);
 }
