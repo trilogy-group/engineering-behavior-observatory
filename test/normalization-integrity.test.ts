@@ -245,6 +245,10 @@ test("reports exact, declared harness, fixture mismatch, material mismatch, and 
   const unsupported = assessComparisonEligibility(missingCapability);
   assert.equal(unsupported.status, "unsupported");
   assert.equal(unsupported.reasons.some(({ code }) => code === "capability-unsupported"), true);
+
+  const malformed = structuredClone(exact);
+  malformed.policy.requiredCapabilities = [42 as never];
+  assert.throws(() => assessComparisonEligibility(malformed), /comparison request.*must be string/u);
 });
 
 test("comparison CLI emits the inspectable report and blocks incompatible requests", () => {
