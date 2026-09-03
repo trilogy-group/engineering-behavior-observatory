@@ -290,6 +290,7 @@ export type {
   HarnessAdapter,
   NativeCaptureAdapter,
   NativeEvidenceReference,
+  NativeEvidenceResolution,
   NativeEvidenceResolver,
   NativeOrderEvidence,
   NormalizationInput,
@@ -302,6 +303,25 @@ export type {
   UniformEventNormalizationAdapter,
   UnmappedNativeRecord,
 } from "./uniform-events.js";
+export {
+  assessComparisonEligibility,
+  createCapturedNativeEvidenceResolver,
+  describeNormalizedDataset,
+  validateNormalizedCorpus,
+  validateNormalizedDataset,
+} from "./normalization-integrity.js";
+export type {
+  AdapterCoverageReport,
+  ComparisonCandidate,
+  ComparisonCapability,
+  ComparisonReason,
+  ComparisonReport,
+  ComparisonRequest,
+  NormalizedDataset,
+  NormalizedDatasetInput,
+  NormalizedContentReference,
+  NormalizedNativeRecord,
+} from "./normalization-integrity.js";
 export {
   captureOpenHandsAgentServer,
   createOpenHandsHarnessAdapter,

@@ -5,6 +5,7 @@ import { HOOK_EVENTS } from "@anthropic-ai/claude-agent-sdk";
 
 import {
   assertNoDuplicateJsonKeys,
+  digestMetadata,
   readVerifiedArtifact,
   validateArtifact,
 } from "./artifacts.js";
@@ -23,6 +24,7 @@ import {
   type ContentReference,
   type HarnessAdapter,
   type NativeEvidenceReference,
+  type NativeEvidenceResolution,
   type NativeEvidenceResolver,
   type NormalizationInput,
   type NormalizationResult,
@@ -237,20 +239,35 @@ export async function readQualifiedClaudeAgentSdkCapture(
 export function createAgentSdkNativeEvidenceResolver(
   input: NormalizationInput<AgentSdkNativeRecord>,
 ): NativeEvidenceResolver {
-  const records = new Map(input.records.map((captured) => [referenceKey(captured.reference), captured]));
-  const manifestArtifacts = new Set(input.records.flatMap(({ record, reference }) => {
+  const resolved = (digest: `sha256:${string}`): NativeEvidenceResolution => ({
+    runId: input.runId,
+    attemptId: input.attemptId,
+    digest,
+  });
+  const records = new Map(input.records.map((captured) => [referenceKey(captured.reference), {
+    captured,
+    resolution: resolved(`sha256:${digestMetadata(captured.record).value}`),
+  }]));
+  const manifestArtifacts = new Map(input.records.flatMap(({ record, reference }) => {
     if (record.kind !== "workspace" && record.kind !== "diagnostic") return [];
     if (reference.artifactId !== "manifest" || !/^#\/evidence\/(0|[1-9][0-9]*)$/u.test(reference.recordLocator)) return [];
-    const id = text(asRecord(record.document)?.id);
-    return id === undefined ? [] : [referenceKey({ artifactId: id, recordLocator: "#" })];
+    const descriptor = asRecord(record.document);
+    const id = text(descriptor?.id);
+    const digest = text(descriptor?.digest);
+    return id === undefined || digest === undefined || !/^sha256:[a-f0-9]{64}$/u.test(digest)
+      ? []
+      : [[referenceKey({ artifactId: id, recordLocator: "#" }), resolved(digest as `sha256:${string}`)] as const];
   }));
   return {
     resolve(reference) {
-      if (records.has(referenceKey(reference)) || manifestArtifacts.has(referenceKey(reference))) return true;
+      const exact = records.get(referenceKey(reference))?.resolution ?? manifestArtifacts.get(referenceKey(reference));
+      if (exact !== undefined) return exact;
       const derived = splitDerivedLocator(reference.recordLocator);
       if (derived === undefined) return false;
-      const captured = records.get(referenceKey({ artifactId: reference.artifactId, recordLocator: derived.base }));
-      return captured !== undefined && resolvesJsonPointer(captured.record.document, derived.pointer);
+      const record = records.get(referenceKey({ artifactId: reference.artifactId, recordLocator: derived.base }));
+      return record !== undefined && resolvesJsonPointer(record.captured.record.document, derived.pointer)
+        ? record.resolution
+        : false;
     },
   };
 }

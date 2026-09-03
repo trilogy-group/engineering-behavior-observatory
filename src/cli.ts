@@ -17,6 +17,7 @@ import {
 } from "./corpus.js";
 import { runAgentSdkQueueEntry } from "./agent-sdk-runner.js";
 import { createPortableRunBundleExport, type PortableExportPolicy } from "./exports.js";
+import { assessComparisonEligibility, type ComparisonRequest } from "./normalization-integrity.js";
 import {
   admitTaskPacket,
   formatErrors,
@@ -44,6 +45,7 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo corpus validate <corpus-root> <index.jsonl>
        ebo corpus pack <export-root> <policy.json> <archive.tar.gz>
        ebo corpus unpack <archive.tar.gz> <destination-root>
+       ebo comparison check <request.json>
 
 Engineering Behavior Observatory
 `;
@@ -98,6 +100,21 @@ export function main(
 
   if (args[0] === "corpus") {
     return runCorpusCommand(args.slice(1), write);
+  }
+
+  if (args[0] === "comparison" && args[1] === "check") {
+    if (args[2] === undefined || args.length !== 3) {
+      write("Usage: ebo comparison check <request.json>\n");
+      return 1;
+    }
+    try {
+      const report = assessComparisonEligibility(readJson(args[2]) as ComparisonRequest);
+      write(`${canonicalizeMetadata(report)}\n`);
+      return report.status === "unsupported" ? 1 : 0;
+    } catch (error) {
+      write(`${errorMessage(error)}\n`);
+      return 1;
+    }
   }
 
   if (args[0] === "validate") {
