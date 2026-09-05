@@ -105,7 +105,7 @@ export type AgentSdkRunSummary = {
   assessmentMode: TaskPacket["assessmentMode"];
   sessionId?: string;
   traceId?: string;
-  /** Local recovery location when outcome capture failed; never a qualified artifact. */
+  /** Local path left by failed capture or cleanup; never itself a qualified artifact. */
   retainedWorkspacePath?: string;
 };
 
@@ -242,7 +242,7 @@ export async function runAgentSdkQueueEntry(options: RunAgentSdkQueueEntryOption
       assessmentMode: packet.assessmentMode,
       ...(manifest.run.native?.sessionId === undefined ? {} : { sessionId: manifest.run.native.sessionId }),
       ...(manifest.run.native?.traceId === undefined ? {} : { traceId: manifest.run.native.traceId }),
-      ...(workspace.state === "ready" && !manifest.evidence.some(({ kind }) => kind === "workspace")
+      ...(workspace.state === "ready"
         ? { retainedWorkspacePath: workspace.path }
         : {}),
     };

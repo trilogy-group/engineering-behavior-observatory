@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -129,6 +130,32 @@ test("workspace capture failure preserves model output and reports a recoverable
     assert.ok(existsSync(join(summary.bundlePath, "session.jsonl")));
     assert.equal(query.calls(), 1);
   } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
+test("reports a leftover workspace when cleanup fails after successful capture", async (t) => {
+  const fixture = createRunnerFixture({ assessmentMode: "observational" });
+  const openDirectory = fs.opendirSync;
+  t.mock.method(fs, "opendirSync", (...args: Parameters<typeof fs.opendirSync>) => {
+    if (args[0] === ".") throw new Error("injected workspace cleanup failure");
+    return openDirectory(...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    const summary = await runAgentSdkQueueEntry({
+      ...fixture,
+      query: fakeQuery({ resultContent: "retained output\n" }).query,
+      checkTelemetryReceipt: receivedReceipt,
+    });
+    assert.equal(summary.classification, "infrastructure-failure");
+    assert.equal(summary.captureQualification, "qualified");
+    assert.ok(summary.retainedWorkspacePath);
+    assert.equal(readFileSync(join(summary.retainedWorkspacePath, "result.txt"), "utf8"), "retained output\n");
+    assert.equal(readManifest(summary.bundlePath).evidence.some(({ kind }) => kind === "workspace"), true);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
     rmSync(fixture.parent, { recursive: true, force: true });
   }
 });

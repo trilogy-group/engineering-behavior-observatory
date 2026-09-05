@@ -126,7 +126,8 @@ and never modifies the restricted source bundle.
 
 If outcome packaging fails after execution starts, the runner preserves the
 source workspace for recovery and includes `retainedWorkspacePath` in its local
-summary. Capture remains unqualified until valid outcome evidence is available.
+summary. The summary also reports this path if cleanup fails after successful
+packaging. Capture remains unqualified until valid outcome evidence is available.
 Workspace diffs use an indexed Git tree without creating a commit, avoiding
 background Git maintenance during temporary-repository cleanup.
 
