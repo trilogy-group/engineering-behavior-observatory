@@ -124,6 +124,12 @@ queue, retries, or replaces an existing attempt destination. `ebo export
 create` calls `createPortableRunBundleExport` with its policy-bound readback
 and never modifies the restricted source bundle.
 
+If outcome packaging fails after execution starts, the runner preserves the
+source workspace for recovery and includes `retainedWorkspacePath` in its local
+summary. Capture remains unqualified until valid outcome evidence is available.
+Workspace diffs use an indexed Git tree without creating a commit, avoiding
+background Git maintenance during temporary-repository cleanup.
+
 Observational packets are the primary path for open-ended enterprise work.
 They contain no reference solution or verifier. Their `completed` terminal
 means the agent loop ended normally and a final workspace was retained; it is

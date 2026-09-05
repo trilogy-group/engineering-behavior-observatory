@@ -105,6 +105,8 @@ export type AgentSdkRunSummary = {
   assessmentMode: TaskPacket["assessmentMode"];
   sessionId?: string;
   traceId?: string;
+  /** Local recovery location when outcome capture failed; never a qualified artifact. */
+  retainedWorkspacePath?: string;
 };
 
 const PERMISSION_MODES = ["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"] as const;
@@ -179,11 +181,13 @@ export async function runAgentSdkQueueEntry(options: RunAgentSdkQueueEntryOption
   }
 
   let baselineRoot: string | undefined;
+  let captureStarted = false;
   try {
     baselineRoot = await mkdtemp(join(tmpdir(), "ebo-agent-sdk-baseline-"));
     const startingWorkspacePath = join(baselineRoot, "workspace");
     await cp(workspace.path, startingWorkspacePath, { recursive: true, preserveTimestamps: true, force: false });
 
+    captureStarted = true;
     const result = await captureClaudeAgentSdkRun({
       definition,
       startingWorkspacePath,
@@ -230,16 +234,21 @@ export async function runAgentSdkQueueEntry(options: RunAgentSdkQueueEntryOption
       runId: entry.runId,
       attemptId,
       bundlePath: attemptBundleRoot,
-      terminal: structuredClone(result.attempt.terminal),
+      terminal: structuredClone(manifest.terminal),
       classification: result.attempt.classification.kind,
       captureQualification: result.qualification.status,
       assessmentMode: packet.assessmentMode,
       ...(manifest.run.native?.sessionId === undefined ? {} : { sessionId: manifest.run.native.sessionId }),
       ...(manifest.run.native?.traceId === undefined ? {} : { traceId: manifest.run.native.traceId }),
+      ...(workspace.state === "ready" && !manifest.evidence.some(({ kind }) => kind === "workspace")
+        ? { retainedWorkspacePath: workspace.path }
+        : {}),
     };
   } finally {
     if (baselineRoot !== undefined) await rm(baselineRoot, { recursive: true, force: true });
-    if (workspace.state === "ready") await cleanupWorkspace(workspace).catch(() => undefined);
+    // Once execution starts, the capture layer cleans up only after retaining
+    // an outcome. Preserve the original work if packaging or finalization fails.
+    if (!captureStarted && workspace.state === "ready") await cleanupWorkspace(workspace).catch(() => undefined);
   }
 }
 
