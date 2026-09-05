@@ -183,9 +183,30 @@ test("fails closed on unknown inputs and a final secret-scan finding", async (t)
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  await t.test("final secret pattern inside a JSON string", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ebo-export-scan-json-"));
+    const source = join(root, "source");
+    const destination = join(root, "portable");
+    const exportPolicy = policy();
+    try {
+      stageSource(source);
+      const manifest = await createPortableRunBundleExport({ sourceRoot: source, destinationRoot: destination, policy: exportPolicy });
+      const session = manifest.artifacts.find(({ kind }) => kind === "session")!;
+      const bytes = Buffer.from(`${JSON.stringify({ content: `token="${genericToken}"` })}\n`);
+      writeFileSync(join(destination, session.relativePath), bytes);
+      session.digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+      session.sizeBytes = bytes.length;
+      writeFileSync(join(destination, "manifest.json"), `${JSON.stringify(manifest)}\n`);
+
+      await assert.rejects(readPortableRunBundleExport(destination, exportPolicy), /secret scan/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
-test("does not treat JSON escaping as an absolute path", async () => {
+test("does not treat JSON serialization as a path or secret assignment", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-export-quoted-labels-"));
   const source = join(root, "source");
   const destination = join(root, "portable");
@@ -198,6 +219,7 @@ test("does not treat JSON escaping as an absolute path", async () => {
           'Use "Open"/"Invite-only" as one combined list.',
           "In this session segment I:\n1. Read the remaining files.",
           "if m:\n    indent = m.group(1)",
+          "The design system's field token:",
         ].join("\n"),
       })}\n`,
     });
@@ -213,6 +235,7 @@ test("does not treat JSON escaping as an absolute path", async () => {
       'Use "Open"/"Invite-only" as one combined list.',
       "In this session segment I:\n1. Read the remaining files.",
       "if m:\n    indent = m.group(1)",
+      "The design system's field token:",
     ].join("\n"));
   } finally {
     rmSync(root, { recursive: true, force: true });

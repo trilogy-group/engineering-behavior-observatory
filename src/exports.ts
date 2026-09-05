@@ -626,10 +626,9 @@ function scanPortableTree(
 ): void {
   for (const [index, { bytes, mediaType }] of buffers.entries()) {
     const text = decode(bytes, "portable export");
-    const secretPatternIndex = SECRET_PATTERNS.findIndex((pattern) => pattern.test(text));
     const failure = [
       ["known sensitive value", sensitiveValues.some((value) => text.includes(value))],
-      ["secret pattern", secretPatternIndex >= 0],
+      ["secret pattern", containsSecretPattern(text, mediaType)],
       ["absolute path", containsLocalPath(text, mediaType)],
       ["local identifier", LOCAL_IDENTIFIER_PATTERNS.some((pattern) => pattern.test(text))],
       ["source correlation", sourceCorrelations.filter((value) => value.length >= 8).some((value) => text.includes(value))],
@@ -641,6 +640,31 @@ function scanPortableTree(
     }
     resetPatterns();
   }
+}
+
+function containsSecretPattern(text: string, mediaType: string): boolean {
+  if (mediaType === "application/json") {
+    return valueContainsSecretPattern(parseJson(Buffer.from(text), "Portable JSON final scan"));
+  }
+  if (mediaType === "application/x-ndjson") {
+    return text.split(/\r?\n/gu).filter(Boolean).some((line) =>
+      valueContainsSecretPattern(parseJson(Buffer.from(line), "Portable JSONL final scan")));
+  }
+  return stringContainsSecretPattern(text);
+}
+
+function valueContainsSecretPattern(value: unknown): boolean {
+  if (typeof value === "string") return stringContainsSecretPattern(value);
+  if (Array.isArray(value)) return value.some(valueContainsSecretPattern);
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(([key, entry]) =>
+    stringContainsSecretPattern(key) || valueContainsSecretPattern(entry));
+}
+
+function stringContainsSecretPattern(value: string): boolean {
+  const matched = SECRET_PATTERNS.some((pattern) => pattern.test(value));
+  resetPatterns();
+  return matched;
 }
 
 function containsLocalPath(text: string, mediaType: string): boolean {

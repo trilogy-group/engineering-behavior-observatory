@@ -135,6 +135,28 @@ for (const scenario of [
   });
 }
 
+test("workspace patch capture does not start Git background maintenance", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-run-bundle-maintenance-"));
+  const trace = join(root, "git-trace.jsonl");
+  const previous = process.env.GIT_TRACE2_EVENT;
+  process.env.GIT_TRACE2_EVENT = trace;
+  try {
+    const fixture = createWorkspaceFixture(root, true);
+    const bundleRoot = join(root, "bundle");
+    const assembler = await createRunBundleAssembler(definition(bundleRoot, "maintenance"));
+    const outcome = await assembler.captureWorkspaceOutcome({ startPath: fixture.start, finalPath: fixture.final });
+    assert.equal(outcome.format, "patch");
+    assertBundleValid(bundleRoot);
+    const events = readFileSync(trace, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { argv?: string[] });
+    assert.equal(events.some(({ argv }) => argv?.includes("maintenance") || argv?.includes("gc")), false,
+      "temporary capture repositories must not start background writers that race cleanup");
+  } finally {
+    if (previous === undefined) delete process.env.GIT_TRACE2_EVENT;
+    else process.env.GIT_TRACE2_EVENT = previous;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a failure after every evidence stage retains a valid partial bundle", async () => {
   for (let completedStages = 0; completedStages <= 5; completedStages += 1) {
     const root = mkdtempSync(join(tmpdir(), `ebo-run-bundle-stage-${completedStages}-`));

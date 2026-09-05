@@ -1243,7 +1243,9 @@ async function workspacePatch(startPath: string, finalPath: string, finalTreeDig
     await cp(startPath, worktree, { recursive: true, preserveTimestamps: true, force: false });
     await execFileAsync("git", ["init", "--quiet"], { cwd: worktree });
     await execFileAsync("git", ["add", "--force", "--all"], { cwd: worktree });
-    await execFileAsync("git", ["-c", "user.name=EBO", "-c", "user.email=ebo.invalid", "commit", "--quiet", "--allow-empty", "-m", "starting fixture"], { cwd: worktree });
+    // A tree is enough for the diff. A commit can spawn detached maintenance
+    // that keeps writing .git/objects while the temporary directory is removed.
+    const { stdout: startingTree } = await execFileAsync("git", ["write-tree"], { cwd: worktree });
     for (const entry of await readdir(worktree)) {
       if (entry !== ".git") await rm(join(worktree, entry), { recursive: true, force: true });
     }
@@ -1255,7 +1257,7 @@ async function workspacePatch(startPath: string, finalPath: string, finalTreeDig
     let stdout: string;
     try {
       ({ stdout } = await execFileAsync("git", [
-        "diff", "--binary", "--full-index", "--no-ext-diff", "--no-renames", "HEAD", "--", ".",
+        "diff", "--binary", "--full-index", "--no-ext-diff", "--no-renames", startingTree.trim(), "--", ".",
       ], { cwd: worktree, encoding: "utf8", maxBuffer: MAX_WORKSPACE_PATCH_BYTES }));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return undefined;
