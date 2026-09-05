@@ -187,12 +187,14 @@ export async function runAgentSdkQueueEntry(options: RunAgentSdkQueueEntryOption
     const startingWorkspacePath = join(baselineRoot, "workspace");
     await cp(workspace.path, startingWorkspacePath, { recursive: true, preserveTimestamps: true, force: false });
 
-    captureStarted = true;
     const result = await captureClaudeAgentSdkRun({
       definition,
       startingWorkspacePath,
       workspace: {
-        setup: () => ({ status: "ready", path: workspace.path, artifactId: "workspace", retained: true }),
+        setup: () => {
+          captureStarted = true;
+          return { status: "ready", path: workspace.path, artifactId: "workspace", retained: true };
+        },
         cleanup: async () => {
           await cleanupWorkspace(workspace);
         },

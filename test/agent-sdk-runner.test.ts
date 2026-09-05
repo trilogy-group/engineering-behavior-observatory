@@ -91,6 +91,21 @@ test("executes one frozen queue entry end to end and retains a qualified bundle"
   }
 });
 
+test("capture initialization failure cleans the unused workspace", async (t) => {
+  const fixture = createRunnerFixture({ assessmentMode: "observational" });
+  t.mock.method(RunBundleAssembler.prototype, "initialize", async () => {
+    throw new Error("injected capture initialization failure");
+  });
+  const query = fakeQuery({ resultContent: "must not execute\n" });
+  try {
+    await assert.rejects(runAgentSdkQueueEntry({ ...fixture, query: query.query }), /injected capture initialization failure/);
+    assert.equal(query.calls(), 0);
+    assert.deepEqual(readdirSync(fixture.workspaceRoot), []);
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
 test("workspace capture failure preserves model output and reports a recoverable path", async (t) => {
   const fixture = createRunnerFixture({ assessmentMode: "observational" });
   t.mock.method(RunBundleAssembler.prototype, "captureWorkspaceOutcome", async () => {
