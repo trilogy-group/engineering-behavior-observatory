@@ -97,6 +97,7 @@ node dist/src/cli.js corpus query <index.jsonl> [--task <id>] [--model <id>] [--
 node dist/src/cli.js corpus validate <corpus-root> <index.jsonl>
 node dist/src/cli.js corpus pack <approved-export-root> <policy.json> <archive.tar.gz>
 node dist/src/cli.js corpus unpack <archive.tar.gz> <destination-root>
+node dist/src/cli.js comparison check <request.json>
 # Optional approved OAuth smoke; provide OAuth auth, never API-key overrides.
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 EBO_LIVE_AGENT_SDK_SMOKE=1 node --test --test-name-pattern='approved live Agent SDK smoke' dist/test/capture-qualification.test.js
@@ -151,6 +152,14 @@ validation issues instead of silently omitting missing evidence. Native
 manifests remain authoritative; delete and rebuild the index at any time.
 Queries use exact-match flags shown by `ebo --help` and do not index prompt or
 tool bodies.
+
+Normalized datasets retain digest-bound native references rather than copied
+source records. Their validator produces adapter/version coverage that keeps
+unmapped native types and unsupported capabilities explicit. `ebo comparison
+check` evaluates one inspectable comparison request and returns `supported`,
+`qualified-with-caveats`, or `unsupported`; declared harness differences remain
+caveats and never become causal claims. See
+[docs/normalization-integrity.md](docs/normalization-integrity.md).
 
 Portable archives accept only `ready` or `exported` partner/public trees that
 pass the export pipeline's policy-bound readback and final secret scan.

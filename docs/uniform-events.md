@@ -116,3 +116,6 @@ spans were configured. This never changes semantic hook events because
 SDK's documented [callback correlation](https://code.claude.com/docs/en/agent-sdk/hooks)
 and [beta tracing](https://code.claude.com/docs/en/agent-sdk/observability)
 boundaries.
+
+Dataset-wide native-reference, ordering, coverage, and comparison gates are
+documented in [Normalization integrity and comparison gates](normalization-integrity.md).
