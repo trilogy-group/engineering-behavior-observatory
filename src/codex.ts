@@ -673,7 +673,7 @@ function mapCodexRecord(
     copyScalar(attributes, "itemType", payload.item.type);
     copyScalar(attributes, "itemId", payload.item.id);
     copyScalar(attributes, "status", payload.item.status);
-    if (payload.item.type === "fileChange") attributes.mutation = true;
+    if (payload.item.type === "fileChange" && payload.item.status === "completed") attributes.mutation = true;
   }
   if (method === "thread/tokenUsage/updated" && isRecord(payload.tokenUsage)) {
     const total = numberRecord(payload.tokenUsage.total);

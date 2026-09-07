@@ -113,6 +113,18 @@ test("duplicate failure evidence across native order domains classifies one logi
   });
 });
 
+test("tied same-tool and alternate-tool successors remain unavailable", () => {
+  const events = [
+    event(1, "tool", "before", { toolUseId: "failed", toolName: "Read", inputDigest: digest }, "failed-start"),
+    event(2, "tool", "after", { toolUseId: "failed", toolName: "Read", isError: true }, "failed-end"),
+    event(3, "tool", "before", { toolUseId: "same", toolName: "Read", inputDigest: digest }, "same"),
+    event(3, "tool", "before", { toolUseId: "alternate", toolName: "Write", inputDigest: digest }, "alternate"),
+  ];
+  const report = createStructuralObservationSet(dataset(events), coverage(events));
+  assert.equal(observation(report, "failure-followed-by-same-tool-count").value.status, "unavailable");
+  assert.equal(observation(report, "failure-followed-by-alternate-tool-count").value.status, "unavailable");
+});
+
 test("source event IDs do not absorb another projection of the same native record", () => {
   const resource = event(1, "runtime", "after", { inputTokens: 5, resourceSemantics: "cumulative-final" }, "resource");
   const outcome = event(1, "outcome", "after", { state: "completed" }, "outcome");
@@ -175,6 +187,9 @@ test("CLI reads a qualified observational bundle, validates it, and writes deriv
   assert.equal(await main(["observations", "corpus", corpus, index, outputs, "--attempt", "attempt-structural-cli"], () => undefined), 0);
   const outputName = `sha256-${createHash("sha256").update(JSON.stringify(["run-structural-cli", "attempt-structural-cli"])).digest("hex")}.json`;
   assert.equal(existsSync(join(outputs, outputName)), true);
+  const nestedOutputs = join(root, "nested", "derived", "observations");
+  assert.equal(await main(["observations", "corpus", corpus, index, nestedOutputs, "--attempt", "attempt-structural-cli"], () => undefined), 0);
+  assert.equal(existsSync(join(nestedOutputs, outputName)), true);
 
   const mixedCorpus = join(root, "mixed-corpus");
   const mixedIndex = join(root, "mixed-index.jsonl");

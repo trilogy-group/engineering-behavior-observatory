@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, realpathSync, renameSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -276,8 +276,7 @@ async function runObservationsCommand(args: string[], write: (message: string) =
       const selected = queryCorpusIndex(index, { ...parseCorpusQuery(args.slice(4)), manifestKind: "run" });
       if (selected.length === 0) throw new Error("Corpus selection matched no retained run bundles.");
       const outputRoot = resolve(third);
-      const outputParent = realpathSync(dirname(outputRoot));
-      assertOutside(realpathSync(first), outputParent);
+      const outputParent = prepareDerivedParent(first, outputRoot);
       if (existsSync(outputRoot)) throw new Error("Structural observation corpus destination already exists.");
       const stagingRoot = mkdtempSync(join(outputParent, ".ebo-observations-"));
       let published = false;
@@ -306,8 +305,24 @@ async function runObservationsCommand(args: string[], write: (message: string) =
 
 async function writeObservationReport(path: string, report: unknown, sourceRoot: string): Promise<void> {
   const destination = resolve(path);
-  assertOutside(realpathSync(sourceRoot), realpathSync(dirname(destination)));
+  prepareDerivedParent(sourceRoot, destination);
   await writeMetadataAtomically(dirname(destination), basename(destination), report, undefined, { overwrite: false });
+}
+
+function prepareDerivedParent(sourceRoot: string, destination: string): string {
+  const source = realpathSync(sourceRoot);
+  const parent = dirname(resolve(destination));
+  let existing = parent;
+  while (!existsSync(existing)) {
+    const next = dirname(existing);
+    if (next === existing) break;
+    existing = next;
+  }
+  assertOutside(source, realpathSync(existing));
+  mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const resolved = realpathSync(parent);
+  assertOutside(source, resolved);
+  return resolved;
 }
 
 function assertDerivedDestination(sourceRoot: string, destination: string): void {

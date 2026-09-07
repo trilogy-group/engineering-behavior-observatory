@@ -352,11 +352,25 @@ function followedOperations(operations: readonly ToolOperation[]): { same: numbe
   for (const current of ordered.filter(({ operation }) => operation.failed)) {
     const nextOperations: ToolOperation[] = [];
     for (const failure of current.failures) {
-      const next = ordered.flatMap(({ operation, starts }) => starts.map((start) => ({ operation, start })))
+      const candidates = ordered.flatMap(({ operation, starts }) => starts.map((start) => ({ operation, start })))
         .filter(({ operation, start }) => operation.id !== current.operation.id
-          && start.domain === failure.domain && start.value > failure.value)
-        .sort((left, right) => left.start.value - right.start.value)[0];
-      if (next !== undefined) nextOperations.push(next.operation);
+          && start.domain === failure.domain && start.value > failure.value);
+      if (candidates.length === 0) continue;
+      const nextOrder = Math.min(...candidates.map(({ start }) => start.value));
+      const tied = candidates.filter(({ start }) => start.value === nextOrder);
+      const tiedClassifications = new Set(tied.map(({ operation }) =>
+        operation.toolName === current.operation.toolName ? "same" : "alternate"));
+      if (tiedClassifications.size > 1) {
+        const events = [current.operation, ...tied.map(({ operation }) => operation)].flatMap(({ events }) => events);
+        return {
+          same: 0,
+          alternate: 0,
+          citations: citations(events),
+          events,
+          reason: "Tied next operations in one native-order domain disagree on tool classification.",
+        };
+      }
+      nextOperations.push(...tied.map(({ operation }) => operation));
     }
     const classifications = new Set(nextOperations.map((operation) =>
       operation.toolName === current.operation.toolName ? "same" : "alternate"));
