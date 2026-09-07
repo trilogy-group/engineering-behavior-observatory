@@ -27,6 +27,9 @@ async function emitTurn() {
   if (mode === "noisy") {
     for (let index = 0; index < 20; index += 1) send({ method: "unknown/noisy", params: { threadId: "thread-1", turnId: "turn-1", index } });
   }
+  if (mode === "foreign-completion") {
+    send({ method: "turn/completed", params: { threadId: "foreign-thread", turn: { id: "foreign-turn", threadId: "foreign-thread", status: "completed", items: [] } } });
+  }
   await finishTurn();
 }
 

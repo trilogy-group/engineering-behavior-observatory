@@ -191,6 +191,20 @@ test("keeps streamed and persisted history evidence separate and declares mismat
   }
 });
 
+test("normalizes only the matching owned turn completion", async () => {
+  const root = await temporaryRoot();
+  try {
+    const capture = await runFake(root, "foreign-completion");
+    assert.ok(capture.gaps.some(({ kind }) => kind === "foreign-turn-completion"));
+    const normalized = await normalizeCodexCapture(capture);
+    const outcomes = normalized.events.filter(({ family }) => family === "outcome");
+    assert.equal(outcomes.length, 1);
+    assert.equal(outcomes[0]?.scope.id, "turn-1");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("bounds OTLP receiver diagnostics while continuing to accept configured signals", async () => {
   const root = await temporaryRoot();
   try {

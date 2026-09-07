@@ -588,10 +588,13 @@ function mapCodexRecord(
     scope = { kind: "turn", id: text(payload.turnId) };
     contentPath = "#/payload/item";
   } else if (method === "turn/completed") {
+    const turn = isRecord(payload.turn) ? payload.turn : {};
+    const owned = captureIdentity(capture);
+    if (owned.threadId === undefined || owned.turnId === undefined
+        || text(payload.threadId) !== owned.threadId || text(turn.id) !== owned.turnId) return undefined;
     family = "outcome";
     actor = "harness";
     phase = "after";
-    const turn = isRecord(payload.turn) ? payload.turn : {};
     scope = { kind: "turn", id: text(turn.id) };
     contentPath = "#/payload/turn";
   } else if (method === "turn/plan/updated" || method === "thread/compacted") {
@@ -651,6 +654,16 @@ function mapCodexRecord(
 function codexNativeType(record: ProtocolObservation): string {
   if (record.kind === "request" && record.source === CODEX_HARNESS) return "server-request";
   return record.method ?? record.kind;
+}
+
+function captureIdentity(capture: QualifiedNativeCapture<ProtocolObservation>): { threadId?: string; turnId?: string } {
+  const value = capture as unknown as Record<string, unknown>;
+  const threadId = text(value.threadId);
+  const turnId = text(value.turnId);
+  return {
+    ...(threadId === undefined ? {} : { threadId }),
+    ...(turnId === undefined ? {} : { turnId }),
+  };
 }
 
 function itemFamily(type: string | undefined): UniformEvent["family"] | undefined {
