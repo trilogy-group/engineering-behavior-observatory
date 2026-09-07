@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import test from "node:test";
 
 import type { HookInput, SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -422,7 +422,10 @@ function largeReviewHistory(selection: ReviewSample, count: number): ReviewHisto
 function largeAdjudicationSelection(count: number): ReviewSample {
   const candidate = {
     assertion: { id: "fixture", schemaVersion: "ebo.behavior-assertion/v1" as const, digest: sha("a") },
-    source: { bundleRoot: "/restricted/fixture", assertionPath: "/restricted/fixture.json" },
+    source: {
+      bundleRoot: resolve("synthetic-review-sources", "bundle"),
+      assertionPath: resolve("synthetic-review-sources", "fixture.json"),
+    },
     context: {
       runId: "fixture-run", attemptId: "fixture-attempt", taskId: "fixture-task", taskContext: "Synthetic fixture task context.",
       modelId: "fixture-model", harnessId: "agent-sdk", terminalState: "completed", outcome: "unavailable" as const,
@@ -436,7 +439,7 @@ function largeAdjudicationSelection(count: number): ReviewSample {
       id: `fixture-${index}`,
       digest: `sha256:${createHash("sha256").update(String(index)).digest("hex")}` as const,
     },
-    source: { ...candidate.source, assertionPath: `/restricted/fixture-${index}.json` },
+    source: { ...candidate.source, assertionPath: resolve("synthetic-review-sources", `fixture-${index}.json`) },
   }));
   const ids = candidates.map(({ assertion }) => assertion.id);
   return {
