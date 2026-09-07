@@ -108,7 +108,7 @@
         "normalization": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["datasetDigest", "adapter", "capabilityProfile", "coverage"],
+          "required": ["datasetDigest", "adapter", "coverage"],
           "properties": {
             "datasetDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
             "adapter": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/adapter" },

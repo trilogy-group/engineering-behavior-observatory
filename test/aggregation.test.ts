@@ -70,9 +70,8 @@ test("aggregates distinct populations, retries, variation, and gated matched dif
   assert.equal(metric(modelA, "verifier-pass-rate").measurement.denominator.value, 2);
   assert.equal(metric(modelA, "reviewed-assertion-confirmed-rate").measurement.status, "unavailable");
   assert.equal(modelA.variations.find(({ measure }) => measure === "terminal-state")!.claimStatus, "case-study");
-  assert.equal(report.comparisons[0]!.claimStatus, "case-study", JSON.stringify(report.comparisons[0]));
-  assert.equal(report.comparisons[0]!.matchedDifference.rate, -1);
-  assert.equal(report.comparisons[0]!.matchedDifference.numerator.unit, "right-minus-left-verified-attempt");
+  assert.equal(report.comparisons[0]!.claimStatus, "unavailable");
+  assert.equal(report.comparisons[0]!.matchedDifference.exclusions.some(({ reason }) => reason === "comparison-candidate-evidence-mismatch"), true);
   assert.equal(report.comparisons[1]!.claimStatus, "unavailable");
   assert.equal(report.comparisons[2]!.matchedDifference.exclusions[0]!.reason, "comparison-measure-not-gated");
   assert.equal(JSON.stringify(report).includes("statistical significance"), true);
@@ -111,6 +110,14 @@ test("aggregates distinct populations, retries, variation, and gated matched dif
     groupBy: ["task"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 },
   });
   assert.equal(metric(observationalOnly.groups[0]!, "verifier-pass-rate").measurement.status, "unavailable");
+  const { captureQualification: _captureQualification, ...withoutQualification } = attempts[4]!;
+  const missingQualification = await aggregateEvaluation({ corpusEntries: [withoutQualification], observationSets: [], assertions: [], calibrations: [], comparisons: [] }, {
+    groupBy: ["task"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 },
+  });
+  assert.deepEqual(metric(missingQualification.groups[0]!, "capture-qualified-rate").measurement.exclusions, [
+    { reason: "capture-qualification-unavailable", count: 1, unit: "attempt" },
+  ]);
+  assert.equal(metric(missingQualification.groups[0]!, "capture-qualified-rate").measurement.status, "unavailable");
 
   const singletonStates = [
     ...Array.from({ length: 8 }, (_, index) => entry(`stable-${index}`, `stable-attempt-${index}`, 1, { terminalState: "completed" })),
@@ -121,7 +128,7 @@ test("aggregates distinct populations, retries, variation, and gated matched dif
     groupBy: ["model"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 },
   });
   assert.equal(singletonReport.groups[0]!.variations.find(({ measure }) => measure === "terminal-state")!.claimStatus, "case-study");
-  const missingMatch = attempts.slice(0, 1).concat(attempts[3]!).map((attempt) => ({ ...attempt, captureQualification: undefined }));
+  const missingMatch = attempts.slice(0, 1).concat(attempts[3]!).map(({ captureQualification: _qualification, ...attempt }) => attempt);
   const missingMatchReport = await aggregateEvaluation({
     corpusEntries: missingMatch,
     observationSets: [],
@@ -165,6 +172,8 @@ test("CLI rebuilds aggregate output from a current local corpus index", async ()
     assert.match(output, /Built 1 aggregate group\(s\)/u);
     const report = readJson(outputPath) as AggregationReport;
     assert.equal(report.sourcePopulation.uniqueAttempts, 2);
+    assert.equal(report.sourceLineage.manifests.length, 2);
+    assert.match(report.sourceLineage.requestDigest, /^sha256:[a-f0-9]{64}$/u);
     assert.equal(report.groups[0]!.variations.find(({ measure }) => measure === "verifier-status")!.claimStatus, "case-study");
     const corpusAlias = join(temporary, "corpus-alias");
     symlinkSync(corpusRoot, corpusAlias);

@@ -110,10 +110,48 @@
         "measurement": { "$ref": "#/$defs/measurement" }
       }
     },
+    "sourceLineage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["requestDigest", "corpusIndexDigest", "manifests", "observationSets", "assertions", "calibrations", "comparisonGates"],
+      "properties": {
+        "requestDigest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" },
+        "corpusIndexDigest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" },
+        "manifests": {
+          "type": "array", "maxItems": 100000,
+          "items": { "type": "object", "additionalProperties": false, "required": ["runId", "attemptId", "digest"], "properties": {
+            "runId": { "$ref": "#/$defs/identifier" }, "attemptId": { "$ref": "#/$defs/identifier" }, "digest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" }
+          } }
+        },
+        "observationSets": {
+          "type": "array", "maxItems": 100000,
+          "items": { "type": "object", "additionalProperties": false, "required": ["runId", "attemptId", "digest"], "properties": {
+            "runId": { "$ref": "#/$defs/identifier" }, "attemptId": { "$ref": "#/$defs/identifier" }, "digest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" }
+          } }
+        },
+        "assertions": {
+          "type": "array", "maxItems": 100000,
+          "items": { "type": "object", "additionalProperties": false, "required": ["runId", "attemptId", "id", "digest"], "properties": {
+            "runId": { "$ref": "#/$defs/identifier" }, "attemptId": { "$ref": "#/$defs/identifier" }, "id": { "$ref": "#/$defs/identifier" }, "digest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" }
+          } }
+        },
+        "calibrations": {
+          "type": "array", "maxItems": 100000,
+          "items": { "type": "object", "additionalProperties": false, "required": ["selectionDigest", "historyDigest"], "properties": {
+            "selectionDigest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" }, "historyDigest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" }
+          } }
+        },
+        "comparisonGates": {
+          "type": "array", "maxItems": 100000,
+          "items": { "type": "object", "additionalProperties": false, "required": ["requestDigest", "reportDigest"], "properties": {
+            "requestDigest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" }, "reportDigest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" }
+          } }
+        }
+      }
+    },
     "report": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "policy", "sourcePopulation", "groups", "comparisons", "limitations"],
+      "required": ["schemaVersion", "policy", "sourcePopulation", "sourceLineage", "groups", "comparisons", "limitations"],
       "properties": {
         "schemaVersion": { "const": "ebo.aggregation-report/v1" },
         "policy": {
@@ -138,6 +176,7 @@
             "selectedAttempts": { "type": "integer", "minimum": 0 }, "duplicateInputsIgnored": { "type": "integer", "minimum": 0 }
           }
         },
+        "sourceLineage": { "$ref": "#/$defs/sourceLineage" },
         "groups": {
           "type": "array", "maxItems": 100000,
           "items": {

@@ -57,7 +57,7 @@ export type StructuralObservationSet = {
   normalization: {
     datasetDigest: `sha256:${string}`;
     adapter: NormalizedDataset["adapter"];
-    capabilityProfile: NormalizedDataset["capabilityProfile"];
+    capabilityProfile?: NormalizedDataset["capabilityProfile"];
     coverage: AdapterCoverageReport;
   };
   observations: readonly StructuralObservation[];

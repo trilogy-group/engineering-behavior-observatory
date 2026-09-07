@@ -296,6 +296,16 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     assert.equal(aggregate.groups[0]!.metrics.find(({ id }) => id === "structural:tool-operation-count")!.population, "attempt");
     assert.equal(aggregate.groups[0]!.metrics.find(({ id }) => id === "review-unresolved-rate")!.measurement.rate, 0.75);
     assert.equal(aggregate.groups[0]!.metrics.find(({ id }) => id === "review-disputed-rate")!.measurement.rate, 0.5);
+    const legacyObservationSet = structuredClone(observationSet);
+    delete legacyObservationSet.normalization.capabilityProfile;
+    const migratedAggregate = await aggregateEvaluation({
+      corpusEntries: buildCorpusIndex(bundleRoot),
+      observationSets: [{ bundleRoot, document: legacyObservationSet }],
+      assertions: [],
+      calibrations: [],
+      comparisons: [],
+    }, { groupBy: ["task"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 } });
+    assert.equal(migratedAggregate.sourceLineage.observationSets.length, 1, "legacy structural v1 sets are rebuilt with declared capabilities");
     const conflictingAssertion = structuredClone(assertions[0]!);
     conflictingAssertion.judgment.rationale = "Conflicting revised synthetic judgment.";
     await assert.rejects(aggregateEvaluation({

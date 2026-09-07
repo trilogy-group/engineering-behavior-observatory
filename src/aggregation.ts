@@ -41,6 +41,7 @@ export type AggregationRequest = {
 };
 
 export type AggregationInput = {
+  lineage?: { requestDigest?: `sha256:${string}`; corpusIndexDigest?: `sha256:${string}` };
   corpusEntries: readonly CorpusIndexEntry[];
   observationSets: ReadonlyArray<{ bundleRoot: string; document: StructuralObservationSet }>;
   assertions: ReadonlyArray<{ bundleRoot: string; document: BehaviorAssertion }>;
@@ -83,6 +84,15 @@ export type AggregationReport = {
     uniqueAttempts: number;
     selectedAttempts: number;
     duplicateInputsIgnored: number;
+  };
+  sourceLineage: {
+    requestDigest: `sha256:${string}`;
+    corpusIndexDigest: `sha256:${string}`;
+    manifests: ReadonlyArray<{ runId: string; attemptId: string; digest: `sha256:${string}` }>;
+    observationSets: ReadonlyArray<{ runId: string; attemptId: string; digest: `sha256:${string}` }>;
+    assertions: ReadonlyArray<{ runId: string; attemptId: string; id: string; digest: `sha256:${string}` }>;
+    calibrations: ReadonlyArray<{ selectionDigest: `sha256:${string}`; historyDigest: `sha256:${string}` }>;
+    comparisonGates: ReadonlyArray<{ requestDigest: `sha256:${string}`; reportDigest: `sha256:${string}` }>;
   };
   groups: ReadonlyArray<{
     dimensions: Partial<Record<AggregationDimension, string>>;
@@ -127,8 +137,12 @@ async function aggregateValidatedEvaluation(
   for (const { bundleRoot, document } of observationSources.values()) {
     assertIndexedBundle(bundleRoot, document.runId, document.attemptId, attempts);
     const rebuilt = await createAgentSdkStructuralObservationSet(bundleRoot);
-    if (canonicalizeMetadata(rebuilt) !== canonicalizeMetadata(document)) throw new Error(`Structural observation set for attempt "${document.attemptId}" is stale.`);
-    observations.set(`${document.runId}\0${document.attemptId}`, document);
+    const { capabilityProfile: _capabilityProfile, ...legacyNormalization } = rebuilt.normalization;
+    const comparable = document.normalization.capabilityProfile === undefined
+      ? { ...rebuilt, normalization: legacyNormalization }
+      : rebuilt;
+    if (canonicalizeMetadata(comparable) !== canonicalizeMetadata(document)) throw new Error(`Structural observation set for attempt "${document.attemptId}" is stale.`);
+    observations.set(`${document.runId}\0${document.attemptId}`, rebuilt);
   }
   const assertionSources = uniqueBy(input.assertions, ({ document }) => assertionKey(document), "behavior assertion");
   const assertions = new Map<string, BehaviorAssertion>();
@@ -164,6 +178,18 @@ async function aggregateValidatedEvaluation(
       selectedAttempts: selected.length,
       duplicateInputsIgnored: duplicates,
     },
+    sourceLineage: {
+      requestDigest: input.lineage?.requestDigest ?? metadataDigest({ policy, comparisons: input.comparisons.map(({ eligibility: _eligibility, ...comparison }) => comparison) }),
+      corpusIndexDigest: input.lineage?.corpusIndexDigest ?? metadataDigest(input.corpusEntries),
+      manifests: attempts.map(({ runId, attemptId, manifestDigest: digest }) => ({ runId, attemptId, digest })),
+      observationSets: [...observationSources.values()].map(({ document }) => ({ runId: document.runId, attemptId: document.attemptId, digest: metadataDigest(document) })),
+      assertions: [...assertionSources.values()].map(({ document }) => ({ runId: document.runId, attemptId: document.attemptId, id: document.id, digest: metadataDigest(document) })),
+      calibrations: input.calibrations.map(({ selection, history }) => ({ selectionDigest: metadataDigest(selection), historyDigest: metadataDigest(history) })),
+      comparisonGates: input.comparisons.flatMap(({ eligibility }) => eligibility.map(({ request, report }) => ({
+        requestDigest: metadataDigest(request),
+        reportDigest: metadataDigest(report),
+      }))),
+    },
     groups,
     comparisons: input.comparisons.map((comparison) => compare(
       comparison,
@@ -196,7 +222,10 @@ function groupMetrics(
   const metrics: AggregateMetric[] = [
     metric("attempt-count", "attempt", selected.length, relatedAll.length, "attempt", "attempt", selectionExclusions),
     rateMetric("infrastructure-failure-rate", "attempt", selected.filter(({ failureClass }) => failureClass === "infrastructure").length, selected.length, "attempt", []),
-    rateMetric("capture-qualified-rate", "attempt", selected.filter(({ captureQualification }) => captureQualification === "qualified" || captureQualification === "qualified-with-gaps").length, selected.length, "attempt", []),
+    rateMetric("capture-qualified-rate", "attempt",
+      selected.filter(({ captureQualification }) => captureQualification === "qualified" || captureQualification === "qualified-with-gaps").length,
+      selected.filter(({ captureQualification }) => captureQualification !== undefined).length,
+      "attempt", exclusionCounts(selected.flatMap(({ captureQualification }) => captureQualification === undefined ? ["capture-qualification-unavailable"] : []), "attempt")),
     rateMetric("terminal-completed-rate", "attempt", selected.filter(({ terminalState }) => terminalState === "completed").length, selected.length, "attempt", []),
   ];
   const verified = selected.filter(({ assessmentMode, verifierStatuses }) => assessmentMode === "verified" && verifierStatuses.length === 1);
@@ -319,13 +348,6 @@ function compare(
       exclusions.push("comparison-eligibility-missing");
       continue;
     }
-    const leftCandidate = gate.request.left.id === leftMatches[0]!.runId ? gate.request.left : gate.request.right;
-    const rightCandidate = gate.request.left.id === rightMatches[0]!.runId ? gate.request.left : gate.request.right;
-    if (!candidateMatchesAttempt(leftCandidate, leftMatches[0]!, comparison.measure, observations)
-        || !candidateMatchesAttempt(rightCandidate, rightMatches[0]!, comparison.measure, observations)) {
-      exclusions.push("comparison-candidate-evidence-mismatch");
-      continue;
-    }
     if (gate.report.status === "unsupported") {
       exclusions.push("comparison-eligibility-unsupported");
       continue;
@@ -337,6 +359,13 @@ function compare(
     if (measureCapabilities(comparison.measure, [leftMatches[0]!, rightMatches[0]!], observations)
       .some((capability) => !gate.report.policy.requiredCapabilities.includes(capability))) {
       exclusions.push("comparison-measure-capability-not-gated");
+      continue;
+    }
+    const leftCandidate = gate.request.left.id === leftMatches[0]!.runId ? gate.request.left : gate.request.right;
+    const rightCandidate = gate.request.left.id === rightMatches[0]!.runId ? gate.request.left : gate.request.right;
+    if (!candidateMatchesAttempt(leftCandidate, leftMatches[0]!, observations)
+        || !candidateMatchesAttempt(rightCandidate, rightMatches[0]!, observations)) {
+      exclusions.push("comparison-candidate-evidence-mismatch");
       continue;
     }
     const leftValue = measureValue(leftMatches[0]!, comparison.measure, observations);
@@ -371,7 +400,6 @@ function compare(
 function candidateMatchesAttempt(
   candidate: ComparisonRequest["left"],
   attempt: Attempt,
-  measure: string,
   observations: ReadonlyMap<string, StructuralObservationSet>,
 ): boolean {
   const exact = candidate.id === attempt.runId
@@ -389,9 +417,9 @@ function candidateMatchesAttempt(
     && candidate.captureProfileDigest === attempt.captureProfileDigest
     && candidate.budgetDigest === attempt.budgetDigest
     && candidate.toolPolicyDigest === attempt.toolPolicyDigest;
-  if (!exact || !measure.startsWith("structural:")) return exact;
+  if (!exact) return false;
   const observationSet = observations.get(attemptKey(attempt));
-  if (observationSet === undefined) return false;
+  if (observationSet?.normalization.capabilityProfile === undefined) return false;
   return candidate.adapterVersion === observationSet.normalization.adapter.version
     && canonicalizeMetadata(candidate.capabilityProfile) === canonicalizeMetadata(observationSet.normalization.capabilityProfile);
 }
@@ -595,4 +623,8 @@ function assertionBindingKey(assertion: BehaviorAssertion): string {
 
 function bindingKey(id: string, digest: string): string {
   return `${id}\0${digest}`;
+}
+
+function metadataDigest(value: unknown): `sha256:${string}` {
+  return `sha256:${digestMetadata(value).value}`;
 }

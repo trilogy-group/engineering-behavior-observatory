@@ -213,14 +213,20 @@ export async function runAgentSdkSemanticJudge(
     throw new Error("Structural observations do not match the qualified normalized dataset.");
   }
   const expectedObservations = createStructuralObservationSet(evidence.dataset, evidence.coverage, evidence.capture);
-  if (canonicalizeMetadata(options.observations) !== canonicalizeMetadata(expectedObservations)) {
+  const observations = options.observations.normalization.capabilityProfile === undefined
+    ? { ...structuredClone(options.observations), normalization: {
+      ...structuredClone(options.observations.normalization),
+      capabilityProfile: structuredClone(expectedObservations.normalization.capabilityProfile),
+    } }
+    : options.observations;
+  if (canonicalizeMetadata(observations) !== canonicalizeMetadata(expectedObservations)) {
     throw new Error("Structural observations differ from the recomputed qualified observation set.");
   }
   const evaluatedModelId = readEvaluatedModelId(options.bundleRoot);
   const input = packageSemanticJudgeInput(
     evidence.dataset.events,
     evidence.capture,
-    options.observations,
+    observations,
     options.request,
     datasetDigest,
     evaluatedModelId,

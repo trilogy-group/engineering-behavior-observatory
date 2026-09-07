@@ -57,10 +57,18 @@ a terminal-state measure; task-success rates come only from available verified
 attempt outcomes. Duplicate identical inputs are counted once, while conflicting
 records with the same identity fail the build.
 
+Every report retains the logical request and corpus-index digests plus the
+exact admitted manifest, observation-set, assertion, calibration, and
+comparison-gate digests. Moving the report therefore does not detach its
+metrics from their rebuild inputs.
+
 Observation and assertion sources name their retained bundle so the build can
 recompute structural observations, resolve assertion citations, and reject
 stale derived evidence. Calibration selections are likewise reloaded from their
 digest-bound sources before their review history contributes to a metric.
+Legacy v1 structural sets without the optional declared capability profile stay
+readable; aggregation and semantic judging rebuild that profile from the native
+bundle before use.
 
 Matched comparisons require one candidate on each side for every caller-chosen
 match key and one eligibility report whose candidate IDs are those two run IDs.

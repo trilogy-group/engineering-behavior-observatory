@@ -312,6 +312,10 @@ async function runAggregationCommand(args: string[], write: (message: string) =>
     const destination = resolve(outputPath);
     prepareDerivedParent(corpusRoot, destination);
     const report = await aggregateEvaluation({
+      lineage: {
+        requestDigest: `sha256:${digestMetadata(request).value}`,
+        corpusIndexDigest: `sha256:${digestMetadata(corpusEntries).value}`,
+      },
       corpusEntries,
       observationSets: source.observationSets.map(({ bundleRoot, path }) => ({
         bundleRoot: resolve(base, bundleRoot),
