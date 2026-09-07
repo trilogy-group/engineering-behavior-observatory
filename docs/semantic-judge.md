@@ -66,6 +66,12 @@ IDs and native references are never rewritten, and the input records the
 remaining harness, native-type, behavioral, and citation clues that may still
 reveal origin.
 
+Selected structural observations automatically include their normalized source
+events so their claims remain citable. An explicitly selected observation that
+has only a native citation and no normalized source event is rejected before
+execution; the same kind of automatically included outcome is recorded as
+omitted instead of being shown to the judge as uncitable support.
+
 ## Backend and trust boundary
 
 The only backend is the installed TypeScript Claude Agent SDK. The caller

@@ -25,6 +25,7 @@ import { probeClaudeAgentSdkCapabilities } from "./agent-sdk.js";
 import { readBoundedFile } from "./scheduler.js";
 import { createStructuralObservationSet, validateStructuralObservationSet, type StructuralObservationSet } from "./structural-observations.js";
 import type { AgentSdkNativeRecord } from "./agent-sdk-normalizer.js";
+import { UNIFORM_EVENT_FAMILIES } from "./uniform-events.js";
 import type { NativeEvidenceReference, NormalizationInput, UniformEvent } from "./uniform-events.js";
 
 type DigestString = `sha256:${string}`;
@@ -32,6 +33,13 @@ type JsonRecord = Record<string, unknown>;
 
 export const SEMANTIC_JUDGE_PROMPT_VERSION = "1.0.0";
 export const CLAUDE_SEMANTIC_JUDGE_BACKEND_ID = "claude-agent-sdk";
+const MISSING_EVIDENCE_CAPABILITIES = [
+  ...UNIFORM_EVENT_FAMILIES.map((family) => `family:${family}`),
+  "evidence:nativeOrder",
+  "evidence:nativeTime",
+  "evidence:parentage",
+  "evidence:content",
+] as const;
 
 export type SemanticJudgeRequest = {
   schemaVersion: "ebo.semantic-judge-request/v1";
@@ -391,9 +399,16 @@ export function packageSemanticJudgeInput(
   const observationById = uniqueById(observations.observations, "structural observation");
   const requestedObservations = request.selection.structuralObservationIds
     .map((id) => requiredEntry(observationById, id, "structural observation"));
-  const outcomes = request.selection.includeOutcomeObservations
+  const uncitableRequested = requestedObservations.find(hasUnprojectedNativeCitation);
+  if (uncitableRequested !== undefined) {
+    throw new Error(`Selected structural observation "${uncitableRequested.id}" has native citations but no normalized source event.`);
+  }
+  const requestedOutcomes = request.selection.includeOutcomeObservations
     ? observations.observations.filter(({ extractor }) => extractor.id.startsWith("outcome-"))
     : [];
+  const automaticOmissions = requestedOutcomes.filter(hasUnprojectedNativeCitation)
+    .map(({ id }) => `structural-observation:${id}:uncitable-native-evidence`);
+  const outcomes = requestedOutcomes.filter((observation) => !hasUnprojectedNativeCitation(observation));
   const selectedObservations = [...new Map([...requestedObservations, ...outcomes].map((value) => [value.id, value])).values()];
   const selectedEventIds = [...new Set([
     ...request.selection.eventIds,
@@ -423,7 +438,7 @@ export function packageSemanticJudgeInput(
     )),
   ];
   const evidenceItems: SemanticJudgeEvidenceItem[] = [];
-  const omitted: string[] = [];
+  const omitted: string[] = [...automaticOmissions];
   let includedRedactions = 0;
   for (const { item, redactions } of candidates) {
     if (semanticJudgePrompt(baseInput([...evidenceItems, item], omitted, includedRedactions + redactions)).length
@@ -542,6 +557,9 @@ export function parseSemanticJudgeResponse(
       throw new Error("Abstained judge response must set assessment fields to null.");
     }
     const missing = response.missingEvidenceCapability;
+    if (missing !== null && !MISSING_EVIDENCE_CAPABILITIES.includes(missing as typeof MISSING_EVIDENCE_CAPABILITIES[number])) {
+      throw new Error("Judge missing evidence capability is invalid.");
+    }
     judgment = {
       disposition,
       reason: requiredText(response.reason, "Judge abstention reason", 8192),
@@ -610,7 +628,7 @@ function responseSchema(maxCitations: number): JsonRecord {
         },
       },
       reason: { type: ["string", "null"], minLength: 1, maxLength: 8192 },
-      missingEvidenceCapability: { type: ["string", "null"], minLength: 1, maxLength: 256 },
+      missingEvidenceCapability: { enum: [...MISSING_EVIDENCE_CAPABILITIES, null] },
       rationale: text,
       alternativeExplanation: text,
       citations: { type: "array", maxItems: maxCitations, items: citation },
@@ -684,6 +702,10 @@ function evidenceItem(
     content: truncated ? `${serialized.slice(0, maxChars - 24)}...[TRUNCATED:${serialized.length}]` : serialized,
     truncated,
   };
+}
+
+function hasUnprojectedNativeCitation(observation: StructuralObservationSet["observations"][number]): boolean {
+  return observation.sourceRecordCount > 0 && observation.sourceEventIds.length === 0;
 }
 
 function citations(value: unknown, allowed: ReadonlySet<string>, max: number): BehaviorAssertion["judgment"]["citations"] {

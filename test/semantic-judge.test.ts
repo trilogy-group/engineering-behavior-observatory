@@ -77,6 +77,21 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
       "claude-test",
     );
     assert.deepEqual(structuralOnly.selection.includedEventIds, observationWithEvents.sourceEventIds);
+    const nativeOnlyObservation = observations.observations.find((observation) =>
+      observation.sourceRecordCount > 0 && observation.sourceEventIds.length === 0)!;
+    const nativeOnlyRequest = judgeRequest("unused", nativeOnlyObservation.id);
+    nativeOnlyRequest.selection.eventIds = [];
+    nativeOnlyRequest.selection.includeOutcomeObservations = false;
+    await assert.rejects(
+      runAgentSdkSemanticJudge({
+        bundleRoot,
+        observations,
+        request: nativeOnlyRequest,
+        outputRoot: join(root, "native-only-observation"),
+        backend: completed({}),
+      }),
+      /native citations but no normalized source event/u,
+    );
 
     const citation = { eventId: event.id, nativeReference: event.source.nativeReference };
     const assessed = {
@@ -133,6 +148,16 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
       ["fabricated", { ...assessed, citations: [{ eventId: "fabricated", nativeReference: event.source.nativeReference }] }],
       ["stale", { ...assessed, citations: [{ eventId: event.id, nativeReference: { ...event.source.nativeReference, recordLocator: "line:999" } }] }],
       ["confirmed", { ...assessed, reviewState: "confirmed" }],
+      ["invalid-capability", {
+        disposition: "abstained",
+        assessment: null,
+        confidence: null,
+        reason: "Evidence is missing.",
+        missingEvidenceCapability: "test logs",
+        rationale: "The selected evidence is insufficient.",
+        alternativeExplanation: "Another source could resolve the gap.",
+        citations: [],
+      }],
     ] as const;
     for (const [name, response] of failures) {
       const record = await run(root, name, bundleRoot, observations, request, completed(response));
@@ -150,7 +175,9 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
     assert.equal(timeout.parse.status, "failed");
     assert.equal(provider.parse.status, "failed");
     const tight = structuredClone(request);
-    tight.selection.structuralObservationIds = observations.observations.map(({ id }) => id);
+    tight.selection.structuralObservationIds = observations.observations
+      .filter((observation) => observation.sourceRecordCount === 0 || observation.sourceEventIds.length > 0)
+      .map(({ id }) => id);
     tight.selection.includeOutcomeObservations = false;
     tight.limits.maxEvidenceItems = 128;
     tight.limits.maxRecordChars = 512;
@@ -246,6 +273,9 @@ test("configures the Claude Agent SDK backend with no tools, settings, plugins, 
     "alternativeExplanation", "assessment", "citations", "confidence", "disposition",
     "missingEvidenceCapability", "rationale", "reason",
   ]);
+  const properties = schema?.properties as Record<string, { enum?: unknown[] }>;
+  assert.equal(properties.missingEvidenceCapability?.enum?.includes("family:validation"), true);
+  assert.equal(properties.missingEvidenceCapability?.enum?.includes("test logs"), false);
   assert.equal(existsSync(observedCwd), false, "ephemeral empty cwd is removed after execution");
 });
 
