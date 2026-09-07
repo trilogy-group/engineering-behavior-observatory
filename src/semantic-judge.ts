@@ -40,6 +40,15 @@ const MISSING_EVIDENCE_CAPABILITIES = [
   "evidence:parentage",
   "evidence:content",
 ] as const;
+const JUDGE_ENVIRONMENT_OVERRIDE_KEYS = [
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "CLAUDE_MODEL",
+  "CLAUDE_CODE_EFFORT_LEVEL",
+  "MAX_THINKING_TOKENS",
+] as const;
 
 export type SemanticJudgeRequest = {
   schemaVersion: "ebo.semantic-judge-request/v1";
@@ -159,6 +168,11 @@ export type SemanticJudgmentRecord = {
     model: string;
     effort: EffortLevel;
     backend: { id: typeof CLAUDE_SEMANTIC_JUDGE_BACKEND_ID; version: string };
+    environment: {
+      parentPreserved: true;
+      modelEffortOverrides: "removed";
+      removedKeys: readonly string[];
+    };
     limits: SemanticJudgeRequest["limits"];
   };
   rawResponse?: RecordReference;
@@ -215,7 +229,7 @@ export async function runAgentSdkSemanticJudge(
     version: installedSdkVersion,
     run: runClaudeAgentSdkSemanticJudge,
   };
-  if (backend.id !== CLAUDE_SEMANTIC_JUDGE_BACKEND_ID || requiredText(backend.version, "Judge backend version", 256) !== backend.version
+  if (backend.id !== CLAUDE_SEMANTIC_JUDGE_BACKEND_ID || backend.version !== installedSdkVersion
       || typeof backend.run !== "function") {
     throw new Error("Semantic judge backend identity is invalid.");
   }
@@ -235,6 +249,11 @@ export async function runAgentSdkSemanticJudge(
       backend: {
         id: backend.id,
         version: backend.version,
+      },
+      environment: {
+        parentPreserved: true as const,
+        modelEffortOverrides: "removed" as const,
+        removedKeys: [...JUDGE_ENVIRONMENT_OVERRIDE_KEYS],
       },
       limits: structuredClone(options.request.limits),
     },
@@ -333,6 +352,9 @@ export async function runClaudeAgentSdkSemanticJudge(
   const controller = new AbortController();
   const isolatedCwd = mkdtempSync(join(tmpdir(), "ebo-semantic-judge-"));
   let handle: ReturnType<typeof claudeQuery> | undefined;
+  let result: SDKResultMessage | undefined;
+  const received: Array<{ sequence: number; content: string; truncated: boolean }> = [];
+  let receivedChars = 0;
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
@@ -344,11 +366,14 @@ export async function runClaudeAgentSdkSemanticJudge(
     }
   }, request.limits.maxWallClockMs);
   try {
+    const env = { ...process.env };
+    for (const key of JUDGE_ENVIRONMENT_OVERRIDE_KEYS) delete env[key];
     const options: Options = {
       abortController: controller,
       cwd: isolatedCwd,
       model: request.evaluator.model,
       effort: request.evaluator.effort,
+      env,
       maxTurns: request.limits.maxTurns,
       ...(request.limits.maxBudgetUsd === undefined ? {} : { maxBudgetUsd: request.limits.maxBudgetUsd }),
       tools: [],
@@ -365,27 +390,28 @@ export async function runClaudeAgentSdkSemanticJudge(
       outputFormat: { type: "json_schema", schema: responseSchema(request.limits.maxCitations) },
     };
     handle = queryFunction({ prompt, options });
-    let result: SDKResultMessage | undefined;
-    for await (const message of handle) if (message.type === "result") result = message;
-    if (timedOut) return { status: "failed", kind: "timeout", message: "Claude Agent SDK judge exceeded maxWallClockMs." };
-    if (result === undefined) return { status: "failed", kind: "provider", message: "Claude Agent SDK judge ended without a result." };
+    for await (const message of handle) {
+      retainMessage(message);
+      if (message.type === "result") result = message;
+    }
+    if (timedOut) return failure("timeout", "Claude Agent SDK judge exceeded maxWallClockMs.");
+    if (result === undefined) return failure("provider", "Claude Agent SDK judge ended without a result.");
     const metadata = sdkMetadata(result);
     if (result.subtype !== "success" || result.is_error) {
       return {
         status: "failed",
         kind: "provider",
         message: result.subtype === "success" ? result.result : result.errors.join("\n") || result.subtype,
-        raw: result,
+        raw: { messages: received },
         ...metadata,
       };
     }
-    return { status: "completed", response: result.structured_output, raw: result, ...metadata };
+    return { status: "completed", response: result.structured_output, raw: { messages: received }, ...metadata };
   } catch (error) {
-    return {
-      status: "failed",
-      kind: timedOut ? "timeout" : "provider",
-      message: timedOut ? "Claude Agent SDK judge exceeded maxWallClockMs." : errorMessage(error),
-    };
+    return failure(
+      timedOut ? "timeout" : "provider",
+      timedOut ? "Claude Agent SDK judge exceeded maxWallClockMs." : errorMessage(error),
+    );
   } finally {
     clearTimeout(timer);
     try {
@@ -394,6 +420,30 @@ export async function runClaudeAgentSdkSemanticJudge(
       // The completed or failed backend result remains retained by the caller.
     }
     rmSync(isolatedCwd, { recursive: true, force: true });
+  }
+
+  function retainMessage(message: unknown): void {
+    if (receivedChars >= request.limits.maxOutputChars) return;
+    let serialized: string;
+    try {
+      serialized = canonicalizeMetadata(message);
+    } catch {
+      serialized = "[SDK message was not JSON-safe]";
+    }
+    const remaining = request.limits.maxOutputChars - receivedChars;
+    const content = serialized.slice(0, remaining);
+    received.push({ sequence: received.length + 1, content, truncated: content.length < serialized.length });
+    receivedChars += content.length;
+  }
+
+  function failure(kind: "provider" | "timeout", message: string): SemanticJudgeBackendResult {
+    return {
+      status: "failed",
+      kind,
+      message,
+      ...(received.length === 0 ? {} : { raw: { messages: received } }),
+      ...(result === undefined ? {} : sdkMetadata(result)),
+    };
   }
 }
 
@@ -786,7 +836,7 @@ function redactJson(value: unknown, needle: string, onRedaction: () => void): un
   }
   if (Array.isArray(value)) return value.map((item) => redactJson(item, needle, onRedaction));
   if (value !== null && typeof value === "object") {
-    const result: Record<string, unknown> = {};
+    const result = Object.create(null) as Record<string, unknown>;
     for (const [key, item] of Object.entries(value)) {
       const redactedKey = key.includes(needle) ? key.split(needle).join("[EVALUATED_MODEL_REDACTED]") : key;
       if (redactedKey !== key) onRedaction();

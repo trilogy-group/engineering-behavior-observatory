@@ -261,7 +261,7 @@
         "evaluator": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["provider", "model", "effort", "backend", "limits"],
+          "required": ["provider", "model", "effort", "backend", "environment", "limits"],
           "properties": {
             "provider": { "const": "anthropic" },
             "model": { "$ref": "#/$defs/identifier" },
@@ -271,6 +271,16 @@
               "additionalProperties": false,
               "required": ["id", "version"],
               "properties": { "id": { "const": "claude-agent-sdk" }, "version": { "$ref": "#/$defs/identifier" } }
+            },
+            "environment": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["parentPreserved", "modelEffortOverrides", "removedKeys"],
+              "properties": {
+                "parentPreserved": { "const": true },
+                "modelEffortOverrides": { "const": "removed" },
+                "removedKeys": { "$ref": "#/$defs/stringList" }
+              }
             },
             "limits": { "$ref": "#/$defs/limits" }
           }

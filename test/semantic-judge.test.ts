@@ -60,6 +60,10 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
       "model-[EVALUATED_MODEL_REDACTED]": "second-colliding-value",
       padding: "x".repeat(600),
     };
+    Object.defineProperty(selectedNative.record.document, "__proto__", {
+      value: "native-prototype-key-value",
+      enumerable: true,
+    });
     const untrustedRequest = structuredClone(request);
     untrustedRequest.limits.maxRecordChars = 2_048;
     const untrusted = packageSemanticJudgeInput(
@@ -74,6 +78,7 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
     assert.doesNotMatch(JSON.stringify(untrusted), /claude-test/u);
     assert.match(JSON.stringify(untrusted), /first-colliding-value/u);
     assert.match(JSON.stringify(untrusted), /second-colliding-value/u);
+    assert.match(JSON.stringify(untrusted), /native-prototype-key-value/u);
     const observationWithEvents = observations.observations.find(({ sourceEventIds }) => sourceEventIds.length > 0)!;
     const structuralOnlyRequest = judgeRequest("unused", observationWithEvents.id);
     structuralOnlyRequest.selection.eventIds = [];
@@ -310,7 +315,15 @@ test("configures the Claude Agent SDK backend with no tools, settings, plugins, 
       },
     } as unknown as ReturnType<typeof import("@anthropic-ai/claude-agent-sdk").query>;
   };
-  const result = await runClaudeAgentSdkSemanticJudge("tiny non-sensitive fixture", judgeRequest("event-1", "observation-1"), query);
+  const previousEffort = process.env.CLAUDE_CODE_EFFORT_LEVEL;
+  let result: Awaited<ReturnType<typeof runClaudeAgentSdkSemanticJudge>>;
+  try {
+    process.env.CLAUDE_CODE_EFFORT_LEVEL = "max";
+    result = await runClaudeAgentSdkSemanticJudge("tiny non-sensitive fixture", judgeRequest("event-1", "observation-1"), query);
+  } finally {
+    if (previousEffort === undefined) delete process.env.CLAUDE_CODE_EFFORT_LEVEL;
+    else process.env.CLAUDE_CODE_EFFORT_LEVEL = previousEffort;
+  }
   assert.equal(result.status, "completed");
   assert.deepEqual(captured?.tools, []);
   assert.deepEqual(captured?.allowedTools, []);
@@ -322,6 +335,7 @@ test("configures the Claude Agent SDK backend with no tools, settings, plugins, 
   assert.equal(captured?.strictMcpConfig, true);
   assert.equal(captured?.persistSession, false);
   assert.equal(captured?.permissionMode, "dontAsk");
+  assert.equal(captured?.env?.CLAUDE_CODE_EFFORT_LEVEL, undefined);
   const schema = captured?.outputFormat?.schema;
   assert.equal(schema?.type, "object");
   assert.deepEqual((schema?.required as string[]).sort(), [
@@ -332,6 +346,37 @@ test("configures the Claude Agent SDK backend with no tools, settings, plugins, 
   assert.equal(properties.missingEvidenceCapability?.enum?.includes("family:validation"), true);
   assert.equal(properties.missingEvidenceCapability?.enum?.includes("test logs"), false);
   assert.equal(existsSync(observedCwd), false, "ephemeral empty cwd is removed after execution");
+});
+
+test("retains bounded received SDK messages and result accounting when the provider stream fails", async () => {
+  const query: typeof import("@anthropic-ai/claude-agent-sdk").query = () => ({
+    close: () => undefined,
+    async *[Symbol.asyncIterator]() {
+      yield {
+        type: "assistant",
+        uuid: "assistant-before-disconnect",
+        session_id: "session-before-disconnect",
+        parent_tool_use_id: null,
+        message: { role: "assistant", content: [{ type: "text", text: "received before disconnect" }] },
+      } as unknown as SDKMessage;
+      yield sdkResult({
+        disposition: "abstained",
+        assessment: null,
+        confidence: null,
+        reason: "insufficient",
+        missingEvidenceCapability: null,
+        rationale: "bounded",
+        alternativeExplanation: "none",
+        citations: [],
+      });
+      throw new Error("provider disconnected");
+    },
+  }) as unknown as ReturnType<typeof import("@anthropic-ai/claude-agent-sdk").query>;
+  const result = await runClaudeAgentSdkSemanticJudge("tiny fixture", judgeRequest("event-1", "observation-1"), query);
+  assert.equal(result.status, "failed");
+  assert.match(JSON.stringify(result.raw), /received before disconnect/u);
+  assert.ok(result.timing);
+  assert.ok(result.usage);
 });
 
 test("approved live semantic judge smoke", { skip: process.env.EBO_LIVE_SEMANTIC_JUDGE_SMOKE !== "1" }, async () => {

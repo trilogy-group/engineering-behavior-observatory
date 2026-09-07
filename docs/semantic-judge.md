@@ -82,6 +82,11 @@ temporary working directory, strict empty MCP configuration, `dontAsk`
 permissions, and a custom system prompt that treats the delimited trajectory
 payload as untrusted data rather than instructions.
 
+The SDK subprocess inherits the parent environment for authentication and
+routing, but EBO removes ambient model and effort override variables before
+launch so the caller request remains authoritative. The retained evaluator
+metadata records that policy without retaining secret values.
+
 The response can contain only an assessed proposal or an abstention. Assessed
 responses require confidence, rationale, an alternative explanation, and at
 least one packaged citation. Abstentions require a reason, rationale, and
