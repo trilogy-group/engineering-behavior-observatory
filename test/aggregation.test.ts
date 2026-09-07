@@ -23,7 +23,7 @@ const digest = `sha256:${"a".repeat(64)}` as const;
 test("aggregates distinct populations, retries, variation, and gated matched differences", async () => {
   const attempts = [
     entry("run-a", "attempt-a1", 1, { modelId: "model-a", trialId: "trial-1", terminalState: "completed", verifierStatuses: ["passed"] }),
-    entry("run-r", "attempt-r1", 1, { modelId: "model-a", trialId: "trial-retry", terminalState: "completed", verifierStatuses: ["passed"] }),
+    entry("run-r", "attempt-r1", 1, { modelId: "model-a", trialId: "trial-retry", terminalState: "completed", verifierStatuses: ["passed"], captureQualification: "unqualified" }),
     entry("run-r", "attempt-r2", 2, { modelId: "model-a", trialId: "trial-retry", terminalState: "interrupted", failureClass: "infrastructure", retryOf: "attempt-r1", verifierStatuses: [] }),
     entry("run-b", "attempt-b1", 1, { modelId: "model-b", trialId: "trial-1", terminalState: "completed", verifierStatuses: ["failed"] }),
     entry("run-c", "attempt-c1", 1, { modelId: "model-a", trialId: "trial-2", assessmentMode: "observational", terminalState: "completed", verifierStatuses: [] }),
@@ -122,6 +122,24 @@ test("aggregates distinct populations, retries, variation, and gated matched dif
     { reason: "capture-qualification-unavailable", count: 1, unit: "attempt" },
   ]);
   assert.equal(metric(missingQualification.groups[0]!, "capture-qualified-rate").measurement.status, "unavailable");
+  for (const verifierStatus of ["error", "not-run"] as const) {
+    const verifierInfrastructure = await aggregateEvaluation({
+      corpusEntries: [entry(`run-${verifierStatus}`, `attempt-${verifierStatus}`, 1, { verifierStatuses: [verifierStatus] })],
+      observationSets: [], assertions: [], calibrations: [], comparisons: [],
+    }, { groupBy: ["task"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 } });
+    const passRate = metric(verifierInfrastructure.groups[0]!, "verifier-pass-rate").measurement;
+    assert.equal(passRate.status, "unavailable");
+    assert.equal(passRate.exclusions[0]!.reason, "verifier-outcome-unavailable-or-infrastructure");
+  }
+
+  const captureGroups = await aggregateEvaluation({ corpusEntries: attempts, observationSets: [], assertions: [], calibrations: [], comparisons: [] }, {
+    groupBy: ["capture-qualification"], selectedAttemptPolicy: "latest-attempt-per-run", recurrence: { minimumOccurrences: 2 },
+  });
+  const excludedCaptureGroup = captureGroups.groups.find(({ dimensions }) => dimensions["capture-qualification"] === "unqualified")!;
+  assert.equal(metric(excludedCaptureGroup, "attempt-count").measurement.numerator.value, 0);
+  assert.deepEqual(metric(excludedCaptureGroup, "attempt-count").measurement.exclusions, [
+    { reason: "not-selected-by-attempt-policy", count: 1, unit: "attempt" },
+  ]);
 
   const singletonStates = [
     ...Array.from({ length: 8 }, (_, index) => entry(`stable-${index}`, `stable-attempt-${index}`, 1, { terminalState: "completed" })),

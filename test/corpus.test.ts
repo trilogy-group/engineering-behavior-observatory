@@ -79,6 +79,35 @@ test("builds, queries, and validates a deterministic mixed corpus index", async 
   }
 });
 
+test("indexes only the verifier bound to the terminal workspace", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-corpus-verifier-binding-"));
+  try {
+    const bundle = join(root, "bundle");
+    cpSync(join(fixtures, "complete"), bundle, { recursive: true });
+    const manifestPath = join(bundle, "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as any;
+    const source = manifest.evidence.find((descriptor: any) => descriptor.kind === "verifier");
+    const verifier = JSON.parse(readFileSync(join(bundle, source.relativePath), "utf8"));
+    const oldVerifier = { ...verifier, status: "failed", workspace: { ...verifier.workspace, artifactId: "old-workspace" } };
+    const bytes = Buffer.from(`${JSON.stringify(oldVerifier)}\n`);
+    writeFileSync(join(bundle, "old-verifier.json"), bytes);
+    manifest.evidence.push({
+      ...source,
+      id: "old-verifier",
+      relativePath: "old-verifier.json",
+      digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+      sizeBytes: bytes.length,
+    });
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    const indexed = buildCorpusIndex(bundle).find(({ manifestKind }) => manifestKind === "run")!;
+    assert.deepEqual(indexed.verifierStatuses, ["passed"]);
+    assert.deepEqual(indexed.verifierArtifactIds.sort(), ["old-verifier", source.id].sort());
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("portable archives are deterministic and contain only approved export files", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-portable-archive-"));
   const source = join(root, "source");

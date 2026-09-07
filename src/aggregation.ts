@@ -153,14 +153,18 @@ async function aggregateValidatedEvaluation(
   }
   for (const { selection } of input.calibrations) await revalidateReviewSample(selection);
   const reviewOutcomes = reviewOutcomeIndex(input.calibrations);
-  const groups = groupAttempts(selected, policy.groupBy).map(([dimensions, members]) => ({
-    dimensions,
-    metrics: groupMetrics(members, attempts, observations, assertions, reviewOutcomes, dimensions),
-    variations: [
-      variation("terminal-state", members, policy.recurrence.minimumOccurrences),
-      variation("verifier-status", members, policy.recurrence.minimumOccurrences),
-    ],
-  }));
+  const selectedIds = new Set(selected.map(attemptKey));
+  const groups = groupAttempts(attempts, policy.groupBy).map(([dimensions, allMembers]) => {
+    const members = allMembers.filter((attempt) => selectedIds.has(attemptKey(attempt)));
+    return {
+      dimensions,
+      metrics: groupMetrics(members, attempts, observations, assertions, reviewOutcomes, dimensions),
+      variations: [
+        variation("terminal-state", members, policy.recurrence.minimumOccurrences),
+        variation("verifier-status", members, policy.recurrence.minimumOccurrences),
+      ],
+    };
+  });
   const report: AggregationReport = {
     schemaVersion: "ebo.aggregation-report/v1",
     policy: {
@@ -228,7 +232,8 @@ function groupMetrics(
       "attempt", exclusionCounts(selected.flatMap(({ captureQualification }) => captureQualification === undefined ? ["capture-qualification-unavailable"] : []), "attempt")),
     rateMetric("terminal-completed-rate", "attempt", selected.filter(({ terminalState }) => terminalState === "completed").length, selected.length, "attempt", []),
   ];
-  const verified = selected.filter(({ assessmentMode, verifierStatuses }) => assessmentMode === "verified" && verifierStatuses.length === 1);
+  const verified = selected.filter(({ assessmentMode, verifierStatuses }) => assessmentMode === "verified"
+    && verifierStatuses.length === 1 && ["passed", "failed"].includes(verifierStatuses[0]!));
   metrics.push(rateMetric(
     "verifier-pass-rate",
     "attempt",
@@ -237,7 +242,8 @@ function groupMetrics(
     "verified-attempt",
     exclusionCounts(selected.flatMap((attempt) => attempt.assessmentMode !== "verified"
       ? ["observational-or-unknown-assessment-mode"]
-      : attempt.verifierStatuses.length !== 1 ? ["verifier-outcome-unavailable-or-conflicting"] : []), "attempt"),
+      : attempt.verifierStatuses.length !== 1 || !["passed", "failed"].includes(attempt.verifierStatuses[0]!)
+        ? ["verifier-outcome-unavailable-or-infrastructure"] : []), "attempt"),
   ));
   const selectedObservationSets = selected.flatMap((attempt) => observations.get(attemptKey(attempt)) ?? []);
   metrics.push(rateMetric("structural-observation-set-availability-rate", "attempt", selectedObservationSets.length,
@@ -455,6 +461,7 @@ function measureValue(attempt: Attempt, measure: string, observations: ReadonlyM
   if (measure === "attempt:infrastructure-failure") return { value: attempt.failureClass === "infrastructure" ? 1 : 0, unit: "attempt" };
   if (measure === "attempt:terminal-completed") return attempt.terminalState === undefined ? undefined : { value: attempt.terminalState === "completed" ? 1 : 0, unit: "attempt" };
   if (measure === "verified:verifier-passed") return attempt.assessmentMode !== "verified" || attempt.verifierStatuses.length !== 1
+    || !["passed", "failed"].includes(attempt.verifierStatuses[0]!)
     ? undefined : { value: attempt.verifierStatuses[0] === "passed" ? 1 : 0, unit: "verified-attempt" };
   if (measure.startsWith("structural:")) {
     const value = observations.get(attemptKey(attempt))?.observations.find(({ extractor }) => extractor.id === measure.slice("structural:".length))?.value;
