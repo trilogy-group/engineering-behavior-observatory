@@ -148,7 +148,15 @@ export async function selectReviewSample(
       throw new Error(`Review sample stratum "${id}" has an inverted confidence range.`);
     }
   }
-  const loaded = await loadCandidates(sourceSet.sources);
+  const canonicalSources: ReviewSourceSet = {
+    ...structuredClone(sourceSet),
+    sources: sourceSet.sources.map((source) => ({
+      ...structuredClone(source),
+      bundleRoot: resolve(source.bundleRoot),
+      assertionPath: resolve(source.assertionPath),
+    })),
+  };
+  const loaded = await loadCandidates(canonicalSources.sources);
   const identities = loaded.map(({ assertion }) => assertionKey(assertion));
   if (new Set(identities).size !== identities.length) throw new Error("Review source assertion identities must be unique.");
 
@@ -171,7 +179,7 @@ export async function selectReviewSample(
   const sample: ReviewSample = {
     schemaVersion: "ebo.review-sample/v1",
     createdAt: now(),
-    sources: structuredClone(sourceSet),
+    sources: canonicalSources,
     criteria: structuredClone(criteria),
     population: {
       sourceCount: loaded.length,
@@ -334,6 +342,10 @@ export function validateReviewHistory(selection: ReviewSample, history: ReviewHi
 
 export function validateReviewSample(selection: ReviewSample): void {
   assertValid("review sample", selection);
+  const candidateBindings = selection.candidates.map(({ assertion }) => assertionKey(assertion));
+  if (new Set(candidateBindings).size !== candidateBindings.length) {
+    throw new Error("Review sample candidate bindings must be unique.");
+  }
   if (selection.population.sourceCount !== selection.sources.sources.length) {
     throw new Error("Review sample source count does not match its retained source set.");
   }

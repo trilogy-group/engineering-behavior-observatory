@@ -76,6 +76,29 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     assert.deepEqual(first.population.selectedAssertionIds, second.population.selectedAssertionIds);
     assert.deepEqual(first.population.unavailableStrata, ["unavailable"]);
     assert.deepEqual(first.sources.sources.map(({ bundleRoot: root }) => root), sources.sources.map(({ bundleRoot: root }) => root));
+    const relativeSelection = await selectReviewSample({
+      schemaVersion: "ebo.review-source-set/v1",
+      sources: [{
+        ...sources.sources[0]!,
+        bundleRoot: relative(process.cwd(), sources.sources[0]!.bundleRoot),
+        assertionPath: relative(process.cwd(), sources.sources[0]!.assertionPath),
+      }],
+    }, { schemaVersion: "ebo.review-sample-criteria/v1", seed: "relative", strata: [{ id: "all", sampleSize: 1, filters: {} }] });
+    assert.equal(relativeSelection.sources.sources[0]!.bundleRoot, sources.sources[0]!.bundleRoot);
+    assert.equal(relativeSelection.sources.sources[0]!.assertionPath, sources.sources[0]!.assertionPath);
+    const duplicateCandidateSelection: ReviewSample = {
+      ...structuredClone(first),
+      candidates: [...first.candidates, structuredClone(first.candidates[0]!)],
+      population: {
+        ...structuredClone(first.population),
+        selectedAssertionIds: [...first.population.selectedAssertionIds, first.candidates[0]!.assertion.id],
+      },
+    };
+    assert.throws(() => summarizeCalibration(duplicateCandidateSelection, {
+      schemaVersion: "ebo.review-history/v1",
+      selection: { schemaVersion: duplicateCandidateSelection.schemaVersion, digest: digest(duplicateCandidateSelection) },
+      decisions: [],
+    }), /candidate bindings must be unique/u);
     assert.equal(first.candidates.every(({ context }) => context.outcome === "unavailable"), true, "observational runs have no verifier outcome");
     const duplicateId = { ...structuredClone(assertions[1]!), id: assertions[0]!.id };
     duplicateId.judgment = { ...duplicateId.judgment, rationale: "A second run may reuse the request-derived assertion ID." };
