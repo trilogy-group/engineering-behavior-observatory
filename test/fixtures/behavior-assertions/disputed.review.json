@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "ebo.behavior-review/v1",
+  "id": "review-disputed",
+  "assertion": {
+    "id": "assertion-positive",
+    "schemaVersion": "ebo.behavior-assertion/v1",
+    "digest": "sha256:43f327dd0f0f405b57885b5650d512c58e714fd1a22c79ebda5b4e0f8cf9c2f1"
+  },
+  "state": "disputed",
+  "reviewer": { "kind": "human", "id": "synthetic-fixture-reviewer" },
+  "rationale": "Synthetic fixture: the cited validation does not establish completion quality."
+}

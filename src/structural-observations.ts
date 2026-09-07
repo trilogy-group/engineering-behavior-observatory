@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   claudeAgentSdkNormalizationAdapter,
+  CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_VERSION,
   createAgentSdkNativeEvidenceResolver,
   readQualifiedClaudeAgentSdkCapture,
   type AgentSdkNativeRecord,
@@ -23,7 +24,7 @@ import type {
 } from "./uniform-events.js";
 
 export const STRUCTURAL_EXTRACTOR_VERSION = "1.0.0";
-export const CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_VERSION = "1.0.0";
+export { CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_VERSION } from "./agent-sdk-normalizer.js";
 
 type RequiredCapability = `family:${UniformEventFamily}` | "evidence:nativeOrder";
 type KnownValue = { status: "known"; value: string | number | boolean; unit: string };

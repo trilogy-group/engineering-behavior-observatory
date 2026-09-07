@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "ebo.behavior-vocabulary/v1",
+  "version": "1.0.0",
+  "categories": [
+    {
+      "id": "objective-constraint-management",
+      "name": "Objective and constraint management",
+      "dimensions": [{ "id": "objective-constraint-management", "name": "Objective and constraint management" }]
+    },
+    {
+      "id": "evidence-use",
+      "name": "Evidence use",
+      "dimensions": [{ "id": "evidence-use", "name": "Evidence use" }]
+    },
+    {
+      "id": "tool-selection-execution",
+      "name": "Tool selection and execution",
+      "dimensions": [{ "id": "tool-selection-execution", "name": "Tool selection and execution" }]
+    },
+    {
+      "id": "error-recognition-recovery",
+      "name": "Error recognition and recovery",
+      "dimensions": [{ "id": "error-recognition-recovery", "name": "Error recognition and recovery" }]
+    },
+    {
+      "id": "context-state-continuity",
+      "name": "Context and state continuity",
+      "dimensions": [{ "id": "context-state-continuity", "name": "Context and state continuity" }]
+    },
+    {
+      "id": "verification-completion",
+      "name": "Verification and completion",
+      "dimensions": [{ "id": "verification-completion", "name": "Verification and completion" }]
+    },
+    {
+      "id": "permission-escalation",
+      "name": "Permission and escalation behavior",
+      "dimensions": [{ "id": "permission-escalation", "name": "Permission and escalation behavior" }]
+    },
+    {
+      "id": "unnecessary-work",
+      "name": "Unnecessary work",
+      "dimensions": [{ "id": "unnecessary-work", "name": "Unnecessary work" }]
+    }
+  ]
+}
