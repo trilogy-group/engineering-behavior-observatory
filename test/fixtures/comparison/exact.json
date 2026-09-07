@@ -1,0 +1,79 @@
+{
+  "schemaVersion": "ebo.comparison-request/v1",
+  "left": {
+    "id": "run-left",
+    "adapterVersion": "1.0.0",
+    "task": { "id": "task-a", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    "fixture": { "id": "fixture-a", "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    "model": { "id": "model-a", "configurationDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+    "harness": { "id": "harness-a", "version": "1.0.0", "configurationDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
+    "assessmentMode": "observational",
+    "captureProfileDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "budgetDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "toolPolicyDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "capabilityProfile": {
+      "schemaVersion": "ebo.adapter-capability-profile/v1",
+      "adapterId": "adapter-a",
+      "harness": "harness-a",
+      "nativeTypes": ["message"],
+      "families": {
+        "message": { "status": "available" },
+        "model-request": { "status": "available" },
+        "tool": { "status": "available" },
+        "context": { "status": "available" },
+        "permission": { "status": "available" },
+        "delegation": { "status": "available" },
+        "artifact": { "status": "available" },
+        "validation": { "status": "available" },
+        "runtime": { "status": "available" },
+        "outcome": { "status": "available" }
+      },
+      "evidence": {
+        "nativeOrder": { "status": "available" },
+        "nativeTime": { "status": "available" },
+        "parentage": { "status": "available" },
+        "content": { "status": "available" }
+      }
+    }
+  },
+  "right": {
+    "id": "run-right",
+    "adapterVersion": "1.0.0",
+    "task": { "id": "task-a", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    "fixture": { "id": "fixture-a", "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    "model": { "id": "model-a", "configurationDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+    "harness": { "id": "harness-a", "version": "1.0.0", "configurationDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
+    "assessmentMode": "observational",
+    "captureProfileDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "budgetDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "toolPolicyDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "capabilityProfile": {
+      "schemaVersion": "ebo.adapter-capability-profile/v1",
+      "adapterId": "adapter-a",
+      "harness": "harness-a",
+      "nativeTypes": ["message"],
+      "families": {
+        "message": { "status": "available" },
+        "model-request": { "status": "available" },
+        "tool": { "status": "available" },
+        "context": { "status": "available" },
+        "permission": { "status": "available" },
+        "delegation": { "status": "available" },
+        "artifact": { "status": "available" },
+        "validation": { "status": "available" },
+        "runtime": { "status": "available" },
+        "outcome": { "status": "available" }
+      },
+      "evidence": {
+        "nativeOrder": { "status": "available" },
+        "nativeTime": { "status": "available" },
+        "parentage": { "status": "available" },
+        "content": { "status": "available" }
+      }
+    }
+  },
+  "policy": {
+    "declaredDifferences": [],
+    "requiredCapabilities": ["family:tool", "evidence:nativeOrder"]
+  }
+}

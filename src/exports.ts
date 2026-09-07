@@ -101,6 +101,8 @@ const HIDDEN_FIELDS = new Set([
   "reasoning",
   "thinking",
 ]);
+const CODEX_REASONING_DELTA_METHOD = "item/reasoning/textDelta";
+const CODEX_REASONING_CONTENT_FIELDS = new Set(["content", "delta", "encryptedcontent", "summary", "text"]);
 const SECRET_FIELDS = new Set([
   "accesskey",
   "accesstoken",
@@ -414,7 +416,7 @@ function sanitizeArtifact(
     const output = Buffer.from(canonicalizeMetadata(sanitizeValue(
       kind === "verifier"
         ? rewriteVerifierDiagnosticReferences(parseJson(bytes, "JSON evidence"), portableDiagnostics)
-        : parseJson(bytes, "JSON evidence"),
+        : stripCodexReasoning(parseJson(bytes, "JSON evidence"), kind, counts),
       policy,
       replacements,
       sensitiveValues,
@@ -429,7 +431,8 @@ function sanitizeArtifact(
     if (lines.length === 0) throw new Error("JSONL evidence is empty.");
     increment(counts, "canonicalized", lines.length);
     const sanitized = lines.map((line) => canonicalizeMetadata(sanitizeValue(
-      parseJson(Buffer.from(line), "JSONL evidence record"), policy, replacements, sensitiveValues, localIdentifiers, counts,
+      stripCodexReasoning(parseJson(Buffer.from(line), "JSONL evidence record"), kind, counts),
+      policy, replacements, sensitiveValues, localIdentifiers, counts,
     )));
     const retained: string[] = [];
     for (const line of sanitized) {
@@ -551,6 +554,75 @@ function sanitizeValue(
   return output;
 }
 
+function stripCodexReasoning(
+  value: unknown,
+  kind: PortableKind | undefined,
+  counts: Map<TransformationAction, number>,
+): unknown {
+  if (kind !== "session") return value;
+  if (Array.isArray(value)) return value.map((entry) => stripCodexReasoning(entry, kind, counts));
+  if (!isRecord(value)) return value;
+  const reasoningItem = value.type === "reasoning";
+  const reasoningDelta = value.method === CODEX_REASONING_DELTA_METHOD;
+  const payloadContainsReasoning = containsCodexReasoning(value.payload);
+  const output: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const normalized = normalizeFieldName(key);
+    if (reasoningItem && key !== "type" && key !== "id") {
+      increment(counts, "removed-field");
+      continue;
+    }
+    if (key === "raw" && (reasoningDelta || payloadContainsReasoning || rawContainsCodexReasoning(entry))) {
+      increment(counts, "removed-field");
+      continue;
+    }
+    if (reasoningDelta && CODEX_REASONING_CONTENT_FIELDS.has(normalized)) {
+      increment(counts, "removed-field");
+      continue;
+    }
+    if (reasoningDelta && (key === "params" || key === "payload")) {
+      output[key] = stripCodexReasoningEnvelope(entry, kind, counts);
+      continue;
+    }
+    output[key] = stripCodexReasoning(entry, kind, counts);
+  }
+  return output;
+}
+
+function stripCodexReasoningEnvelope(
+  value: unknown,
+  kind: PortableKind,
+  counts: Map<TransformationAction, number>,
+): unknown {
+  if (Array.isArray(value)) return value.map((entry) => stripCodexReasoningEnvelope(entry, kind, counts));
+  if (!isRecord(value)) return value;
+  const output: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (CODEX_REASONING_CONTENT_FIELDS.has(normalizeFieldName(key))) {
+      increment(counts, "removed-field");
+      continue;
+    }
+    output[key] = stripCodexReasoning(entry, kind, counts);
+  }
+  return output;
+}
+
+function containsCodexReasoning(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsCodexReasoning);
+  if (!isRecord(value)) return false;
+  return value.type === "reasoning" || value.method === CODEX_REASONING_DELTA_METHOD
+    || Object.values(value).some(containsCodexReasoning);
+}
+
+function rawContainsCodexReasoning(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  try {
+    return containsCodexReasoning(JSON.parse(value) as unknown);
+  } catch {
+    return false;
+  }
+}
+
 function rewriteString(
   input: string,
   policy: PortableExportPolicy,
@@ -626,14 +698,14 @@ function scanPortableTree(
 ): void {
   for (const [index, { bytes, mediaType }] of buffers.entries()) {
     const text = decode(bytes, "portable export");
-    const secretPatternIndex = SECRET_PATTERNS.findIndex((pattern) => pattern.test(text));
     const failure = [
       ["known sensitive value", sensitiveValues.some((value) => text.includes(value))],
-      ["secret pattern", secretPatternIndex >= 0],
+      ["secret pattern", containsSecretPattern(text, mediaType)],
       ["absolute path", containsLocalPath(text, mediaType)],
       ["local identifier", LOCAL_IDENTIFIER_PATTERNS.some((pattern) => pattern.test(text))],
       ["source correlation", sourceCorrelations.filter((value) => value.length >= 8).some((value) => text.includes(value))],
       ["hidden content field", /"(?:chain[_-]?of[_-]?thought|extended[_-]?thinking|hidden[_-]?reasoning|reasoning|thinking|raw[_-]?(?:api|request|response)[_-]?body)"\s*:/iu.test(text)],
+      ["Codex reasoning content", containsCodexReasoningContent(text, mediaType)],
     ].find(([, matched]) => matched);
     if (failure !== undefined) {
       resetPatterns();
@@ -641,6 +713,65 @@ function scanPortableTree(
     }
     resetPatterns();
   }
+}
+
+function containsCodexReasoningContent(text: string, mediaType: string): boolean {
+  if (mediaType === "application/json") {
+    return valueContainsCodexReasoningContent(parseJson(Buffer.from(text), "Portable JSON reasoning scan"));
+  }
+  if (mediaType === "application/x-ndjson") {
+    return text.split(/\r?\n/gu).filter(Boolean).some((line) =>
+      valueContainsCodexReasoningContent(parseJson(Buffer.from(line), "Portable JSONL reasoning scan")));
+  }
+  return false;
+}
+
+function valueContainsCodexReasoningContent(value: unknown): boolean {
+  if (typeof value === "string") {
+    const trimmed = value.trimStart();
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+    try {
+      return valueContainsCodexReasoningContent(JSON.parse(trimmed) as unknown);
+    } catch {
+      return false;
+    }
+  }
+  if (Array.isArray(value)) return value.some(valueContainsCodexReasoningContent);
+  if (!isRecord(value)) return false;
+  if (value.type === "reasoning"
+      && Object.keys(value).some((key) => CODEX_REASONING_CONTENT_FIELDS.has(normalizeFieldName(key)))) return true;
+  if (value.method === CODEX_REASONING_DELTA_METHOD) {
+    for (const container of [value.params, value.payload]) {
+      if (isRecord(container)
+          && Object.keys(container).some((key) => CODEX_REASONING_CONTENT_FIELDS.has(normalizeFieldName(key)))) return true;
+    }
+  }
+  return Object.values(value).some(valueContainsCodexReasoningContent);
+}
+
+function containsSecretPattern(text: string, mediaType: string): boolean {
+  if (mediaType === "application/json") {
+    return valueContainsSecretPattern(parseJson(Buffer.from(text), "Portable JSON final scan"));
+  }
+  if (mediaType === "application/x-ndjson") {
+    return text.split(/\r?\n/gu).filter(Boolean).some((line) =>
+      valueContainsSecretPattern(parseJson(Buffer.from(line), "Portable JSONL final scan")));
+  }
+  return stringContainsSecretPattern(text);
+}
+
+function valueContainsSecretPattern(value: unknown): boolean {
+  if (typeof value === "string") return stringContainsSecretPattern(value);
+  if (Array.isArray(value)) return value.some(valueContainsSecretPattern);
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(([key, entry]) =>
+    stringContainsSecretPattern(key) || valueContainsSecretPattern(entry));
+}
+
+function stringContainsSecretPattern(value: string): boolean {
+  const matched = SECRET_PATTERNS.some((pattern) => pattern.test(value));
+  resetPatterns();
+  return matched;
 }
 
 function containsLocalPath(text: string, mediaType: string): boolean {

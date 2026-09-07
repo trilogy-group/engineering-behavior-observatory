@@ -23,6 +23,10 @@ or implement beyond the assigned issue.
 - Integrate OpenHands through a pinned Agent Server REST/WebSocket boundary.
   Claim only the evidence verified through that API; do not assume complete
   in-process `EventLog` delivery.
+- Integrate Codex through a pinned, owned `app-server` child over stdio. Match
+  native thread/turn terminal identities, retain history separately from
+  streamed items, and never attach to a desktop daemon or infer completion from
+  process exit.
 - Keep source control protocols separate from EBO's small uniform event
   projection. Each adapter retains its own methods, identities, lifecycle, and
   completion semantics.
@@ -99,9 +103,10 @@ priorities.
 - P0/P1 findings are blocking. A P2 blocks only when it demonstrates an
   acceptance-criteria failure, evidence loss or corruption, secret leakage, or
   a violation of the trust boundary above.
-- Require exactly eight completed full-PR scans when automated review is active:
-  one automatic scan and seven explicit re-triggers. Batch remediation between
-  scans; after scan 8, use exact-commit local review instead of scan 9.
+- Require one clean full-PR scan for the current head and allow at most eight
+  scans total when automated review is active. Stop on a clean no-issues or 👍
+  result; re-trigger only after remediation changes the head. After scan 8, use
+  exact-commit local review instead of scan 9.
 - Do not request speculative hardening for hostile same-user races, trusted
   callback mutation, new archive dialects, or capabilities outside the issue.
 

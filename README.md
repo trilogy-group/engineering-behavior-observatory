@@ -14,6 +14,19 @@ The first post-capture contract is now available: versioned
 capture-qualified native evidence without replacing source records or transport
 semantics.
 
+The [OpenHands Agent Server adapter](docs/openhands-agent-server.md) implements
+the pinned `1.44.1` REST/WebSocket boundary with native-first reconciliation,
+explicit completeness gaps, and verified run-bundle packaging.
+
+The [DeepSeek Harness adapter](docs/deepseek-harness.md) uses the official
+out-of-process TypeScript client, retains native session evidence and explicit
+receipt-to-idle completion boundaries, and normalizes only qualified records.
+
+The optional [Codex app-server adapter](docs/codex-harness.md) owns one pinned
+`0.150.1` stdio child per attempt, retains native thread/turn/item evidence and
+independently verified OTLP receipts, and runs one frozen observational queue
+entry through `ebo codex run`.
+
 ## Status
 
 M2 native Agent SDK capture is available through the public
@@ -45,6 +58,8 @@ EBO TypeScript coordinator
 │   └── official TypeScript client over JSON-RPC stdio
 ├── OpenHands adapter
 │   └── pinned Agent Server REST/WebSocket API
+├── Codex adapter
+│   └── pinned app-server JSONL protocol over owned stdio
 └── uniform event projection
     └── only after native capture qualification
 ```
@@ -83,12 +98,14 @@ node dist/src/cli.js matrix compile <experiment.json> <bundle-root> <queue.json>
 node dist/src/cli.js queue inspect <queue.json>
 node dist/src/cli.js queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
 node dist/src/cli.js agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
+node dist/src/cli.js codex run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 node dist/src/cli.js export create <run-bundle-root> <policy.json> <export-root>
 node dist/src/cli.js corpus build <corpus-root> <index.jsonl>
 node dist/src/cli.js corpus query <index.jsonl> [--task <id>] [--model <id>] [--harness <id>] [--assessment-mode <observational|verified>]
 node dist/src/cli.js corpus validate <corpus-root> <index.jsonl>
 node dist/src/cli.js corpus pack <approved-export-root> <policy.json> <archive.tar.gz>
 node dist/src/cli.js corpus unpack <archive.tar.gz> <destination-root>
+node dist/src/cli.js comparison check <request.json>
 # Optional approved OAuth smoke; provide OAuth auth, never API-key overrides.
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 EBO_LIVE_AGENT_SDK_SMOKE=1 node --test --test-name-pattern='approved live Agent SDK smoke' dist/test/capture-qualification.test.js
@@ -114,6 +131,13 @@ cannot start, or the retained output fails validation. It never iterates the
 queue, retries, or replaces an existing attempt destination. `ebo export
 create` calls `createPortableRunBundleExport` with its policy-bound readback
 and never modifies the restricted source bundle.
+
+If outcome packaging fails after execution starts, the runner preserves the
+source workspace for recovery and includes `retainedWorkspacePath` in its local
+summary. The summary also reports this path if cleanup fails after successful
+packaging. Capture remains unqualified until valid outcome evidence is available.
+Workspace diffs use an indexed Git tree without creating a commit, avoiding
+background Git maintenance during temporary-repository cleanup.
 
 Observational packets are the primary path for open-ended enterprise work.
 They contain no reference solution or verifier. Their `completed` terminal
@@ -143,6 +167,14 @@ validation issues instead of silently omitting missing evidence. Native
 manifests remain authoritative; delete and rebuild the index at any time.
 Queries use exact-match flags shown by `ebo --help` and do not index prompt or
 tool bodies.
+
+Normalized datasets retain digest-bound native references rather than copied
+source records. Their validator produces adapter/version coverage that keeps
+unmapped native types and unsupported capabilities explicit. `ebo comparison
+check` evaluates one inspectable comparison request and returns `supported`,
+`qualified-with-caveats`, or `unsupported`; declared harness differences remain
+caveats and never become causal claims. See
+[docs/normalization-integrity.md](docs/normalization-integrity.md).
 
 Portable archives accept only `ready` or `exported` partner/public trees that
 pass the export pipeline's policy-bound readback and final secret scan.

@@ -216,6 +216,74 @@ export {
   spawnProtocolProcess,
 } from "./process-protocol.js";
 export {
+  captureCodexAppServer,
+  CODEX_ADAPTER_VERSION,
+  CODEX_APP_SERVER_CAPABILITIES,
+  CODEX_APP_SERVER_VERSION,
+  CODEX_DEFAULT_SHUTDOWN_GRACE_MS,
+  CODEX_HARNESS,
+  createCodexHarnessAdapter,
+  describeAndValidateCodexDataset,
+  normalizeCodexCapture,
+} from "./codex.js";
+export type {
+  CodexAppServerCapture,
+  CodexAppServerCaptureRequest,
+  CodexAppServerConfiguration,
+  CodexApprovalPolicy,
+  CodexCaptureGap,
+  CodexOtlpRecord,
+  CodexReasoningEffort,
+  CodexSandbox,
+  CodexTelemetryEvidence,
+  CodexTelemetrySignal,
+} from "./codex.js";
+export {
+  captureCodexAppServerRun,
+  CODEX_CONFIG_SCHEMA_VERSION,
+  CODEX_CONTRACT_DIGEST,
+  resolveCodexConfigurationRecord,
+  runCodexQueueEntry,
+} from "./codex-run.js";
+export type {
+  CaptureCodexAppServerRunOptions,
+  CaptureCodexAppServerRunResult,
+  CaptureCodexAppServerVerifier,
+  CodexCaptureProfileConfiguration,
+  CodexConfigurationKind,
+  CodexConfigurationRecord,
+  CodexHarnessConfiguration,
+  CodexModelConfiguration,
+  CodexNativeLimitsConfiguration,
+  CodexNativeToolPolicyConfiguration,
+  CodexRunSummary,
+  RunCodexQueueEntryOptions,
+} from "./codex-run.js";
+export {
+  createDeepSeekHarnessAdapter,
+  createDeepSeekRuntimeComposition,
+  DEEPSEEK_ADAPTER_ID,
+  DEEPSEEK_CAPABILITY_PROFILE,
+  DEEPSEEK_HARNESS_ID,
+  DEEPSEEK_SDK_VERSION,
+  deepSeekCapabilities,
+  deepSeekCompositionDigest,
+  DeepSeekNativeCapture,
+  executeDeepSeekHarness,
+  normalizeDeepSeekCapture,
+  qualifiedDeepSeekCapture,
+} from "./deepseek-adapter.js";
+export type {
+  DeepSeekAdapterRequest,
+  DeepSeekCapabilities,
+  DeepSeekCaptureReport,
+  DeepSeekFileReference,
+  DeepSeekHarnessConfiguration,
+  DeepSeekNativeObservation,
+  DeepSeekRuntimeComposition,
+  DeepSeekRuntimeCompositionInput,
+} from "./deepseek-adapter.js";
+export {
   buildClaudeAgentSdkEnvironment,
   executeClaudeAgentSdk,
   openClaudeAgentSdkHookCapture,
@@ -266,6 +334,7 @@ export type {
   HarnessAdapter,
   NativeCaptureAdapter,
   NativeEvidenceReference,
+  NativeEvidenceResolution,
   NativeEvidenceResolver,
   NativeOrderEvidence,
   NormalizationInput,
@@ -278,6 +347,62 @@ export type {
   UniformEventNormalizationAdapter,
   UnmappedNativeRecord,
 } from "./uniform-events.js";
+export {
+  assessComparisonEligibility,
+  createCapturedNativeEvidenceResolver,
+  describeNormalizedDataset,
+  validateNormalizedCorpus,
+  validateNormalizedDataset,
+} from "./normalization-integrity.js";
+export type {
+  AdapterCoverageReport,
+  ComparisonCandidate,
+  ComparisonCapability,
+  ComparisonReason,
+  ComparisonReport,
+  ComparisonRequest,
+  NormalizedDataset,
+  NormalizedDatasetInput,
+  NormalizedContentReference,
+  NormalizedNativeRecord,
+} from "./normalization-integrity.js";
+export {
+  captureOpenHandsAgentServer,
+  createOpenHandsHarnessAdapter,
+  normalizeOpenHandsCapture,
+  OPENHANDS_AGENT_SERVER_CAPABILITIES,
+  OPENHANDS_AGENT_SERVER_VERSION,
+  OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES,
+  OPENHANDS_MAX_RESPONSE_BYTES,
+  OPENHANDS_DEFAULT_MAX_CAPTURE_BYTES,
+  OPENHANDS_MAX_CAPTURE_BYTES,
+  OPENHANDS_TYPESCRIPT_CLIENT_VERSION,
+} from "./openhands.js";
+export type {
+  OpenHandsCapture,
+  OpenHandsCaptureRequest,
+  OpenHandsNativeRecord,
+  OpenHandsWebSocket,
+} from "./openhands.js";
+export { captureOpenHandsAgentServerRun } from "./openhands-run.js";
+export type {
+  CaptureOpenHandsAgentServerRunOptions,
+  CaptureOpenHandsAgentServerRunResult,
+  CaptureOpenHandsAgentServerVerifier,
+  OpenHandsAgentServerRunConfiguration,
+} from "./openhands-run.js";
+export {
+  CLAUDE_AGENT_SDK_HARNESS,
+  CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_ID,
+  claudeAgentSdkNormalizationAdapter,
+  createAgentSdkNativeEvidenceResolver,
+  normalizeClaudeAgentSdkRunBundle,
+  readQualifiedClaudeAgentSdkCapture,
+} from "./agent-sdk-normalizer.js";
+export type {
+  AgentSdkNativeRecord,
+  AgentSdkNormalizationResult,
+} from "./agent-sdk-normalizer.js";
 export {
   AGENT_SDK_CONFIG_SCHEMA_VERSION,
   resolveAgentSdkConfigurationRecord,

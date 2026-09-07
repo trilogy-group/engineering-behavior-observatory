@@ -16,7 +16,9 @@ import {
   type CorpusIndexQuery,
 } from "./corpus.js";
 import { runAgentSdkQueueEntry } from "./agent-sdk-runner.js";
+import { runCodexQueueEntry } from "./codex-run.js";
 import { createPortableRunBundleExport, type PortableExportPolicy } from "./exports.js";
+import { assessComparisonEligibility, type ComparisonRequest } from "./normalization-integrity.js";
 import {
   admitTaskPacket,
   formatErrors,
@@ -38,12 +40,14 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo queue inspect <queue.json>
        ebo queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
        ebo agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
+       ebo codex run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
        ebo export create <run-bundle-root> <policy.json> <export-root>
        ebo corpus build <corpus-root> <index.jsonl>
        ebo corpus query <index.jsonl> [--kind|--run|--attempt|--task|--model|--harness|--assessment-mode|--terminal|--failure-class|--verifier-status|--capture|--export-status|--sharing-class <value>]
        ebo corpus validate <corpus-root> <index.jsonl>
        ebo corpus pack <export-root> <policy.json> <archive.tar.gz>
        ebo corpus unpack <archive.tar.gz> <destination-root>
+       ebo comparison check <request.json>
 
 Engineering Behavior Observatory
 `;
@@ -92,12 +96,31 @@ export function main(
     return runAgentSdkCommand(args.slice(2), write);
   }
 
+  if (args[0] === "codex" && args[1] === "run") {
+    return runCodexCommand(args.slice(2), write);
+  }
+
   if (args[0] === "export" && args[1] === "create") {
     return createExportCommand(args.slice(2), write);
   }
 
   if (args[0] === "corpus") {
     return runCorpusCommand(args.slice(1), write);
+  }
+
+  if (args[0] === "comparison" && args[1] === "check") {
+    if (args[2] === undefined || args.length !== 3) {
+      write("Usage: ebo comparison check <request.json>\n");
+      return 1;
+    }
+    try {
+      const report = assessComparisonEligibility(readJson(args[2]) as ComparisonRequest);
+      write(`${canonicalizeMetadata(report)}\n`);
+      return report.status === "unsupported" ? 1 : 0;
+    } catch (error) {
+      write(`${errorMessage(error)}\n`);
+      return 1;
+    }
   }
 
   if (args[0] === "validate") {
@@ -263,6 +286,53 @@ async function runAgentSdkCommand(
   } catch (error) {
     write(`${errorMessage(error)}\n`);
     return 1;
+  }
+}
+
+async function runCodexCommand(
+  args: string[],
+  write: (message: string) => void,
+): Promise<number> {
+  const commandUsage = "Usage: ebo codex run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]\n";
+  const positional: string[] = [];
+  let workspaceRoot: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === "--workspace-root") {
+      const value = args[++index];
+      if (value === undefined || value.startsWith("--")) {
+        write(commandUsage);
+        return 1;
+      }
+      workspaceRoot = value;
+    } else positional.push(args[index]!);
+  }
+  const [bundleRoot, queuePath, runId, outputRoot] = positional;
+  if (bundleRoot === undefined || queuePath === undefined || runId === undefined
+      || outputRoot === undefined || positional.length !== 4) {
+    write(commandUsage);
+    return 1;
+  }
+  const controller = new AbortController();
+  const abort = (): void => controller.abort();
+  process.on("SIGINT", abort);
+  process.on("SIGTERM", abort);
+  try {
+    const summary = await runCodexQueueEntry({
+      bundleRoot,
+      queuePath,
+      runId,
+      outputRoot,
+      signal: controller.signal,
+      ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+    });
+    write(`${canonicalizeMetadata(summary)}\n`);
+    return 0;
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  } finally {
+    process.off("SIGINT", abort);
+    process.off("SIGTERM", abort);
   }
 }
 

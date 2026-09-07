@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -7,6 +8,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
+import { RunBundleAssembler } from "../src/run-bundles.js";
 import type { HookEvent, HookInput, Options, SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import {
@@ -68,6 +70,8 @@ test("executes one frozen queue entry end to end and retains a qualified bundle"
     assert.equal(summary.classification, "completed");
     assert.equal(summary.captureQualification, "qualified");
     assert.equal(summary.sessionId, SESSION_ID);
+    assert.equal(summary.retainedWorkspacePath, undefined);
+    assert.deepEqual(readdirSync(fixture.workspaceRoot), [], "successful packaging still cleans up the source workspace");
 
     const manifest = readManifest(summary.bundlePath);
     const workspaceEvidence = manifest.evidence.find((descriptor) => descriptor.kind === "workspace");
@@ -84,6 +88,74 @@ test("executes one frozen queue entry end to end and retains a qualified bundle"
     assert.ok(readFileSync(join(summary.bundlePath, "session.jsonl"), "utf8").trim().length > 0);
     assert.ok(readFileSync(join(summary.bundlePath, "hooks.jsonl"), "utf8").trim().length > 0);
   } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
+test("capture initialization failure cleans the unused workspace", async (t) => {
+  const fixture = createRunnerFixture({ assessmentMode: "observational" });
+  t.mock.method(RunBundleAssembler.prototype, "initialize", async () => {
+    throw new Error("injected capture initialization failure");
+  });
+  const query = fakeQuery({ resultContent: "must not execute\n" });
+  try {
+    await assert.rejects(runAgentSdkQueueEntry({ ...fixture, query: query.query }), /injected capture initialization failure/);
+    assert.equal(query.calls(), 0);
+    assert.deepEqual(readdirSync(fixture.workspaceRoot), []);
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
+test("workspace capture failure preserves model output and reports a recoverable path", async (t) => {
+  const fixture = createRunnerFixture({ assessmentMode: "observational" });
+  t.mock.method(RunBundleAssembler.prototype, "captureWorkspaceOutcome", async () => {
+    throw new Error("ENOSPC: injected workspace packaging failure");
+  });
+  const query = fakeQuery({ resultContent: "completed work worth preserving\n" });
+  try {
+    const summary = await runAgentSdkQueueEntry({
+      ...fixture,
+      query: query.query,
+      checkTelemetryReceipt: receivedReceipt,
+    });
+    assert.equal(summary.captureQualification, "unqualified");
+    assert.equal(summary.terminal.workspaceArtifactId, undefined);
+    const retainedPath = summary.retainedWorkspacePath;
+    assert.ok(retainedPath, "failed packaging must identify the retained source workspace");
+    assert.equal(readFileSync(join(retainedPath, "result.txt"), "utf8"), "completed work worth preserving\n");
+    const manifest = readManifest(summary.bundlePath);
+    assert.deepEqual(summary.terminal, manifest.terminal);
+    assert.equal(manifest.evidence.some(({ kind }) => kind === "workspace"), false);
+    assert.ok(existsSync(join(summary.bundlePath, "session.jsonl")));
+    assert.equal(query.calls(), 1);
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
+test("reports a leftover workspace when cleanup fails after successful capture", async (t) => {
+  const fixture = createRunnerFixture({ assessmentMode: "observational" });
+  const openDirectory = fs.opendirSync;
+  t.mock.method(fs, "opendirSync", (...args: Parameters<typeof fs.opendirSync>) => {
+    if (args[0] === ".") throw new Error("injected workspace cleanup failure");
+    return openDirectory(...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    const summary = await runAgentSdkQueueEntry({
+      ...fixture,
+      query: fakeQuery({ resultContent: "retained output\n" }).query,
+      checkTelemetryReceipt: receivedReceipt,
+    });
+    assert.equal(summary.classification, "infrastructure-failure");
+    assert.equal(summary.captureQualification, "qualified");
+    assert.ok(summary.retainedWorkspacePath);
+    assert.equal(readFileSync(join(summary.retainedWorkspacePath, "result.txt"), "utf8"), "retained output\n");
+    assert.equal(readManifest(summary.bundlePath).evidence.some(({ kind }) => kind === "workspace"), true);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
     rmSync(fixture.parent, { recursive: true, force: true });
   }
 });

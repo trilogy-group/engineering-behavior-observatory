@@ -1,0 +1,21 @@
+{
+  "id": "deepseek-telemetry",
+  "dshBin": "../../fake-runtime.mjs",
+  "profile": "sdk",
+  "cordisPath": "cordis.yml",
+  "patches": ["cordis.yml"],
+  "processCwd": ".",
+  "workspaceCwd": ".",
+  "provider": "fake-provider",
+  "model": "fake-model",
+  "plugins": [
+    { "name": "agent" },
+    { "name": "jsonrpc", "configurationPath": "cordis.yml" },
+    { "name": "session-telemetry-otel", "configurationPath": "cordis.yml" }
+  ],
+  "environment": {
+    "allowedKeys": ["FAKE_SCENARIO", "FAKE_SECRET"],
+    "secretKeys": ["FAKE_SECRET"]
+  },
+  "telemetry": { "status": "enabled", "nativeSpans": "not-checked", "artifactPath": "telemetry.json" }
+}

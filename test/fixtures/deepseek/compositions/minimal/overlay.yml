@@ -1,0 +1,3 @@
+plugins:
+  observer:
+    mode: native-only

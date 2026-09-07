@@ -11,7 +11,12 @@ last_memory_sync: 2026-08-31T12:29:52.140353+00:00
 
 ## Current model
 
-- COE-591 contributed: PR #22: feat: add operational Agent SDK runner and portable-export command (merge `0c8c4e5`)
+- COE-576 contributed: PR #25: COE-576: Define the uniform event adapter contract (merge `a302d38`)
+- COE-577 contributed: PR #28: feat: normalize Agent SDK capture into uniform events (merge `4050f9e`)
+- COE-578 contributed: PR #30: COE-578: Add pinned OpenHands Agent Server adapter (merge `07bf452`)
+- COE-579 contributed: PR #29: COE-579: Add the DeepSeek Harness runtime adapter (merge `49a5721`)
+- COE-580 contributed: PR #31: COE-580: Gate normalization integrity and comparisons (merge `035bdab`)
+- COE-592 contributed: PR #23: COE-592: support observational Agent SDK runs (merge `03d1cd5`)
 
 ## Important invariants
 
@@ -28,10 +33,26 @@ last_memory_sync: 2026-08-31T12:29:52.140353+00:00
 
 ## Recent changes
 
-- COE-591: Operationalize one Agent SDK run from a frozen queue entry
+- COE-576: Define the uniform event IR and adapter contract
+- COE-577: Implement the Agent SDK normalization adapter
+- COE-578: Implement the OpenHands harness adapter
+- COE-579: Implement the DeepSeek Harness adapter
+- COE-580: Implement normalization integrity and comparison gates
+- COE-592: Support observational Agent SDK tasks without verifiers
+- COE-593: Admit common framework filenames in observational fixtures
+- COE-594: Qualify real package-manager workspaces and trajectory exports
+- COE-596: Add a Codex app-server harness with native telemetry and observational capture
 
 ## Source refs
 
-- COE-591
+- COE-576
+- COE-577
+- COE-578
+- COE-579
+- COE-580
+- COE-592
+- COE-593
+- COE-594
+- COE-596
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

@@ -390,6 +390,7 @@ export type ProtocolProcessOptions = {
   signal?: AbortSignal;
   now?: () => string;
   spawnOptions?: Omit<SpawnOptions, "stdio" | "env" | "cwd" | "signal" | "timeout" | "killSignal">;
+  onStderr?: (chunk: Uint8Array, final: boolean, recorder: ProtocolEvidenceRecorder) => void | Promise<void>;
   onFrame?: (payload: unknown, recorder: ProtocolEvidenceRecorder) => void | Promise<void>;
 };
 
@@ -708,6 +709,10 @@ export class ProtocolProcess {
       this.childError ??= errorMessage(error);
       void this.recorder.recordError(this.childError, undefined, INTERNAL_RECORDER_TOKEN).catch(() => undefined);
     });
+    this.child.stdin?.on("error", (error) => {
+      this.childError ??= `Protocol stdin failed: ${errorMessage(error)}`;
+      void this.recorder.recordError(this.childError, undefined, INTERNAL_RECORDER_TOKEN).catch(() => undefined);
+    });
     this.attachStreams();
     this.waitPromise = new Promise<ProtocolProcessResult>((resolveResult) => {
       this.resolveResult = resolveResult;
@@ -748,16 +753,39 @@ export class ProtocolProcess {
     return this.wait();
   }
 
-  public async interrupt(): Promise<ProtocolProcessResult> {
+  public async interrupt(graceMs = this.shutdownGraceMs, killGraceMs = this.killGraceMs): Promise<ProtocolProcessResult> {
     if (this.closeObserved) return this.wait();
+    const boundedGraceMs = nonnegativeInteger(graceMs, "Interrupt grace period");
+    const boundedKillGraceMs = nonnegativeInteger(killGraceMs, "Interrupt kill grace period");
+    if (boundedGraceMs > MAX_TIMER_MS || boundedKillGraceMs > MAX_TIMER_MS) {
+      throw new Error("Interrupt grace periods must not exceed the Node timer maximum.");
+    }
     this.setTermination("interrupted");
-    await this.sendSignal("SIGINT", this.shutdownGraceMs);
+    await this.sendSignal("SIGINT", boundedGraceMs, boundedKillGraceMs);
     return this.wait();
   }
 
   private attachStreams(): void {
     if (this.child.stderr !== null) {
-      this.child.stderr.on("data", (chunk: Buffer) => this.stderrCapture.write(chunk));
+      this.child.stderr.on("data", (chunk: Buffer) => {
+        this.stderrCapture.write(chunk);
+        if (this.options.onStderr !== undefined) {
+          this.child.stderr?.pause();
+          this.lineQueue = this.lineQueue
+            .then(() => this.options.onStderr!(chunk, false, this.recorder))
+            .then(() => undefined)
+            .catch((error: unknown) => this.failRecorder(`Protocol stderr recording failed: ${errorMessage(error)}`));
+          void this.lineQueue.finally(() => this.child.stderr?.resume()).catch(() => undefined);
+        }
+      });
+      this.child.stderr.on("end", () => {
+        if (this.options.onStderr !== undefined) {
+          this.lineQueue = this.lineQueue
+            .then(() => this.options.onStderr!(Buffer.alloc(0), true, this.recorder))
+            .then(() => undefined)
+            .catch((error: unknown) => this.failRecorder(`Protocol stderr recording failed: ${errorMessage(error)}`));
+        }
+      });
     }
     if (this.child.stdout === null) return;
     this.child.stdout.on("data", (chunk: Buffer) => {
@@ -896,13 +924,13 @@ export class ProtocolProcess {
     if (this.termination === "natural") this.termination = termination;
   }
 
-  private sendSignal(signal: NodeJS.Signals, graceMs: number): Promise<void> {
-    const operation = this.signalQueue.then(() => this.sendSignalNow(signal, graceMs));
+  private sendSignal(signal: NodeJS.Signals, graceMs: number, killGraceMs = this.killGraceMs): Promise<void> {
+    const operation = this.signalQueue.then(() => this.sendSignalNow(signal, graceMs, killGraceMs));
     this.signalQueue = operation.catch(() => undefined);
     return operation;
   }
 
-  private async sendSignalNow(signal: NodeJS.Signals, graceMs: number): Promise<void> {
+  private async sendSignalNow(signal: NodeJS.Signals, graceMs: number, killGraceMs: number): Promise<void> {
     if (this.closeObserved) return;
     const pid = this.child.pid;
     if (pid === undefined) {
@@ -931,7 +959,7 @@ export class ProtocolProcess {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ESRCH") this.childError ??= errorMessage(error);
       }
-      if (this.killGraceMs > 0) await this.waitForClose(this.killGraceMs);
+      if (killGraceMs > 0) await this.waitForClose(killGraceMs);
     }
     if (!this.closeObserved && (this.detached || this.child.exitCode !== null || this.child.signalCode !== null)) {
       this.forceFinish();

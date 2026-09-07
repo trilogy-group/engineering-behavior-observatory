@@ -116,8 +116,15 @@ export type HarnessAdapter<Request = unknown, NativeRecord = unknown> = {
 };
 
 export interface NativeEvidenceResolver {
-  resolve(reference: NativeEvidenceReference): boolean | Promise<boolean>;
+  resolve(reference: NativeEvidenceReference): boolean | NativeEvidenceResolution
+    | Promise<boolean | NativeEvidenceResolution>;
 }
+
+export type NativeEvidenceResolution = {
+  runId: string;
+  attemptId: string;
+  digest: `sha256:${string}`;
+};
 
 export class AdapterRegistry {
   readonly #adapters: ReadonlyMap<string, HarnessAdapter>;
