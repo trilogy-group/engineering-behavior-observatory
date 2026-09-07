@@ -57,6 +57,7 @@ export type StructuralObservationSet = {
   normalization: {
     datasetDigest: `sha256:${string}`;
     adapter: NormalizedDataset["adapter"];
+    capabilityProfile?: NormalizedDataset["capabilityProfile"];
     coverage: AdapterCoverageReport;
   };
   observations: readonly StructuralObservation[];
@@ -132,6 +133,7 @@ export function createStructuralObservationSet(
     normalization: {
       datasetDigest: `sha256:${digestMetadata(dataset).value}`,
       adapter: structuredClone(dataset.adapter),
+      capabilityProfile: structuredClone(dataset.capabilityProfile),
       coverage: structuredClone(coverage),
     },
     observations,

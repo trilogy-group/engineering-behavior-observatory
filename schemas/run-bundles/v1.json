@@ -251,12 +251,16 @@
           "required": ["id", "task", "fixture", "model", "harness", "runtime"],
           "properties": {
             "id": { "$ref": "#/$defs/identifier" },
+            "trial": {
+              "type": "object", "additionalProperties": false, "required": ["index"],
+              "properties": { "index": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 } }
+            },
             "assessmentMode": { "enum": ["observational", "verified"] },
             "task": {
               "type": "object",
               "additionalProperties": false,
               "required": ["id"],
-              "properties": { "id": { "$ref": "#/$defs/identifier" } }
+              "properties": { "id": { "$ref": "#/$defs/identifier" }, "digest": { "$ref": "#/$defs/digest" } }
             },
             "fixture": {
               "type": "object",
@@ -273,7 +277,8 @@
               "required": ["provider", "id"],
               "properties": {
                 "provider": { "$ref": "#/$defs/identifier" },
-                "id": { "$ref": "#/$defs/identifier" }
+                "id": { "$ref": "#/$defs/identifier" },
+                "configurationDigest": { "$ref": "#/$defs/digest" }
               }
             },
             "harness": {
@@ -282,7 +287,8 @@
               "required": ["id", "version"],
               "properties": {
                 "id": { "$ref": "#/$defs/identifier" },
-                "version": { "$ref": "#/$defs/identifier" }
+                "version": { "$ref": "#/$defs/identifier" },
+                "configurationDigest": { "$ref": "#/$defs/digest" }
               }
             },
             "runtime": {
@@ -334,6 +340,7 @@
           "required": ["digest", "budgetDigest", "toolPolicyDigest"],
           "properties": {
             "digest": { "$ref": "#/$defs/digest" },
+            "captureProfileDigest": { "$ref": "#/$defs/digest" },
             "budgetDigest": { "$ref": "#/$defs/digest" },
             "toolPolicyDigest": { "$ref": "#/$defs/digest" }
           }

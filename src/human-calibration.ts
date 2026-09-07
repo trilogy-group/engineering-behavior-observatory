@@ -615,7 +615,7 @@ function counts(candidates: readonly ReviewCandidate[], decisions: readonly Revi
       for (let right = left + 1; right < reviews.length; right += 1) pairResults.push(reviews[left]!.state === reviews[right]!.state);
     }
   }
-  const outcomes = candidates.map((candidate) => effectiveOutcome(candidate, relevant));
+  const outcomes = candidates.map((candidate) => effectiveReviewOutcome(candidate, relevant));
   const disputed = candidates.filter((candidate, index) => {
     if (outcomes[index] !== "unresolved") return false;
     const own = relevant.filter(({ assertion }) => assertionKey(assertion) === assertionKey(candidate.assertion));
@@ -644,7 +644,7 @@ function counts(candidates: readonly ReviewCandidate[], decisions: readonly Revi
   };
 }
 
-function effectiveOutcome(candidate: ReviewCandidate, decisions: readonly ReviewDecision[]): "confirmed" | "rejected" | "unresolved" | "unreviewed" | "judge-abstained" {
+export function effectiveReviewOutcome(candidate: ReviewCandidate, decisions: readonly ReviewDecision[]): "confirmed" | "rejected" | "unresolved" | "unreviewed" | "judge-abstained" {
   if (candidate.context.abstained) return "judge-abstained";
   const own = decisions.filter(({ assertion }) => assertionKey(assertion) === assertionKey(candidate.assertion));
   const adjudication = currentAdjudication(own);
@@ -655,6 +655,16 @@ function effectiveOutcome(candidate: ReviewCandidate, decisions: readonly Review
   const states = new Set(reviews.map(({ state }) => state));
   if (states.size !== 1) return "unresolved";
   return states.has("confirmed") ? "confirmed" : "rejected";
+}
+
+export function isDisputedReviewOutcome(candidate: ReviewCandidate, decisions: readonly ReviewDecision[]): boolean {
+  if (effectiveReviewOutcome(candidate, decisions) !== "unresolved") return false;
+  const own = decisions.filter(({ assertion }) => assertionKey(assertion) === assertionKey(candidate.assertion));
+  const adjudication = currentAdjudication(own);
+  if (adjudication !== undefined) return adjudication.state === "disputed";
+  const reviews = latestHumanReviews(own);
+  return reviews.some(({ state }) => state === "disputed")
+    || new Set(reviews.filter(({ state }) => state !== "insufficient-evidence").map(({ state }) => state)).size > 1;
 }
 
 function currentAdjudication(decisions: readonly ReviewDecision[]): ReviewDecision | undefined {

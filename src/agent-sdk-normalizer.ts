@@ -179,8 +179,7 @@ export async function readQualifiedClaudeAgentSdkCapture(
     throw new Error(`Agent SDK normalization requires capture-qualified evidence: ${reasons}.`);
   }
 
-  if (manifest.run.harness.id !== "agent-sdk"
-      || !manifest.run.runtime.some(({ source, name }) => source === "anthropic" && name === "agent-sdk")) {
+  if (!manifest.run.runtime.some(({ source, name }) => source === "anthropic" && ["agent-sdk", CLAUDE_AGENT_SDK_HARNESS].includes(name))) {
     throw new Error("Run bundle is not an Agent SDK capture.");
   }
 

@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ebo:schema:aggregation:v1",
+  "$defs": {
+    "identifier": { "type": "string", "minLength": 1, "maxLength": 1024, "pattern": ".*\\S.*" },
+    "path": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": ".*\\S.*" },
+    "derivedSource": {
+      "type": "object", "additionalProperties": false, "required": ["bundleRoot", "path"],
+      "properties": { "bundleRoot": { "$ref": "#/$defs/path" }, "path": { "$ref": "#/$defs/path" } }
+    },
+    "eligibilityGate": {
+      "type": "object", "additionalProperties": false, "required": ["request", "report"],
+      "properties": { "request": { "$ref": "#/$defs/path" }, "report": { "$ref": "#/$defs/path" } }
+    },
+    "dimension": { "enum": ["task", "model", "harness", "trial", "capture-qualification"] },
+    "filters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "task": { "$ref": "#/$defs/identifier" },
+        "model": { "$ref": "#/$defs/identifier" },
+        "harness": { "$ref": "#/$defs/identifier" },
+        "trial": { "$ref": "#/$defs/identifier" },
+        "capture-qualification": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "sources", "groupBy", "selectedAttemptPolicy", "recurrence", "comparisons"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.aggregation-request/v1" },
+        "sources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["corpusRoot", "corpusIndex", "observationSets", "assertions", "calibrations"],
+          "properties": {
+            "corpusRoot": { "$ref": "#/$defs/path" },
+            "corpusIndex": { "$ref": "#/$defs/path" },
+            "observationSets": { "type": "array", "maxItems": 100000, "items": { "$ref": "#/$defs/derivedSource" } },
+            "assertions": { "type": "array", "maxItems": 100000, "items": { "$ref": "#/$defs/derivedSource" } },
+            "calibrations": {
+              "type": "array",
+              "maxItems": 100000,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["selection", "history"],
+                "properties": { "selection": { "$ref": "#/$defs/path" }, "history": { "$ref": "#/$defs/path" } }
+              }
+            }
+          }
+        },
+        "groupBy": { "type": "array", "maxItems": 5, "uniqueItems": true, "items": { "$ref": "#/$defs/dimension" } },
+        "selectedAttemptPolicy": { "enum": ["all-attempts", "latest-attempt-per-run"] },
+        "recurrence": {
+          "type": "object", "additionalProperties": false, "required": ["minimumOccurrences"],
+          "properties": { "minimumOccurrences": { "type": "integer", "minimum": 2 } }
+        },
+        "comparisons": {
+          "type": "array",
+          "maxItems": 100000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "measure", "left", "right", "matchBy", "eligibilityGates"],
+            "properties": {
+              "id": { "$ref": "#/$defs/identifier" },
+              "measure": { "$ref": "#/$defs/identifier" },
+              "left": { "$ref": "#/$defs/filters" },
+              "right": { "$ref": "#/$defs/filters" },
+              "matchBy": { "type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": true, "items": { "$ref": "#/$defs/dimension" } },
+              "eligibilityGates": { "type": "array", "minItems": 1, "maxItems": 100000, "items": { "$ref": "#/$defs/eligibilityGate" } }
+            }
+          }
+        }
+      }
+    },
+    "quantity": {
+      "type": "object", "additionalProperties": false, "required": ["value", "unit"],
+      "properties": { "value": { "type": "number" }, "unit": { "$ref": "#/$defs/identifier" } }
+    },
+    "exclusion": {
+      "type": "object", "additionalProperties": false, "required": ["reason", "count", "unit"],
+      "properties": { "reason": { "$ref": "#/$defs/identifier" }, "count": { "type": "integer", "minimum": 0 }, "unit": { "$ref": "#/$defs/identifier" } }
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "numerator", "denominator", "exclusions"],
+      "properties": {
+        "status": { "enum": ["available", "unavailable"] },
+        "numerator": { "$ref": "#/$defs/quantity" },
+        "denominator": { "$ref": "#/$defs/quantity" },
+        "rate": { "type": "number" },
+        "exclusions": { "type": "array", "maxItems": 100000, "items": { "$ref": "#/$defs/exclusion" } },
+        "reason": { "$ref": "#/$defs/identifier" }
+      },
+      "allOf": [
+        { "if": { "properties": { "status": { "const": "available" } } }, "then": { "required": ["rate"] } },
+        { "if": { "properties": { "status": { "const": "unavailable" } } }, "then": { "required": ["reason"], "not": { "required": ["rate"] } } }
+      ]
+    },
+    "metric": {
+      "type": "object", "additionalProperties": false, "required": ["id", "population", "claimStatus", "measurement"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "population": { "enum": ["run", "attempt", "operation", "assertion", "reviewed-assertion"] },
+        "claimStatus": { "enum": ["descriptive", "unavailable"] },
+        "measurement": { "$ref": "#/$defs/measurement" }
+      }
+    },
+    "sourceLineage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["requestDigest", "corpusIndexDigest", "manifests", "observationSets", "assertions", "calibrations", "comparisonGates"],
+      "properties": {
+        "requestDigest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" },
+        "corpusIndexDigest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" },
+        "manifests": {
+          "type": "array", "maxItems": 100000,
+          "items": { "type": "object", "additionalProperties": false, "required": ["runId", "attemptId", "digest"], "properties": {
+            "runId": { "$ref": "#/$defs/identifier" }, "attemptId": { "$ref": "#/$defs/identifier" }, "digest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" }
+          } }
+        },
+        "observationSets": {
+          "type": "array", "maxItems": 100000,
+          "items": { "type": "object", "additionalProperties": false, "required": ["runId", "attemptId", "digest"], "properties": {
+            "runId": { "$ref": "#/$defs/identifier" }, "attemptId": { "$ref": "#/$defs/identifier" }, "digest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" }
+          } }
+        },
+        "assertions": {
+          "type": "array", "maxItems": 100000,
+          "items": { "type": "object", "additionalProperties": false, "required": ["runId", "attemptId", "id", "digest"], "properties": {
+            "runId": { "$ref": "#/$defs/identifier" }, "attemptId": { "$ref": "#/$defs/identifier" }, "id": { "$ref": "#/$defs/identifier" }, "digest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" }
+          } }
+        },
+        "calibrations": {
+          "type": "array", "maxItems": 100000,
+          "items": { "type": "object", "additionalProperties": false, "required": ["selectionDigest", "historyDigest"], "properties": {
+            "selectionDigest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" }, "historyDigest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" }
+          } }
+        },
+        "comparisonGates": {
+          "type": "array", "maxItems": 100000,
+          "items": { "type": "object", "additionalProperties": false, "required": ["requestDigest", "reportDigest"], "properties": {
+            "requestDigest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" }, "reportDigest": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/digest" }
+          } }
+        }
+      }
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "policy", "sourcePopulation", "sourceLineage", "groups", "comparisons", "limitations"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.aggregation-report/v1" },
+        "policy": {
+          "type": "object", "additionalProperties": false, "required": ["groupBy", "selectedAttemptPolicy", "recurrence"],
+          "properties": {
+            "groupBy": { "type": "array", "maxItems": 5, "uniqueItems": true, "items": { "$ref": "#/$defs/dimension" } },
+            "selectedAttemptPolicy": { "enum": ["all-attempts", "latest-attempt-per-run"] },
+            "recurrence": {
+              "type": "object", "additionalProperties": false, "required": ["minimumOccurrences", "establishesCausality", "establishesStatisticalSignificance"],
+              "properties": {
+                "minimumOccurrences": { "type": "integer", "minimum": 2 },
+                "establishesCausality": { "const": false },
+                "establishesStatisticalSignificance": { "const": false }
+              }
+            }
+          }
+        },
+        "sourcePopulation": {
+          "type": "object", "additionalProperties": false, "required": ["uniqueRuns", "uniqueAttempts", "selectedAttempts", "duplicateInputsIgnored"],
+          "properties": {
+            "uniqueRuns": { "type": "integer", "minimum": 0 }, "uniqueAttempts": { "type": "integer", "minimum": 0 },
+            "selectedAttempts": { "type": "integer", "minimum": 0 }, "duplicateInputsIgnored": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "sourceLineage": { "$ref": "#/$defs/sourceLineage" },
+        "groups": {
+          "type": "array", "maxItems": 100000,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["dimensions", "metrics", "variations"],
+            "properties": {
+              "dimensions": { "$ref": "#/$defs/filters" },
+              "metrics": { "type": "array", "maxItems": 100000, "items": { "$ref": "#/$defs/metric" } },
+              "variations": {
+                "type": "array", "maxItems": 2,
+                "items": {
+                  "type": "object", "additionalProperties": false, "required": ["measure", "distribution", "claimStatus"],
+                  "properties": {
+                    "measure": { "enum": ["terminal-state", "verifier-status"] },
+                    "distribution": { "type": "array", "items": { "$ref": "#/$defs/metric" } },
+                    "claimStatus": { "enum": ["no-variation", "case-study", "recurring-description", "unavailable"] }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "comparisons": {
+          "type": "array", "maxItems": 100000,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["id", "measure", "eligibility", "matchedDifference", "differingMatchedUnits", "claimStatus", "limitations"],
+            "properties": {
+              "id": { "$ref": "#/$defs/identifier" }, "measure": { "$ref": "#/$defs/identifier" },
+              "eligibility": { "type": "array", "minItems": 1, "maxItems": 100000, "items": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/comparisonReportV2" } },
+              "matchedDifference": { "$ref": "#/$defs/measurement" },
+              "differingMatchedUnits": { "type": "integer", "minimum": 0 },
+              "claimStatus": { "enum": ["no-difference", "case-study", "recurring-description", "unavailable"] },
+              "limitations": { "type": "array", "items": { "$ref": "#/$defs/identifier" } }
+            }
+          }
+        },
+        "limitations": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/identifier" } }
+      }
+    }
+  },
+  "oneOf": [{ "$ref": "#/$defs/request" }, { "$ref": "#/$defs/report" }]
+}

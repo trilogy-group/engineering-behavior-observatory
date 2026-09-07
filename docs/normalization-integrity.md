@@ -46,7 +46,9 @@ shared control protocol.
 
 ## Comparison eligibility
 
-The comparison gate consumes one explicit `ebo.comparison-request/v1` artifact:
+The comparison gate consumes one explicit `ebo.comparison-request/v1` or
+`ebo.comparison-request/v2` artifact. V2 additionally retains the exact measure
+and candidate manifest digests required by aggregation:
 
 ```sh
 node dist/src/cli.js comparison check <request.json>
@@ -56,7 +58,8 @@ The request names both candidates, their task and fixture digests, model and
 harness configuration identities, material capture/budget/tool-policy digests,
 normalization-adapter identities and pinned versions, capability profiles, required capabilities,
 and any declared model or harness difference. The command prints an
-`ebo.comparison-report/v1` JSON object and
+matching versioned `ebo.comparison-report/v1` or
+`ebo.comparison-report/v2` JSON object and
 returns nonzero when its status is `unsupported`.
 
 Statuses are:

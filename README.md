@@ -115,6 +115,7 @@ node dist/src/cli.js corpus validate <corpus-root> <index.jsonl>
 node dist/src/cli.js corpus pack <approved-export-root> <policy.json> <archive.tar.gz>
 node dist/src/cli.js corpus unpack <archive.tar.gz> <destination-root>
 node dist/src/cli.js comparison check <request.json>
+node dist/src/cli.js aggregate build <request.json> <output.json>
 node dist/src/cli.js calibration sample <sources.json> <criteria.json> <selection.json>
 node dist/src/cli.js calibration packet <selection.json> <output-root>
 node dist/src/cli.js calibration inspect <packet.json> <assertion-id> [event-id]
@@ -193,8 +194,16 @@ source records. Their validator produces adapter/version coverage that keeps
 unmapped native types and unsupported capabilities explicit. `ebo comparison
 check` evaluates one inspectable comparison request and returns `supported`,
 `qualified-with-caveats`, or `unsupported`; declared harness differences remain
-caveats and never become causal claims. See
+caveats and never become causal claims. The v2 comparison contract adds exact
+measure, manifest, request, and policy bindings for aggregation while the v1
+CLI path remains readable. See
 [docs/normalization-integrity.md](docs/normalization-integrity.md).
+
+The [comparison and aggregation read model](docs/aggregation.md) scans the
+current corpus and derived evaluation artifacts directly, keeps run, attempt,
+operation, assertion, and reviewed-assertion populations separate, and emits
+explicit denominators, exclusions, caveats, and descriptive claim status. It
+does not infer causality, statistical significance, or a composite ranking.
 
 The [local human calibration workflow](docs/human-calibration.md) selects
 digest-bound review samples, renders escaped static packets with only the cited

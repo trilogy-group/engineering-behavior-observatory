@@ -38,11 +38,12 @@ export type RunBundleRuntimeComponent = {
 
 export type RunBundleRun = {
   id: string;
+  trial?: { index: number };
   assessmentMode: AssessmentMode;
-  task: { id: string };
+  task: { id: string; digest?: DigestString };
   fixture: { id: string; digest: DigestString };
-  model: { provider: string; id: string };
-  harness: { id: string; version: string };
+  model: { provider: string; id: string; configurationDigest?: DigestString };
+  harness: { id: string; version: string; configurationDigest?: DigestString };
   runtime: RunBundleRuntimeComponent[];
   verifier?: { locator: string; digest: DigestString; format?: "commonjs" | "module" };
   native?: { sessionId?: string; traceId?: string };
@@ -50,6 +51,7 @@ export type RunBundleRun = {
 
 export type RunBundleConfiguration = {
   digest: DigestString;
+  captureProfileDigest?: DigestString;
   budgetDigest: DigestString;
   toolPolicyDigest: DigestString;
 };

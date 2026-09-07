@@ -349,6 +349,7 @@ export type {
 } from "./uniform-events.js";
 export {
   assessComparisonEligibility,
+  assessLegacyComparisonEligibility,
   createCapturedNativeEvidenceResolver,
   describeNormalizedDataset,
   validateNormalizedCorpus,
@@ -384,6 +385,8 @@ export type {
 } from "./behavior-assertions.js";
 export {
   assertCalibrationDestination,
+  effectiveReviewOutcome,
+  isDisputedReviewOutcome,
   importReviewDecision,
   selectReviewSample,
   summarizeCalibration,
@@ -403,6 +406,16 @@ export type {
   ReviewSampleCriteria,
   ReviewSourceSet,
 } from "./human-calibration.js";
+export { aggregateEvaluation } from "./aggregation.js";
+export type {
+  AggregateMeasurement,
+  AggregateMetric,
+  AggregationDimension,
+  AggregationInput,
+  AggregationReport,
+  AggregationRequest,
+  AttemptSelectionPolicy,
+} from "./aggregation.js";
 export {
   CLAUDE_SEMANTIC_JUDGE_BACKEND_ID,
   packageSemanticJudgeInput,
@@ -428,6 +441,8 @@ export type {
   ComparisonReason,
   ComparisonReport,
   ComparisonRequest,
+  LegacyComparisonReport,
+  LegacyComparisonRequest,
   NormalizedDataset,
   NormalizedDatasetInput,
   NormalizedContentReference,

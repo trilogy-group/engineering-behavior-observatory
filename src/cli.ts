@@ -6,6 +6,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { assertNoDuplicateJsonKeys, canonicalizeMetadata, digestMetadata, validateArtifact, validateExportManifest, validateRunManifestEvidence, writeMetadataAtomically } from "./artifacts.js";
+import { aggregateEvaluation, type AggregationRequest } from "./aggregation.js";
 import {
   buildCorpusIndex,
   packPortableExport,
@@ -34,7 +35,7 @@ import {
   type ReviewSampleCriteria,
   type ReviewSourceSet,
 } from "./human-calibration.js";
-import { assessComparisonEligibility, type ComparisonRequest } from "./normalization-integrity.js";
+import { assessComparisonEligibility, assessLegacyComparisonEligibility, type ComparisonRequest, type LegacyComparisonRequest } from "./normalization-integrity.js";
 import {
   runAgentSdkSemanticJudge,
   type SemanticJudgeBackend,
@@ -71,6 +72,7 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo corpus pack <export-root> <policy.json> <archive.tar.gz>
        ebo corpus unpack <archive.tar.gz> <destination-root>
        ebo comparison check <request.json>
+       ebo aggregate build <request.json> <output.json>
        ebo observations create <run-bundle-root> <output.json>
        ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
        ebo assertions validate <run-bundle-root> <assertion.json> [review.json]
@@ -148,13 +150,20 @@ export function main(
       return 1;
     }
     try {
-      const report = assessComparisonEligibility(readJson(args[2]) as ComparisonRequest);
+      const request = readJson(args[2]) as ComparisonRequest | LegacyComparisonRequest;
+      const report = request.schemaVersion === "ebo.comparison-request/v1"
+        ? assessLegacyComparisonEligibility(request)
+        : assessComparisonEligibility(request);
       write(`${canonicalizeMetadata(report)}\n`);
       return report.status === "unsupported" ? 1 : 0;
     } catch (error) {
       write(`${errorMessage(error)}\n`);
       return 1;
     }
+  }
+
+  if (args[0] === "aggregate" && args[1] === "build") {
+    return runAggregationCommand(args.slice(2), write);
   }
 
   if (args[0] === "observations") {
@@ -274,6 +283,67 @@ export function main(
 
   process.stderr.write(`Unknown argument: ${args[0]}\n`);
   return 1;
+}
+
+async function runAggregationCommand(args: string[], write: (message: string) => void): Promise<number> {
+  const [requestPath, outputPath] = args;
+  if (requestPath === undefined || outputPath === undefined || args.length !== 2) {
+    write("Usage: ebo aggregate build <request.json> <output.json>\n");
+    return 1;
+  }
+  try {
+    const request = readJson(requestPath) as AggregationRequest;
+    const errors = validateArtifact(requestPath, request);
+    if (errors.length > 0) throw new Error(errors.map(({ field, message }) => `${field}: ${message}`).join("\n"));
+    const base = dirname(resolve(requestPath));
+    const source = request.sources;
+    const corpusRoot = resolve(base, source.corpusRoot);
+    const corpusIndexPath = resolve(base, source.corpusIndex);
+    const corpusEntries = readCorpusIndex(corpusIndexPath);
+    const corpusIssues = validateCorpusIndex(corpusRoot, corpusEntries);
+    if (corpusIssues.length > 0) throw new Error(`Corpus index is not current: ${corpusIssues[0]!.manifestPath} ${corpusIssues[0]!.message}`);
+    const resolveJson = <Value>(path: string, label: string): Value => {
+      const resolved = resolve(base, path);
+      const value = readJson(resolved);
+      const validation = validateArtifact(resolved, value);
+      if (validation.length > 0) throw new Error(`${label} ${validation[0]!.field}: ${validation[0]!.message}`);
+      return value as Value;
+    };
+    const destination = resolve(outputPath);
+    prepareDerivedParent(corpusRoot, destination);
+    const report = await aggregateEvaluation({
+      lineage: {
+        requestDigest: `sha256:${digestMetadata(request).value}`,
+        corpusIndexDigest: `sha256:${digestMetadata(corpusEntries).value}`,
+      },
+      corpusEntries,
+      observationSets: source.observationSets.map(({ bundleRoot, path }) => ({
+        bundleRoot: resolve(base, bundleRoot),
+        document: resolveJson<StructuralObservationSet>(path, "Structural observation set"),
+      })),
+      assertions: source.assertions.map(({ bundleRoot, path }) => ({
+        bundleRoot: resolve(base, bundleRoot),
+        document: resolveJson<BehaviorAssertion>(path, "Behavior assertion"),
+      })),
+      calibrations: source.calibrations.map(({ selection, history }) => ({
+        selection: resolveJson<ReviewSample>(selection, "Review sample"),
+        history: resolveJson<ReviewHistory>(history, "Review history"),
+      })),
+      comparisons: request.comparisons.map(({ eligibilityGates, ...comparison }) => ({
+        ...comparison,
+        eligibility: eligibilityGates.map(({ request: comparisonRequest, report }) => ({
+          request: resolveJson<ComparisonRequest>(comparisonRequest, "Comparison request"),
+          report: resolveJson<ReturnType<typeof assessComparisonEligibility>>(report, "Comparison report"),
+        })),
+      })),
+    }, request);
+    await writeMetadataAtomically(dirname(destination), basename(destination), report, undefined, { overwrite: false });
+    write(`Built ${report.groups.length} aggregate group(s) and ${report.comparisons.length} matched comparison(s).\n`);
+    return 0;
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  }
 }
 
 async function runCalibrationCommand(args: string[], write: (message: string) => void): Promise<number> {

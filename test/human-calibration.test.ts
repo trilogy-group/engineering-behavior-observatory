@@ -9,10 +9,13 @@ import type { HookInput, SDKMessage, SDKResultMessage } from "@anthropic-ai/clau
 import lockfile from "proper-lockfile";
 
 import {
+  aggregateEvaluation,
+  buildCorpusIndex,
   CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_VERSION,
   captureClaudeAgentSdkRun,
   canonicalizeMetadata,
   claudeAgentSdkNormalizationAdapter,
+  createAgentSdkStructuralObservationSet,
   describeNormalizedDataset,
   digestMetadata,
   importReviewDecision,
@@ -276,6 +279,70 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     assert.equal(summary.totals.disputedAssertions, 2);
     assert.equal(summary.totals.unresolvedAssertions, 3);
     assert.equal(summary.totals.humanDecisionAbstentions, 1);
+    const observationSet = await createAgentSdkStructuralObservationSet(bundleRoot);
+    const aggregate = await aggregateEvaluation({
+      corpusEntries: buildCorpusIndex(bundleRoot),
+      observationSets: [{ bundleRoot, document: observationSet }],
+      assertions: assertions.map((document) => ({ bundleRoot, document })),
+      calibrations: [{ selection, history: history! }],
+      comparisons: [],
+    }, {
+      groupBy: ["task", "model", "harness", "trial"],
+      selectedAttemptPolicy: "all-attempts",
+      recurrence: { minimumOccurrences: 2 },
+    });
+    assert.equal(aggregate.sourcePopulation.uniqueAttempts, 1, "bundle-to-observations-to-assertions-to-synthetic-review aggregation stays connected");
+    assert.equal(aggregate.groups[0]!.metrics.some(({ id }) => id === "structural:tool-operation-count"), true);
+    assert.equal(aggregate.groups[0]!.metrics.find(({ id }) => id === "structural:tool-operation-count")!.population, "attempt");
+    assert.equal(aggregate.groups[0]!.metrics.find(({ id }) => id === "review-unresolved-rate")!.measurement.rate, 0.75);
+    assert.equal(aggregate.groups[0]!.metrics.find(({ id }) => id === "review-disputed-rate")!.measurement.rate, 0.5);
+    const unavailableRequests = aggregate.groups[0]!.metrics.find(({ id }) => id === "structural:model-request-count")!;
+    assert.equal(unavailableRequests.measurement.status, "unavailable");
+    assert.equal(unavailableRequests.measurement.exclusions.length > 0, true);
+    const legacyObservationSet = structuredClone(observationSet);
+    delete legacyObservationSet.normalization.capabilityProfile;
+    const migratedAggregate = await aggregateEvaluation({
+      corpusEntries: buildCorpusIndex(bundleRoot),
+      observationSets: [{ bundleRoot, document: legacyObservationSet }],
+      assertions: [],
+      calibrations: [],
+      comparisons: [],
+    }, { groupBy: ["task"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 } });
+    assert.equal(migratedAggregate.sourceLineage.observationSets.length, 1, "legacy structural v1 sets are rebuilt with declared capabilities");
+    const conflictingAssertion = structuredClone(assertions[0]!);
+    conflictingAssertion.judgment.rationale = "Conflicting revised synthetic judgment.";
+    await assert.rejects(aggregateEvaluation({
+      corpusEntries: buildCorpusIndex(bundleRoot),
+      observationSets: [],
+      assertions: [{ bundleRoot, document: assertions[0]! }, { bundleRoot, document: conflictingAssertion }],
+      calibrations: [],
+      comparisons: [],
+    }, {
+      groupBy: ["task"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 },
+    }), /duplicate behavior assertion identity has conflicting content/iu);
+    const staleObservationSet = structuredClone(observationSet);
+    staleObservationSet.observations[0]!.definition = "Tampered but schema-valid fixture definition.";
+    await assert.rejects(aggregateEvaluation({
+      corpusEntries: buildCorpusIndex(bundleRoot),
+      observationSets: [{ bundleRoot, document: staleObservationSet }],
+      assertions: assertions.map((document) => ({ bundleRoot, document })),
+      calibrations: [{ selection, history: history! }],
+      comparisons: [],
+    }, {
+      groupBy: ["task"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 },
+    }), /observation set.*stale/iu);
+    const foreignBundle = join(temporary, "foreign-bundle-with-same-identities");
+    cpSync(bundleRoot, foreignBundle, { recursive: true, preserveTimestamps: true });
+    writeFileSync(join(foreignBundle, "manifest.json"), `${JSON.stringify(readJson(join(foreignBundle, "manifest.json")), null, 2)}\n`);
+    await assert.rejects(aggregateEvaluation({
+      corpusEntries: buildCorpusIndex(bundleRoot),
+      observationSets: [{ bundleRoot: foreignBundle, document: observationSet }],
+      assertions: [],
+      calibrations: [],
+      comparisons: [],
+    }, {
+      groupBy: ["task"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 },
+    }), /does not match the indexed manifest digest/u);
     const reviewerB = await append(decision("review-b-confirmed", "review", byId.get("assertion-a")!, "synthetic-fixture-reviewer-b", "confirmed"));
     const reviewerE = await append(decision("review-e-confirmed", "review", byId.get("assertion-a")!, "synthetic-fixture-reviewer-e", "confirmed"));
     await append({

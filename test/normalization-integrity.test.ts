@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -306,6 +307,21 @@ test("comparison CLI emits the inspectable report and blocks incompatible reques
   const incompatiblePath = join(fixtureRoot, "comparison/fixture-mismatch.json");
   assert.equal(main(["comparison", "check", incompatiblePath], (message) => (output += message)), 1);
   assert.equal((JSON.parse(output) as { status: string }).status, "unsupported");
+  const temporary = mkdtempSync(join(tmpdir(), "ebo-comparison-v1-"));
+  try {
+    const legacy = JSON.parse(readFileSync(path, "utf8")) as Record<string, any>;
+    legacy.schemaVersion = "ebo.comparison-request/v1";
+    delete legacy.measure;
+    delete legacy.left.manifestDigest;
+    delete legacy.right.manifestDigest;
+    const legacyPath = join(temporary, "legacy.json");
+    writeFileSync(legacyPath, JSON.stringify(legacy));
+    output = "";
+    assert.equal(main(["comparison", "check", legacyPath], (message) => (output += message)), 0);
+    assert.equal((JSON.parse(output) as { schemaVersion: string }).schemaVersion, "ebo.comparison-report/v1");
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
 });
 
 function agentSdkFixture(name: "complete" | "partial"): NormalizationInput<AgentSdkNativeRecord> {
