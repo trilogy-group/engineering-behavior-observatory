@@ -1,19 +1,16 @@
 ---
 type: topic-doc
-area: ontology
+area: llm-judge
 visibility: public
-last_memory_sync: 2026-09-07T07:19:40.803790+00:00
+last_memory_sync: 2026-09-07T15:26:22.741472+00:00
 ---
 
-# Ontology
+# Llm Judge
 
 <!-- BEGIN OPENSYMPHONY MANAGED MEMORY SYNC -->
 
 ## Current model
 
-- COE-576 contributed: PR #25: COE-576: Define the uniform event adapter contract (merge `a302d38`)
-- COE-581 contributed: PR #35: COE-581: Add outcome and structural observations (merge `447db73`)
-- COE-582 contributed: PR #36: COE-582: Add evidence-bound behavior assertions (merge `70f2776`)
 - COE-583 contributed: PR #37: COE-583: Add evidence-grounded semantic judge runner (merge `ea0e703`)
 
 ## Important invariants
@@ -31,16 +28,10 @@ last_memory_sync: 2026-09-07T07:19:40.803790+00:00
 
 ## Recent changes
 
-- COE-576: Define the uniform event IR and adapter contract
-- COE-581: Implement outcome ingestion and structural observations
-- COE-582: Define behavior assertions and evidence resolution
 - COE-583: Implement the evidence-grounded semantic judge runner
 
 ## Source refs
 
-- COE-576
-- COE-581
-- COE-582
 - COE-583
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

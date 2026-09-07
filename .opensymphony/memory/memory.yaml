@@ -34,6 +34,7 @@ areas:
       - area:evaluation
       - area:evidence
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
@@ -63,6 +64,7 @@ areas:
       - area:export
       - area:hooks
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
@@ -98,6 +100,7 @@ areas:
       - area:export
       - area:hooks
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
@@ -131,6 +134,7 @@ areas:
       - area:evidence
       - area:export
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
@@ -156,6 +160,7 @@ areas:
       - area:evaluation
       - area:evidence
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:outcomes
@@ -175,6 +180,7 @@ areas:
       linear_labels:
       - area:evaluation
       - area:evidence
+      - area:llm-judge
       - area:ontology
       - area:outcomes
       - area:structural-analysis
@@ -199,6 +205,7 @@ areas:
       - area:evidence
       - area:export
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
@@ -230,6 +237,7 @@ areas:
       - area:evidence
       - area:export
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
@@ -261,6 +269,7 @@ areas:
       - area:export
       - area:hooks
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
@@ -288,12 +297,27 @@ areas:
       - area:evaluation
       - area:evidence
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:outcomes
       - area:structural-analysis
       linear_milestones:
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
+  llm-judge:
+    title: Llm Judge
+    docs_target: docs/llm-judge.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - llm judge
+    - llm-judge
+    source_refs:
+      linear_labels:
+      - area:llm-judge
+      linear_milestones:
       - 'M5: Behavioral Evaluation'
   m2-native-agent-sdk-capture:
     title: M2 Native Agent Sdk Capture
@@ -322,6 +346,7 @@ areas:
       - area:evaluation
       - area:evidence
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
@@ -343,6 +368,7 @@ areas:
       linear_labels:
       - area:evaluation
       - area:evidence
+      - area:llm-judge
       - area:ontology
       - area:outcomes
       - area:structural-analysis
@@ -362,6 +388,7 @@ areas:
       linear_labels:
       - area:evaluation
       - area:evidence
+      - area:llm-judge
       - area:ontology
       - area:openhands-runtime
       - area:outcomes
@@ -388,6 +415,7 @@ areas:
       - area:evidence
       - area:export
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
@@ -421,6 +449,7 @@ areas:
       - area:evidence
       - area:export
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
@@ -454,6 +483,7 @@ areas:
       - area:export
       - area:hooks
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
@@ -491,6 +521,7 @@ areas:
       - area:export
       - area:hooks
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
@@ -527,6 +558,7 @@ areas:
       - area:evidence
       - area:export
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
@@ -556,6 +588,7 @@ areas:
       - area:evaluation
       - area:evidence
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
@@ -586,6 +619,7 @@ areas:
       - area:evidence
       - area:export
       - area:json-rpc
+      - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
@@ -613,6 +647,7 @@ areas:
       linear_labels:
       - area:evaluation
       - area:evidence
+      - area:llm-judge
       - area:ontology
       - area:structural-analysis
       linear_milestones:
