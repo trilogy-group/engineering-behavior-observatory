@@ -100,7 +100,7 @@ test("executes one frozen queue entry end to end and retains a qualified bundle"
       captureProfileDigest: corpusEntry.captureProfileDigest!,
       budgetDigest: corpusEntry.budgetDigest!,
       toolPolicyDigest: corpusEntry.toolPolicyDigest!,
-      capabilityProfile: observationSet.normalization.capabilityProfile,
+      capabilityProfile: observationSet.normalization.capabilityProfile!,
     };
     const comparisonRequest: ComparisonRequest = {
       schemaVersion: "ebo.comparison-request/v2",
