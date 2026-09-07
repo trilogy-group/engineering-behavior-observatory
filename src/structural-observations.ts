@@ -66,7 +66,7 @@ type ExtractorRegistration = { id: string; requiredCapabilities: readonly Requir
 export const STRUCTURAL_EXTRACTOR_REGISTRY = [
   registry("model-request-count", ["family:model-request"], "Distinct source-native inference requests observed in the attempt."),
   registry("tool-operation-count", ["family:tool"], "Distinct logical tool operations, deduplicated by source-native operation identity."),
-  registry("tool-native-record-count", ["family:tool"], "Native tool-family records retained separately from logical operation totals."),
+  registry("tool-native-record-count", ["family:tool"], "Native records carrying mapped or explicitly unprojectable tool evidence."),
   registry("unidentified-tool-native-record-count", ["family:tool"], "Native tool-family records without a resolvable source-native operation identity."),
   registry("tool-error-count", ["family:tool"], "Distinct logical tool operations with an explicit native failure result."),
   registry("repeated-tool-operation-count", ["family:tool"], "Distinct logical tool operations beyond the first with the same explicit tool identity and input digest."),
@@ -167,12 +167,18 @@ export async function validateStructuralObservationSet(
 
 function extractStructuralFacts(dataset: NormalizedDataset): StructuralObservation[] {
   const operations = toolOperations(dataset.events);
+  const unprojectedToolEvidence = dataset.events.filter((event) =>
+    typeof event.attributes.unprojectedToolBlockCount === "number" && event.attributes.unprojectedToolBlockCount > 0);
   const ambiguousTools = uniqueEvents([
     ...dataset.events.filter((event) => event.family === "tool" && operationId(event, dataset.events) === undefined),
     ...ambiguousActorScopedToolEvents(dataset.events),
+    ...unprojectedToolEvidence,
   ]);
   const ambiguousToolFailures = ambiguousTools.filter(explicitToolFailure);
-  const toolCitations = citations(dataset.events.filter(({ family }) => family === "tool"));
+  const toolEvidence = uniqueEvents([...dataset.events.filter(({ family }) => family === "tool"), ...unprojectedToolEvidence]);
+  const toolCitations = citations(toolEvidence);
+  const unprojectedToolReason = unprojectedToolEvidence.length === 0 ? undefined
+    : `${unprojectedToolEvidence.length} native record(s) contain unprojectable tool blocks.`;
   const modelEvents = dataset.events.filter(({ family }) => family === "model-request");
   const ambiguousRequests = modelEvents.filter((event) => requestId(event) === undefined);
   const requestIds = new Set(modelEvents.flatMap((event) => requestId(event) ?? []));
@@ -183,14 +189,14 @@ function extractStructuralFacts(dataset: NormalizedDataset): StructuralObservati
   return [
     countOrUnavailable(dataset, registration("model-request-count"), requestIds.size, citations(modelEvents), ambiguousRequests.length > 0
       ? `${ambiguousRequests.length} model-request record(s) lack a source-native request identity.` : undefined, "requests", modelEvents),
-    countOrUnavailable(dataset, registration("tool-operation-count"), operations.length, toolCitations, undefined, "identified-logical-tool-operations", dataset.events.filter(({ family }) => family === "tool")),
-    countOrUnavailable(dataset, registration("tool-native-record-count"), toolCitations.length, toolCitations, undefined, "native-records", dataset.events.filter(({ family }) => family === "tool")),
+    countOrUnavailable(dataset, registration("tool-operation-count"), operations.length, toolCitations, unprojectedToolReason, "identified-logical-tool-operations", toolEvidence),
+    countOrUnavailable(dataset, registration("tool-native-record-count"), toolCitations.length, toolCitations, undefined, "native-records", toolEvidence),
     countOrUnavailable(dataset, registration("unidentified-tool-native-record-count"), citations(ambiguousTools).length, citations(ambiguousTools), undefined, "native-records", ambiguousTools),
-    countOrUnavailable(dataset, registration("tool-error-count"), failed.length, citations(failed.flatMap(({ events }) => events)), ambiguousToolFailures.length > 0
-      ? "Tool failure totals are unavailable because a failure record has ambiguous operation identity." : undefined, "logical-tool-operations", failed.flatMap(({ events }) => events)),
-    countOrUnavailable(dataset, registration("repeated-tool-operation-count"), repeated.count, repeated.citations, repeated.reason, "logical-tool-operations", repeated.events),
-    countOrUnavailable(dataset, registration("failure-followed-by-same-tool-count"), followed.same, followed.citations, followed.reason, "failed-logical-tool-operations", followed.events),
-    countOrUnavailable(dataset, registration("failure-followed-by-alternate-tool-count"), followed.alternate, followed.citations, followed.reason, "failed-logical-tool-operations", followed.events),
+    countOrUnavailable(dataset, registration("tool-error-count"), failed.length, citations(failed.flatMap(({ events }) => events)), unprojectedToolReason
+      ?? (ambiguousToolFailures.length > 0 ? "Tool failure totals are unavailable because a failure record has ambiguous operation identity." : undefined), "logical-tool-operations", failed.flatMap(({ events }) => events)),
+    countOrUnavailable(dataset, registration("repeated-tool-operation-count"), repeated.count, repeated.citations, unprojectedToolReason ?? repeated.reason, "logical-tool-operations", repeated.events),
+    countOrUnavailable(dataset, registration("failure-followed-by-same-tool-count"), followed.same, followed.citations, unprojectedToolReason ?? followed.reason, "failed-logical-tool-operations", followed.events),
+    countOrUnavailable(dataset, registration("failure-followed-by-alternate-tool-count"), followed.alternate, followed.citations, unprojectedToolReason ?? followed.reason, "failed-logical-tool-operations", followed.events),
     validationAfterMutation(dataset),
     countOrUnavailable(dataset, registration("compaction-boundary-record-count"), compactions.length, citations(compactions), undefined, "native-records", compactions),
     resourceObservation(dataset, "input-token-count", ["inputTokens"], "tokens"),
@@ -411,15 +417,26 @@ function validationAfterMutation(dataset: NormalizedDataset): StructuralObservat
 }
 
 function resourceObservation(dataset: NormalizedDataset, id: ExtractorRegistration["id"], fields: readonly string[], unit: string): StructuralObservation {
-  const candidates = dataset.events.flatMap((event) => fields.flatMap((field) => typeof event.attributes[field] === "number"
-    && typeof event.attributes.resourceSemantics === "string"
-    ? [{ event, field, value: event.attributes[field] as number, semantics: event.attributes.resourceSemantics as string }]
-    : []));
+  const candidates = dataset.events.flatMap((event) => {
+    if (typeof event.attributes.resourceSemantics !== "string") return [];
+    const aliases = fields.flatMap((field) => typeof event.attributes[field] === "number"
+      ? [{ field, value: event.attributes[field] as number }] : []);
+    return aliases.length === 0 ? [] : [{
+      event,
+      field: aliases.map(({ field }) => field).join("/"),
+      value: aliases[0]!.value,
+      semantics: event.attributes.resourceSemantics as string,
+      aliasConflict: new Set(aliases.map(({ value }) => value)).size > 1,
+    }];
+  });
   const field = fields.join("/");
   const registrationValue = registration(id);
   const capabilityReason = unavailableCapability(dataset, registrationValue, candidates.length === 0);
   if (capabilityReason !== undefined) return unavailable(dataset, registrationValue, capabilityReason, citations(candidates.map(({ event }) => event)), candidates.map(({ event }) => event));
   if (candidates.length === 0) return unavailable(dataset, registrationValue, `No supported native ${field} record is available.`, []);
+  if (candidates.some(({ aliasConflict }) => aliasConflict)) {
+    return unavailable(dataset, registrationValue, `${field} aliases conflict within one native record.`, citations(candidates.map(({ event }) => event)), candidates.map(({ event }) => event));
+  }
   if (candidates.some(({ value }) => !Number.isFinite(value) || value < 0 || unit === "tokens" && !Number.isSafeInteger(value))) {
     return unavailable(dataset, registrationValue, `${field} contains a negative or non-integral native value.`, citations(candidates.map(({ event }) => event)), candidates.map(({ event }) => event));
   }

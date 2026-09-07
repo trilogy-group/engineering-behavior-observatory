@@ -133,6 +133,34 @@ test("source event IDs do not absorb another projection of the same native recor
   assert.deepEqual(observation(report, "input-token-count").sourceEventIds, [resource.id]);
 });
 
+test("unprojectable native tool blocks make logical totals unavailable", () => {
+  const retained = event(1, "message", "instant", { unprojectedToolBlockCount: 1 }, "invalid-tool-block");
+  const report = createStructuralObservationSet(dataset([retained]), coverage([retained]));
+  assert.equal(observation(report, "tool-operation-count").value.status, "unavailable");
+  assert.deepEqual(observation(report, "unidentified-tool-native-record-count").value, {
+    status: "known", value: 1, unit: "native-records",
+  });
+});
+
+test("resource aliases are deduplicated per event and conflicts stay unavailable", () => {
+  const matching = event(1, "runtime", "during", {
+    cacheReadInputTokens: 5,
+    cachedInputTokens: 5,
+    resourceSemantics: "increment",
+  }, "matching-aliases");
+  const matchingReport = createStructuralObservationSet(dataset([matching]), coverage([matching]));
+  assert.deepEqual(observation(matchingReport, "cache-read-input-token-count").value, {
+    status: "known", value: 5, unit: "tokens",
+  });
+  const conflicting = event(1, "runtime", "during", {
+    cacheReadInputTokens: 5,
+    cachedInputTokens: 6,
+    resourceSemantics: "increment",
+  }, "conflicting-aliases");
+  const conflictingReport = createStructuralObservationSet(dataset([conflicting]), coverage([conflicting]));
+  assert.equal(observation(conflictingReport, "cache-read-input-token-count").value.status, "unavailable");
+});
+
 test("verified outcomes retain assertion-level citations while observational outcomes make no verifier claim", () => {
   const verifiedCapture: NormalizationInput<AgentSdkNativeRecord> = {
     runId: "run-structural-golden",

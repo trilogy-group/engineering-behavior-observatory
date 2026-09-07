@@ -231,6 +231,31 @@ test("marks only explicit file changes as mutations", async () => {
   assert.equal(result.events.find(({ source }) => source.nativeType === "DirectoryAdded")?.attributes.mutation, undefined);
 });
 
+test("surfaces native tool blocks that cannot be projected", async () => {
+  const input = readFixture("complete");
+  input.records = [...input.records, {
+    reference: { artifactId: "session", recordLocator: "line:10" },
+    record: {
+      kind: "session",
+      document: {
+        schemaVersion: "ebo.agent-sdk-message/v1",
+        sequence: 10,
+        nativeType: "assistant",
+        sessionId: "session-golden",
+        message: {
+          type: "assistant",
+          uuid: "message-invalid-tool",
+          session_id: "session-golden",
+          message: { role: "assistant", content: [{ type: "tool_use", id: "tool-without-name", input: {} }] },
+        },
+      },
+    },
+  }];
+  const result = await claudeAgentSdkNormalizationAdapter.normalize(input);
+  assert.equal(result.events.find(({ source, family }) =>
+    source.nativeReference.recordLocator === "line:10" && family === "message")?.attributes.unprojectedToolBlockCount, 1);
+});
+
 test("correlates task lifecycle hooks by task ID before a shared agent ID", async () => {
   const input = readFixture("complete");
   const taskRecords = ["task-a", "task-b"].flatMap((taskId, taskIndex) =>

@@ -915,11 +915,23 @@ function sessionAttributes(nativeType: string, subtype: string | undefined, mess
     elapsedSeconds: scalar(message.elapsed_time_seconds),
     durationMs: scalar(message.duration_ms),
     apiDurationMs: scalar(message.duration_api_ms),
+    unprojectedToolBlockCount: unprojectedToolBlockCount(message),
     resourceSemantics: nativeType === "result" && typeof message.duration_ms === "number" ? "cumulative-final" : undefined,
     rateLimitStatus: nativeType === "rate_limit_event" ? scalar(rateLimit?.status) : undefined,
     rateLimitType: nativeType === "rate_limit_event" ? scalar(rateLimit?.rateLimitType) : undefined,
     utilization: nativeType === "rate_limit_event" ? scalar(rateLimit?.utilization) : undefined,
   });
+}
+
+function unprojectedToolBlockCount(message: JsonRecord): number | undefined {
+  const content = asRecord(message.message)?.content;
+  if (!Array.isArray(content)) return undefined;
+  const count = content.filter((value) => {
+    const block = asRecord(value);
+    return block?.type === "tool_use" && (text(block.id) === undefined || text(block.name) === undefined)
+      || block?.type === "tool_result" && text(block.tool_use_id) === undefined;
+  }).length;
+  return count === 0 ? undefined : count;
 }
 
 function sessionContent(
