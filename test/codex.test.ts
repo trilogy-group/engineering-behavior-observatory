@@ -203,6 +203,12 @@ test("honors an abort latched before asynchronous capture setup", async (t) => {
   t.mock.method(performance, "now", () => clockReads++ === 0 ? 0 : 10_000);
   try {
     await mkdir(workspace);
+    const scheduledDelays: number[] = [];
+    const originalSetTimeout = globalThis.setTimeout;
+    t.mock.method(globalThis, "setTimeout", ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+      scheduledDelays.push(delay ?? 0);
+      return originalSetTimeout(callback, delay, ...args);
+    }) as typeof setTimeout);
     const capture = await captureCodexAppServer({
       runId: "run-pre-aborted",
       attemptId: "attempt-pre-aborted",
@@ -213,6 +219,7 @@ test("honors an abort latched before asynchronous capture setup", async (t) => {
       signal: controller.signal,
       shutdownGraceMs: 1_000,
     });
+    assert.equal(scheduledDelays[0], 0, "an aged setup deadline must schedule no deferred pre-turn wait");
     assert.equal(capture.process.termination, "interrupted");
     assert.equal(capture.process.partial, true);
     assert.equal(capture.terminalStatus, undefined);
