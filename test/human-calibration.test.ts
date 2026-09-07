@@ -371,6 +371,14 @@ test("validates a large review lineage without starving an active import lock", 
   }
 });
 
+test("indexes large adjudication and source populations within the lock window", () => {
+  const selection = largeAdjudicationSelection(5_000);
+  const history = largeAdjudicationHistory(selection);
+  const startedAt = performance.now();
+  validateReviewHistory(selection, history);
+  assert.ok(performance.now() - startedAt < 30_000, "adjudication history validation must finish within the lock stale window");
+});
+
 function decision(
   id: string,
   kind: ReviewDecision["kind"],
@@ -407,6 +415,78 @@ function largeReviewHistory(selection: ReviewSample, count: number): ReviewHisto
     };
     decisions.push(record);
     prefix.update(`${index === 0 ? "" : ","}${canonicalizeMetadata(record)}`);
+  }
+  return { ...history, decisions };
+}
+
+function largeAdjudicationSelection(count: number): ReviewSample {
+  const candidate = {
+    assertion: { id: "fixture", schemaVersion: "ebo.behavior-assertion/v1" as const, digest: sha("a") },
+    source: { bundleRoot: "/restricted/fixture", assertionPath: "/restricted/fixture.json" },
+    context: {
+      runId: "fixture-run", attemptId: "fixture-attempt", taskId: "fixture-task", taskContext: "Synthetic fixture task context.",
+      modelId: "fixture-model", harnessId: "agent-sdk", terminalState: "completed", outcome: "unavailable" as const,
+      categoryId: "verification-completion", abstained: false, confidence: 0.8,
+    },
+  };
+  const candidates = Array.from({ length: count }, (_, index) => ({
+    ...structuredClone(candidate),
+    assertion: {
+      ...candidate.assertion,
+      id: `fixture-${index}`,
+      digest: `sha256:${createHash("sha256").update(String(index)).digest("hex")}` as const,
+    },
+    source: { ...candidate.source, assertionPath: `/restricted/fixture-${index}.json` },
+  }));
+  const ids = candidates.map(({ assertion }) => assertion.id);
+  return {
+    schemaVersion: "ebo.review-sample/v1",
+    createdAt: "2026-09-07T12:00:00Z",
+    sources: {
+      schemaVersion: "ebo.review-source-set/v1",
+      sources: candidates.map(({ source }) => ({ ...source, taskContext: candidate.context.taskContext })),
+    },
+    criteria: { schemaVersion: "ebo.review-sample-criteria/v1", seed: "adjudication-scale", strata: [{ id: "all", sampleSize: count, filters: {} }] },
+    population: {
+      sourceCount: count,
+      eligibleAssertionIds: ids,
+      selectedAssertionIds: ids,
+      unavailableStrata: [],
+      strata: [{ id: "all", eligible: count, selected: count, requested: count }],
+    },
+    candidates,
+  };
+}
+
+function largeAdjudicationHistory(selection: ReviewSample): ReviewHistory {
+  const history: ReviewHistory = {
+    schemaVersion: "ebo.review-history/v1",
+    selection: { schemaVersion: selection.schemaVersion, digest: digest(selection) },
+    decisions: [],
+  };
+  const decisions: ReviewDecision[] = [];
+  const prefix = createHash("sha256").update('{"decisions":[');
+  const suffix = `],"schemaVersion":${canonicalizeMetadata(history.schemaVersion)},"selection":${canonicalizeMetadata(history.selection)}}`;
+  const append = (record: Omit<ReviewDecision, "previousHistory">): void => {
+    const decision: ReviewDecision = {
+      ...record,
+      previousHistory: decisions.length === 0 ? null : {
+        schemaVersion: history.schemaVersion,
+        digest: `sha256:${prefix.copy().update(suffix).digest("hex")}`,
+      },
+    };
+    decisions.push(decision);
+    prefix.update(`${decisions.length === 1 ? "" : ","}${canonicalizeMetadata(decision)}`);
+  };
+  for (const [index, candidate] of selection.candidates.entries()) {
+    const first = `review-scale-${index}-a`;
+    const second = `review-scale-${index}-b`;
+    append(decision(first, "review", candidate.assertion, "synthetic-fixture-reviewer-a", "confirmed"));
+    append(decision(second, "review", candidate.assertion, "synthetic-fixture-reviewer-b", "rejected"));
+    append({
+      ...decision(`adjudication-scale-${index}`, "adjudication", candidate.assertion, "synthetic-fixture-adjudicator", "confirmed"),
+      adjudicates: [first, second],
+    });
   }
   return { ...history, decisions };
 }

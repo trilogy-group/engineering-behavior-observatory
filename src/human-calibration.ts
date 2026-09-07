@@ -132,6 +132,11 @@ type LoadedCandidate = ReviewCandidate & {
   capture?: AgentSdkBehaviorEvidence["capture"];
 };
 
+type DecisionValidationIndex = {
+  byId: Map<string, ReviewDecision>;
+  latestReviews: Map<string, Map<string, ReviewDecision>>;
+};
+
 export async function selectReviewSample(
   sourceSet: ReviewSourceSet,
   criteria: ReviewSampleCriteria,
@@ -285,7 +290,7 @@ export async function importReviewDecision(
     if (canonicalizeMetadata(decision.previousHistory) !== canonicalizeMetadata(expectedPrevious)) {
       throw new Error("Review decision previous-history binding is stale.");
     }
-    validateDecisionSemantics(decision, existing.decisions);
+    validateDecisionSemantics(decision, indexDecisions(existing.decisions));
     validateBehaviorReview(loaded.assertionDocument, asBehaviorReview(decision));
     const history: ReviewHistory = { ...existing, decisions: [...existing.decisions, structuredClone(decision)] };
     validateReviewHistory(selection, history);
@@ -321,7 +326,7 @@ export function validateReviewHistory(selection: ReviewSample, history: ReviewHi
   validateReviewSample(selection);
   assertValid("review history", history);
   if (history.selection.digest !== digest(selection)) throw new Error("Review history selection binding is stale.");
-  const ids = new Set<string>();
+  const decisionIndex = indexDecisions();
   const candidatesById = new Map<string, ReviewCandidate[]>();
   for (const candidate of selection.candidates) {
     const matches = candidatesById.get(candidate.assertion.id) ?? [];
@@ -330,10 +335,8 @@ export function validateReviewHistory(selection: ReviewSample, history: ReviewHi
   }
   const prefix = createHash("sha256").update('{"decisions":[');
   const suffix = `],"schemaVersion":${canonicalizeMetadata(history.schemaVersion)},"selection":${canonicalizeMetadata(history.selection)}}`;
-  const prior: ReviewDecision[] = [];
   for (const [index, decision] of history.decisions.entries()) {
-    if (ids.has(decision.id)) throw new Error(`Review history repeats decision "${decision.id}".`);
-    ids.add(decision.id);
+    if (decisionIndex.byId.has(decision.id)) throw new Error(`Review history repeats decision "${decision.id}".`);
     const matchingId = candidatesById.get(decision.assertion.id) ?? [];
     if (matchingId.length === 0) throw new Error(`Review history targets unknown assertion "${decision.assertion.id}".`);
     const candidate = matchingId.find(({ assertion }) => assertionKey(assertion) === assertionKey(decision.assertion));
@@ -348,9 +351,9 @@ export function validateReviewHistory(selection: ReviewSample, history: ReviewHi
     if (canonicalizeMetadata(decision.previousHistory) !== canonicalizeMetadata(expected)) {
       throw new Error(`Review history decision "${decision.id}" has a stale previous-history binding.`);
     }
-    validateDecisionSemantics(decision, prior);
+    validateDecisionSemantics(decision, decisionIndex);
     prefix.update(`${index === 0 ? "" : ","}${canonicalizeMetadata(decision)}`);
-    prior.push(decision);
+    indexDecision(decisionIndex, decision);
   }
 }
 
@@ -389,10 +392,11 @@ export function validateReviewSample(selection: ReviewSample): void {
       || selection.population.eligibleAssertionIds.length !== selection.population.strata.reduce((total, { eligible }) => total + eligible, 0)) {
     throw new Error("Review sample eligible or unavailable population is inconsistent with its strata.");
   }
+  const sources = new Set(selection.sources.sources.map((source) => sourceKey(
+    resolve(source.bundleRoot), resolve(source.assertionPath), source.taskContext,
+  )));
   for (const candidate of selection.candidates) {
-    if (!selection.sources.sources.some((source) => resolve(source.bundleRoot) === candidate.source.bundleRoot
-        && resolve(source.assertionPath) === candidate.source.assertionPath
-        && source.taskContext === candidate.context.taskContext)) {
+    if (!sources.has(sourceKey(candidate.source.bundleRoot, candidate.source.assertionPath, candidate.context.taskContext))) {
       throw new Error(`Review candidate "${candidate.assertion.id}" is absent from the retained source set.`);
     }
   }
@@ -553,22 +557,37 @@ export function terminalVerifierOutcome(capture: AgentSdkBehaviorEvidence["captu
   return distinct[0] ?? "unavailable";
 }
 
-function validateDecisionSemantics(decision: ReviewDecision, prior: readonly ReviewDecision[]): void {
+function validateDecisionSemantics(decision: ReviewDecision, index: DecisionValidationIndex): void {
   if (decision.kind === "review" && decision.adjudicates !== undefined) throw new Error("A review decision cannot adjudicate prior decisions.");
   if (decision.kind !== "adjudication") return;
   if (decision.adjudicates === undefined || decision.adjudicates.length < 2) throw new Error("An adjudication must bind at least two prior review decisions.");
   if (new Set(decision.adjudicates).size !== decision.adjudicates.length) throw new Error("Adjudication decision IDs must be unique.");
+  const key = assertionKey(decision.assertion);
   for (const id of decision.adjudicates) {
-    const target = prior.find((candidate) => candidate.id === id);
-    if (target === undefined || target.kind !== "review" || assertionKey(target.assertion) !== assertionKey(decision.assertion)) {
+    const target = index.byId.get(id);
+    if (target === undefined || target.kind !== "review" || assertionKey(target.assertion) !== key) {
       throw new Error(`Adjudication targets unknown or unrelated review decision "${id}".`);
     }
   }
-  const current = latestHumanReviews(prior.filter(({ assertion }) => assertionKey(assertion) === assertionKey(decision.assertion)))
-    .map(({ id }) => id).sort();
+  const current = [...(index.latestReviews.get(key)?.values() ?? [])].map(({ id }) => id).sort();
   if (canonicalizeMetadata([...decision.adjudicates].sort()) !== canonicalizeMetadata(current)) {
     throw new Error("Adjudication must bind the current latest decision from every reviewer.");
   }
+}
+
+function indexDecisions(decisions: readonly ReviewDecision[] = []): DecisionValidationIndex {
+  const index: DecisionValidationIndex = { byId: new Map(), latestReviews: new Map() };
+  for (const decision of decisions) indexDecision(index, decision);
+  return index;
+}
+
+function indexDecision(index: DecisionValidationIndex, decision: ReviewDecision): void {
+  index.byId.set(decision.id, decision);
+  if (decision.kind !== "review") return;
+  const key = assertionKey(decision.assertion);
+  const reviews = index.latestReviews.get(key) ?? new Map<string, ReviewDecision>();
+  reviews.set(decision.reviewer.id, decision);
+  index.latestReviews.set(key, reviews);
 }
 
 function asBehaviorReview(decision: ReviewDecision): BehaviorReview {
@@ -708,6 +727,10 @@ function encodeRelativePath(path: string): string {
 
 function assertionKey(assertion: ReviewCandidate["assertion"]): string {
   return canonicalizeMetadata([assertion.id, assertion.schemaVersion, assertion.digest]);
+}
+
+function sourceKey(bundleRoot: string, assertionPath: string, taskContext: string): string {
+  return canonicalizeMetadata([bundleRoot, assertionPath, taskContext]);
 }
 
 function anchor(value: string): string {
