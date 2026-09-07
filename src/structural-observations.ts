@@ -278,10 +278,11 @@ function toolOperations(events: readonly UniformEvent[]): ToolOperation[] {
     groups.set(id, grouped);
   }
   return [...groups].sort(([left], [right]) => left.localeCompare(right)).flatMap(([id, grouped]) => {
-    const actorScopes = new Set(grouped.flatMap((event) => actorScope(event) ?? []));
+    const preferAgentScope = grouped.some((event) => explicitAgentScope(event) !== undefined);
+    const actorScopes = new Set(grouped.flatMap((event) => toolActorScope(event, preferAgentScope) ?? []));
     const scopedGroups = actorScopes.size <= 1
       ? [[id, grouped] as const]
-      : [...actorScopes].sort().map((scope) => [`${scope}:${id}`, grouped.filter((event) => actorScope(event) === scope)] as const);
+      : [...actorScopes].sort().map((scope) => [`${scope}:${id}`, grouped.filter((event) => toolActorScope(event, preferAgentScope) === scope)] as const);
     return scopedGroups.map(([scopedId, scoped]) => operation(scopedId, scoped));
   });
 }
@@ -299,9 +300,18 @@ function operation(id: string, grouped: UniformEvent[]): ToolOperation {
 }
 
 function actorScope(event: UniformEvent): string | undefined {
-  return scalarString(event.attributes.agentId)
-    ?? (event.scope.kind === "session" || event.scope.kind === "turn" ? event.scope.id : undefined)
-    ?? (event.actor.kind === "agent" ? event.actor.id : undefined);
+  const scopeId = scalarString(event.scope.id);
+  return explicitAgentScope(event)
+    ?? ((event.scope.kind === "session" || event.scope.kind === "turn") && scopeId !== undefined ? `${event.scope.kind}:${scopeId}` : undefined);
+}
+
+function explicitAgentScope(event: UniformEvent): string | undefined {
+  const id = scalarString(event.attributes.agentId) ?? (event.actor.kind === "agent" ? event.actor.id : undefined);
+  return id === undefined ? undefined : `agent:${id}`;
+}
+
+function toolActorScope(event: UniformEvent, preferAgentScope: boolean): string | undefined {
+  return explicitAgentScope(event) ?? (preferAgentScope ? undefined : actorScope(event));
 }
 
 function ambiguousActorScopedToolEvents(events: readonly UniformEvent[]): UniformEvent[] {
@@ -314,8 +324,9 @@ function ambiguousActorScopedToolEvents(events: readonly UniformEvent[]): Unifor
     groups.set(id, grouped);
   }
   return [...groups.values()].flatMap((grouped) => {
-    const scopes = new Set(grouped.flatMap((event) => actorScope(event) ?? []));
-    return scopes.size > 1 ? grouped.filter((event) => actorScope(event) === undefined) : [];
+    const preferAgentScope = grouped.some((event) => explicitAgentScope(event) !== undefined);
+    const scopes = new Set(grouped.flatMap((event) => toolActorScope(event, preferAgentScope) ?? []));
+    return scopes.size > 1 ? grouped.filter((event) => toolActorScope(event, preferAgentScope) === undefined) : [];
   });
 }
 
@@ -681,7 +692,8 @@ function isCompactionBoundary(event: UniformEvent): boolean {
   const method = scalarString(event.attributes.method);
   const eventType = scalarString(event.attributes.eventType);
   return subtype === "compact_boundary" || hook === "PreCompact" || hook === "PostCompact"
-    || method === "thread/compacted" || eventType?.startsWith("compaction/") === true;
+    || method === "thread/compacted" || eventType?.startsWith("compaction/") === true
+    || event.source.nativeType === "Condensation" || event.source.nativeType === "CondensationSummaryEvent";
 }
 
 function importAssessmentMode(

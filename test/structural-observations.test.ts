@@ -98,6 +98,27 @@ test("native operation IDs are scoped by explicit actors and unscoped duplicates
   });
 });
 
+test("session-scoped progress remains part of an explicitly agent-scoped native operation", () => {
+  const hook = event(1, "tool", "before", {
+    toolUseId: "shared-operation",
+    agentId: "worker-1",
+    toolName: "Read",
+    inputDigest: digest,
+  }, "agent-hook", "hooks");
+  const progress = event(2, "tool", "during", {
+    toolUseId: "shared-operation",
+    toolName: "Read",
+  }, "session-progress", "session");
+  progress.scope = { kind: "session", id: "session-1" };
+  const report = createStructuralObservationSet(dataset([hook, progress]), coverage([hook, progress]));
+  assert.deepEqual(observation(report, "tool-operation-count").value, {
+    status: "known", value: 1, unit: "identified-logical-tool-operations",
+  });
+  assert.deepEqual(observation(report, "unidentified-tool-native-record-count").value, {
+    status: "known", value: 0, unit: "native-records",
+  });
+});
+
 test("session-local request IDs remain distinct across root and subagent sessions", () => {
   const root = event(1, "model-request", "before", { callId: "1" }, "root-request", "root-order");
   root.scope = { kind: "session", id: "root" };
@@ -213,6 +234,17 @@ test("an omitted category in the latest cumulative resource snapshot stays unava
   assert.equal(cacheCreation.value.status, "unavailable");
   assert.deepEqual(cacheCreation.sourceEventIds, [latest.id]);
   assert.deepEqual(cacheCreation.citations, [latest.source.nativeReference]);
+});
+
+test("OpenHands condensation records count as explicit compaction boundaries", () => {
+  const condensation = event(1, "context", "during", {}, "openhands-condensation");
+  condensation.source.nativeType = "Condensation";
+  const summary = event(2, "context", "after", {}, "openhands-condensation-summary");
+  summary.source.nativeType = "CondensationSummaryEvent";
+  const report = createStructuralObservationSet(dataset([condensation, summary]), coverage([condensation, summary]));
+  const compactions = observation(report, "compaction-boundary-record-count");
+  assert.deepEqual(compactions.value, { status: "known", value: 2, unit: "native-records" });
+  assert.deepEqual(compactions.sourceEventIds, [condensation.id, summary.id].sort());
 });
 
 test("workspace outcome count follows the terminal workspace reference", () => {
