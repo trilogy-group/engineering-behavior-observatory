@@ -36,7 +36,8 @@ from the run manifest identity.
 5. Read every final event page in timestamp order, reconcile by native event ID,
    then clean up the conversation.
 6. Package native JSONL, exposed hook events, the workspace outcome, and the EBO
-   verifier result before finalizing the run bundle.
+   verifier result before finalizing the run bundle. If workspace packaging
+   fails, preserve and report the disposable workspace path for recovery.
 
 Container callers can set `serverWorkspacePath` when the Agent Server sees a
 different mount path from the local EBO coordinator.
@@ -84,6 +85,11 @@ The adapter maps only fields present in the pinned event contract:
 Workspace and verifier evidence are packaged through the existing EBO outcome
 contracts. Agent Server product telemetry is not treated as complete native
 OpenTelemetry evidence.
+
+The native run bundle is finalized and capture-qualified before uniform-event
+projection. A projection error is returned separately and does not replace the
+recorded terminal state or make the retained native/workspace evidence
+inaccessible. Unqualified capture is not normalized.
 
 ## Validation
 

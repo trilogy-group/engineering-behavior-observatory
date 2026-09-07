@@ -73,8 +73,8 @@ convenience fields to the event schema.
 
 The golden examples in
 [`test/fixtures/uniform-events/all-families.v1.json`](../test/fixtures/uniform-events/all-families.v1.json)
-cover all initial families using the retained Agent SDK, verifier, telemetry,
-workspace, and terminal evidence shapes. They deliberately preserve unknown
+cover all initial families using representative retained harness, verifier,
+telemetry, workspace, and terminal evidence shapes. They deliberately preserve unknown
 time, parentage, and content where the qualified fixtures do not establish
 those facts.
 
@@ -89,7 +89,7 @@ normalization.
 | Native evidence | Uniform families |
 | --- | --- |
 | SDK assistant/user/result and structural system records | `message`, `tool`, `context`, `delegation`, `permission`, `runtime`, `outcome` |
-| Agent SDK callback records | `message`, `model-request`, `tool`, `context`, `permission`, `delegation`, `artifact`, `runtime` |
+| Agent SDK callback records | `message`, `tool`, `context`, `permission`, `delegation`, `artifact`, `runtime` |
 | Agent SDK telemetry summary | `runtime` |
 | Workspace manifest descriptor and verifier artifact | `artifact`, `validation` |
 | Run-manifest assessment mode and terminal records | `outcome` |
@@ -116,6 +116,11 @@ spans were configured. This never changes semantic hook events because
 SDK's documented [callback correlation](https://code.claude.com/docs/en/agent-sdk/hooks)
 and [beta tracing](https://code.claude.com/docs/en/agent-sdk/observability)
 boundaries.
+
+Model-switch callbacks remain `runtime` evidence. The retained Agent SDK
+capability record does not expose inference-request lifecycle events, so the
+`model-request` family is reported as unsupported rather than as an observed
+zero.
 
 Dataset-wide native-reference, ordering, coverage, and comparison gates are
 documented in [Normalization integrity and comparison gates](normalization-integrity.md).

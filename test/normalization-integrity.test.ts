@@ -163,7 +163,15 @@ test("keeps unknown Agent SDK records reachable and distinguishes unsupported ca
   assert.deepEqual(unknown, { nativeType: "future_message", total: 1, mapped: 0, unmapped: 1 });
   assert.equal(dataset.unmapped.some(({ reference }) => reference.recordLocator === "line:2"), true);
   assert.equal(coverage.families["model-request"].observedEvents, 0);
-  assert.equal(coverage.families["model-request"].capability.status, "available");
+  assert.equal(coverage.families["model-request"].capability.status, "unsupported");
+
+  const comparison = comparisonFixture();
+  for (const candidate of [comparison.left, comparison.right]) {
+    candidate.harness.id = normalization.capabilityProfile.harness;
+    candidate.capabilityProfile = normalization.capabilityProfile;
+  }
+  comparison.policy.requiredCapabilities = ["family:model-request"];
+  assert.equal(assessComparisonEligibility(comparison).status, "unsupported");
 });
 
 test("applies the same normalization and native-reference gate to Agent SDK, OpenHands, and DeepSeek", async () => {

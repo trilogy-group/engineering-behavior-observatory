@@ -50,6 +50,25 @@ test("changes only the capability report when detailed-beta hook spans are missi
   assert.match(complete.capabilityProfile.evidence.nativeTime.detail ?? "", /configured/u);
 });
 
+test("reports retained SDK model-request coverage as unavailable and keeps model switches as runtime events", async () => {
+  const input = readFixture("complete");
+  const report = input.records.find(({ record }) => record.kind === "capture-report")!;
+  report.record.document = {
+    schemaVersion: "capture-report/v1",
+    qualification: "qualified",
+    agentSdk: { capabilities: { sdkVersion: "0.3.258" } },
+  };
+  const result = await claudeAgentSdkNormalizationAdapter.normalize(input);
+  const modelSwitch = result.events.find(({ source }) => source.nativeType === "PreModelSwitch")!;
+
+  assert.equal(modelSwitch.family, "runtime");
+  assert.equal(result.events.some(({ family }) => family === "model-request"), false);
+  assert.deepEqual(result.capabilityProfile.families["model-request"], {
+    status: "unsupported",
+    detail: "Retained Agent SDK 0.3.258 exposes model-switch callbacks, not inference-request lifecycle records.",
+  });
+});
+
 test("keeps unknown records reachable and joins tool facts only through stable source IDs", async () => {
   const partialInput = readFixture("partial");
   const partial = await claudeAgentSdkNormalizationAdapter.normalize(partialInput);

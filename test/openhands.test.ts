@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -994,6 +994,7 @@ test("packages one verified smoke attempt with native, workspace, verifier, and 
     if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
     throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
   };
+  let callerCleanupRan = false;
 
   try {
     const result = await captureOpenHandsAgentServerRun({
@@ -1002,7 +1003,10 @@ test("packages one verified smoke attempt with native, workspace, verifier, and 
       workspaceOutcomeExcludedDirectoryNames: ["node_modules", "node_modules"],
       workspace: {
         setup: async () => ({ status: "ready", path: final, artifactId: "workspace", retained: true }),
-        cleanup: async () => undefined,
+        cleanup: async () => {
+          callerCleanupRan = true;
+          rmSync(final, { recursive: true, force: true });
+        },
       },
       configuration: {
         model: "test/model",
@@ -1043,11 +1047,15 @@ test("packages one verified smoke attempt with native, workspace, verifier, and 
     assert.deepEqual(result.manifest.evidence.filter(({ kind }) => ["session", "hook", "workspace", "verifier"].includes(kind)).map(({ kind }) => kind), [
       "workspace", "verifier", "session", "hook",
     ]);
+    assert.ok(result.normalized);
     assert.equal(result.normalized.events.every(({ attemptId }) => attemptId === definition.attempt.id), true);
     assert.equal(result.normalized.events.every(({ source }) => source.nativeReference.artifactId === "session"), true);
     assert.equal(result.normalized.events.flatMap(({ content }) => content.status === "known" ? content.value : [])
       .every(({ nativeReference }) => nativeReference.artifactId === "session"), true);
     assert.equal(result.qualification.status, "qualified-with-gaps");
+    assert.equal(callerCleanupRan, true);
+    assert.equal(existsSync(final), false);
+    assert.equal(result.retainedWorkspacePath, undefined);
     assert.equal(result.qualification.reasons.some(({ code }) => code === "EVENT_LOG_COMPLETENESS_UNPROVEN"), true);
     const captureReport = result.manifest.evidence.find(({ kind }) => kind === "capture-report")!;
     assert.deepEqual(
@@ -1061,7 +1069,7 @@ test("packages one verified smoke attempt with native, workspace, verifier, and 
   }
 });
 
-test("runs caller workspace cleanup when workspace evidence capture fails", async () => {
+test("preserves and reports the source workspace when workspace evidence capture fails", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-openhands-workspace-capture-failure-"));
   const start = join(root, "start");
   const final = join(root, "final");
@@ -1070,6 +1078,15 @@ test("runs caller workspace cleanup when workspace evidence capture fails", asyn
   cpSync(start, final, { recursive: true, preserveTimestamps: true });
   writeFileSync(join(final, "result.txt"), "after\n");
   symlinkSync("result.txt", join(final, "unsafe-link"));
+  const sessionHook = {
+    id: "hook-workspace-capture-failure",
+    kind: "HookExecutionEvent",
+    source: "hook",
+    timestamp: "2026-09-02T07:00:01Z",
+    hook_event_type: "SessionEnd",
+    success: true,
+    exit_code: 0,
+  };
   const definition: RunBundleDefinition = {
     bundleRoot: join(root, "bundle"),
     bundleId: "bundle-openhands-workspace-capture-failure",
@@ -1094,7 +1111,9 @@ test("runs caller workspace cleanup when workspace evidence capture fails", asyn
     if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
       return json({ id: "conversation-1", execution_status: "finished" });
     }
-    if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [message], next_page_id: null });
+    if (url.includes("/api/conversations/conversation-1/events/search")) {
+      return json({ items: [message, sessionHook], next_page_id: null });
+    }
     if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
     throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
   };
@@ -1105,7 +1124,10 @@ test("runs caller workspace cleanup when workspace evidence capture fails", asyn
       startingWorkspacePath: start,
       workspace: {
         setup: async () => ({ status: "ready", path: final, artifactId: "workspace", retained: true }),
-        cleanup: async () => { callerCleanupRan = true; },
+        cleanup: async () => {
+          callerCleanupRan = true;
+          rmSync(final, { recursive: true, force: true });
+        },
       },
       configuration: {
         model: "test/model",
@@ -1118,6 +1140,7 @@ test("runs caller workspace cleanup when workspace evidence capture fails", asyn
           queueMicrotask(() => {
             socket.open();
             socket.message(message);
+            socket.message(sessionHook);
           });
           return socket;
         },
@@ -1125,11 +1148,208 @@ test("runs caller workspace cleanup when workspace evidence capture fails", asyn
       },
     });
 
-    assert.equal(callerCleanupRan, true);
+    assert.equal(callerCleanupRan, false);
+    assert.equal(result.retainedWorkspacePath, final);
+    assert.equal(existsSync(join(final, "result.txt")), true);
     assert.equal(result.attempt.record.cleanup?.status, "failed");
     assert.equal(result.attempt.classification.kind, "infrastructure-failure");
     assert.equal(result.manifest.terminal.workspaceArtifactId, undefined);
     assert.equal(result.manifest.evidence.some(({ kind }) => kind === "workspace"), false);
+    assert.equal(result.normalized, undefined);
+    const reportDescriptor = result.manifest.evidence.find(({ kind }) => kind === "capture-report")!;
+    const report = JSON.parse(readFileSync(join(definition.bundleRoot, reportDescriptor.relativePath), "utf8")) as {
+      missingEvidence: Array<{ kind: string; detail?: string }>;
+    };
+    assert.equal(report.missingEvidence.some(({ kind, detail }) =>
+      kind === "workspace" && /symbolic link/u.test(detail ?? "")), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("keeps retained workspace evidence distinct from a verifier failure", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-openhands-verifier-failure-"));
+  const start = join(root, "start");
+  const final = join(root, "final");
+  const bundleRoot = join(root, "bundle");
+  mkdirSync(start);
+  writeFileSync(join(start, "result.txt"), "before\n");
+  cpSync(start, final, { recursive: true, preserveTimestamps: true });
+  writeFileSync(join(final, "result.txt"), "after\n");
+  const hook = {
+    id: "hook-verifier-failure",
+    kind: "HookExecutionEvent",
+    source: "hook",
+    timestamp: "2026-09-02T07:00:01Z",
+    hook_event_type: "SessionEnd",
+    success: true,
+    exit_code: 0,
+  };
+  const definition: RunBundleDefinition = {
+    bundleRoot,
+    bundleId: "bundle-openhands-verifier-failure",
+    run: {
+      id: "run-openhands-verifier-failure",
+      assessmentMode: "verified",
+      task: { id: "task-openhands-verifier-failure" },
+      fixture: { id: "fixture-openhands-verifier-failure", digest: SHA("a") },
+      model: { provider: "test", id: "test/model" },
+      harness: { id: "openhands-agent-server", version: OPENHANDS_AGENT_SERVER_VERSION },
+      runtime: [],
+    },
+    attempt: { id: "attempt-openhands-verifier-failure", number: 1 },
+    configuration: { digest: SHA("b"), budgetDigest: SHA("c"), toolPolicyDigest: SHA("d") },
+  };
+  let callerCleanupRan = false;
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
+      return json({ id: "conversation-1", execution_status: "finished" });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) {
+      return json({ items: [message, hook], next_page_id: null });
+    }
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+
+  try {
+    const result = await captureOpenHandsAgentServerRun({
+      definition,
+      startingWorkspacePath: start,
+      workspace: {
+        setup: async () => ({ status: "ready", path: final, artifactId: "workspace", retained: true }),
+        cleanup: async () => {
+          callerCleanupRan = true;
+          rmSync(final, { recursive: true, force: true });
+        },
+      },
+      configuration: {
+        model: "test/model",
+        baseUrl: "http://127.0.0.1:8000",
+        startConversation: { agent: { kind: "Agent", llm: { model: "test/model" } } },
+        message: { role: "user", content: [{ type: "text", text: "update result.txt" }], run: true },
+        fetch,
+        webSocket: (url) => {
+          const socket = new FakeWebSocket(url);
+          queueMicrotask(() => {
+            socket.open();
+            socket.message(message);
+            socket.message(hook);
+          });
+          return socket;
+        },
+        pollIntervalMs: 0,
+      },
+      verifier: async () => { throw new Error("verifier failed after workspace packaging"); },
+    });
+    const reportDescriptor = result.manifest.evidence.find(({ kind }) => kind === "capture-report")!;
+    const report = JSON.parse(readFileSync(join(bundleRoot, reportDescriptor.relativePath), "utf8")) as {
+      missingEvidence: Array<{ kind: string }>;
+    };
+
+    assert.equal(result.attempt.classification.kind, "verifier-error");
+    assert.equal(result.manifest.evidence.some(({ kind }) => kind === "workspace"), true);
+    assert.equal(report.missingEvidence.some(({ kind }) => kind === "workspace"), false);
+    assert.equal(callerCleanupRan, true);
+    assert.equal(result.attempt.record.cleanup?.status, "completed");
+    assert.equal(result.retainedWorkspacePath, undefined);
+    assert.equal(result.normalized, undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("finalizes completed native capture before reporting projection failure", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-openhands-normalization-failure-"));
+  const start = join(root, "start");
+  const final = join(root, "final");
+  const bundleRoot = join(root, "bundle");
+  mkdirSync(start);
+  writeFileSync(join(start, "result.txt"), "before\n");
+  cpSync(start, final, { recursive: true, preserveTimestamps: true });
+  writeFileSync(join(final, "result.txt"), "after\n");
+  const cyclicMessage = { ...message, parent_id: message.id };
+  const hook = {
+    id: "hook-normalization-failure",
+    kind: "HookExecutionEvent",
+    source: "hook",
+    timestamp: "2026-09-02T07:00:01Z",
+    hook_event_type: "SessionEnd",
+    success: true,
+    exit_code: 0,
+  };
+  const definition: RunBundleDefinition = {
+    bundleRoot,
+    bundleId: "bundle-openhands-normalization-failure",
+    run: {
+      id: "run-openhands-normalization-failure",
+      assessmentMode: "observational",
+      task: { id: "task-openhands-normalization-failure" },
+      fixture: { id: "fixture-openhands-normalization-failure", digest: SHA("a") },
+      model: { provider: "test", id: "test/model" },
+      harness: { id: "openhands-agent-server", version: OPENHANDS_AGENT_SERVER_VERSION },
+      runtime: [],
+    },
+    attempt: { id: "attempt-openhands-normalization-failure", number: 1 },
+    configuration: { digest: SHA("b"), budgetDigest: SHA("c"), toolPolicyDigest: SHA("d") },
+  };
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
+      return json({ id: "conversation-1", execution_status: "finished" });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) {
+      return json({ items: [cyclicMessage, hook], next_page_id: null });
+    }
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+
+  try {
+    const result = await captureOpenHandsAgentServerRun({
+      definition,
+      startingWorkspacePath: start,
+      workspace: {
+        setup: async () => ({ status: "ready", path: final, artifactId: "workspace", retained: true }),
+        cleanup: async () => rmSync(final, { recursive: true, force: true }),
+      },
+      configuration: {
+        model: "test/model",
+        baseUrl: "http://127.0.0.1:8000",
+        startConversation: { agent: { kind: "Agent", llm: { model: "test/model" } } },
+        message: { role: "user", content: [{ type: "text", text: "update result.txt" }], run: true },
+        fetch,
+        webSocket: (url) => {
+          const socket = new FakeWebSocket(url);
+          queueMicrotask(() => {
+            socket.open();
+            socket.message(cyclicMessage);
+            socket.message(hook);
+          });
+          return socket;
+        },
+        pollIntervalMs: 0,
+      },
+    });
+    const persisted = JSON.parse(readFileSync(join(bundleRoot, "manifest.json"), "utf8")) as {
+      terminal: { state: string };
+      evidence: Array<{ kind: string }>;
+    };
+
+    assert.equal(result.attempt.terminal.state, "completed");
+    assert.equal(result.manifest.terminal.state, "completed");
+    assert.equal(persisted.terminal.state, "completed");
+    assert.equal(persisted.evidence.some(({ kind }) => kind === "session"), true);
+    assert.equal(persisted.evidence.some(({ kind }) => kind === "workspace"), true);
+    assert.match(result.normalizationError ?? "", /cyclic parentage/u);
+    assert.equal(result.normalized, undefined);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1486,6 +1706,7 @@ test("approved live Agent Server smoke produces a verified run bundle", {
     assert.equal(result.attempt.classification.kind, "completed");
     assert.equal(result.manifest.terminal.state, "completed");
     assert.equal(result.qualification.status, "qualified-with-gaps");
+    assert.ok(result.normalized);
     assert.equal(result.normalized.events.length > 0, true);
   } finally {
     rmSync(root, { recursive: true, force: true });
