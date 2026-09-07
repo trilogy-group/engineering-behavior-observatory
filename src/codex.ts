@@ -496,6 +496,8 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     records,
     localLoginReference,
     environmentKeys: Object.keys(environment).sort(),
+    threadId,
+    turnId,
   });
   if (captureError !== undefined && processResult.error !== undefined) {
     gaps.push({ kind: "process-error", detail: processResult.error });
@@ -571,13 +573,15 @@ function mapCodexRecord(
   let phase: UniformEvent["phase"] = "instant";
   let scope: UniformEvent["scope"] = { kind: "attempt", id: capture.attemptId };
   let contentPath: string | undefined;
-  if (record.kind === "request" && record.source === CODEX_HARNESS && isPermissionRequest(method)) {
+  if (record.kind === "request" && record.source === CODEX_HARNESS && isPermissionRequest(method)
+      && matchesOwnedScope(capture, payload)) {
     family = "permission";
     actor = "harness";
     phase = "before";
     scope = scopedTurn(payload);
   } else if (record.kind !== "notification") return undefined;
   else if (method === "item/completed") {
+    if (!matchesOwnedScope(capture, payload)) return undefined;
     const item = isRecord(payload.item) ? payload.item : {};
     const type = text(item.type);
     family = itemFamily(type);
@@ -589,20 +593,20 @@ function mapCodexRecord(
     contentPath = "#/payload/item";
   } else if (method === "turn/completed") {
     const turn = isRecord(payload.turn) ? payload.turn : {};
-    const owned = captureIdentity(capture);
-    if (owned.threadId === undefined || owned.turnId === undefined
-        || text(payload.threadId) !== owned.threadId || text(turn.id) !== owned.turnId) return undefined;
+    if (!matchesOwnedScope(capture, { threadId: payload.threadId, turnId: turn.id })) return undefined;
     family = "outcome";
     actor = "harness";
     phase = "after";
     scope = { kind: "turn", id: text(turn.id) };
     contentPath = "#/payload/turn";
   } else if (method === "turn/plan/updated" || method === "thread/compacted") {
+    if (!matchesOwnedScope(capture, payload)) return undefined;
     family = "context";
     actor = "agent";
     scope = scopedTurn(payload);
     contentPath = "#/payload";
   } else if (method === "thread/tokenUsage/updated" || method === "model/rerouted" || method === "hook/completed") {
+    if (!matchesOwnedScope(capture, payload, method === "hook/completed")) return undefined;
     family = "runtime";
     scope = scopedTurn(payload);
     contentPath = "#/payload";
@@ -664,6 +668,17 @@ function captureIdentity(capture: QualifiedNativeCapture<ProtocolObservation>): 
     ...(threadId === undefined ? {} : { threadId }),
     ...(turnId === undefined ? {} : { turnId }),
   };
+}
+
+function matchesOwnedScope(
+  capture: QualifiedNativeCapture<ProtocolObservation>,
+  payload: Record<string, unknown>,
+  allowSessionScope = false,
+): boolean {
+  const owned = captureIdentity(capture);
+  if (owned.threadId === undefined || owned.turnId === undefined || text(payload.threadId) !== owned.threadId) return false;
+  const recordTurnId = text(payload.turnId);
+  return recordTurnId === owned.turnId || allowSessionScope && (payload.turnId === null || payload.turnId === undefined);
 }
 
 function itemFamily(type: string | undefined): UniformEvent["family"] | undefined {
@@ -793,6 +808,8 @@ type OtlpReceiver = {
     records: readonly ProtocolObservation[];
     localLoginReference: "available" | "unavailable";
     environmentKeys: readonly string[];
+    threadId?: string;
+    turnId?: string;
   }): CodexTelemetryEvidence;
 };
 
@@ -855,6 +872,7 @@ async function openOtlpReceiver(signals: readonly CodexTelemetrySignal[], now = 
         const seenThreadId = text(record.payload.threadId);
         const seenTurnId = text(record.payload.turnId);
         if (total === undefined || last === undefined || seenThreadId === undefined || seenTurnId === undefined) return [];
+        if (seenThreadId !== input.threadId || seenTurnId !== input.turnId) return [];
         return [{
           sequence: record.sequence,
           threadId: seenThreadId,

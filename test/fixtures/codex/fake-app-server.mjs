@@ -30,6 +30,19 @@ async function emitTurn() {
   if (mode === "foreign-completion") {
     send({ method: "turn/completed", params: { threadId: "foreign-thread", turn: { id: "foreign-turn", threadId: "foreign-thread", status: "completed", items: [] } } });
   }
+  if (mode === "foreign-scope") {
+    const scope = { threadId: "foreign-thread", turnId: "foreign-turn" };
+    send({ method: "item/completed", params: { ...scope, completedAtMs: 1_700_000_000_050, item: { id: "foreign-item", type: "commandExecution", status: "completed" } } });
+    send({ method: "turn/plan/updated", params: { ...scope, explanation: null, plan: [] } });
+    send({ method: "thread/compacted", params: scope });
+    send({ method: "model/rerouted", params: { ...scope, fromModel: "a", toModel: "b", reason: "fallback" } });
+    send({ method: "hook/completed", params: { ...scope, run: {} } });
+    send({ method: "thread/tokenUsage/updated", params: { ...scope, tokenUsage: {
+      total: { totalTokens: 999, inputTokens: 999, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
+      last: { totalTokens: 999, inputTokens: 999, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
+    } } });
+    send({ method: "item/commandExecution/requestApproval", id: 903, params: { ...scope, itemId: "foreign-item" } });
+  }
   await finishTurn();
 }
 

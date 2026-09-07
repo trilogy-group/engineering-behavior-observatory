@@ -205,6 +205,24 @@ test("normalizes only the matching owned turn completion", async () => {
   }
 });
 
+test("filters every normalized and usage record to the owned thread and turn", async () => {
+  const root = await temporaryRoot();
+  try {
+    const capture = await runFake(root, "foreign-scope");
+    const normalized = await normalizeCodexCapture(capture);
+    assert.equal(normalized.events.some(({ scope }) => scope.id === "foreign-turn"), false);
+    assert.equal(normalized.events.some(({ attributes }) => attributes.itemId === "foreign-item"), false);
+    assert.equal(capture.telemetry.usage.final?.total.totalTokens, 14);
+    const foreign = capture.records.filter(({ record }) => record.sourceIdentity === "foreign-thread");
+    assert.ok(foreign.length > 0);
+    for (const record of foreign) {
+      assert.ok(normalized.unmapped.some(({ reference }) => reference.recordLocator === record.reference.recordLocator));
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("bounds OTLP receiver diagnostics while continuing to accept configured signals", async () => {
   const root = await temporaryRoot();
   try {
