@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { mkdirSync, realpathSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -275,13 +275,23 @@ async function runObservationsCommand(args: string[], write: (message: string) =
       if (issues.length > 0) throw new Error(`Corpus index is not current: ${issues[0]!.manifestPath} ${issues[0]!.message}`);
       const selected = queryCorpusIndex(index, { ...parseCorpusQuery(args.slice(4)), manifestKind: "run" });
       if (selected.length === 0) throw new Error("Corpus selection matched no retained run bundles.");
-      assertOutside(realpathSync(first), realpathSync(dirname(resolve(third))));
-      mkdirSync(third, { recursive: true, mode: 0o700 });
-      for (const entry of selected) {
-        if (entry.runId === undefined || entry.attemptId === undefined || entry.issues.length > 0) throw new Error(`Corpus entry ${entry.manifestPath} is not observation-ready.`);
-        const bundleRoot = dirname(join(resolve(first), ...entry.manifestPath.split("/")));
-        const report = await createAgentSdkStructuralObservationSet(bundleRoot);
-        await writeObservationReport(join(third, observationFileName(entry.runId, entry.attemptId)), report, first);
+      const outputRoot = resolve(third);
+      const outputParent = realpathSync(dirname(outputRoot));
+      assertOutside(realpathSync(first), outputParent);
+      if (existsSync(outputRoot)) throw new Error("Structural observation corpus destination already exists.");
+      const stagingRoot = mkdtempSync(join(outputParent, ".ebo-observations-"));
+      let published = false;
+      try {
+        for (const entry of selected) {
+          if (entry.runId === undefined || entry.attemptId === undefined || entry.issues.length > 0) throw new Error(`Corpus entry ${entry.manifestPath} is not observation-ready.`);
+          const bundleRoot = dirname(join(resolve(first), ...entry.manifestPath.split("/")));
+          const report = await createAgentSdkStructuralObservationSet(bundleRoot);
+          await writeObservationReport(join(stagingRoot, observationFileName(entry.runId, entry.attemptId)), report, first);
+        }
+        renameSync(stagingRoot, outputRoot);
+        published = true;
+      } finally {
+        if (!published) rmSync(stagingRoot, { recursive: true, force: true });
       }
       write(`Created structural observations for ${selected.length} corpus run bundle(s).\n`);
       return 0;

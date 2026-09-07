@@ -175,6 +175,19 @@ test("CLI reads a qualified observational bundle, validates it, and writes deriv
   assert.equal(await main(["observations", "corpus", corpus, index, outputs, "--attempt", "attempt-structural-cli"], () => undefined), 0);
   const outputName = `sha256-${createHash("sha256").update(JSON.stringify(["run-structural-cli", "attempt-structural-cli"])).digest("hex")}.json`;
   assert.equal(existsSync(join(outputs, outputName)), true);
+
+  const mixedCorpus = join(root, "mixed-corpus");
+  const mixedIndex = join(root, "mixed-index.jsonl");
+  const mixedOutput = join(root, "mixed-output");
+  cpSync(source, join(mixedCorpus, "runs", "a-good"), { recursive: true });
+  cpSync(source, join(mixedCorpus, "runs", "z-unsupported"), { recursive: true });
+  const unsupportedManifestPath = join(mixedCorpus, "runs", "z-unsupported", "manifest.json");
+  const unsupportedManifest = JSON.parse(readFileSync(unsupportedManifestPath, "utf8")) as { run: { harness: { id: string } } };
+  unsupportedManifest.run.harness.id = "codex-app-server";
+  writeFileSync(unsupportedManifestPath, JSON.stringify(unsupportedManifest));
+  writeCorpusIndex(mixedIndex, buildCorpusIndex(mixedCorpus));
+  assert.equal(await main(["observations", "corpus", mixedCorpus, mixedIndex, mixedOutput], () => undefined), 1);
+  assert.equal(existsSync(mixedOutput), false, "a later unsupported bundle must not leave earlier reports published");
 });
 
 function dataset(events: UniformEvent[], capability: "available" | "partial" | "unsupported" = "available"): NormalizedDataset {

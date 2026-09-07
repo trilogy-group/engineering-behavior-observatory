@@ -211,6 +211,26 @@ test("marks recognized but unprojected native payload content as unknown", async
     source.nativeReference.artifactId === "session" && source.nativeReference.recordLocator === "line:5")?.attributes.messageId, undefined);
 });
 
+test("marks only explicit file changes as mutations", async () => {
+  const input = readFixture("complete");
+  input.records = [...input.records, {
+    reference: { artifactId: "hooks", recordLocator: "line:10" },
+    record: {
+      kind: "hook",
+      document: {
+        schemaVersion: "ebo.claude-agent-hook/v1",
+        sequence: 10,
+        hook: "DirectoryAdded",
+        sessionId: "session-golden",
+        nativePayload: { hook_event_name: "DirectoryAdded", session_id: "session-golden", source: "register_repo_root" },
+      },
+    },
+  }];
+  const result = await claudeAgentSdkNormalizationAdapter.normalize(input);
+  assert.equal(result.events.find(({ source }) => source.nativeType === "FileChanged")?.attributes.mutation, true);
+  assert.equal(result.events.find(({ source }) => source.nativeType === "DirectoryAdded")?.attributes.mutation, undefined);
+});
+
 test("correlates task lifecycle hooks by task ID before a shared agent ID", async () => {
   const input = readFixture("complete");
   const taskRecords = ["task-a", "task-b"].flatMap((taskId, taskIndex) =>

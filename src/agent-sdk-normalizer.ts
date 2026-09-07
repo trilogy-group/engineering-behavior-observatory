@@ -980,7 +980,7 @@ function hookAttributes(
 ): Record<string, UniformAttributeValue> {
   return compactAttributes({
     hook,
-    mutation: ["FileChanged", "DirectoryAdded"].includes(hook) ? true : undefined,
+    mutation: hook === "FileChanged" ? true : undefined,
     toolUseId,
     toolName: scalar(payload.tool_name),
     inputDigest: hook === "PreToolUse" && payload.tool_input !== undefined
