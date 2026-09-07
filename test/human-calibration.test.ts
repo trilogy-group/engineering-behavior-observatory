@@ -296,6 +296,17 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     assert.equal(aggregate.groups[0]!.metrics.find(({ id }) => id === "structural:tool-operation-count")!.population, "attempt");
     assert.equal(aggregate.groups[0]!.metrics.find(({ id }) => id === "review-unresolved-rate")!.measurement.rate, 0.75);
     assert.equal(aggregate.groups[0]!.metrics.find(({ id }) => id === "review-disputed-rate")!.measurement.rate, 0.5);
+    const conflictingAssertion = structuredClone(assertions[0]!);
+    conflictingAssertion.judgment.rationale = "Conflicting revised synthetic judgment.";
+    await assert.rejects(aggregateEvaluation({
+      corpusEntries: buildCorpusIndex(bundleRoot),
+      observationSets: [],
+      assertions: [{ bundleRoot, document: assertions[0]! }, { bundleRoot, document: conflictingAssertion }],
+      calibrations: [],
+      comparisons: [],
+    }, {
+      groupBy: ["task"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 },
+    }), /duplicate behavior assertion identity has conflicting content/iu);
     const staleObservationSet = structuredClone(observationSet);
     staleObservationSet.observations[0]!.definition = "Tampered but schema-valid fixture definition.";
     await assert.rejects(aggregateEvaluation({

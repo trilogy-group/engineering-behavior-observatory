@@ -216,13 +216,25 @@ function groupMetrics(
   const extractorIds = [...new Set(selectedObservationSets.flatMap(({ observations: values }) => values.map(({ extractor }) => extractor.id)))].sort();
   for (const extractorId of extractorIds) {
     const values = selected.map((attempt) => observations.get(attemptKey(attempt))?.observations.find(({ extractor }) => extractor.id === extractorId)?.value);
-    const known = values.flatMap((value) => value?.status === "known" && typeof value.value === "number" ? [value] : []);
+    const known = values.flatMap((value) => value?.status === "known" ? [value] : []);
     const units = new Set(known.map(({ unit }) => unit));
-    metrics.push(units.size > 1
-      ? unavailableMetric(`structural:${extractorId}`, "attempt", "Structural observation units differ within the group.", selected.length, "attempt")
-      : metric(`structural:${extractorId}`, "attempt", known.reduce((sum, { value }) => sum + Number(value), 0), known.length,
-        known[0]?.unit ?? "observation-value", "attempt-with-known-observation",
-        exclusionCounts(values.flatMap((value) => value?.status === "unavailable" ? [value.reason] : value === undefined ? ["observation-set-missing"] : []), "attempt")));
+    const types = new Set(known.map(({ value }) => typeof value));
+    const exclusions = exclusionCounts(values.flatMap((value) => value?.status === "unavailable" ? [value.reason] : value === undefined ? ["observation-set-missing"] : []), "attempt");
+    if (units.size > 1 || types.size > 1) {
+      metrics.push(unavailableMetric(`structural:${extractorId}`, "attempt", "Structural observation types or units differ within the group.", selected.length, "attempt"));
+    } else if (types.has("number")) {
+      metrics.push(metric(`structural:${extractorId}`, "attempt", known.reduce((sum, { value }) => sum + Number(value), 0), known.length,
+        known[0]?.unit ?? "observation-value", "attempt-with-known-observation", exclusions));
+    } else if (types.has("boolean")) {
+      metrics.push(metric(`structural:${extractorId}`, "attempt", known.filter(({ value }) => value === true).length, known.length,
+        "attempt-with-true-observation", "attempt-with-known-observation", exclusions));
+    } else {
+      for (const value of [...new Set(known.map(({ value }) => String(value)))].sort()) {
+        metrics.push(metric(`structural:${extractorId}:${value}`, "attempt", known.filter((knownValue) => knownValue.value === value).length,
+          known.length, "attempt", "attempt-with-known-observation", exclusions));
+      }
+      if (known.length === 0) metrics.push(unavailableMetric(`structural:${extractorId}`, "attempt", "The eligible denominator is empty.", 0, "attempt"));
+    }
   }
   const selectedAssertions = [...assertions.values()].filter(({ runId, attemptId }) => selectedIds.has(`${runId}\0${attemptId}`));
   metrics.push(rateMetric("assertion-abstention-rate", "assertion", selectedAssertions.filter(({ judgment }) => judgment.disposition === "abstained").length,
@@ -416,7 +428,9 @@ function measureValue(attempt: Attempt, measure: string, observations: ReadonlyM
     ? undefined : { value: attempt.verifierStatuses[0] === "passed" ? 1 : 0, unit: "verified-attempt" };
   if (measure.startsWith("structural:")) {
     const value = observations.get(attemptKey(attempt))?.observations.find(({ extractor }) => extractor.id === measure.slice("structural:".length))?.value;
-    return value?.status === "known" && typeof value.value === "number" ? { value: value.value, unit: value.unit } : undefined;
+    return value?.status === "known" && (typeof value.value === "number" || typeof value.value === "boolean")
+      ? { value: typeof value.value === "boolean" ? Number(value.value) : value.value, unit: value.unit }
+      : undefined;
   }
   throw new Error(`Unsupported aggregate comparison measure "${measure}".`);
 }
@@ -577,7 +591,7 @@ function attemptKey(attempt: Pick<Attempt, "runId" | "attemptId">): string {
 }
 
 function assertionKey(assertion: BehaviorAssertion): string {
-  return `${assertion.runId}\0${assertion.attemptId}\0${assertionBindingKey(assertion)}`;
+  return `${assertion.runId}\0${assertion.attemptId}\0${assertion.id}`;
 }
 
 function assertionBindingKey(assertion: BehaviorAssertion): string {
