@@ -216,6 +216,50 @@ export {
   spawnProtocolProcess,
 } from "./process-protocol.js";
 export {
+  captureCodexAppServer,
+  CODEX_ADAPTER_VERSION,
+  CODEX_APP_SERVER_CAPABILITIES,
+  CODEX_APP_SERVER_VERSION,
+  CODEX_DEFAULT_SHUTDOWN_GRACE_MS,
+  CODEX_HARNESS,
+  createCodexHarnessAdapter,
+  describeAndValidateCodexDataset,
+  normalizeCodexCapture,
+} from "./codex.js";
+export type {
+  CodexAppServerCapture,
+  CodexAppServerCaptureRequest,
+  CodexAppServerConfiguration,
+  CodexApprovalPolicy,
+  CodexCaptureGap,
+  CodexOtlpRecord,
+  CodexReasoningEffort,
+  CodexSandbox,
+  CodexTelemetryEvidence,
+  CodexTelemetrySignal,
+} from "./codex.js";
+export {
+  captureCodexAppServerRun,
+  CODEX_CONFIG_SCHEMA_VERSION,
+  CODEX_CONTRACT_DIGEST,
+  resolveCodexConfigurationRecord,
+  runCodexQueueEntry,
+} from "./codex-run.js";
+export type {
+  CaptureCodexAppServerRunOptions,
+  CaptureCodexAppServerRunResult,
+  CaptureCodexAppServerVerifier,
+  CodexCaptureProfileConfiguration,
+  CodexConfigurationKind,
+  CodexConfigurationRecord,
+  CodexHarnessConfiguration,
+  CodexModelConfiguration,
+  CodexNativeLimitsConfiguration,
+  CodexNativeToolPolicyConfiguration,
+  CodexRunSummary,
+  RunCodexQueueEntryOptions,
+} from "./codex-run.js";
+export {
   createDeepSeekHarnessAdapter,
   createDeepSeekRuntimeComposition,
   DEEPSEEK_ADAPTER_ID,

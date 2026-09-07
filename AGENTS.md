@@ -23,6 +23,10 @@ or implement beyond the assigned issue.
 - Integrate OpenHands through a pinned Agent Server REST/WebSocket boundary.
   Claim only the evidence verified through that API; do not assume complete
   in-process `EventLog` delivery.
+- Integrate Codex through a pinned, owned `app-server` child over stdio. Match
+  native thread/turn terminal identities, retain history separately from
+  streamed items, and never attach to a desktop daemon or infer completion from
+  process exit.
 - Keep source control protocols separate from EBO's small uniform event
   projection. Each adapter retains its own methods, identities, lifecycle, and
   completion semantics.

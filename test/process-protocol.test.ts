@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { readFileSync, rmSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import { test } from "node:test";
 
 import {
@@ -786,6 +787,24 @@ test("interrupts after delivered frames and flushes partial evidence", async () 
     assert.equal(processResult.partial, true);
     assert.equal(processResult.stdoutFrames, 1);
     assert.match(readFileSync(evidencePath, "utf8"), /notification/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("interrupt can reserve a caller-owned deadline for evidence finalization", async () => {
+  const root = temporaryRoot();
+  try {
+    const protocol = spawnProtocolProcess({
+      ...nodeScript("process.on('SIGINT', () => {}); console.log(JSON.stringify({ready:true})); setTimeout(()=>{}, 10000)"),
+      source: "fake-harness",
+      evidencePath: join(root, "bounded-interrupt.jsonl"),
+    });
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+    const startedAt = performance.now();
+    const result = await protocol.interrupt(10, 10);
+    assert.ok(performance.now() - startedAt < 250);
+    assert.equal(result.status, "interrupted");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

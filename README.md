@@ -22,6 +22,11 @@ The [DeepSeek Harness adapter](docs/deepseek-harness.md) uses the official
 out-of-process TypeScript client, retains native session evidence and explicit
 receipt-to-idle completion boundaries, and normalizes only qualified records.
 
+The optional [Codex app-server adapter](docs/codex-harness.md) owns one pinned
+`0.150.1` stdio child per attempt, retains native thread/turn/item evidence and
+independently verified OTLP receipts, and runs one frozen observational queue
+entry through `ebo codex run`.
+
 ## Status
 
 M2 native Agent SDK capture is available through the public
@@ -53,6 +58,8 @@ EBO TypeScript coordinator
 │   └── official TypeScript client over JSON-RPC stdio
 ├── OpenHands adapter
 │   └── pinned Agent Server REST/WebSocket API
+├── Codex adapter
+│   └── pinned app-server JSONL protocol over owned stdio
 └── uniform event projection
     └── only after native capture qualification
 ```
@@ -91,6 +98,7 @@ node dist/src/cli.js matrix compile <experiment.json> <bundle-root> <queue.json>
 node dist/src/cli.js queue inspect <queue.json>
 node dist/src/cli.js queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
 node dist/src/cli.js agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
+node dist/src/cli.js codex run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 node dist/src/cli.js export create <run-bundle-root> <policy.json> <export-root>
 node dist/src/cli.js corpus build <corpus-root> <index.jsonl>
 node dist/src/cli.js corpus query <index.jsonl> [--task <id>] [--model <id>] [--harness <id>] [--assessment-mode <observational|verified>]

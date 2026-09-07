@@ -820,6 +820,8 @@ function nativeRecordSummary(records: unknown[]): { hookNames: string[]; session
     for (const sessionId of [
       record.sessionId,
       record.session_id,
+      record.schemaVersion === "ebo.protocol-observation/v1" && record.source === "codex-app-server"
+        ? record.sourceIdentity : undefined,
       isRecord(record.message) ? record.message.session_id : undefined,
     ]) {
       if (typeof sessionId === "string") sessionIds.push(sessionId);
