@@ -1,0 +1,68 @@
+{
+  "schemaVersion": "ebo.normalized-dataset/v1",
+  "runId": "run-behavior-fixture",
+  "attemptId": "attempt-behavior-fixture",
+  "adapter": {
+    "id": "fixture-adapter",
+    "version": "1.0.0",
+    "harness": "fixture-harness"
+  },
+  "capabilityProfile": {
+    "schemaVersion": "ebo.adapter-capability-profile/v1",
+    "adapterId": "fixture-adapter",
+    "harness": "fixture-harness",
+    "nativeTypes": ["fixture-event"],
+    "families": {
+      "message": { "status": "available" },
+      "model-request": { "status": "available" },
+      "tool": { "status": "available" },
+      "context": { "status": "available" },
+      "permission": { "status": "available" },
+      "delegation": { "status": "available" },
+      "artifact": { "status": "available" },
+      "validation": { "status": "available" },
+      "runtime": { "status": "available" },
+      "outcome": { "status": "available" }
+    },
+    "evidence": {
+      "nativeOrder": { "status": "available" },
+      "nativeTime": { "status": "available" },
+      "parentage": { "status": "available" },
+      "content": { "status": "available" }
+    }
+  },
+  "nativeRecords": [
+    {
+      "reference": { "artifactId": "session", "recordLocator": "line:1" },
+      "nativeType": "fixture-event",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "contentReferences": [],
+  "events": [
+    {
+      "schemaVersion": "ebo.uniform-event/v1",
+      "id": "event-1",
+      "runId": "run-behavior-fixture",
+      "attemptId": "attempt-behavior-fixture",
+      "source": {
+        "harness": "fixture-harness",
+        "nativeType": "fixture-event",
+        "nativeReference": { "artifactId": "session", "recordLocator": "line:1" }
+      },
+      "nativeOrder": { "status": "known", "value": 1, "domain": "session" },
+      "nativeTime": { "status": "known", "value": "2026-09-07T00:00:00Z" },
+      "actor": { "kind": "agent" },
+      "family": "validation",
+      "phase": "after",
+      "scope": { "kind": "attempt", "id": "attempt-behavior-fixture" },
+      "relations": {
+        "parent": { "status": "unknown", "reason": "No parent is exposed." },
+        "known": []
+      },
+      "attributes": { "status": "passed" },
+      "content": { "status": "known", "value": [] }
+    }
+  ],
+  "unmapped": []
+}

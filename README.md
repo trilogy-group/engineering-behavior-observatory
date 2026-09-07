@@ -14,6 +14,10 @@ The first post-capture contract is now available: versioned
 capture-qualified native evidence without replacing source records or transport
 semantics.
 
+The versioned [behavior assertion contract](docs/behavior-assertions.md) binds
+one declared behavior dimension to the exact normalized dataset, event, and
+reachable native source. Human review remains a separate record.
+
 The [OpenHands Agent Server adapter](docs/openhands-agent-server.md) implements
 the pinned `1.44.1` REST/WebSocket boundary with native-first reconciliation,
 explicit completeness gaps, and verified run-bundle packaging.
@@ -106,6 +110,7 @@ node dist/src/cli.js corpus validate <corpus-root> <index.jsonl>
 node dist/src/cli.js corpus pack <approved-export-root> <policy.json> <archive.tar.gz>
 node dist/src/cli.js corpus unpack <archive.tar.gz> <destination-root>
 node dist/src/cli.js comparison check <request.json>
+node dist/src/cli.js assertions validate <run-bundle-root> <assertion.json> [review.json]
 node dist/src/cli.js observations create <run-bundle-root> <output.json>
 node dist/src/cli.js observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
 # Optional approved OAuth smoke; provide OAuth auth, never API-key overrides.

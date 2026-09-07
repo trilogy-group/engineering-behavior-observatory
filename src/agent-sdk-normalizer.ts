@@ -36,6 +36,7 @@ import {
 
 export const CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_ID = "claude-agent-sdk/v1";
 export const CLAUDE_AGENT_SDK_HARNESS = "claude-agent-sdk";
+export const CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_VERSION = "1.0.0";
 
 type JsonRecord = Record<string, unknown>;
 type AgentSdkNativeKind =

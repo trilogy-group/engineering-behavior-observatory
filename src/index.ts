@@ -366,6 +366,20 @@ export type {
   StructuralObservation,
   StructuralObservationSet,
 } from "./structural-observations.js";
+export {
+  DEFAULT_BEHAVIOR_VOCABULARY,
+  isConfirmedBehaviorAssertion,
+  validateAgentSdkBehaviorAssertion,
+  validateBehaviorAssertion,
+  validateBehaviorReview,
+} from "./behavior-assertions.js";
+export type {
+  BehaviorAssertion,
+  BehaviorCitation,
+  BehaviorReview,
+  BehaviorVocabulary,
+  ResolvedBehaviorCitation,
+} from "./behavior-assertions.js";
 export type {
   AdapterCoverageReport,
   ComparisonCandidate,

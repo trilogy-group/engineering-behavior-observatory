@@ -17,6 +17,7 @@ import {
   type CorpusIndexQuery,
 } from "./corpus.js";
 import { runAgentSdkQueueEntry } from "./agent-sdk-runner.js";
+import { validateAgentSdkBehaviorAssertion, type BehaviorAssertion, type BehaviorReview } from "./behavior-assertions.js";
 import { runCodexQueueEntry } from "./codex-run.js";
 import { createPortableRunBundleExport, type PortableExportPolicy } from "./exports.js";
 import { assessComparisonEligibility, type ComparisonRequest } from "./normalization-integrity.js";
@@ -52,6 +53,7 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo comparison check <request.json>
        ebo observations create <run-bundle-root> <output.json>
        ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
+       ebo assertions validate <run-bundle-root> <assertion.json> [review.json]
 
 Engineering Behavior Observatory
 `;
@@ -129,6 +131,30 @@ export function main(
 
   if (args[0] === "observations") {
     return runObservationsCommand(args.slice(1), write);
+  }
+
+  if (args[0] === "assertions" && args[1] === "validate") {
+    const bundleRoot = args[2];
+    const assertionPath = args[3];
+    const reviewPath = args[4];
+    if (bundleRoot === undefined || assertionPath === undefined || args.length > 5) {
+      write("Usage: ebo assertions validate <run-bundle-root> <assertion.json> [review.json]\n");
+      return 1;
+    }
+    try {
+      const assertion = readJson(assertionPath) as BehaviorAssertion;
+      const review = reviewPath === undefined ? undefined : readJson(reviewPath) as BehaviorReview;
+      return validateAgentSdkBehaviorAssertion(bundleRoot, assertion, review).then((citations) => {
+        write(`Validated behavior assertion "${assertion.id}" (${citations.length} citation(s); review=${review?.state ?? "unreviewed"}).\n`);
+        return 0;
+      }, (error: unknown) => {
+        write(`${errorMessage(error)}\n`);
+        return 1;
+      });
+    } catch (error) {
+      write(`${errorMessage(error)}\n`);
+      return 1;
+    }
   }
 
   if (args[0] === "validate") {

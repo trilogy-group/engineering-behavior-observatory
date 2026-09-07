@@ -1136,6 +1136,7 @@ function loadValidators(): Map<string, ValidateFunction> {
   ajv.addSchema(readSchema("uniform-events/v1.json"));
   ajv.addSchema(readSchema("normalization-integrity.v1.json"));
   ajv.addSchema(readSchema("structural-observations.v1.json"));
+  ajv.addSchema(readSchema("behavior-assertions.v1.json"));
   ajv.addSchema(readSchema("deepseek-runtime-composition.v1.schema.json"));
 
   return new Map([
@@ -1155,6 +1156,9 @@ function loadValidators(): Map<string, ValidateFunction> {
     ["ebo.comparison-report/v1", requiredValidator(ajv, "urn:ebo:schema:normalization-integrity:v1#/$defs/comparisonReport")],
     ["ebo.structural-observation/v1", requiredValidator(ajv, "urn:ebo:schema:structural-observations:v1#/$defs/observation")],
     ["ebo.structural-observation-set/v1", requiredValidator(ajv, "urn:ebo:schema:structural-observations:v1#/$defs/set")],
+    ["ebo.behavior-vocabulary/v1", requiredValidator(ajv, "urn:ebo:schema:behavior-assertions:v1#/$defs/vocabulary")],
+    ["ebo.behavior-assertion/v1", requiredValidator(ajv, "urn:ebo:schema:behavior-assertions:v1#/$defs/assertion")],
+    ["ebo.behavior-review/v1", requiredValidator(ajv, "urn:ebo:schema:behavior-assertions:v1#/$defs/review")],
     ["ebo.deepseek-runtime-composition/v1", requiredValidator(ajv, "https://ebo.dev/schemas/deepseek-runtime-composition.v1.schema.json")],
   ]);
 }
