@@ -262,7 +262,7 @@ function groupMetrics(
         metrics.push(metric(`structural:${extractorId}:${value}`, "attempt", known.filter((knownValue) => knownValue.value === value).length,
           known.length, "attempt", "attempt-with-known-observation", exclusions));
       }
-      if (known.length === 0) metrics.push(unavailableMetric(`structural:${extractorId}`, "attempt", "The eligible denominator is empty.", 0, "attempt"));
+      if (known.length === 0) metrics.push(unavailableMetric(`structural:${extractorId}`, "attempt", "The eligible denominator is empty.", 0, "attempt", exclusions));
     }
   }
   const selectedAssertions = [...assertions.values()].filter(({ runId, attemptId }) => selectedIds.has(`${runId}\0${attemptId}`));
@@ -318,7 +318,7 @@ function compare(
       throw new Error(`Comparison "${comparison.id}" has a stale eligibility report.`);
     }
     assertArtifact("comparison report", report);
-    const key = candidatePairKey(report.candidates[0], report.candidates[1]);
+    const key = candidatePairKey(request.left, request.right);
     const current = gates.get(key);
     if (current !== undefined && canonicalizeMetadata(current) !== canonicalizeMetadata({ request, report })) {
       throw new Error(`Comparison "${comparison.id}" has conflicting eligibility reports for one candidate pair.`);
@@ -343,7 +343,10 @@ function compare(
       exclusions.push(leftMatches.length === 0 || rightMatches.length === 0 ? "unmatched-unit" : "ambiguous-matched-unit");
       continue;
     }
-    const gate = gates.get(candidatePairKey(leftMatches[0]!.runId, rightMatches[0]!.runId));
+    const gate = gates.get(candidatePairKey(
+      { id: leftMatches[0]!.runId, manifestDigest: leftMatches[0]!.manifestDigest },
+      { id: rightMatches[0]!.runId, manifestDigest: rightMatches[0]!.manifestDigest },
+    ));
     if (gate === undefined) {
       exclusions.push("comparison-eligibility-missing");
       continue;
@@ -440,8 +443,12 @@ function measureCapabilities(
   throw new Error(`Unsupported aggregate comparison measure "${measure}".`);
 }
 
-function candidatePairKey(left: string, right: string): string {
-  return canonicalizeMetadata([left, right].sort());
+function candidatePairKey(
+  left: Pick<ComparisonRequest["left"], "id" | "manifestDigest">,
+  right: Pick<ComparisonRequest["right"], "id" | "manifestDigest">,
+): string {
+  return canonicalizeMetadata([[left.id, left.manifestDigest], [right.id, right.manifestDigest]]
+    .sort((leftValue, rightValue) => canonicalizeMetadata(leftValue).localeCompare(canonicalizeMetadata(rightValue))));
 }
 
 function measureValue(attempt: Attempt, measure: string, observations: ReadonlyMap<string, StructuralObservationSet>): { value: number; unit: string } | undefined {
@@ -566,8 +573,9 @@ function rateMetric(id: string, population: AggregateMetric["population"], numer
   return metric(id, population, numerator, denominator, unit, unit, exclusions);
 }
 
-function unavailableMetric(id: string, population: AggregateMetric["population"], reason: string, denominator: number, unit: string): AggregateMetric {
-  return { id, population, claimStatus: "unavailable", measurement: unavailableMeasurement(reason, 0, unit, [], unit, denominator) };
+function unavailableMetric(id: string, population: AggregateMetric["population"], reason: string, denominator: number, unit: string,
+  exclusions: AggregateMeasurement["exclusions"] = []): AggregateMetric {
+  return { id, population, claimStatus: "unavailable", measurement: unavailableMeasurement(reason, 0, unit, exclusions, unit, denominator) };
 }
 
 function availableMeasurement(numerator: number, denominator: number, numeratorUnit: string, denominatorUnit: string,

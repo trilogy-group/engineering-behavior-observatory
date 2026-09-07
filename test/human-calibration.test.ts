@@ -296,6 +296,9 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     assert.equal(aggregate.groups[0]!.metrics.find(({ id }) => id === "structural:tool-operation-count")!.population, "attempt");
     assert.equal(aggregate.groups[0]!.metrics.find(({ id }) => id === "review-unresolved-rate")!.measurement.rate, 0.75);
     assert.equal(aggregate.groups[0]!.metrics.find(({ id }) => id === "review-disputed-rate")!.measurement.rate, 0.5);
+    const unavailableRequests = aggregate.groups[0]!.metrics.find(({ id }) => id === "structural:model-request-count")!;
+    assert.equal(unavailableRequests.measurement.status, "unavailable");
+    assert.equal(unavailableRequests.measurement.exclusions.length > 0, true);
     const legacyObservationSet = structuredClone(observationSet);
     delete legacyObservationSet.normalization.capabilityProfile;
     const migratedAggregate = await aggregateEvaluation({

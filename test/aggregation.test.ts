@@ -39,6 +39,10 @@ test("aggregates distinct populations, retries, variation, and gated matched dif
   exactRequest.right.model = { ...exactRequest.right.model, id: "model-b" };
   exactRequest.policy = { declaredDifferences: ["model"], requiredCapabilities: ["family:outcome"] };
   const exact: ComparisonReport = assessComparisonEligibility(exactRequest);
+  const retryRequest = structuredClone(exactRequest);
+  retryRequest.left.manifestDigest = `sha256:${"2".repeat(64)}`;
+  retryRequest.right.manifestDigest = `sha256:${"3".repeat(64)}`;
+  const retryGate = assessComparisonEligibility(retryRequest);
   const unsupportedRequest = readJson(join(fixtureRoot, "comparison/fixture-mismatch.json")) as Parameters<typeof assessComparisonEligibility>[0];
   unsupportedRequest.measure = "attempt:terminal-completed";
   unsupportedRequest.left.id = "run-a";
@@ -57,7 +61,7 @@ test("aggregates distinct populations, retries, variation, and gated matched dif
     assertions: [],
     calibrations: [],
     comparisons: [
-      { id: "verifier-model-difference", measure: "verified:verifier-passed", left: { model: "model-a" }, right: { model: "model-b" }, matchBy: ["task", "trial"], eligibility: [{ request: exactRequest, report: exact }] },
+      { id: "verifier-model-difference", measure: "verified:verifier-passed", left: { model: "model-a" }, right: { model: "model-b" }, matchBy: ["task", "trial"], eligibility: [{ request: exactRequest, report: exact }, { request: retryRequest, report: retryGate }] },
       { id: "mismatched-fixture", measure: "attempt:terminal-completed", left: { model: "model-a" }, right: { model: "model-b" }, matchBy: ["task", "trial"], eligibility: [{ request: unsupportedRequest, report: unsupported }] },
       { id: "wrong-measure-gate", measure: "attempt:terminal-completed", left: { model: "model-a" }, right: { model: "model-b" }, matchBy: ["task", "trial"], eligibility: [{ request: exactRequest, report: exact }] },
     ],
