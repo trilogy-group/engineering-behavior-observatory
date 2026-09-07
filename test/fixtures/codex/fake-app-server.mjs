@@ -111,7 +111,9 @@ lines.on("line", async (line) => {
       instructionSources: [],
       approvalPolicy: mode === "policy-mismatch" ? "untrusted" : message.params.approvalPolicy,
       approvalsReviewer: "user",
-      sandbox: mode === "policy-mismatch" ? { type: "readOnly", networkAccess: false } : sandboxPolicy(message.params.sandbox, message.params.cwd),
+      sandbox: mode === "policy-mismatch" ? { type: "readOnly", networkAccess: false }
+        : mode === "sandbox-root-mismatch" ? { type: "workspaceWrite", writableRoots: [message.params.cwd, "/tmp"], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }
+          : sandboxPolicy(message.params.sandbox, message.params.cwd),
       activePermissionProfile: null,
       reasoningEffort: "high",
       multiAgentMode: "explicitRequestOnly",

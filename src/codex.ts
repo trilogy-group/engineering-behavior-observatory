@@ -511,7 +511,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     threadId,
     turnId,
   });
-  if (captureError !== undefined && processResult.error !== undefined) {
+  if (processResult.error !== undefined) {
     gaps.push({ kind: "process-error", detail: processResult.error });
   }
   return {
@@ -754,7 +754,10 @@ function sandboxMatches(requested: CodexSandbox, applied: unknown, workspace: st
   return applied.type === "workspaceWrite"
     && applied.networkAccess === false
     && Array.isArray(applied.writableRoots)
-    && applied.writableRoots.includes(workspace);
+    && applied.writableRoots.length === 1
+    && applied.writableRoots[0] === workspace
+    && applied.excludeTmpdirEnvVar === true
+    && applied.excludeSlashTmp === true;
 }
 
 function scopedThreadId(payload: unknown): string | undefined {

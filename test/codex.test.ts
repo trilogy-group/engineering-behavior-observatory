@@ -204,6 +204,41 @@ test("declares every server-applied material policy mismatch", async () => {
   }
 });
 
+test("rejects broadened workspace-write roots and temp access", async () => {
+  const root = await temporaryRoot();
+  try {
+    const capture = await runFake(root, "sandbox-root-mismatch");
+    assert.ok(capture.gaps.some(({ kind }) => kind === "sandbox-mismatch"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("reports process finalization errors after a successful turn", async () => {
+  const root = await temporaryRoot();
+  const workspace = join(root, "workspace");
+  const stderrPath = join(root, "diagnostics/stderr.txt");
+  try {
+    await mkdir(workspace);
+    await mkdir(dirname(stderrPath), { recursive: true });
+    await writeFile(stderrPath, "pre-existing\n");
+    const capture = await captureCodexAppServer({
+      runId: "run-finalization-error",
+      attemptId: "attempt-finalization-error",
+      workspacePath: workspace,
+      prompt: "Complete normally.",
+      configuration: fakeConfiguration("success"),
+      evidencePath: join(root, "session.jsonl"),
+      stderrPath,
+    });
+    assert.equal(capture.terminalStatus, "completed");
+    assert.equal(capture.qualification, "qualified-with-gaps");
+    assert.ok(capture.gaps.some(({ kind }) => kind === "process-error"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("normalizes only the matching owned turn completion", async () => {
   const root = await temporaryRoot();
   try {
