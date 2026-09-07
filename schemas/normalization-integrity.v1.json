@@ -240,10 +240,11 @@
     "comparisonReport": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "measure", "status", "candidates", "policy", "reasons"],
+      "required": ["schemaVersion", "measure", "requestDigest", "status", "candidates", "policy", "reasons"],
       "properties": {
         "schemaVersion": { "const": "ebo.comparison-report/v1" },
         "measure": { "$ref": "#/$defs/identifier" },
+        "requestDigest": { "$ref": "#/$defs/digest" },
         "status": { "enum": ["supported", "qualified-with-caveats", "unsupported"] },
         "candidates": {
           "type": "array",

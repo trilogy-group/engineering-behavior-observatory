@@ -307,6 +307,18 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     }, {
       groupBy: ["task"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 },
     }), /observation set.*stale/iu);
+    const foreignBundle = join(temporary, "foreign-bundle-with-same-identities");
+    cpSync(bundleRoot, foreignBundle, { recursive: true, preserveTimestamps: true });
+    writeFileSync(join(foreignBundle, "manifest.json"), `${JSON.stringify(readJson(join(foreignBundle, "manifest.json")), null, 2)}\n`);
+    await assert.rejects(aggregateEvaluation({
+      corpusEntries: buildCorpusIndex(bundleRoot),
+      observationSets: [{ bundleRoot: foreignBundle, document: observationSet }],
+      assertions: [],
+      calibrations: [],
+      comparisons: [],
+    }, {
+      groupBy: ["task"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 },
+    }), /does not match the indexed manifest digest/u);
     const reviewerB = await append(decision("review-b-confirmed", "review", byId.get("assertion-a")!, "synthetic-fixture-reviewer-b", "confirmed"));
     const reviewerE = await append(decision("review-e-confirmed", "review", byId.get("assertion-a")!, "synthetic-fixture-reviewer-e", "confirmed"));
     await append({

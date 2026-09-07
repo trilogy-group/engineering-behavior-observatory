@@ -322,9 +322,12 @@ async function runAggregationCommand(args: string[], write: (message: string) =>
         selection: resolveJson<ReviewSample>(selection, "Review sample"),
         history: resolveJson<ReviewHistory>(history, "Review history"),
       })),
-      comparisons: request.comparisons.map(({ eligibilityReports, ...comparison }) => ({
+      comparisons: request.comparisons.map(({ eligibilityGates, ...comparison }) => ({
         ...comparison,
-        eligibility: eligibilityReports.map((path) => resolveJson<ReturnType<typeof assessComparisonEligibility>>(path, "Comparison report")),
+        eligibility: eligibilityGates.map(({ request: comparisonRequest, report }) => ({
+          request: resolveJson<ComparisonRequest>(comparisonRequest, "Comparison request"),
+          report: resolveJson<ReturnType<typeof assessComparisonEligibility>>(report, "Comparison report"),
+        })),
       })),
     }, request);
     await writeMetadataAtomically(dirname(destination), basename(destination), report, undefined, { overwrite: false });

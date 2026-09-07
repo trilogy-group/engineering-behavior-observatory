@@ -34,7 +34,10 @@ The request uses paths relative to `request.json`:
     "left": { "model": "model-a" },
     "right": { "model": "model-b" },
     "matchBy": ["task", "harness", "trial"],
-    "eligibilityReports": ["derived/comparisons/model-a-model-b.json"]
+    "eligibilityGates": [{
+      "request": "derived/comparisons/model-a-model-b.request.json",
+      "report": "derived/comparisons/model-a-model-b.report.json"
+    }]
   }]
 }
 ```
@@ -68,6 +71,10 @@ measure's required capability;
 an unsupported gate makes the comparison
 unavailable, and partial-capability or declared-condition caveats remain in the
 output.
+
+Each eligibility report carries the digest of its source comparison request.
+The aggregate build reloads that request and recomputes the report before using
+the gate, so an edited or stale report cannot authorize a matched difference.
 
 The caller supplies the recurrence threshold. A divergent matched unit below
 that threshold is a `case-study`; reaching it yields only a

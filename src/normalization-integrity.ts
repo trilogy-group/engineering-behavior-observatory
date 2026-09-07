@@ -114,6 +114,7 @@ export type ComparisonReason = {
 export type ComparisonReport = {
   schemaVersion: "ebo.comparison-report/v1";
   measure: string;
+  requestDigest: DigestString;
   status: "supported" | "qualified-with-caveats" | "unsupported";
   candidates: [string, string];
   policy: ComparisonRequest["policy"];
@@ -381,6 +382,7 @@ export function assessComparisonEligibility(request: ComparisonRequest): Compari
   const report: ComparisonReport = {
     schemaVersion: "ebo.comparison-report/v1",
     measure: request.measure,
+    requestDigest: `sha256:${digestMetadata(request).value}`,
     status: blockers.length > 0 ? "unsupported" : caveats.length > 0 ? "qualified-with-caveats" : "supported",
     candidates: [request.left.id, request.right.id],
     policy: structuredClone(request.policy),

@@ -49,9 +49,9 @@ test("aggregates distinct populations, retries, variation, and gated matched dif
     assertions: [],
     calibrations: [],
     comparisons: [
-      { id: "verifier-model-difference", measure: "verified:verifier-passed", left: { model: "model-a" }, right: { model: "model-b" }, matchBy: ["task", "trial"], eligibility: [exact] },
-      { id: "mismatched-fixture", measure: "attempt:terminal-completed", left: { model: "model-a" }, right: { model: "model-b" }, matchBy: ["task", "trial"], eligibility: [unsupported] },
-      { id: "wrong-measure-gate", measure: "attempt:terminal-completed", left: { model: "model-a" }, right: { model: "model-b" }, matchBy: ["task", "trial"], eligibility: [exact] },
+      { id: "verifier-model-difference", measure: "verified:verifier-passed", left: { model: "model-a" }, right: { model: "model-b" }, matchBy: ["task", "trial"], eligibility: [{ request: exactRequest, report: exact }] },
+      { id: "mismatched-fixture", measure: "attempt:terminal-completed", left: { model: "model-a" }, right: { model: "model-b" }, matchBy: ["task", "trial"], eligibility: [{ request: unsupportedRequest, report: unsupported }] },
+      { id: "wrong-measure-gate", measure: "attempt:terminal-completed", left: { model: "model-a" }, right: { model: "model-b" }, matchBy: ["task", "trial"], eligibility: [{ request: exactRequest, report: exact }] },
     ],
   }, { groupBy: ["task", "model", "harness"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 } });
 
@@ -74,6 +74,20 @@ test("aggregates distinct populations, retries, variation, and gated matched dif
     rate: 0,
     exclusions: [{ reason: "observation-set-missing", count: 4, unit: "attempt" }],
   });
+  await assert.rejects(aggregateEvaluation({
+    corpusEntries: attempts,
+    observationSets: [],
+    assertions: [],
+    calibrations: [],
+    comparisons: [{
+      id: "stale-gate",
+      measure: "verified:verifier-passed",
+      left: { model: "model-a" },
+      right: { model: "model-b" },
+      matchBy: ["task", "trial"],
+      eligibility: [{ request: exactRequest, report: { ...exact, status: "unsupported" } }],
+    }],
+  }, { groupBy: ["task"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 } }), /stale eligibility report/u);
 
   const latest = await aggregateEvaluation({ corpusEntries: attempts, observationSets: [], assertions: [], calibrations: [], comparisons: [] }, {
     groupBy: ["task"], selectedAttemptPolicy: "latest-attempt-per-run", recurrence: { minimumOccurrences: 2 },

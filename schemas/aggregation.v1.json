@@ -8,6 +8,10 @@
       "type": "object", "additionalProperties": false, "required": ["bundleRoot", "path"],
       "properties": { "bundleRoot": { "$ref": "#/$defs/path" }, "path": { "$ref": "#/$defs/path" } }
     },
+    "eligibilityGate": {
+      "type": "object", "additionalProperties": false, "required": ["request", "report"],
+      "properties": { "request": { "$ref": "#/$defs/path" }, "report": { "$ref": "#/$defs/path" } }
+    },
     "dimension": { "enum": ["task", "model", "harness", "trial", "capture-qualification"] },
     "filters": {
       "type": "object",
@@ -59,14 +63,14 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["id", "measure", "left", "right", "matchBy", "eligibilityReports"],
+            "required": ["id", "measure", "left", "right", "matchBy", "eligibilityGates"],
             "properties": {
               "id": { "$ref": "#/$defs/identifier" },
               "measure": { "$ref": "#/$defs/identifier" },
               "left": { "$ref": "#/$defs/filters" },
               "right": { "$ref": "#/$defs/filters" },
               "matchBy": { "type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": true, "items": { "$ref": "#/$defs/dimension" } },
-              "eligibilityReports": { "type": "array", "minItems": 1, "maxItems": 100000, "uniqueItems": true, "items": { "$ref": "#/$defs/path" } }
+              "eligibilityGates": { "type": "array", "minItems": 1, "maxItems": 100000, "items": { "$ref": "#/$defs/eligibilityGate" } }
             }
           }
         }

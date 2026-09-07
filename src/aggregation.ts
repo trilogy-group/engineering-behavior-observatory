@@ -1,4 +1,6 @@
-import { canonicalizeMetadata, digestMetadata, validateArtifact } from "./artifacts.js";
+import { join, resolve } from "node:path";
+
+import { canonicalizeMetadata, digestBytes, digestMetadata, validateArtifact } from "./artifacts.js";
 import { validateAgentSdkBehaviorAssertion, type BehaviorAssertion } from "./behavior-assertions.js";
 import type { CorpusIndexEntry } from "./corpus.js";
 import {
@@ -9,7 +11,8 @@ import {
   type ReviewHistory,
   type ReviewSample,
 } from "./human-calibration.js";
-import type { ComparisonCapability, ComparisonReport } from "./normalization-integrity.js";
+import { assessComparisonEligibility, type ComparisonCapability, type ComparisonReport, type ComparisonRequest } from "./normalization-integrity.js";
+import { readBoundedFile } from "./scheduler.js";
 import { createAgentSdkStructuralObservationSet, type StructuralObservationSet } from "./structural-observations.js";
 
 export type AggregationDimension = "task" | "model" | "harness" | "trial" | "capture-qualification";
@@ -33,7 +36,7 @@ export type AggregationRequest = {
     left: Partial<Record<AggregationDimension, string>>;
     right: Partial<Record<AggregationDimension, string>>;
     matchBy: readonly AggregationDimension[];
-    eligibilityReports: readonly string[];
+    eligibilityGates: ReadonlyArray<{ request: string; report: string }>;
   }>;
 };
 
@@ -48,7 +51,7 @@ export type AggregationInput = {
     left: Partial<Record<AggregationDimension, string>>;
     right: Partial<Record<AggregationDimension, string>>;
     matchBy: readonly AggregationDimension[];
-    eligibility: readonly ComparisonReport[];
+    eligibility: ReadonlyArray<{ request: ComparisonRequest; report: ComparisonReport }>;
   }>;
 };
 
@@ -122,6 +125,7 @@ async function aggregateValidatedEvaluation(
   const observationSources = uniqueBy(input.observationSets, ({ document }) => `${document.runId}\0${document.attemptId}`, "observation set");
   const observations = new Map<string, StructuralObservationSet>();
   for (const { bundleRoot, document } of observationSources.values()) {
+    assertIndexedBundle(bundleRoot, document.runId, document.attemptId, attempts);
     const rebuilt = await createAgentSdkStructuralObservationSet(bundleRoot);
     if (canonicalizeMetadata(rebuilt) !== canonicalizeMetadata(document)) throw new Error(`Structural observation set for attempt "${document.attemptId}" is stale.`);
     observations.set(`${document.runId}\0${document.attemptId}`, document);
@@ -129,6 +133,7 @@ async function aggregateValidatedEvaluation(
   const assertionSources = uniqueBy(input.assertions, ({ document }) => assertionKey(document), "behavior assertion");
   const assertions = new Map<string, BehaviorAssertion>();
   for (const { bundleRoot, document } of assertionSources.values()) {
+    assertIndexedBundle(bundleRoot, document.runId, document.attemptId, attempts);
     await validateAgentSdkBehaviorAssertion(bundleRoot, document);
     assertions.set(assertionKey(document), document);
   }
@@ -266,7 +271,11 @@ function compare(
   recurrenceMinimum: number,
 ): AggregationReport["comparisons"][number] {
   const gates = new Map<string, ComparisonReport>();
-  for (const report of comparison.eligibility) {
+  for (const { request, report } of comparison.eligibility) {
+    const rebuilt = assessComparisonEligibility(request);
+    if (canonicalizeMetadata(rebuilt) !== canonicalizeMetadata(report)) {
+      throw new Error(`Comparison "${comparison.id}" has a stale eligibility report.`);
+    }
     assertArtifact("comparison report", report);
     const key = candidatePairKey(report.candidates[0], report.candidates[1]);
     const current = gates.get(key);
@@ -321,13 +330,13 @@ function compare(
   return {
     id: comparison.id,
     measure: comparison.measure,
-    eligibility: structuredClone(comparison.eligibility),
+    eligibility: comparison.eligibility.map(({ report }) => structuredClone(report)),
     matchedDifference: measurement,
     differingMatchedUnits: differing,
     claimStatus: differences.length === 0 ? "unavailable" : differing === 0 ? "no-difference"
       : differing >= recurrenceMinimum ? "recurring-description" : "case-study",
     limitations: [
-      ...new Set(comparison.eligibility.flatMap(({ reasons }) => reasons.map(({ detail }) => detail))),
+      ...new Set(comparison.eligibility.flatMap(({ report }) => report.reasons.map(({ detail }) => detail))),
       "Matched differences are descriptive and do not establish causality or statistical significance.",
     ],
   };
@@ -395,6 +404,15 @@ function uniqueAttempts(entries: readonly CorpusIndexEntry[]): { attempts: Attem
     else throw new Error(`Corpus inputs conflict for run "${entry.runId}" attempt "${entry.attemptId}".`);
   }
   return { attempts: [...attempts.values()].sort((left, right) => attemptKey(left).localeCompare(attemptKey(right))), duplicates };
+}
+
+function assertIndexedBundle(bundleRoot: string, runId: string, attemptId: string, attempts: readonly Attempt[]): void {
+  const indexed = attempts.filter((attempt) => attempt.runId === runId && attempt.attemptId === attemptId);
+  if (indexed.length !== 1) throw new Error(`Derived source run "${runId}" attempt "${attemptId}" has no unique corpus entry.`);
+  const actual = `sha256:${digestBytes(readBoundedFile(join(resolve(bundleRoot), "manifest.json"), "Derived source manifest")).value}`;
+  if (actual !== indexed[0]!.manifestDigest) {
+    throw new Error(`Derived source run "${runId}" attempt "${attemptId}" does not match the indexed manifest digest.`);
+  }
 }
 
 function selectAttempts(attempts: readonly Attempt[], policy: AttemptSelectionPolicy): Attempt[] {
