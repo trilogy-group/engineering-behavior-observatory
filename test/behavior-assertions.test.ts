@@ -42,15 +42,20 @@ test("validates positive, disputed, abstained, and invalid-reference fixtures", 
 
   assert.equal((await validateBehaviorAssertion(positive, dataset, resolver(dataset))).length, 1);
   validateBehaviorReview(positive, disputed);
-  assert.equal(isConfirmedBehaviorAssertion(positive, disputed), false);
-  assert.equal(isConfirmedBehaviorAssertion(positive), false);
+  assert.equal(await isConfirmedBehaviorAssertion(positive, dataset, resolver(dataset), disputed), false);
+  assert.equal(await isConfirmedBehaviorAssertion(positive, dataset, resolver(dataset)), false);
 
   const confirmed = structuredClone(disputed);
   confirmed.state = "confirmed";
-  assert.equal(isConfirmedBehaviorAssertion(positive, confirmed), true);
+  assert.equal(await isConfirmedBehaviorAssertion(positive, dataset, resolver(dataset), confirmed), true);
 
   assert.deepEqual(await validateBehaviorAssertion(abstained, dataset, resolver(dataset)), []);
-  assert.equal(isConfirmedBehaviorAssertion(abstained, { ...confirmed, assertion: binding(abstained) }), false);
+  assert.equal(await isConfirmedBehaviorAssertion(
+    abstained,
+    dataset,
+    resolver(dataset),
+    { ...confirmed, assertion: binding(abstained) },
+  ), false);
 
   await assert.rejects(
     validateBehaviorAssertion(fixture("invalid-reference.json"), dataset, resolver(dataset)),
@@ -99,6 +104,14 @@ test("rejects undeclared dimensions and keeps proposed review separate from huma
   undeclared.behavior.dimensionId = "invented-dimension";
 
   await assert.rejects(validateBehaviorAssertion(undeclared, dataset, resolver(dataset)), /declared behavior dimension/u);
+  await assert.rejects(isConfirmedBehaviorAssertion(undeclared, dataset, resolver(dataset), {
+    schemaVersion: "ebo.behavior-review/v1",
+    id: "invalid-confirmation",
+    assertion: binding(undeclared),
+    state: "confirmed",
+    reviewer: { kind: "human", id: "synthetic-fixture-reviewer" },
+    rationale: "Synthetic fixture must not confirm an invalid assertion.",
+  }), /declared behavior dimension/u);
   assert.throws(() => validateBehaviorReview(assertion, {
     schemaVersion: "ebo.behavior-review/v1",
     id: "invalid-proposal",

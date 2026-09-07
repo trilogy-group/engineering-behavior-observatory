@@ -143,7 +143,14 @@ export function validateBehaviorReview(assertion: BehaviorAssertion, review: Beh
   }
 }
 
-export function isConfirmedBehaviorAssertion(assertion: BehaviorAssertion, review?: BehaviorReview): boolean {
+export async function isConfirmedBehaviorAssertion(
+  assertion: BehaviorAssertion,
+  dataset: NormalizedDataset,
+  resolver: NativeEvidenceResolver,
+  review?: BehaviorReview,
+  vocabulary: BehaviorVocabulary = DEFAULT_BEHAVIOR_VOCABULARY,
+): Promise<boolean> {
+  await validateBehaviorAssertion(assertion, dataset, resolver, vocabulary);
   if (review === undefined) return false;
   validateBehaviorReview(assertion, review);
   return assertion.judgment.disposition === "assessed" && review.state === "confirmed";
