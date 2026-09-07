@@ -709,6 +709,10 @@ export class ProtocolProcess {
       this.childError ??= errorMessage(error);
       void this.recorder.recordError(this.childError, undefined, INTERNAL_RECORDER_TOKEN).catch(() => undefined);
     });
+    this.child.stdin?.on("error", (error) => {
+      this.childError ??= `Protocol stdin failed: ${errorMessage(error)}`;
+      void this.recorder.recordError(this.childError, undefined, INTERNAL_RECORDER_TOKEN).catch(() => undefined);
+    });
     this.attachStreams();
     this.waitPromise = new Promise<ProtocolProcessResult>((resolveResult) => {
       this.resolveResult = resolveResult;

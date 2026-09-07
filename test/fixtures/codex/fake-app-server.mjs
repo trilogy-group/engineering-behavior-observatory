@@ -34,6 +34,11 @@ async function emitTurn() {
   if (mode === "foreign-completion") {
     send({ method: "turn/completed", params: { threadId: "foreign-thread", turn: { id: "foreign-turn", threadId: "foreign-thread", status: "completed", items: [] } } });
   }
+  if (mode === "foreign-completion-flood") {
+    for (let index = 0; index < 100; index += 1) {
+      send({ method: "turn/completed", params: { threadId: `foreign-${index}`, turn: { id: `foreign-${index}`, threadId: `foreign-${index}`, status: "completed", items: [] } } });
+    }
+  }
   if (mode === "foreign-scope") {
     const scope = { threadId: "foreign-thread", turnId: "foreign-turn" };
     send({ method: "item/completed", params: { ...scope, completedAtMs: 1_700_000_000_050, item: { id: "foreign-item", type: "commandExecution", status: "completed" } } });
@@ -118,6 +123,10 @@ lines.on("line", async (line) => {
       reasoningEffort: "high",
       multiAgentMode: "explicitRequestOnly",
     } });
+    if (mode === "close-stdin") {
+      process.stdin.destroy();
+      setTimeout(() => process.exit(0), 50);
+    }
   } else if (message.method === "turn/start") {
     if (mode === "auth-failure") {
       send({ id: message.id, error: { code: -32000, message: "Unauthorized" } });

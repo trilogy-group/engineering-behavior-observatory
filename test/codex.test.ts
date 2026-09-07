@@ -130,6 +130,18 @@ test("preserves recoverable partial evidence for malformed output, auth failure,
   }
 });
 
+test("contains a child stdin pipe error as recoverable partial evidence", async () => {
+  const root = await temporaryRoot();
+  try {
+    const capture = await runFake(root, "close-stdin");
+    assert.equal(capture.qualification, "qualified-with-gaps");
+    assert.ok(capture.gaps.some(({ kind }) => kind === "capture-error" || kind === "process-error"));
+    assert.ok(capture.records.length > 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("interrupts the owned turn, records acknowledgement, and finishes on matching turn/completed", async () => {
   const root = await temporaryRoot();
   const controller = new AbortController();
@@ -248,6 +260,17 @@ test("normalizes only the matching owned turn completion", async () => {
     const outcomes = normalized.events.filter(({ family }) => family === "outcome");
     assert.equal(outcomes.length, 1);
     assert.equal(outcomes[0]?.scope.id, "turn-1");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("deduplicates repeated foreign completion gaps while retaining native records", async () => {
+  const root = await temporaryRoot();
+  try {
+    const capture = await runFake(root, "foreign-completion-flood");
+    assert.equal(capture.gaps.filter(({ kind }) => kind === "foreign-turn-completion").length, 1);
+    assert.ok(capture.records.filter(({ record }) => record.method === "turn/completed").length > 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

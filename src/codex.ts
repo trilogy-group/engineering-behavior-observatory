@@ -224,6 +224,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
   const instructionsPath = join(isolatedCodexHome, "instructions.md");
   const environment = isolatedEnvironment(isolatedCodexHome);
   const gaps: CodexCaptureGap[] = [];
+  const addGap = (gap: CodexCaptureGap): void => recordCaptureGap(gaps, gap);
   let threadId: string | undefined;
   let turnId: string | undefined;
   let terminal: Record<string, unknown> | undefined;
@@ -345,7 +346,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
             });
             resolveTerminal?.(turn);
           } else {
-            gaps.push({ kind: "foreign-turn-completion", detail: "Ignored turn/completed for a non-owned thread or turn." });
+            addGap({ kind: "foreign-turn-completion", detail: "Ignored turn/completed for a non-owned thread or turn." });
           }
         }
       },
@@ -398,7 +399,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
           timeout(request.shutdownGraceMs ?? 2_000, "Codex turn/interrupt acknowledgement timed out."),
         ]);
       } catch (error) {
-        gaps.push({ kind: "interrupt-acknowledgement", detail: errorMessage(error) });
+        addGap({ kind: "interrupt-acknowledgement", detail: errorMessage(error) });
       }
       if (terminal === undefined) {
         await Promise.race([
@@ -435,19 +436,19 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     threadId = text(isRecord(threadStart.thread) ? threadStart.thread.id : undefined);
     if (threadId === undefined) throw new Error("Codex thread/start did not return a thread identity.");
     if (text(threadStart.model) !== request.configuration.model) {
-      gaps.push({ kind: "model-mismatch", detail: `Requested ${request.configuration.model}; launched ${String(threadStart.model)}.` });
+      addGap({ kind: "model-mismatch", detail: `Requested ${request.configuration.model}; launched ${String(threadStart.model)}.` });
     }
     if (text(threadStart.reasoningEffort) !== request.configuration.effort) {
-      gaps.push({ kind: "effort-mismatch", detail: `Requested ${request.configuration.effort}; launched ${String(threadStart.reasoningEffort)}.` });
+      addGap({ kind: "effort-mismatch", detail: `Requested ${request.configuration.effort}; launched ${String(threadStart.reasoningEffort)}.` });
     }
     if (text(threadStart.modelProvider) !== request.configuration.provider) {
-      gaps.push({ kind: "provider-mismatch", detail: `Requested ${request.configuration.provider}; launched ${String(threadStart.modelProvider)}.` });
+      addGap({ kind: "provider-mismatch", detail: `Requested ${request.configuration.provider}; launched ${String(threadStart.modelProvider)}.` });
     }
     if (threadStart.approvalPolicy !== request.configuration.approvalPolicy) {
-      gaps.push({ kind: "approval-policy-mismatch", detail: `Requested ${request.configuration.approvalPolicy}; applied ${JSON.stringify(threadStart.approvalPolicy)}.` });
+      addGap({ kind: "approval-policy-mismatch", detail: `Requested ${request.configuration.approvalPolicy}; applied ${JSON.stringify(threadStart.approvalPolicy)}.` });
     }
     if (!sandboxMatches(request.configuration.sandbox, threadStart.sandbox, request.workspacePath)) {
-      gaps.push({ kind: "sandbox-mismatch", detail: `Requested ${request.configuration.sandbox}; applied ${JSON.stringify(threadStart.sandbox)}.` });
+      addGap({ kind: "sandbox-mismatch", detail: `Requested ${request.configuration.sandbox}; applied ${JSON.stringify(threadStart.sandbox)}.` });
     }
     const started = await sendRequest("turn/start", {
       threadId,
@@ -470,14 +471,14 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     try {
       history = await sendRequest("thread/read", { threadId, includeTurns: true } satisfies ThreadReadParams);
       if (!historyMatches(history, threadId, turnId)) {
-        gaps.push({ kind: "history-mismatch", detail: "thread/read history did not contain the owned terminal turn." });
+        addGap({ kind: "history-mismatch", detail: "thread/read history did not contain the owned terminal turn." });
       }
     } catch (error) {
-      gaps.push({ kind: "history-readback", detail: errorMessage(error) });
+      addGap({ kind: "history-readback", detail: errorMessage(error) });
     }
   } catch (error) {
     captureError = errorMessage(error);
-    gaps.push({ kind: "capture-error", detail: captureError });
+    addGap({ kind: "capture-error", detail: captureError });
   } finally {
     request.signal?.removeEventListener("abort", abortListener);
     if (terminal === undefined && request.signal?.aborted !== true) await protocolProcess.shutdown();
@@ -489,7 +490,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
   }
 
   const records = processResult.observations;
-  if (processResult.droppedObservations > 0) gaps.push({
+  if (processResult.droppedObservations > 0) addGap({
     kind: "normalization-projection-truncated",
     detail: `${processResult.droppedObservations} earlier observations remain authoritative in session.jsonl but are outside the bounded in-memory projection.`,
   });
@@ -512,7 +513,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     turnId,
   });
   if (processResult.error !== undefined) {
-    gaps.push({ kind: "process-error", detail: processResult.error });
+    addGap({ kind: "process-error", detail: processResult.error });
   }
   return {
     runId: request.runId,
@@ -1021,6 +1022,14 @@ async function receiveOtlp(
 function recordReceiverError(state: { receiverErrors: string[] }, message: string): void {
   if (state.receiverErrors.length < 64) state.receiverErrors.push(message);
   else if (state.receiverErrors.length === 64) state.receiverErrors.push("Additional OTLP receiver errors were truncated.");
+}
+
+function recordCaptureGap(gaps: CodexCaptureGap[], gap: CodexCaptureGap): void {
+  if (gaps.some((existing) => existing.kind === gap.kind && existing.detail === gap.detail)) return;
+  if (gaps.length < 64) gaps.push(gap);
+  else if (!gaps.some(({ kind }) => kind === "capture-gap-limit")) {
+    gaps.push({ kind: "capture-gap-limit", detail: "Additional capture gaps remain in native session evidence." });
+  }
 }
 
 function numberRecord(value: unknown): Partial<TokenUsageBreakdown> | undefined {
