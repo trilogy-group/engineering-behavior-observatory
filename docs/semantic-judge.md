@@ -67,8 +67,8 @@ remaining harness, native-type, behavioral, and citation clues that may still
 reveal origin.
 
 Selected structural observations automatically include their normalized source
-events so their claims remain citable. An explicitly selected observation that
-has only a native citation and no normalized source event is rejected before
+events so their claims remain citable. An explicitly selected observation with
+no normalized source event, including an exact zero fact, is rejected before
 execution; the same kind of automatically included outcome is recorded as
 omitted instead of being shown to the judge as uncitable support.
 

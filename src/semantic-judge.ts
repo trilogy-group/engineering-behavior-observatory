@@ -399,16 +399,16 @@ export function packageSemanticJudgeInput(
   const observationById = uniqueById(observations.observations, "structural observation");
   const requestedObservations = request.selection.structuralObservationIds
     .map((id) => requiredEntry(observationById, id, "structural observation"));
-  const uncitableRequested = requestedObservations.find(hasUnprojectedNativeCitation);
+  const uncitableRequested = requestedObservations.find(hasNoSourceEvent);
   if (uncitableRequested !== undefined) {
-    throw new Error(`Selected structural observation "${uncitableRequested.id}" has native citations but no normalized source event.`);
+    throw new Error(`Selected structural observation "${uncitableRequested.id}" has no normalized source event.`);
   }
   const requestedOutcomes = request.selection.includeOutcomeObservations
     ? observations.observations.filter(({ extractor }) => extractor.id.startsWith("outcome-"))
     : [];
-  const automaticOmissions = requestedOutcomes.filter(hasUnprojectedNativeCitation)
+  const automaticOmissions = requestedOutcomes.filter(hasNoSourceEvent)
     .map(({ id }) => `structural-observation:${id}:uncitable-native-evidence`);
-  const outcomes = requestedOutcomes.filter((observation) => !hasUnprojectedNativeCitation(observation));
+  const outcomes = requestedOutcomes.filter((observation) => !hasNoSourceEvent(observation));
   const selectedObservations = [...new Map([...requestedObservations, ...outcomes].map((value) => [value.id, value])).values()];
   const selectedEventIds = [...new Set([
     ...request.selection.eventIds,
@@ -714,8 +714,8 @@ function evidenceItem(
   };
 }
 
-function hasUnprojectedNativeCitation(observation: StructuralObservationSet["observations"][number]): boolean {
-  return observation.sourceRecordCount > 0 && observation.sourceEventIds.length === 0;
+function hasNoSourceEvent(observation: StructuralObservationSet["observations"][number]): boolean {
+  return observation.sourceEventIds.length === 0;
 }
 
 function citations(value: unknown, allowed: ReadonlySet<string>, max: number): BehaviorAssertion["judgment"]["citations"] {
@@ -774,11 +774,15 @@ function redactJson(value: unknown, needle: string, onRedaction: () => void): un
   }
   if (Array.isArray(value)) return value.map((item) => redactJson(item, needle, onRedaction));
   if (value !== null && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+    const result: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
       const redactedKey = key.includes(needle) ? key.split(needle).join("[EVALUATED_MODEL_REDACTED]") : key;
       if (redactedKey !== key) onRedaction();
-      return [redactedKey, redactJson(item, needle, onRedaction)];
-    }));
+      let retainedKey = redactedKey;
+      while (Object.hasOwn(result, retainedKey)) retainedKey = `${retainedKey}#redacted`;
+      result[retainedKey] = redactJson(item, needle, onRedaction);
+    }
+    return result;
   }
   return value;
 }
