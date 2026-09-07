@@ -150,7 +150,7 @@ test("interrupts the owned turn, records acknowledgement, and finishes on matchi
   const root = await temporaryRoot();
   const controller = new AbortController();
   try {
-    const promise = runFake(root, "interrupt", [], controller.signal);
+    const promise = runFake(root, "interrupt", [], controller.signal, undefined, 2_000);
     await waitForRecord(join(root, "session.jsonl"), (record) => record.kind === "response" && record.method === "turn/start");
     controller.abort();
     const capture = await promise;
@@ -769,6 +769,7 @@ async function runFake(
   signals: readonly ("logs" | "traces" | "metrics")[] = [],
   signal?: AbortSignal,
   maxInMemoryObservations?: number,
+  shutdownGraceMs = 500,
 ): Promise<CodexAppServerCapture> {
   const workspace = join(root, "workspace");
   await mkdir(workspace, { recursive: true });
@@ -780,7 +781,7 @@ async function runFake(
     configuration: { ...fakeConfiguration(mode), ...(signals.length === 0 ? {} : { telemetry: { signals } }) },
     evidencePath: join(root, "session.jsonl"),
     stderrPath: join(root, "diagnostics/stderr.txt"),
-    shutdownGraceMs: 500,
+    shutdownGraceMs,
     ...(signal === undefined ? {} : { signal }),
     ...(maxInMemoryObservations === undefined ? {} : { maxInMemoryObservations }),
   });
