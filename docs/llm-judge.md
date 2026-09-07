@@ -12,6 +12,7 @@ last_memory_sync: 2026-09-07T15:26:22.741472+00:00
 ## Current model
 
 - COE-583 contributed: PR #37: COE-583: Add evidence-grounded semantic judge runner (merge `ea0e703`)
+- COE-584 contributed: PR #38: COE-584: Add human calibration and adjudication workflow (merge `02a9333`)
 
 ## Important invariants
 
@@ -29,9 +30,11 @@ last_memory_sync: 2026-09-07T15:26:22.741472+00:00
 ## Recent changes
 
 - COE-583: Implement the evidence-grounded semantic judge runner
+- COE-584: Implement human calibration and adjudication workflow
 
 ## Source refs
 
 - COE-583
+- COE-584
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

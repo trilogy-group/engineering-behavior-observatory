@@ -30,6 +30,7 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:calibration
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
@@ -39,6 +40,7 @@ areas:
       - area:ontology
       - area:openhands-runtime
       - area:outcomes
+      - area:review
       - area:structural-analysis
       linear_milestones:
       - 'M4: Uniform Events And Harness Adapters'
@@ -56,6 +58,7 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:calibration
       - area:capture
       - area:corpus
       - area:deepseek-runtime
@@ -71,6 +74,7 @@ areas:
       - area:opentelemetry
       - area:outcomes
       - area:quality
+      - area:review
       - area:runner
       - area:security
       - area:sessions
@@ -79,6 +83,21 @@ areas:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
+  calibration:
+    title: Calibration
+    docs_target: docs/calibration.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - calibration
+    source_refs:
+      linear_labels:
+      - area:calibration
+      - area:evaluation
+      - area:review
+      linear_milestones:
       - 'M5: Behavioral Evaluation'
   capture:
     title: Capture
@@ -92,6 +111,7 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:calibration
       - area:capture
       - area:corpus
       - area:deepseek-runtime
@@ -107,6 +127,7 @@ areas:
       - area:opentelemetry
       - area:outcomes
       - area:quality
+      - area:review
       - area:runner
       - area:security
       - area:sessions
@@ -128,6 +149,7 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:calibration
       - area:corpus
       - area:deepseek-runtime
       - area:evaluation
@@ -140,6 +162,7 @@ areas:
       - area:openhands-runtime
       - area:outcomes
       - area:quality
+      - area:review
       - area:structural-analysis
       linear_milestones:
       - 'M3: Safe Export And Corpus Access'
@@ -156,6 +179,7 @@ areas:
     - deepseek-runtime
     source_refs:
       linear_labels:
+      - area:calibration
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
@@ -164,6 +188,7 @@ areas:
       - area:normalization
       - area:ontology
       - area:outcomes
+      - area:review
       - area:structural-analysis
       linear_milestones:
       - 'M4: Uniform Events And Harness Adapters'
@@ -178,11 +203,13 @@ areas:
     - evaluation
     source_refs:
       linear_labels:
+      - area:calibration
       - area:evaluation
       - area:evidence
       - area:llm-judge
       - area:ontology
       - area:outcomes
+      - area:review
       - area:structural-analysis
       linear_milestones:
       - 'M5: Behavioral Evaluation'
@@ -198,6 +225,7 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:calibration
       - area:capture
       - area:corpus
       - area:deepseek-runtime
@@ -211,6 +239,7 @@ areas:
       - area:openhands-runtime
       - area:outcomes
       - area:quality
+      - area:review
       - area:runner
       - area:security
       - area:structural-analysis
@@ -231,6 +260,7 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:calibration
       - area:corpus
       - area:deepseek-runtime
       - area:evaluation
@@ -243,6 +273,7 @@ areas:
       - area:openhands-runtime
       - area:outcomes
       - area:quality
+      - area:review
       - area:security
       - area:structural-analysis
       linear_milestones:
@@ -261,6 +292,7 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:calibration
       - area:capture
       - area:corpus
       - area:deepseek-runtime
@@ -275,6 +307,7 @@ areas:
       - area:openhands-runtime
       - area:outcomes
       - area:quality
+      - area:review
       - area:runner
       - area:security
       - area:structural-analysis
@@ -294,6 +327,7 @@ areas:
     - json-rpc
     source_refs:
       linear_labels:
+      - area:calibration
       - area:evaluation
       - area:evidence
       - area:json-rpc
@@ -301,6 +335,7 @@ areas:
       - area:normalization
       - area:ontology
       - area:outcomes
+      - area:review
       - area:structural-analysis
       linear_milestones:
       - 'M4: Uniform Events And Harness Adapters'
@@ -316,7 +351,10 @@ areas:
     - llm-judge
     source_refs:
       linear_labels:
+      - area:calibration
+      - area:evaluation
       - area:llm-judge
+      - area:review
       linear_milestones:
       - 'M5: Behavioral Evaluation'
   m2-native-agent-sdk-capture:
@@ -342,6 +380,7 @@ areas:
     source_refs:
       linear_labels:
       - area:adapters
+      - area:calibration
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
@@ -352,6 +391,7 @@ areas:
       - area:openhands-runtime
       - area:outcomes
       - area:quality
+      - area:review
       - area:structural-analysis
       linear_milestones:
       - 'M4: Uniform Events And Harness Adapters'
@@ -366,11 +406,13 @@ areas:
     - ontology
     source_refs:
       linear_labels:
+      - area:calibration
       - area:evaluation
       - area:evidence
       - area:llm-judge
       - area:ontology
       - area:outcomes
+      - area:review
       - area:structural-analysis
       linear_milestones:
       - 'M4: Uniform Events And Harness Adapters'
@@ -386,12 +428,14 @@ areas:
     - openhands-runtime
     source_refs:
       linear_labels:
+      - area:calibration
       - area:evaluation
       - area:evidence
       - area:llm-judge
       - area:ontology
       - area:openhands-runtime
       - area:outcomes
+      - area:review
       - area:structural-analysis
       linear_milestones:
       - 'M4: Uniform Events And Harness Adapters'
@@ -408,6 +452,7 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:calibration
       - area:capture
       - area:corpus
       - area:deepseek-runtime
@@ -422,6 +467,7 @@ areas:
       - area:opentelemetry
       - area:outcomes
       - area:quality
+      - area:review
       - area:runner
       - area:security
       - area:structural-analysis
@@ -442,6 +488,7 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:calibration
       - area:capture
       - area:corpus
       - area:deepseek-runtime
@@ -455,6 +502,7 @@ areas:
       - area:openhands-runtime
       - area:outcomes
       - area:quality
+      - area:review
       - area:runner
       - area:security
       - area:structural-analysis
@@ -475,6 +523,7 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:calibration
       - area:capture
       - area:corpus
       - area:deepseek-runtime
@@ -491,6 +540,7 @@ areas:
       - area:outcomes
       - area:quality
       - area:repository
+      - area:review
       - area:runner
       - area:security
       - area:sessions
@@ -513,6 +563,7 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:calibration
       - area:capture
       - area:corpus
       - area:deepseek-runtime
@@ -529,6 +580,7 @@ areas:
       - area:outcomes
       - area:quality
       - area:repository
+      - area:review
       - area:runner
       - area:security
       - area:sessions
@@ -538,6 +590,19 @@ areas:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
+  review:
+    title: Review
+    docs_target: docs/review.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - review
+    source_refs:
+      linear_labels:
+      - area:review
+      linear_milestones:
       - 'M5: Behavioral Evaluation'
   runner:
     title: Runner
@@ -551,6 +616,7 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:calibration
       - area:capture
       - area:corpus
       - area:deepseek-runtime
@@ -564,6 +630,7 @@ areas:
       - area:openhands-runtime
       - area:outcomes
       - area:quality
+      - area:review
       - area:runner
       - area:security
       - area:structural-analysis
@@ -584,6 +651,7 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:calibration
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
@@ -594,6 +662,7 @@ areas:
       - area:openhands-runtime
       - area:outcomes
       - area:quality
+      - area:review
       - area:security
       - area:structural-analysis
       linear_milestones:
@@ -612,6 +681,7 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:calibration
       - area:capture
       - area:corpus
       - area:deepseek-runtime
@@ -625,6 +695,7 @@ areas:
       - area:openhands-runtime
       - area:outcomes
       - area:quality
+      - area:review
       - area:runner
       - area:security
       - area:sessions
@@ -645,10 +716,12 @@ areas:
     - structural-analysis
     source_refs:
       linear_labels:
+      - area:calibration
       - area:evaluation
       - area:evidence
       - area:llm-judge
       - area:ontology
+      - area:review
       - area:structural-analysis
       linear_milestones:
       - 'M5: Behavioral Evaluation'

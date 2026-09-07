@@ -50,6 +50,7 @@ last_memory_sync: 2026-08-26T03:34:35.394200+00:00
 - COE-581: Implement outcome ingestion and structural observations
 - COE-582: Define behavior assertions and evidence resolution
 - COE-583: Implement the evidence-grounded semantic judge runner
+- COE-584: Implement human calibration and adjudication workflow
 - COE-590: Complete the production Agent SDK capture path
 - COE-591: Operationalize one Agent SDK run from a frozen queue entry
 - COE-592: Support observational Agent SDK tasks without verifiers
@@ -77,6 +78,7 @@ last_memory_sync: 2026-08-26T03:34:35.394200+00:00
 - COE-581
 - COE-582
 - COE-583
+- COE-584
 - COE-590
 - COE-591
 - COE-592

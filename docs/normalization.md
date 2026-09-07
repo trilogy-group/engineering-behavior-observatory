@@ -40,6 +40,7 @@ last_memory_sync: 2026-09-07T07:19:40.803748+00:00
 - COE-581: Implement outcome ingestion and structural observations
 - COE-582: Define behavior assertions and evidence resolution
 - COE-583: Implement the evidence-grounded semantic judge runner
+- COE-584: Implement human calibration and adjudication workflow
 
 ## Source refs
 
@@ -50,5 +51,6 @@ last_memory_sync: 2026-09-07T07:19:40.803748+00:00
 - COE-581
 - COE-582
 - COE-583
+- COE-584
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->
