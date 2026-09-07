@@ -219,6 +219,36 @@ test("interrupts a post-terminal history read when the caller aborts", async () 
   }
 });
 
+test("latches aborts that arrive while terminal evidence is being recorded", async () => {
+  const root = await temporaryRoot();
+  const workspace = join(root, "workspace");
+  const controller = new AbortController();
+  try {
+    await mkdir(workspace);
+    const capture = await Promise.race([
+      captureCodexAppServer({
+        runId: "run-terminal-abort-race",
+        attemptId: "attempt-terminal-abort-race",
+        workspacePath: workspace,
+        prompt: "Complete then wait on history.",
+        configuration: fakeConfiguration("history-hang"),
+        evidencePath: join(root, "session.jsonl"),
+        signal: controller.signal,
+        now: () => {
+          if (!controller.signal.aborted && new Error().stack?.includes("recordCompletion")) controller.abort();
+          return new Date().toISOString();
+        },
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("terminal abort race hung")), 2_000)),
+    ]);
+    assert.equal(controller.signal.aborted, true);
+    assert.ok(capture.gaps.some(({ kind, detail }) => kind === "history-readback" && detail.includes("before persisted history")));
+    assert.equal(capture.records.some(({ record }) => record.method === "thread/read" && record.kind === "request"), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("declares every server-applied material policy mismatch", async () => {
   const root = await temporaryRoot();
   try {
@@ -376,6 +406,7 @@ test("keeps out-of-range native timestamps explicitly unknown", async () => {
     const normalized = await normalizeCodexCapture(capture);
     const tool = normalized.events.find(({ family }) => family === "tool");
     assert.equal(tool?.nativeTime.status, "unknown");
+    assert.match(tool?.nativeTime.status === "unknown" ? tool.nativeTime.reason : "", /invalid|outside/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

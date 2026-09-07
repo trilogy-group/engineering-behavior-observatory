@@ -230,6 +230,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
   let terminal: Record<string, unknown> | undefined;
   let history: Record<string, unknown> | undefined;
   let historyReadPending = false;
+  let abortRequested = request.signal?.aborted ?? false;
   let nextRequestId = 1;
   const pending = new Map<ProtocolIdentity, {
     method: string;
@@ -387,6 +388,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
   };
 
   const abort = async (): Promise<void> => {
+    abortRequested = true;
     if ((threadId === undefined || turnId === undefined) && terminal === undefined) {
       await Promise.race([
         ownedTurnPromise,
@@ -471,6 +473,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     ]);
     try {
       historyReadPending = true;
+      if (abortRequested) throw new Error("Capture was aborted before persisted history readback started.");
       history = await sendRequest("thread/read", { threadId, includeTurns: true } satisfies ThreadReadParams);
       if (!historyMatches(history, threadId, turnId)) {
         addGap({ kind: "history-mismatch", detail: "thread/read history did not contain the owned terminal turn." });
@@ -712,7 +715,9 @@ function nativeTimestamp(method: string, payload: Record<string, unknown>): Unif
     const date = new Date(milliseconds);
     if (!Number.isNaN(date.getTime())) return { status: "known", value: date.toISOString() };
   }
-  return { status: "unknown", reason: "Native record omitted a lifecycle timestamp." };
+  return milliseconds === undefined
+    ? { status: "unknown", reason: "Native record omitted a lifecycle timestamp." }
+    : { status: "unknown", reason: "Native lifecycle timestamp is invalid or outside the supported range." };
 }
 
 function scopedTurn(payload: Record<string, unknown>): UniformEvent["scope"] {
