@@ -15,6 +15,7 @@ last_memory_sync: 2026-09-07T11:28:07.712022+00:00
 - COE-582 contributed: PR #36: COE-582: Add evidence-bound behavior assertions (merge `70f2776`)
 - COE-583 contributed: PR #37: COE-583: Add evidence-grounded semantic judge runner (merge `ea0e703`)
 - COE-584 contributed: PR #38: COE-584: Add human calibration and adjudication workflow (merge `02a9333`)
+- COE-585 contributed: PR #39: feat: add evidence-bound comparison aggregation (merge `ecdf703`)
 
 ## Important invariants
 
@@ -35,6 +36,7 @@ last_memory_sync: 2026-09-07T11:28:07.712022+00:00
 - COE-582: Define behavior assertions and evidence resolution
 - COE-583: Implement the evidence-grounded semantic judge runner
 - COE-584: Implement human calibration and adjudication workflow
+- COE-585: Implement comparison and aggregation
 
 ## Source refs
 
@@ -42,5 +44,6 @@ last_memory_sync: 2026-09-07T11:28:07.712022+00:00
 - COE-582
 - COE-583
 - COE-584
+- COE-585
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

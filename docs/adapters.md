@@ -41,6 +41,7 @@ last_memory_sync: 2026-09-07T07:19:40.801865+00:00
 - COE-582: Define behavior assertions and evidence resolution
 - COE-583: Implement the evidence-grounded semantic judge runner
 - COE-584: Implement human calibration and adjudication workflow
+- COE-585: Implement comparison and aggregation
 
 ## Source refs
 
@@ -52,5 +53,6 @@ last_memory_sync: 2026-09-07T07:19:40.801865+00:00
 - COE-582
 - COE-583
 - COE-584
+- COE-585
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

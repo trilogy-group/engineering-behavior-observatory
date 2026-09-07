@@ -1,17 +1,16 @@
 ---
 type: topic-doc
-area: calibration
+area: analysis
 visibility: public
-last_memory_sync: 2026-09-07T19:25:15.086162+00:00
+last_memory_sync: 2026-09-07T23:02:20.007207+00:00
 ---
 
-# Calibration
+# Analysis
 
 <!-- BEGIN OPENSYMPHONY MANAGED MEMORY SYNC -->
 
 ## Current model
 
-- COE-584 contributed: PR #38: COE-584: Add human calibration and adjudication workflow (merge `02a9333`)
 - COE-585 contributed: PR #39: feat: add evidence-bound comparison aggregation (merge `ecdf703`)
 
 ## Important invariants
@@ -29,12 +28,10 @@ last_memory_sync: 2026-09-07T19:25:15.086162+00:00
 
 ## Recent changes
 
-- COE-584: Implement human calibration and adjudication workflow
 - COE-585: Implement comparison and aggregation
 
 ## Source refs
 
-- COE-584
 - COE-585
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

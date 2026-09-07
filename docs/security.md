@@ -43,6 +43,7 @@ last_memory_sync: 2026-08-31T17:10:33.049438+00:00
 - COE-582: Define behavior assertions and evidence resolution
 - COE-583: Implement the evidence-grounded semantic judge runner
 - COE-584: Implement human calibration and adjudication workflow
+- COE-585: Implement comparison and aggregation
 - COE-591: Operationalize one Agent SDK run from a frozen queue entry
 - COE-592: Support observational Agent SDK tasks without verifiers
 - COE-593: Admit common framework filenames in observational fixtures
@@ -60,6 +61,7 @@ last_memory_sync: 2026-08-31T17:10:33.049438+00:00
 - COE-582
 - COE-583
 - COE-584
+- COE-585
 - COE-591
 - COE-592
 - COE-593

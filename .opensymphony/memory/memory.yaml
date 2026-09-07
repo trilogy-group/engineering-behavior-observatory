@@ -30,6 +30,8 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:deepseek-runtime
       - area:evaluation
@@ -58,6 +60,8 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:capture
       - area:corpus
@@ -84,6 +88,35 @@ areas:
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+  aggregation:
+    title: Aggregation
+    docs_target: docs/aggregation.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - aggregation
+    source_refs:
+      linear_labels:
+      - area:aggregation
+      - area:analysis
+      - area:evaluation
+      linear_milestones:
+      - 'M5: Behavioral Evaluation'
+  analysis:
+    title: Analysis
+    docs_target: docs/analysis.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - analysis
+    source_refs:
+      linear_labels:
+      - area:analysis
+      - area:evaluation
+      linear_milestones:
+      - 'M5: Behavioral Evaluation'
   calibration:
     title: Calibration
     docs_target: docs/calibration.md
@@ -94,6 +127,8 @@ areas:
     - calibration
     source_refs:
       linear_labels:
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:evaluation
       - area:review
@@ -111,6 +146,8 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:capture
       - area:corpus
@@ -149,6 +186,8 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:corpus
       - area:deepseek-runtime
@@ -179,6 +218,8 @@ areas:
     - deepseek-runtime
     source_refs:
       linear_labels:
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:deepseek-runtime
       - area:evaluation
@@ -203,6 +244,8 @@ areas:
     - evaluation
     source_refs:
       linear_labels:
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:evaluation
       - area:evidence
@@ -225,6 +268,8 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:capture
       - area:corpus
@@ -260,6 +305,8 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:corpus
       - area:deepseek-runtime
@@ -292,6 +339,8 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:capture
       - area:corpus
@@ -327,6 +376,8 @@ areas:
     - json-rpc
     source_refs:
       linear_labels:
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:evaluation
       - area:evidence
@@ -351,6 +402,8 @@ areas:
     - llm-judge
     source_refs:
       linear_labels:
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:evaluation
       - area:llm-judge
@@ -380,6 +433,8 @@ areas:
     source_refs:
       linear_labels:
       - area:adapters
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:deepseek-runtime
       - area:evaluation
@@ -406,6 +461,8 @@ areas:
     - ontology
     source_refs:
       linear_labels:
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:evaluation
       - area:evidence
@@ -428,6 +485,8 @@ areas:
     - openhands-runtime
     source_refs:
       linear_labels:
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:evaluation
       - area:evidence
@@ -452,6 +511,8 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:capture
       - area:corpus
@@ -488,6 +549,8 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:capture
       - area:corpus
@@ -523,6 +586,8 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:capture
       - area:corpus
@@ -563,6 +628,8 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:capture
       - area:corpus
@@ -601,6 +668,9 @@ areas:
     - review
     source_refs:
       linear_labels:
+      - area:aggregation
+      - area:analysis
+      - area:evaluation
       - area:review
       linear_milestones:
       - 'M5: Behavioral Evaluation'
@@ -616,6 +686,8 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:capture
       - area:corpus
@@ -651,6 +723,8 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:deepseek-runtime
       - area:evaluation
@@ -681,6 +755,8 @@ areas:
       linear_labels:
       - area:adapters
       - area:agent-sdk
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:capture
       - area:corpus
@@ -716,6 +792,8 @@ areas:
     - structural-analysis
     source_refs:
       linear_labels:
+      - area:aggregation
+      - area:analysis
       - area:calibration
       - area:evaluation
       - area:evidence

@@ -93,3 +93,32 @@ The caller supplies the recurrence threshold. A divergent matched unit below
 that threshold is a `case-study`; reaching it yields only a
 `recurring-description`. Neither state establishes causality or statistical
 significance, and the report never emits a composite model ranking.
+
+<!-- BEGIN OPENSYMPHONY MANAGED MEMORY SYNC -->
+
+## Current model
+
+- COE-585 contributed: PR #39: feat: add evidence-bound comparison aggregation (merge `ecdf703`)
+
+## Important invariants
+
+- Preserve the behavior described in the recent captured changes unless current code and tests show it has changed.
+- Use capsule source refs to inspect the original PR or Linear issue when context is ambiguous.
+
+## Operational flow
+
+- No generated diagram requested for this sync.
+
+## Known gotchas
+
+- No area-specific gotchas were inferred from the selected memory.
+
+## Recent changes
+
+- COE-585: Implement comparison and aggregation
+
+## Source refs
+
+- COE-585
+
+<!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->
