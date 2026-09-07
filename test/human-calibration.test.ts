@@ -204,6 +204,13 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     assert.equal(summary.totals.disputedAssertions, 2);
     assert.equal(summary.totals.unresolvedAssertions, 3);
     assert.equal(summary.totals.humanDecisionAbstentions, 1);
+    const reviewerB = await append(decision("review-b-confirmed", "review", byId.get("assertion-a")!, "synthetic-fixture-reviewer-b", "confirmed"));
+    const reviewerE = await append(decision("review-e-confirmed", "review", byId.get("assertion-a")!, "synthetic-fixture-reviewer-e", "confirmed"));
+    await append({
+      ...decision("adjudication-disputed", "adjudication", byId.get("assertion-a")!, "synthetic-fixture-adjudicator", "disputed"),
+      adjudicates: [confirmed.id, reviewerB.id, reviewerE.id],
+    });
+    assert.equal(summarizeCalibration(selection, history!).totals.disputedAssertions, 2, "a current disputed adjudication counts as a dispute");
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }

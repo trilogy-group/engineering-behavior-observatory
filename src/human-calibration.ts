@@ -506,6 +506,8 @@ function counts(candidates: readonly ReviewCandidate[], decisions: readonly Revi
   const outcomes = candidates.map((candidate) => effectiveOutcome(candidate, relevant));
   const disputed = candidates.filter((candidate, index) => {
     if (outcomes[index] !== "unresolved") return false;
+    const own = relevant.filter(({ assertion }) => assertionKey(assertion) === assertionKey(candidate.assertion));
+    if (currentAdjudication(own)?.state === "disputed") return true;
     const reviews = latestReviews.filter(({ assertion }) => assertionKey(assertion) === assertionKey(candidate.assertion));
     return reviews.some(({ state }) => state === "disputed") || new Set(reviews.filter(({ state }) => state !== "insufficient-evidence").map(({ state }) => state)).size > 1;
   }).length;
@@ -533,9 +535,7 @@ function counts(candidates: readonly ReviewCandidate[], decisions: readonly Revi
 function effectiveOutcome(candidate: ReviewCandidate, decisions: readonly ReviewDecision[]): "confirmed" | "rejected" | "unresolved" | "unreviewed" | "judge-abstained" {
   if (candidate.context.abstained) return "judge-abstained";
   const own = decisions.filter(({ assertion }) => assertionKey(assertion) === assertionKey(candidate.assertion));
-  const lastReviewIndex = own.findLastIndex(({ kind }) => kind === "review");
-  const adjudicationIndex = own.findLastIndex(({ kind }) => kind === "adjudication");
-  const adjudication = adjudicationIndex > lastReviewIndex ? own[adjudicationIndex] : undefined;
+  const adjudication = currentAdjudication(own);
   if (adjudication !== undefined) return adjudication.state === "confirmed" ? "confirmed" : adjudication.state === "rejected" ? "rejected" : "unresolved";
   const reviews = latestHumanReviews(own);
   if (reviews.length === 0) return "unreviewed";
@@ -543,6 +543,12 @@ function effectiveOutcome(candidate: ReviewCandidate, decisions: readonly Review
   const states = new Set(reviews.map(({ state }) => state));
   if (states.size !== 1) return "unresolved";
   return states.has("confirmed") ? "confirmed" : "rejected";
+}
+
+function currentAdjudication(decisions: readonly ReviewDecision[]): ReviewDecision | undefined {
+  const lastReviewIndex = decisions.findLastIndex(({ kind }) => kind === "review");
+  const adjudicationIndex = decisions.findLastIndex(({ kind }) => kind === "adjudication");
+  return adjudicationIndex > lastReviewIndex ? decisions[adjudicationIndex] : undefined;
 }
 
 function latestHumanReviews(decisions: readonly ReviewDecision[]): ReviewDecision[] {
