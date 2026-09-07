@@ -349,6 +349,7 @@ export type {
 } from "./uniform-events.js";
 export {
   assessComparisonEligibility,
+  assessLegacyComparisonEligibility,
   createCapturedNativeEvidenceResolver,
   describeNormalizedDataset,
   validateNormalizedCorpus,
@@ -440,6 +441,8 @@ export type {
   ComparisonReason,
   ComparisonReport,
   ComparisonRequest,
+  LegacyComparisonReport,
+  LegacyComparisonRequest,
   NormalizedDataset,
   NormalizedDatasetInput,
   NormalizedContentReference,

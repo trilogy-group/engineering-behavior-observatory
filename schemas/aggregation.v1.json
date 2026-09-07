@@ -166,7 +166,7 @@
             "required": ["id", "measure", "eligibility", "matchedDifference", "differingMatchedUnits", "claimStatus", "limitations"],
             "properties": {
               "id": { "$ref": "#/$defs/identifier" }, "measure": { "$ref": "#/$defs/identifier" },
-              "eligibility": { "type": "array", "minItems": 1, "maxItems": 100000, "items": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/comparisonReport" } },
+              "eligibility": { "type": "array", "minItems": 1, "maxItems": 100000, "items": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/comparisonReportV2" } },
               "matchedDifference": { "$ref": "#/$defs/measurement" },
               "differingMatchedUnits": { "type": "integer", "minimum": 0 },
               "claimStatus": { "enum": ["no-difference", "case-study", "recurring-description", "unavailable"] },

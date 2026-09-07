@@ -77,6 +77,9 @@ output.
 Each eligibility report carries the digest of its source comparison request.
 The aggregate build reloads that request and recomputes the report before using
 the gate, so an edited or stale report cannot authorize a matched difference.
+These bindings use `ebo.comparison-request/v2` and
+`ebo.comparison-report/v2`; the original v1 request/report remain supported by
+`ebo comparison check` but do not contain enough lineage for aggregation.
 
 The caller supplies the recurrence threshold. A divergent matched unit below
 that threshold is a `case-study`; reaching it yields only a

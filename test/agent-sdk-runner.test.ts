@@ -103,7 +103,7 @@ test("executes one frozen queue entry end to end and retains a qualified bundle"
       capabilityProfile: observationSet.normalization.capabilityProfile,
     };
     const comparisonRequest: ComparisonRequest = {
-      schemaVersion: "ebo.comparison-request/v1",
+      schemaVersion: "ebo.comparison-request/v2",
       measure: "structural:tool-operation-count",
       left: candidate,
       right: structuredClone(candidate),

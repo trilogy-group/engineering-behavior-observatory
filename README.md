@@ -194,7 +194,9 @@ source records. Their validator produces adapter/version coverage that keeps
 unmapped native types and unsupported capabilities explicit. `ebo comparison
 check` evaluates one inspectable comparison request and returns `supported`,
 `qualified-with-caveats`, or `unsupported`; declared harness differences remain
-caveats and never become causal claims. See
+caveats and never become causal claims. The v2 comparison contract adds exact
+measure, manifest, request, and policy bindings for aggregation while the v1
+CLI path remains readable. See
 [docs/normalization-integrity.md](docs/normalization-integrity.md).
 
 The [comparison and aggregation read model](docs/aggregation.md) scans the

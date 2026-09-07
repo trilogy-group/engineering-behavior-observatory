@@ -7,6 +7,7 @@ import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 
 import { assertNoDuplicateJsonKeys, digestMetadata, validateArtifact, validateRunManifestEvidence } from "./artifacts.js";
 import { captureClaudeAgentSdkRun } from "./agent-sdk-run.js";
+import { CLAUDE_AGENT_SDK_HARNESS } from "./agent-sdk-normalizer.js";
 import {
   probeClaudeAgentSdkCapabilities,
   type ClaudeAgentSdkConfiguration,
@@ -439,7 +440,8 @@ function buildRunBundleDefinition(
       model: { provider: "anthropic", id: entry.model.id, configurationDigest: `sha256:${entry.configuration.model.digest.value}` },
       harness: { id: entry.harness.id, version: capabilities.sdkVersion, configurationDigest: `sha256:${entry.configuration.harness.digest.value}` },
       runtime: [
-        { source: "anthropic", name: entry.harness.id, version: capabilities.sdkVersion },
+        ...(entry.harness.id === CLAUDE_AGENT_SDK_HARNESS ? [] : [{ source: "EBO", name: entry.harness.id, version: capabilities.sdkVersion }]),
+        { source: "anthropic", name: CLAUDE_AGENT_SDK_HARNESS, version: capabilities.sdkVersion },
         { source: "anthropic", name: "agent-cli", version: capabilities.claudeCodeVersion },
       ],
       ...(packet.assessmentMode === "verified" ? {

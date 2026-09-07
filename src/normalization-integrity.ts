@@ -87,7 +87,7 @@ export type ComparisonCandidate = {
 };
 
 export type ComparisonRequest = {
-  schemaVersion: "ebo.comparison-request/v1";
+  schemaVersion: "ebo.comparison-request/v2";
   measure: string;
   left: ComparisonCandidate;
   right: ComparisonCandidate;
@@ -113,12 +113,26 @@ export type ComparisonReason = {
 };
 
 export type ComparisonReport = {
-  schemaVersion: "ebo.comparison-report/v1";
+  schemaVersion: "ebo.comparison-report/v2";
   measure: string;
   requestDigest: DigestString;
   status: "supported" | "qualified-with-caveats" | "unsupported";
   candidates: [string, string];
   policy: ComparisonRequest["policy"];
+  reasons: readonly ComparisonReason[];
+};
+
+export type LegacyComparisonRequest = {
+  schemaVersion: "ebo.comparison-request/v1";
+  left: Omit<ComparisonCandidate, "manifestDigest">;
+  right: Omit<ComparisonCandidate, "manifestDigest">;
+  policy: ComparisonRequest["policy"];
+};
+
+export type LegacyComparisonReport = {
+  schemaVersion: "ebo.comparison-report/v1";
+  status: ComparisonReport["status"];
+  candidates: [string, string];
   reasons: readonly ComparisonReason[];
 };
 
@@ -376,7 +390,7 @@ export function assessComparisonEligibility(request: ComparisonRequest): Compari
   }
   const reasons = [...blockers, ...caveats];
   const report: ComparisonReport = {
-    schemaVersion: "ebo.comparison-report/v1",
+    schemaVersion: "ebo.comparison-report/v2",
     measure: request.measure,
     requestDigest: `sha256:${digestMetadata(request).value}`,
     status: blockers.length > 0 ? "unsupported" : caveats.length > 0 ? "qualified-with-caveats" : "supported",
@@ -386,6 +400,26 @@ export function assessComparisonEligibility(request: ComparisonRequest): Compari
   };
   assertValidArtifact("comparison report", report);
   return report;
+}
+
+export function assessLegacyComparisonEligibility(request: LegacyComparisonRequest): LegacyComparisonReport {
+  assertValidArtifact("comparison request", request);
+  const manifestDigest = `sha256:${"0".repeat(64)}` as DigestString;
+  const report = assessComparisonEligibility({
+    ...structuredClone(request),
+    schemaVersion: "ebo.comparison-request/v2",
+    measure: "legacy-unspecified",
+    left: { ...structuredClone(request.left), manifestDigest },
+    right: { ...structuredClone(request.right), manifestDigest },
+  });
+  const legacy: LegacyComparisonReport = {
+    schemaVersion: "ebo.comparison-report/v1",
+    status: report.status,
+    candidates: report.candidates,
+    reasons: report.reasons,
+  };
+  assertValidArtifact("comparison report", legacy);
+  return legacy;
 }
 
 function coverageReport(

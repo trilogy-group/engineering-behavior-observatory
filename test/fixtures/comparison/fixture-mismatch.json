@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "ebo.comparison-request/v1",
+  "schemaVersion": "ebo.comparison-request/v2",
   "measure": "structural:tool-operation-count",
   "left": {
     "id": "run-left",
