@@ -588,7 +588,9 @@ export function parseSemanticJudgeResponse(
   input: SemanticJudgeInput,
   evaluatorVersion: string = probeClaudeAgentSdkCapabilities().sdkVersion,
 ): BehaviorAssertion {
-  const response = record(value, "Judge response");
+  const envelope = record(value, "Judge response envelope");
+  exactKeys(envelope, ["judgment"], "Judge response envelope");
+  const response = record(envelope.judgment, "Judge response");
   const disposition = response.disposition;
   const allowedEventIds = new Set(input.selection.includedEventIds);
   let judgment: BehaviorAssertion["judgment"];
@@ -686,24 +688,50 @@ function responseSchema(maxCitations: number): JsonRecord {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["disposition", "assessment", "confidence", "reason", "missingEvidenceCapability", "rationale", "alternativeExplanation", "citations"],
+    required: ["judgment"],
     properties: {
-      disposition: { enum: ["assessed", "abstained"] },
-      assessment: { enum: ["constructive", "adverse", "mixed", "context-dependent", null] },
-      confidence: {
-        type: ["object", "null"],
-        additionalProperties: false,
-        required: ["value", "scale"],
-        properties: {
-          value: { type: "number", minimum: 0, maximum: 1 },
-          scale: { const: "evaluator-reported-0-to-1" },
-        },
+      judgment: {
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["disposition", "assessment", "confidence", "reason", "missingEvidenceCapability", "rationale", "alternativeExplanation", "citations"],
+            properties: {
+              disposition: { const: "assessed" },
+              assessment: { enum: ["constructive", "adverse", "mixed", "context-dependent"] },
+              confidence: {
+                type: "object",
+                additionalProperties: false,
+                required: ["value", "scale"],
+                properties: {
+                  value: { type: "number", minimum: 0, maximum: 1 },
+                  scale: { const: "evaluator-reported-0-to-1" },
+                },
+              },
+              reason: { const: null },
+              missingEvidenceCapability: { const: null },
+              rationale: text,
+              alternativeExplanation: text,
+              citations: { type: "array", minItems: 1, maxItems: maxCitations, items: citation },
+            },
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["disposition", "assessment", "confidence", "reason", "missingEvidenceCapability", "rationale", "alternativeExplanation", "citations"],
+            properties: {
+              disposition: { const: "abstained" },
+              assessment: { const: null },
+              confidence: { const: null },
+              reason: text,
+              missingEvidenceCapability: { enum: [...MISSING_EVIDENCE_CAPABILITIES, null] },
+              rationale: text,
+              alternativeExplanation: text,
+              citations: { type: "array", maxItems: maxCitations, items: citation },
+            },
+          },
+        ],
       },
-      reason: { type: ["string", "null"], minLength: 1, maxLength: 8192 },
-      missingEvidenceCapability: { enum: [...MISSING_EVIDENCE_CAPABILITIES, null] },
-      rationale: text,
-      alternativeExplanation: text,
-      citations: { type: "array", maxItems: maxCitations, items: citation },
     },
   };
 }

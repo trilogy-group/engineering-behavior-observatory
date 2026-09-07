@@ -160,7 +160,7 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
 
     const malformedMetadata = await run(root, "malformed-metadata", bundleRoot, observations, request, backend(async () => ({
       status: "completed",
-      response: assessed,
+      response: { judgment: assessed },
       raw: { invalid: Number.NaN },
       timing: { durationMs: Number.NaN, durationApiMs: 1 },
       usage: { totalCostUsd: 0, numTurns: 1, mainLoop: undefined, byModel: {} },
@@ -302,7 +302,7 @@ test("configures the Claude Agent SDK backend with no tools, settings, plugins, 
     return {
       close: () => { throw new Error("close after completion"); },
       async *[Symbol.asyncIterator]() {
-        yield sdkResult({
+        yield sdkResult({ judgment: {
           disposition: "abstained",
           assessment: null,
           confidence: null,
@@ -311,7 +311,7 @@ test("configures the Claude Agent SDK backend with no tools, settings, plugins, 
           rationale: "bounded",
           alternativeExplanation: "none",
           citations: [],
-        });
+        } });
       },
     } as unknown as ReturnType<typeof import("@anthropic-ai/claude-agent-sdk").query>;
   };
@@ -338,13 +338,13 @@ test("configures the Claude Agent SDK backend with no tools, settings, plugins, 
   assert.equal(captured?.env?.CLAUDE_CODE_EFFORT_LEVEL, undefined);
   const schema = captured?.outputFormat?.schema;
   assert.equal(schema?.type, "object");
-  assert.deepEqual((schema?.required as string[]).sort(), [
-    "alternativeExplanation", "assessment", "citations", "confidence", "disposition",
-    "missingEvidenceCapability", "rationale", "reason",
-  ]);
-  const properties = schema?.properties as Record<string, { enum?: unknown[] }>;
-  assert.equal(properties.missingEvidenceCapability?.enum?.includes("family:validation"), true);
-  assert.equal(properties.missingEvidenceCapability?.enum?.includes("test logs"), false);
+  assert.deepEqual(schema?.required, ["judgment"]);
+  const judgmentSchema = (schema?.properties as {
+    judgment: { oneOf: Array<{ properties: Record<string, { enum?: unknown[]; minItems?: number }> }> };
+  }).judgment;
+  assert.equal(judgmentSchema.oneOf[0]!.properties.citations?.minItems, 1);
+  assert.equal(judgmentSchema.oneOf[1]!.properties.missingEvidenceCapability?.enum?.includes("family:validation"), true);
+  assert.equal(judgmentSchema.oneOf[1]!.properties.missingEvidenceCapability?.enum?.includes("test logs"), false);
   assert.equal(existsSync(observedCwd), false, "ephemeral empty cwd is removed after execution");
 });
 
@@ -359,7 +359,7 @@ test("retains bounded received SDK messages and result accounting when the provi
         parent_tool_use_id: null,
         message: { role: "assistant", content: [{ type: "text", text: "received before disconnect" }] },
       } as unknown as SDKMessage;
-      yield sdkResult({
+      yield sdkResult({ judgment: {
         disposition: "abstained",
         assessment: null,
         confidence: null,
@@ -368,7 +368,7 @@ test("retains bounded received SDK messages and result accounting when the provi
         rationale: "bounded",
         alternativeExplanation: "none",
         citations: [],
-      });
+      } });
       throw new Error("provider disconnected");
     },
   }) as unknown as ReturnType<typeof import("@anthropic-ai/claude-agent-sdk").query>;
@@ -392,7 +392,9 @@ test("approved live semantic judge smoke", { skip: process.env.EBO_LIVE_SEMANTIC
     request,
   );
   assert.equal(result.status, "completed", result.status === "failed" ? result.message : undefined);
-  if (result.status === "completed") assert.equal((result.response as { disposition?: unknown }).disposition, "abstained");
+  if (result.status === "completed") {
+    assert.equal((result.response as { judgment?: { disposition?: unknown } }).judgment?.disposition, "abstained");
+  }
 });
 
 async function run(
@@ -416,7 +418,7 @@ async function run(
 function completed(response: unknown): SemanticJudgeBackend {
   return backend(async (prompt) => {
     assert.match(prompt, /<EVIDENCE_DATA>/u);
-    return { status: "completed", response, raw: { response } };
+    return { status: "completed", response: { judgment: response }, raw: { response: { judgment: response } } };
   });
 }
 
