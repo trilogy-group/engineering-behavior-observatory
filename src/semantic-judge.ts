@@ -23,7 +23,7 @@ import {
 } from "./artifacts.js";
 import { probeClaudeAgentSdkCapabilities } from "./agent-sdk.js";
 import { readBoundedFile } from "./scheduler.js";
-import { validateStructuralObservationSet, type StructuralObservationSet } from "./structural-observations.js";
+import { createStructuralObservationSet, validateStructuralObservationSet, type StructuralObservationSet } from "./structural-observations.js";
 import type { AgentSdkNativeRecord } from "./agent-sdk-normalizer.js";
 import type { NativeEvidenceReference, NormalizationInput, UniformEvent } from "./uniform-events.js";
 
@@ -180,6 +180,10 @@ export async function runAgentSdkSemanticJudge(
       || options.observations.attemptId !== evidence.dataset.attemptId
       || options.observations.normalization.datasetDigest !== datasetDigest) {
     throw new Error("Structural observations do not match the qualified normalized dataset.");
+  }
+  const expectedObservations = createStructuralObservationSet(evidence.dataset, evidence.coverage, evidence.capture);
+  if (canonicalizeMetadata(options.observations) !== canonicalizeMetadata(expectedObservations)) {
+    throw new Error("Structural observations differ from the recomputed qualified observation set.");
   }
   const evaluatedModelId = readEvaluatedModelId(options.bundleRoot);
   const input = packageSemanticJudgeInput(
@@ -385,50 +389,80 @@ export function packageSemanticJudgeInput(
   validateRequest(request);
   const eventById = uniqueById(events, "normalized event");
   const observationById = uniqueById(observations.observations, "structural observation");
-  const requestedEvents = request.selection.eventIds.map((id) => requiredEntry(eventById, id, "normalized event"));
   const requestedObservations = request.selection.structuralObservationIds
     .map((id) => requiredEntry(observationById, id, "structural observation"));
   const outcomes = request.selection.includeOutcomeObservations
     ? observations.observations.filter(({ extractor }) => extractor.id.startsWith("outcome-"))
     : [];
   const selectedObservations = [...new Map([...requestedObservations, ...outcomes].map((value) => [value.id, value])).values()];
+  const selectedEventIds = [...new Set([
+    ...request.selection.eventIds,
+    ...selectedObservations.flatMap(({ sourceEventIds }) => sourceEventIds),
+  ])];
+  const requestedEvents = selectedEventIds.map((id) => requiredEntry(eventById, id, "normalized event"));
   const requestedCount = requestedEvents.length + selectedObservations.length;
   if (requestedCount > request.limits.maxEvidenceItems) {
     throw new Error("Semantic judge evidence selection exceeds maxEvidenceItems.");
   }
   const nativeByReference = new Map(capture.records.map((value) => [referenceKey(value.reference), value.record]));
   const redact = request.blinding.evaluatedModelIdentity === "redact";
-  let redactionCount = 0;
-  const redactValue = (value: unknown): unknown => redactJson(value, evaluatedModelId, () => { redactionCount += 1; });
-  const candidates: SemanticJudgeEvidenceItem[] = [
+  const candidates: Array<{ item: SemanticJudgeEvidenceItem; redactions: number }> = [
     ...requestedEvents.map((event) => {
       const nativeRecord = nativeByReference.get(referenceKey(event.source.nativeReference));
       if (nativeRecord === undefined) throw new Error(`Selected normalized event "${event.id}" has no exact captured native record.`);
       const { nativeReference: _nativeReference, ...source } = event.source;
-      return evidenceItem("event", event.id, {
-        normalizedEvent: redactValue({ ...event, source }),
-        nativeRecord: redactValue(nativeRecord),
-      }, request.limits.maxRecordChars, { eventId: event.id, nativeReference: event.source.nativeReference });
+      return redactedEvidenceItem("event", event.id, {
+        normalizedEvent: { ...event, source },
+        nativeRecord,
+      }, { eventId: event.id, nativeReference: event.source.nativeReference });
     }),
-    ...selectedObservations.map((observation) => evidenceItem(
+    ...selectedObservations.map((observation) => redactedEvidenceItem(
       "structural-observation",
       observation.id,
-      redactValue(observation),
-      request.limits.maxRecordChars,
+      observation,
     )),
   ];
   const evidenceItems: SemanticJudgeEvidenceItem[] = [];
   const omitted: string[] = [];
-  for (const item of candidates) {
-    const candidate = [...evidenceItems, item];
-    const projected = baseInput(candidate);
-    if (semanticJudgePrompt(projected).length <= request.limits.maxInputChars) evidenceItems.push(item);
-    else omitted.push(`${item.kind}:${item.id}:maxInputChars`);
+  let includedRedactions = 0;
+  for (const { item, redactions } of candidates) {
+    if (semanticJudgePrompt(baseInput([...evidenceItems, item], omitted, includedRedactions + redactions)).length
+        <= request.limits.maxInputChars) {
+      evidenceItems.push(item);
+      includedRedactions += redactions;
+      continue;
+    }
+    omitted.push(`${item.kind}:${item.id}:maxInputChars`);
+    while (semanticJudgePrompt(baseInput(evidenceItems, omitted, includedRedactions)).length
+        > request.limits.maxInputChars && evidenceItems.length > 0) {
+      const removed = evidenceItems.pop()!;
+      const removedCandidate = candidates.find(({ item: candidate }) => candidate === removed)!;
+      includedRedactions -= removedCandidate.redactions;
+      omitted.push(`${removed.kind}:${removed.id}:maxInputChars`);
+    }
   }
-  if (evidenceItems.length === 0) throw new Error("Semantic judge input limits omit every selected evidence item.");
-  return baseInput(evidenceItems);
+  const result = baseInput(evidenceItems, omitted, includedRedactions);
+  if (semanticJudgePrompt(result).length > request.limits.maxInputChars) {
+    throw new Error("Semantic judge selection metadata exceeds maxInputChars.");
+  }
+  return result;
 
-  function baseInput(items: readonly SemanticJudgeEvidenceItem[]): SemanticJudgeInput {
+  function redactedEvidenceItem(
+    kind: SemanticJudgeEvidenceItem["kind"],
+    id: string,
+    value: unknown,
+    citation?: SemanticJudgeEvidenceItem["citation"],
+  ): { item: SemanticJudgeEvidenceItem; redactions: number } {
+    let redactions = 0;
+    const content = redact ? redactJson(value, evaluatedModelId, () => { redactions += 1; }) : value;
+    return { item: evidenceItem(kind, id, content, request.limits.maxRecordChars, citation), redactions };
+  }
+
+  function baseInput(
+    items: readonly SemanticJudgeEvidenceItem[],
+    omittedItems: readonly string[],
+    redactionCount: number,
+  ): SemanticJudgeInput {
     return {
       schemaVersion: "ebo.semantic-judge-input/v1",
       promptVersion: SEMANTIC_JUDGE_PROMPT_VERSION,
@@ -442,7 +476,7 @@ export function packageSemanticJudgeInput(
         requestedStructuralObservationIds: [...request.selection.structuralObservationIds],
         includedEventIds: items.filter(({ kind }) => kind === "event").map(({ id }) => id),
         includedStructuralObservationIds: items.filter(({ kind }) => kind === "structural-observation").map(({ id }) => id),
-        omitted: [...omitted],
+        omitted: [...omittedItems],
         truncated: items.filter(({ truncated }) => truncated).map(({ kind, id }) => `${kind}:${id}`),
       },
       blinding: {
@@ -471,8 +505,20 @@ export function parseSemanticJudgeResponse(
   const disposition = response.disposition;
   const allowedEventIds = new Set(input.selection.includedEventIds);
   let judgment: BehaviorAssertion["judgment"];
+  exactKeys(response, [
+    "disposition",
+    "assessment",
+    "confidence",
+    "reason",
+    "missingEvidenceCapability",
+    "rationale",
+    "alternativeExplanation",
+    "citations",
+  ], "Judge response");
   if (disposition === "assessed") {
-    exactKeys(response, ["disposition", "assessment", "confidence", "rationale", "alternativeExplanation", "citations"], "Assessed judge response");
+    if (response.reason !== null || response.missingEvidenceCapability !== null) {
+      throw new Error("Assessed judge response must set abstention fields to null.");
+    }
     const confidence = record(response.confidence, "Judge confidence");
     exactKeys(confidence, ["value", "scale"], "Judge confidence");
     if (!["constructive", "adverse", "mixed", "context-dependent"].includes(String(response.assessment))) {
@@ -492,14 +538,14 @@ export function parseSemanticJudgeResponse(
       citations: citations(response.citations, allowedEventIds, request.limits.maxCitations),
     };
   } else if (disposition === "abstained") {
-    const keys = ["disposition", "reason", "rationale", "alternativeExplanation", "citations"];
-    if (response.missingEvidenceCapability !== undefined) keys.push("missingEvidenceCapability");
-    exactKeys(response, keys, "Abstained judge response");
+    if (response.assessment !== null || response.confidence !== null) {
+      throw new Error("Abstained judge response must set assessment fields to null.");
+    }
     const missing = response.missingEvidenceCapability;
     judgment = {
       disposition,
       reason: requiredText(response.reason, "Judge abstention reason", 8192),
-      ...(missing === undefined ? {} : { missingEvidenceCapability: requiredText(missing, "Missing evidence capability", 256) }),
+      ...(missing === null ? {} : { missingEvidenceCapability: requiredText(missing, "Missing evidence capability", 256) }),
       rationale: requiredText(response.rationale, "Judge rationale", 8192),
       alternativeExplanation: requiredText(response.alternativeExplanation, "Judge alternative explanation", 8192),
       citations: citations(response.citations, allowedEventIds, request.limits.maxCitations),
@@ -550,18 +596,21 @@ function responseSchema(maxCitations: number): JsonRecord {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["disposition", "rationale", "alternativeExplanation", "citations"],
+    required: ["disposition", "assessment", "confidence", "reason", "missingEvidenceCapability", "rationale", "alternativeExplanation", "citations"],
     properties: {
       disposition: { enum: ["assessed", "abstained"] },
-      assessment: { enum: ["constructive", "adverse", "mixed", "context-dependent"] },
+      assessment: { enum: ["constructive", "adverse", "mixed", "context-dependent", null] },
       confidence: {
-        type: "object",
+        type: ["object", "null"],
         additionalProperties: false,
         required: ["value", "scale"],
-        properties: { value: { type: "number", minimum: 0, maximum: 1 }, scale: { const: "evaluator-reported-0-to-1" } },
+        properties: {
+          value: { type: "number", minimum: 0, maximum: 1 },
+          scale: { const: "evaluator-reported-0-to-1" },
+        },
       },
-      reason: text,
-      missingEvidenceCapability: { type: "string", minLength: 1, maxLength: 256 },
+      reason: { type: ["string", "null"], minLength: 1, maxLength: 8192 },
+      missingEvidenceCapability: { type: ["string", "null"], minLength: 1, maxLength: 256 },
       rationale: text,
       alternativeExplanation: text,
       citations: { type: "array", maxItems: maxCitations, items: citation },

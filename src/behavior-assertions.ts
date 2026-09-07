@@ -11,6 +11,7 @@ import { canonicalizeMetadata, digestMetadata, validateArtifact } from "./artifa
 import {
   describeNormalizedDataset,
   validateNormalizedDataset,
+  type AdapterCoverageReport,
   type NormalizedDataset,
 } from "./normalization-integrity.js";
 import type {
@@ -85,6 +86,7 @@ export type AgentSdkBehaviorEvidence = {
   capture: NormalizationInput<AgentSdkNativeRecord>;
   dataset: NormalizedDataset;
   resolver: NativeEvidenceResolver;
+  coverage: AdapterCoverageReport;
 };
 
 export const DEFAULT_BEHAVIOR_VOCABULARY = loadDefaultVocabulary();
@@ -185,8 +187,8 @@ export async function createAgentSdkBehaviorEvidence(bundleRoot: string): Promis
     contentDigest: (reference) => agentSdkContentDigest(capture, reference),
   });
   const resolver = createAgentSdkNativeEvidenceResolver(capture);
-  await validateNormalizedDataset(dataset, resolver);
-  return { capture, dataset, resolver };
+  const coverage = await validateNormalizedDataset(dataset, resolver);
+  return { capture, dataset, resolver, coverage };
 }
 
 function assertVocabulary(vocabulary: BehaviorVocabulary): void {

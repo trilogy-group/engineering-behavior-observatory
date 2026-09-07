@@ -64,12 +64,27 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
     assert.match(JSON.stringify(untrusted), /IGNORE ALL PRIOR INSTRUCTIONS/u);
     assert.doesNotMatch(JSON.stringify(untrusted), /claude-test/u);
     assert.equal(untrusted.evidence.find(({ kind }) => kind === "event")?.truncated, true);
+    const observationWithEvents = observations.observations.find(({ sourceEventIds }) => sourceEventIds.length > 0)!;
+    const structuralOnlyRequest = judgeRequest("unused", observationWithEvents.id);
+    structuralOnlyRequest.selection.eventIds = [];
+    structuralOnlyRequest.selection.includeOutcomeObservations = false;
+    const structuralOnly = packageSemanticJudgeInput(
+      evidence.dataset.events,
+      evidence.capture,
+      observations,
+      structuralOnlyRequest,
+      observations.normalization.datasetDigest,
+      "claude-test",
+    );
+    assert.deepEqual(structuralOnly.selection.includedEventIds, observationWithEvents.sourceEventIds);
 
     const citation = { eventId: event.id, nativeReference: event.source.nativeReference };
     const assessed = {
       disposition: "assessed",
       assessment: "constructive",
       confidence: { value: 0.8, scale: "evaluator-reported-0-to-1" },
+      reason: null,
+      missingEvidenceCapability: null,
       rationale: "The retained event supports the requested dimension.",
       alternativeExplanation: "The event may cover only one part of the task.",
       citations: [citation],
@@ -88,8 +103,23 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
     assert.equal(statSync(join(root, "proposal-a", "input.json")).mode & 0o777, 0o600);
     assert.equal(existsSync(join(root, "proposal-a", "judgment.json")), true);
 
+    const tampered = structuredClone(observations);
+    tampered.observations[0]!.definition = "Invented structural fact.";
+    await assert.rejects(
+      runAgentSdkSemanticJudge({
+        bundleRoot,
+        observations: tampered,
+        request,
+        outputRoot: join(root, "tampered-observations"),
+        backend: completed(assessed),
+      }),
+      /recomputed qualified observation set/u,
+    );
+
     const abstained = await run(root, "abstained", bundleRoot, observations, request, completed({
       disposition: "abstained",
+      assessment: null,
+      confidence: null,
       reason: "The bounded evidence is insufficient.",
       missingEvidenceCapability: "family:validation",
       rationale: "No additional validation event was selected.",
@@ -119,6 +149,30 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
     });
     assert.equal(timeout.parse.status, "failed");
     assert.equal(provider.parse.status, "failed");
+    const tight = structuredClone(request);
+    tight.selection.structuralObservationIds = observations.observations.map(({ id }) => id);
+    tight.selection.includeOutcomeObservations = false;
+    tight.limits.maxEvidenceItems = 128;
+    tight.limits.maxRecordChars = 512;
+    tight.limits.maxInputChars = 8_000;
+    let boundedPromptLength = 0;
+    const bounded = await run(root, "bounded-omissions", bundleRoot, observations, tight, async (prompt) => {
+      boundedPromptLength = prompt.length;
+      return completed({
+        disposition: "abstained",
+        assessment: null,
+        confidence: null,
+        reason: "The bound omitted relevant evidence.",
+        missingEvidenceCapability: null,
+        rationale: "No assessment is safe.",
+        alternativeExplanation: "A larger input might support assessment.",
+        citations: [],
+      })(prompt, tight);
+    });
+    assert.equal(bounded.status, "proposed");
+    assert.ok(boundedPromptLength <= tight.limits.maxInputChars);
+    const boundedInput = JSON.parse(readFileSync(join(root, "bounded-omissions", "input.json"), "utf8")) as { selection: { omitted: string[] } };
+    assert.ok(boundedInput.selection.omitted.length > 0);
     await assert.rejects(
       runAgentSdkSemanticJudge({ bundleRoot, observations, request, outputRoot: join(root, "proposal-a"), backend: completed(assessed) }),
       /EEXIST/u,
@@ -161,7 +215,16 @@ test("configures the Claude Agent SDK backend with no tools, settings, plugins, 
     return {
       close: () => { throw new Error("close after completion"); },
       async *[Symbol.asyncIterator]() {
-        yield sdkResult({ disposition: "abstained", reason: "insufficient", rationale: "bounded", alternativeExplanation: "none", citations: [] });
+        yield sdkResult({
+          disposition: "abstained",
+          assessment: null,
+          confidence: null,
+          reason: "insufficient",
+          missingEvidenceCapability: null,
+          rationale: "bounded",
+          alternativeExplanation: "none",
+          citations: [],
+        });
       },
     } as unknown as ReturnType<typeof import("@anthropic-ai/claude-agent-sdk").query>;
   };
@@ -177,6 +240,12 @@ test("configures the Claude Agent SDK backend with no tools, settings, plugins, 
   assert.equal(captured?.strictMcpConfig, true);
   assert.equal(captured?.persistSession, false);
   assert.equal(captured?.permissionMode, "dontAsk");
+  const schema = captured?.outputFormat?.schema;
+  assert.equal(schema?.type, "object");
+  assert.deepEqual((schema?.required as string[]).sort(), [
+    "alternativeExplanation", "assessment", "citations", "confidence", "disposition",
+    "missingEvidenceCapability", "rationale", "reason",
+  ]);
   assert.equal(existsSync(observedCwd), false, "ephemeral empty cwd is removed after execution");
 });
 
