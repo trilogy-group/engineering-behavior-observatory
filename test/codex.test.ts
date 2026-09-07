@@ -62,6 +62,16 @@ test("captures matching native lifecycle, interleaving, usage, history, and inde
     const normalized = await normalizeCodexCapture(capture);
     assert.equal(normalized.events.filter(({ family }) => family === "tool").length, 1, "item start and deltas must not inflate tool counts");
     assert.equal(normalized.events.filter(({ family }) => family === "outcome").length, 1);
+    assert.deepEqual(normalized.events.find(({ source }) => source.nativeType === "thread/tokenUsage/updated")?.attributes, {
+      method: "thread/tokenUsage/updated",
+      totalTokens: 14,
+      inputTokens: 8,
+      cachedInputTokens: 2,
+      cacheWriteInputTokens: 1,
+      outputTokens: 4,
+      reasoningOutputTokens: 2,
+      resourceSemantics: "cumulative-snapshot",
+    });
     assert.ok(normalized.unmapped.some(({ reference }) => {
       const record = capture.records.find(({ reference: candidate }) => candidate.recordLocator === reference.recordLocator)?.record;
       return record?.method === "unknown/native";
@@ -71,6 +81,35 @@ test("captures matching native lifecycle, interleaving, usage, history, and inde
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("marks only successfully completed Codex file changes as mutations", async () => {
+  const capture = {
+    runId: "run-codex-mutations",
+    attemptId: "attempt-codex-mutations",
+    qualification: "qualified",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    records: ["completed", "failed"].map((status, index) => ({
+      reference: { artifactId: "session", recordLocator: `line:${index + 1}` },
+      record: {
+        schemaVersion: "ebo.protocol-observation/v1",
+        sequence: index + 1,
+        observedAt: "2026-09-07T00:00:00.000Z",
+        kind: "notification",
+        source: "codex-app-server",
+        method: "item/completed",
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: { id: `file-${index + 1}`, type: "fileChange", status },
+        },
+      },
+    })),
+  } as unknown as CodexAppServerCapture;
+  const events = (await normalizeCodexCapture(capture)).events;
+  assert.equal(events.find(({ attributes }) => attributes.itemId === "file-1")?.attributes.mutation, true);
+  assert.equal(events.find(({ attributes }) => attributes.itemId === "file-2")?.attributes.mutation, undefined);
 });
 
 test("answers an unexpected approval with a retained unattended decline", async () => {

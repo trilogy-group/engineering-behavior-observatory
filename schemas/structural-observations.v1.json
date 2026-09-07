@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ebo:schema:structural-observations:v1",
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": ".*\\S.*"
+    },
+    "reference": {
+      "$ref": "urn:ebo:schema:uniform-events:v1#/$defs/nativeReference"
+    },
+    "capability": {
+      "type": "string",
+      "pattern": "^(?:family:(?:message|model-request|tool|context|permission|delegation|artifact|validation|runtime|outcome)|evidence:nativeOrder)$"
+    },
+    "value": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "value", "unit"],
+          "properties": {
+            "status": { "const": "known" },
+            "value": {
+              "oneOf": [
+                { "type": "string", "maxLength": 1024 },
+                { "type": "number" },
+                { "type": "boolean" }
+              ]
+            },
+            "unit": { "$ref": "#/$defs/identifier" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason"],
+          "properties": {
+            "status": { "const": "unavailable" },
+            "reason": { "$ref": "#/$defs/identifier" }
+          }
+        }
+      ]
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "id", "runId", "attemptId", "extractor", "definition", "denominator", "value", "sourceEventIds", "sourceRecordCount", "citations"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.structural-observation/v1" },
+        "id": { "$ref": "#/$defs/identifier" },
+        "runId": { "$ref": "#/$defs/identifier" },
+        "attemptId": { "$ref": "#/$defs/identifier" },
+        "extractor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "version", "requiredCapabilities"],
+          "properties": {
+            "id": { "$ref": "#/$defs/identifier" },
+            "version": { "const": "1.0.0" },
+            "requiredCapabilities": {
+              "type": "array",
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/capability" }
+            }
+          }
+        },
+        "definition": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "denominator": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scope", "id", "value", "unit"],
+          "properties": {
+            "scope": { "const": "attempt" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "value": { "const": 1 },
+            "unit": { "const": "attempt" }
+          }
+        },
+        "value": { "$ref": "#/$defs/value" },
+        "sourceEventIds": {
+          "type": "array",
+          "maxItems": 1000000,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "sourceRecordCount": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "citations": {
+          "type": "array",
+          "maxItems": 1000000,
+          "items": { "$ref": "#/$defs/reference" }
+        }
+      }
+    },
+    "set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "runId", "attemptId", "assessmentMode", "extractorVersion", "normalization", "observations"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.structural-observation-set/v1" },
+        "runId": { "$ref": "#/$defs/identifier" },
+        "attemptId": { "$ref": "#/$defs/identifier" },
+        "assessmentMode": { "enum": ["observational", "verified", "unknown"] },
+        "extractorVersion": { "const": "1.0.0" },
+        "normalization": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["datasetDigest", "adapter", "coverage"],
+          "properties": {
+            "datasetDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+            "adapter": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/adapter" },
+            "coverage": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/coverageReport" }
+          }
+        },
+        "observations": {
+          "type": "array",
+          "maxItems": 1000000,
+          "items": { "$ref": "#/$defs/observation" }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/observation" },
+    { "$ref": "#/$defs/set" }
+  ]
+}

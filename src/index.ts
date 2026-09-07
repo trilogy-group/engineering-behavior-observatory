@@ -354,6 +354,18 @@ export {
   validateNormalizedCorpus,
   validateNormalizedDataset,
 } from "./normalization-integrity.js";
+export {
+  CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_VERSION,
+  createAgentSdkStructuralObservationSet,
+  createStructuralObservationSet,
+  STRUCTURAL_EXTRACTOR_REGISTRY,
+  STRUCTURAL_EXTRACTOR_VERSION,
+  validateStructuralObservationSet,
+} from "./structural-observations.js";
+export type {
+  StructuralObservation,
+  StructuralObservationSet,
+} from "./structural-observations.js";
 export type {
   AdapterCoverageReport,
   ComparisonCandidate,

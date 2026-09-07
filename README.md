@@ -106,6 +106,8 @@ node dist/src/cli.js corpus validate <corpus-root> <index.jsonl>
 node dist/src/cli.js corpus pack <approved-export-root> <policy.json> <archive.tar.gz>
 node dist/src/cli.js corpus unpack <archive.tar.gz> <destination-root>
 node dist/src/cli.js comparison check <request.json>
+node dist/src/cli.js observations create <run-bundle-root> <output.json>
+node dist/src/cli.js observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
 # Optional approved OAuth smoke; provide OAuth auth, never API-key overrides.
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 EBO_LIVE_AGENT_SDK_SMOKE=1 node --test --test-name-pattern='approved live Agent SDK smoke' dist/test/capture-qualification.test.js
@@ -175,6 +177,14 @@ check` evaluates one inspectable comparison request and returns `supported`,
 `qualified-with-caveats`, or `unsupported`; declared harness differences remain
 caveats and never become causal claims. See
 [docs/normalization-integrity.md](docs/normalization-integrity.md).
+
+Versioned [structural observations](docs/structural-observations.md) ingest
+terminal, capture, workspace, and mode-appropriate verifier outcomes, then
+compute exact native-evidence facts. Logical tool operations use native IDs,
+resource snapshots are not added repeatedly, unrelated order domains stay
+separate, and missing capability is unavailable rather than zero. The CLI reads
+qualified retained Agent SDK bundles or an exact corpus selection and always
+writes derived records outside immutable source evidence.
 
 Portable archives accept only `ready` or `exported` partner/public trees that
 pass the export pipeline's policy-bound readback and final secret scan.
