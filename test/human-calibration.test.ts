@@ -37,6 +37,8 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
   try {
     const bundleRoot = await qualifiedBundle(temporary);
     const assertions = await writeAssertions(temporary, bundleRoot);
+    const reviewBundle = join(temporary, "bundle#question?");
+    cpSync(bundleRoot, reviewBundle, { recursive: true, preserveTimestamps: true });
     const unselectedBundle = join(temporary, "unselected-bundle");
     cpSync(bundleRoot, unselectedBundle, { recursive: true, preserveTimestamps: true });
     const unselectedAssertion = {
@@ -50,7 +52,7 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
       schemaVersion: "ebo.review-source-set/v1",
       sources: [
         ...assertions.map((assertion) => ({
-          bundleRoot,
+          bundleRoot: reviewBundle,
           assertionPath: join(temporary, `${assertion.id}.json`),
           taskContext: "Inspect <img src=x onerror=alert(1)> result.txt and report the retained change.\u0080",
         })),
@@ -100,8 +102,14 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     assert.equal(await main(["calibration", "packet", selectionPath, packetRoot], (message) => { output += message; }), 0);
     assert.throws(() => assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot: root }) => root), join(unselectedBundle, "derived.json")), /outside immutable/u);
     const sourceAlias = join(temporary, "source-alias");
-    symlinkSync(bundleRoot, sourceAlias, "dir");
+    symlinkSync(reviewBundle, sourceAlias, "dir");
     assert.throws(() => assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot: root }) => root), join(sourceAlias, "derived.json")), /outside immutable/u);
+    const outsideHistory = join(temporary, "outside-history.json");
+    writeFileSync(outsideHistory, "{}\n");
+    const historyAlias = join(reviewBundle, "history-link.json");
+    symlinkSync(outsideHistory, historyAlias);
+    assert.throws(() => assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot: root }) => root), historyAlias), /outside immutable/u);
+    rmSync(historyAlias);
     const html = readFileSync(join(packetRoot, "index.html"), "utf8");
     assert.match(html, /&lt;script&gt;fixture&lt;\/script&gt;/u);
     assert.doesNotMatch(html, /<script>fixture<\/script>/u);
@@ -112,7 +120,7 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     output = "";
     const citedEventId = assertions[0]!.judgment.citations[0]!.eventId;
     assert.equal(await main(["calibration", "inspect", join(packetRoot, "packet.json"), "assertion-a", citedEventId], (message) => { output += message; }), 0);
-    assert.match(output, /"nativeHref":"\.\.\/bundle\/session\.jsonl"/u);
+    assert.match(output, /"nativeHref":"\.\.\/bundle%23question%3F\/session\.jsonl"/u);
     const evidenceHref = (JSON.parse(output) as { href: string }).href;
     assert.equal(readJson<{ evidenceBoundary: { copiedNativeEvidence: boolean } }>(join(packetRoot, "packet.json")).evidenceBoundary.copiedNativeEvidence, true);
     const evidenceHtml = readFileSync(join(packetRoot, evidenceHref), "utf8");
@@ -126,6 +134,13 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
 
     const byId = new Map(selection.candidates.map((candidate) => [candidate.assertion.id, candidate.assertion]));
     const historyPath = join(temporary, "history.json");
+    const lockedDecision: ReviewDecision = {
+      ...decision("review-locked", "review", byId.get("assertion-a")!, "synthetic-fixture-reviewer-locked", "confirmed"),
+      previousHistory: null,
+    };
+    writeFileSync(`${historyPath}.lock`, "");
+    await assert.rejects(importReviewDecision(selection, historyPath, lockedDecision), /already in progress/u);
+    rmSync(`${historyPath}.lock`);
     let history: ReviewHistory | undefined;
     const append = async (decision: Omit<ReviewDecision, "previousHistory">): Promise<ReviewDecision> => {
       const record: ReviewDecision = {

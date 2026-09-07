@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
 import {
@@ -226,41 +226,55 @@ export async function importReviewDecision(
   validateReviewSample(selection);
   assertValid("human review decision", decision);
   assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot }) => bundleRoot), historyPath);
-  const selectionBinding = { schemaVersion: selection.schemaVersion, digest: digest(selection) } as const;
-  const existing = existsSync(historyPath) ? readJson(historyPath) as ReviewHistory : {
-    schemaVersion: "ebo.review-history/v1" as const,
-    selection: selectionBinding,
-    decisions: [],
-  };
-  validateReviewHistory(selection, existing);
-  const duplicate = existing.decisions.find(({ id }) => id === decision.id);
-  if (duplicate !== undefined) {
-    if (canonicalizeMetadata(duplicate) !== canonicalizeMetadata(decision)) {
-      throw new Error(`Review decision "${decision.id}" conflicts with an existing decision.`);
+  const lockPath = `${resolve(historyPath)}.lock`;
+  let lock: number;
+  try {
+    lock = openSync(lockPath, "wx", 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("Another review-history import is already in progress.");
+    throw error;
+  }
+  // ponytail: one local lock serializes imports; use transactional storage only if a hosted multi-writer workflow is introduced.
+  try {
+    const selectionBinding = { schemaVersion: selection.schemaVersion, digest: digest(selection) } as const;
+    const existing = existsSync(historyPath) ? readJson(historyPath) as ReviewHistory : {
+      schemaVersion: "ebo.review-history/v1" as const,
+      selection: selectionBinding,
+      decisions: [],
+    };
+    validateReviewHistory(selection, existing);
+    const duplicate = existing.decisions.find(({ id }) => id === decision.id);
+    if (duplicate !== undefined) {
+      if (canonicalizeMetadata(duplicate) !== canonicalizeMetadata(decision)) {
+        throw new Error(`Review decision "${decision.id}" conflicts with an existing decision.`);
+      }
+      return { appended: false, history: existing };
     }
-    return { appended: false, history: existing };
+    const matchingId = selection.candidates.filter(({ assertion }) => assertion.id === decision.assertion.id);
+    if (matchingId.length === 0) throw new Error(`Review decision targets unknown assertion "${decision.assertion.id}".`);
+    const candidate = matchingId.find(({ assertion }) => assertionKey(assertion) === assertionKey(decision.assertion));
+    if (candidate === undefined) throw new Error("Review decision assertion binding is stale.");
+    const loaded = await reloadCandidate(candidate);
+    if (canonicalizeMetadata(decision.assertion) !== canonicalizeMetadata(loaded.assertion)) {
+      throw new Error("Review decision assertion binding is stale.");
+    }
+    const expectedPrevious = existing.decisions.length === 0 ? null : {
+      schemaVersion: existing.schemaVersion,
+      digest: digest(existing),
+    } as const;
+    if (canonicalizeMetadata(decision.previousHistory) !== canonicalizeMetadata(expectedPrevious)) {
+      throw new Error("Review decision previous-history binding is stale.");
+    }
+    validateDecisionSemantics(decision, existing.decisions);
+    validateBehaviorReview(loaded.assertionDocument, asBehaviorReview(decision));
+    const history: ReviewHistory = { ...existing, decisions: [...existing.decisions, structuredClone(decision)] };
+    validateReviewHistory(selection, history);
+    await writeMetadataAtomically(dirname(resolve(historyPath)), resolve(historyPath).split(sep).at(-1)!, history, undefined, { overwrite: true });
+    return { appended: true, history };
+  } finally {
+    closeSync(lock);
+    unlinkSync(lockPath);
   }
-  const matchingId = selection.candidates.filter(({ assertion }) => assertion.id === decision.assertion.id);
-  if (matchingId.length === 0) throw new Error(`Review decision targets unknown assertion "${decision.assertion.id}".`);
-  const candidate = matchingId.find(({ assertion }) => assertionKey(assertion) === assertionKey(decision.assertion));
-  if (candidate === undefined) throw new Error("Review decision assertion binding is stale.");
-  const loaded = await reloadCandidate(candidate);
-  if (canonicalizeMetadata(decision.assertion) !== canonicalizeMetadata(loaded.assertion)) {
-    throw new Error("Review decision assertion binding is stale.");
-  }
-  const expectedPrevious = existing.decisions.length === 0 ? null : {
-    schemaVersion: existing.schemaVersion,
-    digest: digest(existing),
-  } as const;
-  if (canonicalizeMetadata(decision.previousHistory) !== canonicalizeMetadata(expectedPrevious)) {
-    throw new Error("Review decision previous-history binding is stale.");
-  }
-  validateDecisionSemantics(decision, existing.decisions);
-  validateBehaviorReview(loaded.assertionDocument, asBehaviorReview(decision));
-  const history: ReviewHistory = { ...existing, decisions: [...existing.decisions, structuredClone(decision)] };
-  validateReviewHistory(selection, history);
-  await writeMetadataAtomically(dirname(resolve(historyPath)), resolve(historyPath).split(sep).at(-1)!, history, undefined, { overwrite: true });
-  return { appended: true, history };
 }
 
 export function summarizeCalibration(selection: ReviewSample, history: ReviewHistory): CalibrationSummary {
@@ -408,7 +422,7 @@ function packetItem(root: string, candidate: LoadedCandidate): any {
         ...structuredClone(citation),
         sharingClass: descriptor?.sharingClass ?? "restricted",
         href: `evidence/${createHash("sha256").update(canonicalizeMetadata([candidate.assertion, citation])).digest("hex")}.html`,
-        nativeHref: encodeURI(toPosix(target)),
+        nativeHref: encodeRelativePath(target),
         content,
       };
     }),
@@ -565,7 +579,7 @@ function seededKey(seed: string, stratum: string, assertion: ReviewCandidate["as
 
 export function assertCalibrationDestination(sourceRoots: readonly string[], destination: string): void {
   const requested = resolve(destination);
-  let ancestor = requested;
+  let ancestor = dirname(requested);
   while (!existsSync(ancestor)) {
     const parent = dirname(ancestor);
     if (parent === ancestor) break;
@@ -578,6 +592,10 @@ export function assertCalibrationDestination(sourceRoots: readonly string[], des
       throw new Error("Calibration outputs must be written outside immutable source evidence.");
     }
   }
+}
+
+function encodeRelativePath(path: string): string {
+  return toPosix(path).split("/").map((segment) => encodeURIComponent(segment)).join("/");
 }
 
 function assertionKey(assertion: ReviewCandidate["assertion"]): string {
