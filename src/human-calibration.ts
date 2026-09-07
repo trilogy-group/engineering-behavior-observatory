@@ -68,10 +68,10 @@ export type ReviewCandidate = {
 export type ReviewSample = {
   schemaVersion: "ebo.review-sample/v1";
   createdAt: string;
+  sources: ReviewSourceSet;
   criteria: ReviewSampleCriteria;
   population: {
     sourceCount: number;
-    sourceRoots: readonly string[];
     eligibleAssertionIds: readonly string[];
     selectedAssertionIds: readonly string[];
     unavailableStrata: readonly string[];
@@ -169,10 +169,10 @@ export async function selectReviewSample(
   const sample: ReviewSample = {
     schemaVersion: "ebo.review-sample/v1",
     createdAt: now(),
+    sources: structuredClone(sourceSet),
     criteria: structuredClone(criteria),
     population: {
       sourceCount: loaded.length,
-      sourceRoots: [...new Set(loaded.map(({ source }) => source.bundleRoot))].sort(),
       eligibleAssertionIds: loaded.filter(({ assertion }) => assignments.has(assertionKey(assertion))).map(({ assertion }) => assertion.id).sort(),
       selectedAssertionIds: candidates.map(({ assertion }) => assertion.id),
       unavailableStrata: strata.filter(({ eligible }) => eligible === 0).map(({ id }) => id),
@@ -180,14 +180,14 @@ export async function selectReviewSample(
     },
     candidates,
   };
-  assertValid("review sample", sample);
+  validateReviewSample(sample);
   return sample;
 }
 
 export async function writeReviewPacket(selection: ReviewSample, outputRoot: string, now = () => new Date().toISOString()): Promise<void> {
-  assertValid("review sample", selection);
+  validateReviewSample(selection);
   const root = resolve(outputRoot);
-  assertCalibrationDestination(selection.population.sourceRoots, root);
+  assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot }) => bundleRoot), root);
   if (existsSync(root)) throw new Error("Review packet destination already exists.");
   const loaded = await Promise.all(selection.candidates.map(reloadCandidate));
   for (const candidate of loaded) {
@@ -223,9 +223,9 @@ export async function importReviewDecision(
   historyPath: string,
   decision: ReviewDecision,
 ): Promise<{ appended: boolean; history: ReviewHistory }> {
-  assertValid("review sample", selection);
+  validateReviewSample(selection);
   assertValid("human review decision", decision);
-  assertCalibrationDestination(selection.population.sourceRoots, historyPath);
+  assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot }) => bundleRoot), historyPath);
   const selectionBinding = { schemaVersion: selection.schemaVersion, digest: digest(selection) } as const;
   const existing = existsSync(historyPath) ? readJson(historyPath) as ReviewHistory : {
     schemaVersion: "ebo.review-history/v1" as const,
@@ -284,7 +284,7 @@ export function summarizeCalibration(selection: ReviewSample, history: ReviewHis
 }
 
 export function validateReviewHistory(selection: ReviewSample, history: ReviewHistory): void {
-  assertValid("review sample", selection);
+  validateReviewSample(selection);
   assertValid("review history", history);
   if (history.selection.digest !== digest(selection)) throw new Error("Review history selection binding is stale.");
   const ids = new Set<string>();
@@ -304,6 +304,24 @@ export function validateReviewHistory(selection: ReviewSample, history: ReviewHi
       throw new Error(`Review history decision "${decision.id}" has a stale previous-history binding.`);
     }
     validateDecisionSemantics(decision, history.decisions.slice(0, index));
+  }
+}
+
+export function validateReviewSample(selection: ReviewSample): void {
+  assertValid("review sample", selection);
+  if (selection.population.sourceCount !== selection.sources.sources.length) {
+    throw new Error("Review sample source count does not match its retained source set.");
+  }
+  if (canonicalizeMetadata(selection.population.selectedAssertionIds)
+      !== canonicalizeMetadata(selection.candidates.map(({ assertion }) => assertion.id))) {
+    throw new Error("Review sample selected assertion IDs do not match its candidates.");
+  }
+  for (const candidate of selection.candidates) {
+    if (!selection.sources.sources.some((source) => resolve(source.bundleRoot) === candidate.source.bundleRoot
+        && resolve(source.assertionPath) === candidate.source.assertionPath
+        && source.taskContext === candidate.context.taskContext)) {
+      throw new Error(`Review candidate "${candidate.assertion.id}" is absent from the retained source set.`);
+    }
   }
 }
 

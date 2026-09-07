@@ -122,18 +122,18 @@
     "sample": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "createdAt", "criteria", "population", "candidates"],
+      "required": ["schemaVersion", "createdAt", "sources", "criteria", "population", "candidates"],
       "properties": {
         "schemaVersion": { "const": "ebo.review-sample/v1" },
         "createdAt": { "type": "string", "format": "date-time" },
+        "sources": { "$ref": "#/$defs/sourceSet" },
         "criteria": { "$ref": "#/$defs/criteria" },
         "population": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["sourceCount", "sourceRoots", "eligibleAssertionIds", "selectedAssertionIds", "unavailableStrata", "strata"],
+          "required": ["sourceCount", "eligibleAssertionIds", "selectedAssertionIds", "unavailableStrata", "strata"],
           "properties": {
             "sourceCount": { "type": "integer", "minimum": 0 },
-            "sourceRoots": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/path" } },
             "eligibleAssertionIds": { "type": "array", "items": { "$ref": "#/$defs/identifier" } },
             "selectedAssertionIds": { "type": "array", "items": { "$ref": "#/$defs/identifier" } },
             "unavailableStrata": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/identifier" } },

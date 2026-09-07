@@ -70,7 +70,7 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     const second = await selectReviewSample(sources, criteria, () => "2026-09-07T12:01:00Z");
     assert.deepEqual(first.population.selectedAssertionIds, second.population.selectedAssertionIds);
     assert.deepEqual(first.population.unavailableStrata, ["unavailable"]);
-    assert.deepEqual(first.population.sourceRoots, [bundleRoot, unselectedBundle].sort());
+    assert.deepEqual(first.sources.sources.map(({ bundleRoot: root }) => root), sources.sources.map(({ bundleRoot: root }) => root));
     assert.equal(first.candidates.every(({ context }) => context.outcome === "unavailable"), true, "observational runs have no verifier outcome");
     const duplicateId = { ...structuredClone(assertions[1]!), id: assertions[0]!.id };
     duplicateId.judgment = { ...duplicateId.judgment, rationale: "A second run may reuse the request-derived assertion ID." };
@@ -98,10 +98,10 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     const packetRoot = join(temporary, "packet");
     output = "";
     assert.equal(await main(["calibration", "packet", selectionPath, packetRoot], (message) => { output += message; }), 0);
-    assert.throws(() => assertCalibrationDestination(selection.population.sourceRoots, join(unselectedBundle, "derived.json")), /outside immutable/u);
+    assert.throws(() => assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot: root }) => root), join(unselectedBundle, "derived.json")), /outside immutable/u);
     const sourceAlias = join(temporary, "source-alias");
     symlinkSync(bundleRoot, sourceAlias, "dir");
-    assert.throws(() => assertCalibrationDestination(selection.population.sourceRoots, join(sourceAlias, "derived.json")), /outside immutable/u);
+    assert.throws(() => assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot: root }) => root), join(sourceAlias, "derived.json")), /outside immutable/u);
     const html = readFileSync(join(packetRoot, "index.html"), "utf8");
     assert.match(html, /&lt;script&gt;fixture&lt;\/script&gt;/u);
     assert.doesNotMatch(html, /<script>fixture<\/script>/u);

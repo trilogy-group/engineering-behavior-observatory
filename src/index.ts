@@ -387,6 +387,7 @@ export {
   importReviewDecision,
   selectReviewSample,
   summarizeCalibration,
+  validateReviewSample,
   validateReviewHistory,
   writeReviewPacket,
 } from "./human-calibration.js";

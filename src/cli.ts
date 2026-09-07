@@ -25,6 +25,7 @@ import {
   importReviewDecision,
   selectReviewSample,
   summarizeCalibration,
+  validateReviewSample,
   validateReviewHistory,
   writeReviewPacket,
   type ReviewDecision,
@@ -308,8 +309,7 @@ async function runCalibrationCommand(args: string[], write: (message: string) =>
     }
     if (command === "binding" && first !== undefined && second !== undefined && args.length >= 3 && args.length <= 4) {
       const selection = readJson(first) as ReviewSample;
-      const errors = validateArtifact(first, selection);
-      if (errors.length > 0) throw new Error(errors.map(({ field, message }) => `${field}: ${message}`).join("\n"));
+      validateReviewSample(selection);
       const matching = selection.candidates.filter(({ assertion }) => matchesAssertionSelector(assertion, second));
       if (matching.length !== 1) throw new Error(matching.length === 0
         ? `Review sample has no assertion "${second}".` : `Review sample assertion "${second}" is ambiguous; append @<digest>.`);
@@ -335,7 +335,7 @@ async function runCalibrationCommand(args: string[], write: (message: string) =>
     }
     if (command === "summarize" && first !== undefined && second !== undefined && third !== undefined && args.length === 4) {
       const selection = readJson(first) as ReviewSample;
-      assertCalibrationDestination(selection.population.sourceRoots, third);
+      assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot }) => bundleRoot), third);
       const summary = summarizeCalibration(selection, readJson(second) as ReviewHistory);
       await writeMetadataAtomically(dirname(resolve(third)), basename(third), summary, undefined, { overwrite: false });
       write(`Summarized ${summary.totals.selectedAssertions} selected assertion(s); confirmed=${summary.totals.confirmedEligibleAssertions}, unresolved=${summary.totals.unresolvedAssertions}.\n`);
