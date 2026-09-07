@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { hostname, uptime } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
 import {
@@ -195,27 +196,36 @@ export async function writeReviewPacket(selection: ReviewSample, outputRoot: str
       throw new Error(`Review assertion "${candidate.assertion.id}" changed after sample selection.`);
     }
   }
-  mkdirSync(root, { recursive: false, mode: 0o700 });
-  const packet = {
-    schemaVersion: "ebo.review-packet/v1" as const,
-    createdAt: now(),
-    selection: { schemaVersion: selection.schemaVersion, digest: digest(selection) },
-    evidenceBoundary: {
-      classification: "restricted-local-only" as const,
-      copiedNativeEvidence: true as const,
-      note: "Only cited native records are copied into this restricted local packet; links retain the source bundle path. This is not a partner or public export.",
-    },
-    items: loaded.map((candidate) => packetItem(root, candidate)),
-  };
-  assertValid("review packet", packet);
-  writeFileSync(join(root, "packet.json"), `${canonicalizeMetadata(packet)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
-  mkdirSync(join(root, "evidence"), { mode: 0o700 });
-  for (const item of packet.items) {
-    for (const citation of item.citations) {
-      writeFileSync(join(root, citation.href), renderEvidenceHtml(citation), { encoding: "utf8", mode: 0o600, flag: "wx" });
+  const parent = dirname(root);
+  mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const stagingRoot = mkdtempSync(join(parent, ".ebo-review-packet-"));
+  let published = false;
+  try {
+    const packet = {
+      schemaVersion: "ebo.review-packet/v1" as const,
+      createdAt: now(),
+      selection: { schemaVersion: selection.schemaVersion, digest: digest(selection) },
+      evidenceBoundary: {
+        classification: "restricted-local-only" as const,
+        copiedNativeEvidence: true as const,
+        note: "Only cited native records are copied into this restricted local packet; links retain the source bundle path. This is not a partner or public export.",
+      },
+      items: loaded.map((candidate) => packetItem(root, candidate)),
+    };
+    assertValid("review packet", packet);
+    mkdirSync(join(stagingRoot, "evidence"), { mode: 0o700 });
+    for (const item of packet.items) {
+      for (const citation of item.citations) {
+        writeFileSync(join(stagingRoot, citation.href), renderEvidenceHtml(citation), { encoding: "utf8", mode: 0o600, flag: "wx" });
+      }
     }
+    writeFileSync(join(stagingRoot, "index.html"), renderPacketHtml(packet), { encoding: "utf8", mode: 0o600, flag: "wx" });
+    writeFileSync(join(stagingRoot, "packet.json"), `${canonicalizeMetadata(packet)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    renameSync(stagingRoot, root);
+    published = true;
+  } finally {
+    if (!published) rmSync(stagingRoot, { recursive: true, force: true });
   }
-  writeFileSync(join(root, "index.html"), renderPacketHtml(packet), { encoding: "utf8", mode: 0o600, flag: "wx" });
 }
 
 export async function importReviewDecision(
@@ -226,14 +236,7 @@ export async function importReviewDecision(
   validateReviewSample(selection);
   assertValid("human review decision", decision);
   assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot }) => bundleRoot), historyPath);
-  const lockPath = `${resolve(historyPath)}.lock`;
-  let lock: number;
-  try {
-    lock = openSync(lockPath, "wx", 0o600);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("Another review-history import is already in progress.");
-    throw error;
-  }
+  const { descriptor: lock, path: lockPath } = acquireHistoryLock(historyPath);
   // ponytail: one local lock serializes imports; use transactional storage only if a hosted multi-writer workflow is introduced.
   try {
     const selectionBinding = { schemaVersion: selection.schemaVersion, digest: digest(selection) } as const;
@@ -275,6 +278,53 @@ export async function importReviewDecision(
     closeSync(lock);
     unlinkSync(lockPath);
   }
+}
+
+function acquireHistoryLock(historyPath: string): { descriptor: number; path: string } {
+  const path = `${resolve(historyPath)}.lock`;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let descriptor: number | undefined;
+    try {
+      descriptor = openSync(path, "wx", 0o600);
+      writeFileSync(descriptor, canonicalizeMetadata({ pid: process.pid, hostname: hostname(), createdAt: new Date().toISOString() }));
+      return { descriptor, path };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        if (descriptor !== undefined) closeSync(descriptor);
+        rmSync(path, { force: true });
+        throw error;
+      }
+      if (attempt !== 0 || !isStaleHistoryLock(path)) throw new Error("Another review-history import is already in progress.");
+      rmSync(path, { force: true });
+    }
+  }
+  throw new Error("Unable to acquire review-history import lock.");
+}
+
+function isStaleHistoryLock(path: string): boolean {
+  try {
+    const value = JSON.parse(readFile(path)) as { pid?: unknown; hostname?: unknown; createdAt?: unknown };
+    if (value.hostname !== hostname() || !Number.isSafeInteger(value.pid) || typeof value.createdAt !== "string") return false;
+    const createdAt = Date.parse(value.createdAt);
+    if (!Number.isFinite(createdAt)) return false;
+    if (Date.now() - createdAt > uptime() * 1_000) return true;
+    try {
+      process.kill(value.pid as number, 0);
+      return false;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "ESRCH";
+    }
+  } catch {
+    try {
+      return Date.now() - statSync(path).mtimeMs > 30_000;
+    } catch {
+      return true;
+    }
+  }
+}
+
+function readFile(path: string): string {
+  return new TextDecoder("utf-8", { fatal: true }).decode(readBoundedFile(path, "Review-history lock", undefined, 4096));
 }
 
 export function summarizeCalibration(selection: ReviewSample, history: ReviewHistory): CalibrationSummary {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { hostname, tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
 
@@ -100,6 +100,7 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     const packetRoot = join(temporary, "packet");
     output = "";
     assert.equal(await main(["calibration", "packet", selectionPath, packetRoot], (message) => { output += message; }), 0);
+    assert.deepEqual(readdirSync(temporary).filter((name) => name.startsWith(".ebo-review-packet-")), []);
     assert.throws(() => assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot: root }) => root), join(unselectedBundle, "derived.json")), /outside immutable/u);
     const sourceAlias = join(temporary, "source-alias");
     symlinkSync(reviewBundle, sourceAlias, "dir");
@@ -141,6 +142,11 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     writeFileSync(`${historyPath}.lock`, "");
     await assert.rejects(importReviewDecision(selection, historyPath, lockedDecision), /already in progress/u);
     rmSync(`${historyPath}.lock`);
+    const staleHistoryPath = join(temporary, "stale-history.json");
+    writeJson(`${staleHistoryPath}.lock`, { pid: 999_999, hostname: hostname(), createdAt: new Date().toISOString() });
+    const recovered = await importReviewDecision(selection, staleHistoryPath, lockedDecision);
+    assert.equal(recovered.appended, true);
+    assert.equal(existsSync(`${staleHistoryPath}.lock`), false);
     let history: ReviewHistory | undefined;
     const append = async (decision: Omit<ReviewDecision, "previousHistory">): Promise<ReviewDecision> => {
       const record: ReviewDecision = {

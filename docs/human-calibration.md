@@ -83,6 +83,8 @@ HTML-escaped. Links remain relative to the packet and its declared local bundle
 root. The packet copies only cited records, keeps them `restricted-local-only`
 with mode `0600`, and is not a partner or public export. Moving the packet
 separately from its source bundles breaks the original-artifact links by design.
+Packet files are staged together and the completed directory is published in
+one rename, so `packet.json` never names partially rendered evidence pages.
 All selection, packet, history, and summary destinations are rejected when they
 would be written inside a source run bundle.
 
@@ -127,6 +129,9 @@ Import appends to one history and never rewrites an earlier decision. It rejects
 unknown or changed assertions, stale history bindings, invalid adjudication
 targets, and reuse of a decision ID with different content. Reimporting the
 exact same decision is idempotent.
+Imports serialize through a per-history local lock. Locks owned by a dead
+same-host process or left before the current boot are recovered automatically;
+an active import makes a concurrent command fail closed for an idempotent retry.
 
 An adjudication is another explicit human decision. It names at least two prior
 review decisions for the same assertion:
