@@ -229,7 +229,6 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
   let turnId: string | undefined;
   let terminal: Record<string, unknown> | undefined;
   let history: Record<string, unknown> | undefined;
-  let historyReadPending = false;
   let abortRequested = request.signal?.aborted ?? false;
   let nextRequestId = 1;
   const pending = new Map<ProtocolIdentity, {
@@ -411,7 +410,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
         ]);
       }
     }
-    if (terminal === undefined || historyReadPending) await protocolProcess.interrupt();
+    if (terminal === undefined) await protocolProcess.interrupt();
   };
   const abortListener = () => { void abort(); };
   if (request.signal?.aborted) abortListener();
@@ -472,16 +471,17 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
       }),
     ]);
     try {
-      historyReadPending = true;
-      if (abortRequested) throw new Error("Capture was aborted before persisted history readback started.");
-      history = await sendRequest("thread/read", { threadId, includeTurns: true } satisfies ThreadReadParams);
+      const historyRequest = sendRequest("thread/read", { threadId, includeTurns: true } satisfies ThreadReadParams);
+      history = await Promise.race([
+        historyRequest,
+        timeout(request.shutdownGraceMs ?? 2_000, "Persisted history readback timed out."),
+      ]);
       if (!historyMatches(history, threadId, turnId)) {
         addGap({ kind: "history-mismatch", detail: "thread/read history did not contain the owned terminal turn." });
       }
     } catch (error) {
       addGap({ kind: "history-readback", detail: errorMessage(error) });
-    } finally {
-      historyReadPending = false;
+      if (abortRequested || errorMessage(error).includes("timed out")) await protocolProcess.interrupt();
     }
   } catch (error) {
     captureError = errorMessage(error);

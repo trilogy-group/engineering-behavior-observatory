@@ -154,6 +154,8 @@ test("interrupts the owned turn, records acknowledgement, and finishes on matchi
     assert.ok(capture.records.some(({ record }) => record.kind === "request" && record.method === "turn/interrupt"));
     assert.ok(capture.records.some(({ record }) => record.kind === "response" && record.method === "turn/interrupt"));
     assert.ok(capture.records.some(({ record }) => record.kind === "completion" && record.status === "interrupted"));
+    assert.ok(capture.history);
+    assert.equal(capture.gaps.some(({ kind }) => kind === "history-readback"), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -234,6 +236,7 @@ test("latches aborts that arrive while terminal evidence is being recorded", asy
         configuration: fakeConfiguration("history-hang"),
         evidencePath: join(root, "session.jsonl"),
         signal: controller.signal,
+        shutdownGraceMs: 100,
         now: () => {
           if (!controller.signal.aborted && new Error().stack?.includes("recordCompletion")) controller.abort();
           return new Date().toISOString();
@@ -242,8 +245,8 @@ test("latches aborts that arrive while terminal evidence is being recorded", asy
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error("terminal abort race hung")), 2_000)),
     ]);
     assert.equal(controller.signal.aborted, true);
-    assert.ok(capture.gaps.some(({ kind, detail }) => kind === "history-readback" && detail.includes("before persisted history")));
-    assert.equal(capture.records.some(({ record }) => record.method === "thread/read" && record.kind === "request"), false);
+    assert.ok(capture.gaps.some(({ kind, detail }) => kind === "history-readback" && detail.includes("timed out")));
+    assert.equal(capture.records.some(({ record }) => record.method === "thread/read" && record.kind === "request"), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
