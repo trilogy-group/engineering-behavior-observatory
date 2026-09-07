@@ -307,7 +307,7 @@ async function runAggregationCommand(args: string[], write: (message: string) =>
       return value as Value;
     };
     const destination = resolve(outputPath);
-    assertOutside(corpusRoot, destination);
+    prepareDerivedParent(corpusRoot, destination);
     const report = await aggregateEvaluation({
       corpusEntries,
       observationSets: source.observationSets.map(({ bundleRoot, path }) => ({

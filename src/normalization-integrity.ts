@@ -73,6 +73,7 @@ export type ComparisonCapability = `family:${UniformEventFamily}`
 
 export type ComparisonCandidate = {
   id: string;
+  manifestDigest: DigestString;
   adapterVersion: string;
   task: { id: string; digest: DigestString };
   fixture: { id: string; digest: DigestString };

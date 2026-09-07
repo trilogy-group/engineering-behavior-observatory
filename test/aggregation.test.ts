@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -31,14 +31,22 @@ test("aggregates distinct populations, retries, variation, and gated matched dif
   const exactRequest = readJson(join(fixtureRoot, "comparison/exact.json")) as Parameters<typeof assessComparisonEligibility>[0];
   exactRequest.measure = "verified:verifier-passed";
   exactRequest.left.id = "run-a";
+  exactRequest.left.manifestDigest = digest;
+  exactRequest.left.assessmentMode = "verified";
   exactRequest.right.id = "run-b";
+  exactRequest.right.manifestDigest = digest;
+  exactRequest.right.assessmentMode = "verified";
   exactRequest.right.model = { ...exactRequest.right.model, id: "model-b" };
   exactRequest.policy = { declaredDifferences: ["model"], requiredCapabilities: ["family:outcome"] };
   const exact: ComparisonReport = assessComparisonEligibility(exactRequest);
   const unsupportedRequest = readJson(join(fixtureRoot, "comparison/fixture-mismatch.json")) as Parameters<typeof assessComparisonEligibility>[0];
   unsupportedRequest.measure = "attempt:terminal-completed";
   unsupportedRequest.left.id = "run-a";
+  unsupportedRequest.left.manifestDigest = digest;
+  unsupportedRequest.left.assessmentMode = "verified";
   unsupportedRequest.right.id = "run-b";
+  unsupportedRequest.right.manifestDigest = digest;
+  unsupportedRequest.right.assessmentMode = "verified";
   unsupportedRequest.right.model = { ...unsupportedRequest.right.model, id: "model-b" };
   unsupportedRequest.policy = { declaredDifferences: ["model"], requiredCapabilities: ["family:outcome"] };
   const unsupported: ComparisonReport = assessComparisonEligibility(unsupportedRequest);
@@ -62,7 +70,7 @@ test("aggregates distinct populations, retries, variation, and gated matched dif
   assert.equal(metric(modelA, "verifier-pass-rate").measurement.denominator.value, 2);
   assert.equal(metric(modelA, "reviewed-assertion-confirmed-rate").measurement.status, "unavailable");
   assert.equal(modelA.variations.find(({ measure }) => measure === "terminal-state")!.claimStatus, "case-study");
-  assert.equal(report.comparisons[0]!.claimStatus, "case-study");
+  assert.equal(report.comparisons[0]!.claimStatus, "case-study", JSON.stringify(report.comparisons[0]));
   assert.equal(report.comparisons[0]!.matchedDifference.rate, -1);
   assert.equal(report.comparisons[1]!.claimStatus, "unavailable");
   assert.equal(report.comparisons[2]!.matchedDifference.exclusions[0]!.reason, "comparison-measure-not-gated");
@@ -112,6 +120,24 @@ test("aggregates distinct populations, retries, variation, and gated matched dif
     groupBy: ["model"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 },
   });
   assert.equal(singletonReport.groups[0]!.variations.find(({ measure }) => measure === "terminal-state")!.claimStatus, "case-study");
+  const missingMatch = attempts.slice(0, 1).concat(attempts[3]!).map((attempt) => ({ ...attempt, captureQualification: undefined }));
+  const missingMatchReport = await aggregateEvaluation({
+    corpusEntries: missingMatch,
+    observationSets: [],
+    assertions: [],
+    calibrations: [],
+    comparisons: [{
+      id: "missing-match-dimension",
+      measure: "verified:verifier-passed",
+      left: { model: "model-a" },
+      right: { model: "model-b" },
+      matchBy: ["capture-qualification"],
+      eligibility: [{ request: exactRequest, report: exact }],
+    }],
+  }, { groupBy: ["task"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 } });
+  assert.deepEqual(missingMatchReport.comparisons[0]!.matchedDifference.exclusions, [
+    { reason: "match-dimension-unavailable", count: 2, unit: "matched-unit" },
+  ]);
 });
 
 test("CLI rebuilds aggregate output from a current local corpus index", async () => {
@@ -139,6 +165,10 @@ test("CLI rebuilds aggregate output from a current local corpus index", async ()
     const report = readJson(outputPath) as AggregationReport;
     assert.equal(report.sourcePopulation.uniqueAttempts, 2);
     assert.equal(report.groups[0]!.variations.find(({ measure }) => measure === "verifier-status")!.claimStatus, "case-study");
+    const corpusAlias = join(temporary, "corpus-alias");
+    symlinkSync(corpusRoot, corpusAlias);
+    writeFileSync(requestPath, JSON.stringify({ ...request, sources: { ...request.sources, corpusRoot: corpusAlias } }));
+    assert.equal(await main(["aggregate", "build", requestPath, join(corpusRoot, "forbidden.json")], () => undefined), 1);
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
@@ -155,11 +185,19 @@ function entry(runId: string, attemptId: string, attemptNumber: number, override
     trialId: runId,
     attemptId,
     attemptNumber,
-    taskId: "task-1",
-    fixtureId: "fixture-1",
+    taskId: "task-a",
+    taskDigest: digest,
+    fixtureId: "fixture-a",
+    fixtureDigest: `sha256:${"b".repeat(64)}`,
     modelId: "model-a",
-    harnessId: "harness-1",
+    modelConfigurationDigest: `sha256:${"c".repeat(64)}`,
+    harnessId: "harness-a",
+    harnessVersion: "1.0.0",
+    harnessConfigurationDigest: `sha256:${"d".repeat(64)}`,
     assessmentMode: "verified",
+    captureProfileDigest: `sha256:${"e".repeat(64)}`,
+    budgetDigest: `sha256:${"f".repeat(64)}`,
+    toolPolicyDigest: `sha256:${"1".repeat(64)}`,
     terminalState: "completed",
     verifierArtifactIds: [],
     verifierStatuses: ["passed"],

@@ -270,7 +270,7 @@ function compare(
   observations: ReadonlyMap<string, StructuralObservationSet>,
   recurrenceMinimum: number,
 ): AggregationReport["comparisons"][number] {
-  const gates = new Map<string, ComparisonReport>();
+  const gates = new Map<string, { request: ComparisonRequest; report: ComparisonReport }>();
   for (const { request, report } of comparison.eligibility) {
     const rebuilt = assessComparisonEligibility(request);
     if (canonicalizeMetadata(rebuilt) !== canonicalizeMetadata(report)) {
@@ -279,18 +279,21 @@ function compare(
     assertArtifact("comparison report", report);
     const key = candidatePairKey(report.candidates[0], report.candidates[1]);
     const current = gates.get(key);
-    if (current !== undefined && canonicalizeMetadata(current) !== canonicalizeMetadata(report)) {
+    if (current !== undefined && canonicalizeMetadata(current) !== canonicalizeMetadata({ request, report })) {
       throw new Error(`Comparison "${comparison.id}" has conflicting eligibility reports for one candidate pair.`);
     }
-    gates.set(key, report);
+    gates.set(key, { request, report });
   }
   const left = attempts.filter((attempt) => matches(attempt, comparison.left));
   const right = attempts.filter((attempt) => matches(attempt, comparison.right));
-  const leftByMatch = indexedMatches(left, comparison.matchBy);
-  const rightByMatch = indexedMatches(right, comparison.matchBy);
+  const exclusions: string[] = [
+    ...left.filter((attempt) => hasMissingDimension(attempt, comparison.matchBy)).map(() => "match-dimension-unavailable"),
+    ...right.filter((attempt) => hasMissingDimension(attempt, comparison.matchBy)).map(() => "match-dimension-unavailable"),
+  ];
+  const leftByMatch = indexedMatches(left.filter((attempt) => !hasMissingDimension(attempt, comparison.matchBy)), comparison.matchBy);
+  const rightByMatch = indexedMatches(right.filter((attempt) => !hasMissingDimension(attempt, comparison.matchBy)), comparison.matchBy);
   const keys = [...new Set([...leftByMatch.keys(), ...rightByMatch.keys()])].sort();
   const differences: number[] = [];
-  const exclusions: string[] = [];
   for (const key of keys) {
     const leftMatches = leftByMatch.get(key) ?? [];
     const rightMatches = rightByMatch.get(key) ?? [];
@@ -303,16 +306,23 @@ function compare(
       exclusions.push("comparison-eligibility-missing");
       continue;
     }
-    if (gate.status === "unsupported") {
+    const leftCandidate = gate.request.left.id === leftMatches[0]!.runId ? gate.request.left : gate.request.right;
+    const rightCandidate = gate.request.left.id === rightMatches[0]!.runId ? gate.request.left : gate.request.right;
+    if (!candidateMatchesAttempt(leftCandidate, leftMatches[0]!, comparison.measure, observations)
+        || !candidateMatchesAttempt(rightCandidate, rightMatches[0]!, comparison.measure, observations)) {
+      exclusions.push("comparison-candidate-evidence-mismatch");
+      continue;
+    }
+    if (gate.report.status === "unsupported") {
       exclusions.push("comparison-eligibility-unsupported");
       continue;
     }
-    if (gate.measure !== comparison.measure) {
+    if (gate.report.measure !== comparison.measure) {
       exclusions.push("comparison-measure-not-gated");
       continue;
     }
     if (measureCapabilities(comparison.measure, [leftMatches[0]!, rightMatches[0]!], observations)
-      .some((capability) => !gate.policy.requiredCapabilities.includes(capability))) {
+      .some((capability) => !gate.report.policy.requiredCapabilities.includes(capability))) {
       exclusions.push("comparison-measure-capability-not-gated");
       continue;
     }
@@ -340,6 +350,43 @@ function compare(
       "Matched differences are descriptive and do not establish causality or statistical significance.",
     ],
   };
+}
+
+function candidateMatchesAttempt(
+  candidate: ComparisonRequest["left"],
+  attempt: Attempt,
+  measure: string,
+  observations: ReadonlyMap<string, StructuralObservationSet>,
+): boolean {
+  const exact = candidate.id === attempt.runId
+    && candidate.manifestDigest === attempt.manifestDigest
+    && candidate.task.id === attempt.taskId
+    && candidate.task.digest === attempt.taskDigest
+    && candidate.fixture.id === attempt.fixtureId
+    && candidate.fixture.digest === attempt.fixtureDigest
+    && candidate.model.id === attempt.modelId
+    && candidate.model.configurationDigest === attempt.modelConfigurationDigest
+    && candidate.harness.id === attempt.harnessId
+    && candidate.harness.version === attempt.harnessVersion
+    && candidate.harness.configurationDigest === attempt.harnessConfigurationDigest
+    && candidate.assessmentMode === attempt.assessmentMode
+    && candidate.captureProfileDigest === attempt.captureProfileDigest
+    && candidate.budgetDigest === attempt.budgetDigest
+    && candidate.toolPolicyDigest === attempt.toolPolicyDigest;
+  if (!exact || !measure.startsWith("structural:")) return exact;
+  const observationSet = observations.get(attemptKey(attempt));
+  if (observationSet === undefined) return false;
+  const coverage = observationSet.normalization.coverage;
+  const profile = {
+    schemaVersion: "ebo.adapter-capability-profile/v1",
+    adapterId: observationSet.normalization.adapter.id,
+    harness: observationSet.normalization.adapter.harness,
+    nativeTypes: coverage.nativeTypes.map(({ nativeType }) => nativeType),
+    families: Object.fromEntries(Object.entries(coverage.families).map(([family, value]) => [family, value.capability])),
+    evidence: coverage.evidence,
+  };
+  return candidate.adapterVersion === observationSet.normalization.adapter.version
+    && canonicalizeMetadata(candidate.capabilityProfile) === canonicalizeMetadata(profile);
 }
 
 function measureCapabilities(
@@ -445,7 +492,7 @@ function dimensionValue(attempt: Attempt, dimension: AggregationDimension): stri
     task: attempt.taskId,
     model: attempt.modelId,
     harness: attempt.harnessId,
-    trial: attempt.trialId ?? attempt.runId,
+    trial: attempt.trialId,
     "capture-qualification": attempt.captureQualification,
   })[dimension];
 }
@@ -463,6 +510,10 @@ function indexedMatches(attempts: readonly Attempt[], dimensions: readonly Aggre
     result.set(key, values);
   }
   return result;
+}
+
+function hasMissingDimension(attempt: Attempt, dimensions: readonly AggregationDimension[]): boolean {
+  return dimensions.some((dimension) => dimensionValue(attempt, dimension) === undefined);
 }
 
 function metric(id: string, population: AggregateMetric["population"], numerator: number, denominator: number,

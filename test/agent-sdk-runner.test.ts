@@ -79,6 +79,8 @@ test("executes one frozen queue entry end to end and retains a qualified bundle"
     assert.equal(workspaceEvidence.mediaType, "text/x-diff", "the small change must retain an applicable patch");
     assert.equal(manifest.run.verifier?.locator, "restricted/verifier.cjs");
     assert.equal(manifest.run.verifier?.format, "commonjs");
+    assert.equal(manifest.run.trial?.index, 1);
+    assert.equal(buildCorpusIndex(summary.bundlePath)[0]?.trialId, "1");
 
     const verifier = readVerifierResult(summary.bundlePath, manifest);
     assert.equal(verifier.status, "passed");

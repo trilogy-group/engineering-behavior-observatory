@@ -152,9 +152,10 @@
     "comparisonCandidate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "adapterVersion", "task", "fixture", "model", "harness", "assessmentMode", "captureProfileDigest", "budgetDigest", "toolPolicyDigest", "capabilityProfile"],
+      "required": ["id", "manifestDigest", "adapterVersion", "task", "fixture", "model", "harness", "assessmentMode", "captureProfileDigest", "budgetDigest", "toolPolicyDigest", "capabilityProfile"],
       "properties": {
         "id": { "$ref": "#/$defs/identifier" },
+        "manifestDigest": { "$ref": "#/$defs/digest" },
         "adapterVersion": { "$ref": "#/$defs/identifier" },
         "task": { "$ref": "#/$defs/condition" },
         "fixture": { "$ref": "#/$defs/condition" },

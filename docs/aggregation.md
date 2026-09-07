@@ -44,6 +44,8 @@ The request uses paths relative to `request.json`:
 
 Grouping dimensions are `task`, `model`, `harness`, `trial`, and
 `capture-qualification`. `all-attempts` is the evidence-preserving default.
+`trial` is the queue's retained numeric trial index; legacy bundles without it
+remain unavailable and are excluded from trial-matched comparisons.
 `latest-attempt-per-run` selects the highest declared attempt number regardless
 of terminal state and reports every excluded earlier attempt; it never searches
 for or substitutes a completed retry.

@@ -429,14 +429,15 @@ function buildRunBundleDefinition(
     bundleId: `bundle-${attemptId}`,
     run: {
       id: entry.runId,
+      trial: { index: entry.trial.index },
       assessmentMode: packet.assessmentMode,
-      task: { id: entry.task.id },
+      task: { id: entry.task.id, digest: `sha256:${entry.task.packetRef.digest.value}` },
       fixture: {
         id: packet.agentInput.fixture.source.locator,
         digest: `sha256:${packet.agentInput.fixture.source.digest.value}`,
       },
-      model: { provider: "anthropic", id: entry.model.id },
-      harness: { id: entry.harness.id, version: capabilities.sdkVersion },
+      model: { provider: "anthropic", id: entry.model.id, configurationDigest: `sha256:${entry.configuration.model.digest.value}` },
+      harness: { id: entry.harness.id, version: capabilities.sdkVersion, configurationDigest: `sha256:${entry.configuration.harness.digest.value}` },
       runtime: [
         { source: "anthropic", name: "agent-sdk", version: capabilities.sdkVersion },
         { source: "anthropic", name: "agent-cli", version: capabilities.claudeCodeVersion },
@@ -456,6 +457,7 @@ function buildRunBundleDefinition(
         harness: entry.configuration.harness,
         captureProfile,
       }).value}`,
+      captureProfileDigest: `sha256:${captureProfile.digest.value}`,
       budgetDigest: `sha256:${entry.configuration.nativeLimits.digest.value}`,
       toolPolicyDigest: `sha256:${entry.configuration.nativeToolPolicy.digest.value}`,
     },
