@@ -194,13 +194,16 @@ test("registers teardown so lifecycle shutdown can await an unacknowledged inter
   }
 });
 
-test("honors an abort latched before asynchronous capture setup", async () => {
+test("honors an abort latched before asynchronous capture setup", async (t) => {
   const root = await temporaryRoot();
   const workspace = join(root, "workspace");
   const controller = new AbortController();
   controller.abort();
+  let clockReads = 0;
+  t.mock.method(performance, "now", () => clockReads++ === 0 ? 0 : 10_000);
   try {
     await mkdir(workspace);
+    const startedAt = Date.now();
     const capture = await captureCodexAppServer({
       runId: "run-pre-aborted",
       attemptId: "attempt-pre-aborted",
@@ -209,12 +212,14 @@ test("honors an abort latched before asynchronous capture setup", async () => {
       configuration: fakeConfiguration("ignore-interrupt"),
       evidencePath: join(root, "session.jsonl"),
       signal: controller.signal,
-      shutdownGraceMs: 100,
+      shutdownGraceMs: 1_000,
     });
+    assert.ok(Date.now() - startedAt < 250, "an aged setup deadline must not add the old fixed 250 ms wait");
     assert.equal(capture.process.termination, "interrupted");
     assert.equal(capture.process.partial, true);
     assert.equal(capture.terminalStatus, undefined);
     assert.ok(capture.gaps.some(({ kind }) => kind === "capture-error"));
+    assert.equal(capture.records.some(({ record }) => record.method === "turn/start"), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
