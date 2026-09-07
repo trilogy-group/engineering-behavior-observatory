@@ -180,15 +180,13 @@ function extractStructuralFacts(dataset: NormalizedDataset): StructuralObservati
   const unprojectedToolReason = unprojectedToolEvidence.length === 0 ? undefined
     : `${unprojectedToolEvidence.length} native record(s) contain unprojectable tool blocks.`;
   const modelEvents = dataset.events.filter(({ family }) => family === "model-request");
-  const ambiguousRequests = modelEvents.filter((event) => requestId(event) === undefined);
-  const requestIds = new Set(modelEvents.flatMap((event) => requestId(event) ?? []));
+  const requests = logicalRequestCount(modelEvents);
   const failed = operations.filter(({ failed }) => failed);
   const repeated = repeatedOperations(operations);
   const followed = followedOperations(operations);
   const compactions = dataset.events.filter(isCompactionBoundary);
   return [
-    countOrUnavailable(dataset, registration("model-request-count"), requestIds.size, citations(modelEvents), ambiguousRequests.length > 0
-      ? `${ambiguousRequests.length} model-request record(s) lack a source-native request identity.` : undefined, "requests", modelEvents),
+    countOrUnavailable(dataset, registration("model-request-count"), requests.count, citations(modelEvents), requests.reason, "requests", modelEvents),
     countOrUnavailable(dataset, registration("tool-operation-count"), operations.length, toolCitations, unprojectedToolReason, "identified-logical-tool-operations", toolEvidence),
     countOrUnavailable(dataset, registration("tool-native-record-count"), toolCitations.length, toolCitations, undefined, "native-records", toolEvidence),
     countOrUnavailable(dataset, registration("unidentified-tool-native-record-count"), citations(ambiguousTools).length, citations(ambiguousTools), undefined, "native-records", ambiguousTools),
@@ -599,6 +597,30 @@ function requestId(event: UniformEvent): string | undefined {
   return [event.attributes.requestId, event.attributes.callId, event.attributes.llmResponseId]
     .map(scalarString).find((value) => value !== undefined)
     ?? (event.scope.kind === "operation" ? event.scope.id : undefined);
+}
+
+function logicalRequestCount(events: readonly UniformEvent[]): { count: number; reason?: string } {
+  const groups = new Map<string, UniformEvent[]>();
+  const unidentified = events.filter((event) => {
+    const id = requestId(event);
+    if (id === undefined) return true;
+    const grouped = groups.get(id) ?? [];
+    grouped.push(event);
+    groups.set(id, grouped);
+    return false;
+  });
+  let count = 0;
+  let ambiguousScopes = 0;
+  for (const grouped of groups.values()) {
+    const scopes = new Set(grouped.flatMap((event) => actorScope(event) ?? []));
+    count += Math.max(1, scopes.size);
+    if (scopes.size > 1) ambiguousScopes += grouped.filter((event) => actorScope(event) === undefined).length;
+  }
+  const ambiguities = [
+    unidentified.length > 0 ? `${unidentified.length} record(s) lack a source-native request identity` : undefined,
+    ambiguousScopes > 0 ? `${ambiguousScopes} record(s) lack a native scope while the same request ID occurs in multiple scopes` : undefined,
+  ].filter((reason): reason is string => reason !== undefined);
+  return { count, ...(ambiguities.length === 0 ? {} : { reason: `Model-request count is unavailable because ${ambiguities.join(" and ")}.` }) };
 }
 
 function explicitToolFailure(event: UniformEvent): boolean {

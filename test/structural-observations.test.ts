@@ -98,6 +98,17 @@ test("native operation IDs are scoped by explicit actors and unscoped duplicates
   });
 });
 
+test("session-local request IDs remain distinct across root and subagent sessions", () => {
+  const root = event(1, "model-request", "before", { callId: "1" }, "root-request", "root-order");
+  root.scope = { kind: "session", id: "root" };
+  const child = event(1, "model-request", "before", { callId: "1" }, "child-request", "child-order");
+  child.scope = { kind: "session", id: "child" };
+  const duplicate = event(2, "model-request", "after", { callId: "1" }, "root-request-result", "root-order");
+  duplicate.scope = { kind: "session", id: "root" };
+  const report = createStructuralObservationSet(dataset([root, child, duplicate]), coverage([root, child, duplicate]));
+  assert.deepEqual(observation(report, "model-request-count").value, { status: "known", value: 2, unit: "requests" });
+});
+
 test("duplicate failure evidence across native order domains classifies one logical operation once", () => {
   const events = [
     event(1, "tool", "before", { toolUseId: "failed", toolName: "Read", inputDigest: digest }, "failed-session-start", "session"),
