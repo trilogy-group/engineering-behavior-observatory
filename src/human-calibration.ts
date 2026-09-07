@@ -282,23 +282,49 @@ export async function importReviewDecision(
 
 function acquireHistoryLock(historyPath: string): { descriptor: number; path: string } {
   const path = `${resolve(historyPath)}.lock`;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    let descriptor: number | undefined;
-    try {
-      descriptor = openSync(path, "wx", 0o600);
-      writeFileSync(descriptor, canonicalizeMetadata({ pid: process.pid, hostname: hostname(), createdAt: new Date().toISOString() }));
-      return { descriptor, path };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-        if (descriptor !== undefined) closeSync(descriptor);
-        rmSync(path, { force: true });
-        throw error;
-      }
-      if (attempt !== 0 || !isStaleHistoryLock(path)) throw new Error("Another review-history import is already in progress.");
-      rmSync(path, { force: true });
-    }
+  try {
+    return createHistoryLock(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !isStaleHistoryLock(path)) throw lockError(error);
   }
-  throw new Error("Unable to acquire review-history import lock.");
+  const reclaimPath = `${path}.reclaim`;
+  let reclaim: number;
+  try {
+    reclaim = openSync(reclaimPath, "wx", 0o600);
+  } catch (error) {
+    throw lockError(error);
+  }
+  try {
+    if (!isStaleHistoryLock(path)) throw new Error("Another review-history import is already in progress.");
+    unlinkSync(path);
+    try {
+      return createHistoryLock(path);
+    } catch (error) {
+      throw lockError(error);
+    }
+  } finally {
+    closeSync(reclaim);
+    unlinkSync(reclaimPath);
+  }
+}
+
+function createHistoryLock(path: string): { descriptor: number; path: string } {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(path, "wx", 0o600);
+    writeFileSync(descriptor, canonicalizeMetadata({ pid: process.pid, hostname: hostname(), createdAt: new Date().toISOString() }));
+    return { descriptor, path };
+  } catch (error) {
+    if (descriptor !== undefined) closeSync(descriptor);
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") rmSync(path, { force: true });
+    throw error;
+  }
+}
+
+function lockError(error: unknown): Error {
+  return (error as NodeJS.ErrnoException).code === "EEXIST"
+    ? new Error("Another review-history import is already in progress.")
+    : error instanceof Error ? error : new Error("Unable to acquire review-history import lock.");
 }
 
 function isStaleHistoryLock(path: string): boolean {

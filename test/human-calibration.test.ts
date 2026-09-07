@@ -147,6 +147,7 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     const recovered = await importReviewDecision(selection, staleHistoryPath, lockedDecision);
     assert.equal(recovered.appended, true);
     assert.equal(existsSync(`${staleHistoryPath}.lock`), false);
+    assert.equal(existsSync(`${staleHistoryPath}.lock.reclaim`), false);
     let history: ReviewHistory | undefined;
     const append = async (decision: Omit<ReviewDecision, "previousHistory">): Promise<ReviewDecision> => {
       const record: ReviewDecision = {
