@@ -51,6 +51,13 @@ async function finishTurn(status = "completed") {
     const origin = new URL(endpoints[0]).origin;
     for (let index = 0; index < 70; index += 1) await fetch(`${origin}/invalid`);
   }
+  if (mode === "concurrent-otlp" && endpoints[0]) {
+    await Promise.all(Array.from({ length: 300 }, () => fetch(endpoints[0], {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    })));
+  }
   for (const endpoint of endpoints) {
     await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: mode === "malformed-otlp" ? "{" : JSON.stringify({ resourceLogs: [], resourceSpans: [], resourceMetrics: [] }) });
   }

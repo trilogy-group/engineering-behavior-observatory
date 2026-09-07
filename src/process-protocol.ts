@@ -761,10 +761,12 @@ export class ProtocolProcess {
       this.child.stderr.on("data", (chunk: Buffer) => {
         this.stderrCapture.write(chunk);
         if (this.options.onStderr !== undefined) {
+          this.child.stderr?.pause();
           this.lineQueue = this.lineQueue
             .then(() => this.options.onStderr!(chunk, false, this.recorder))
             .then(() => undefined)
             .catch((error: unknown) => this.failRecorder(`Protocol stderr recording failed: ${errorMessage(error)}`));
+          void this.lineQueue.finally(() => this.child.stderr?.resume()).catch(() => undefined);
         }
       });
       this.child.stderr.on("end", () => {

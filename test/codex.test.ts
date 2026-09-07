@@ -236,6 +236,17 @@ test("bounds OTLP receiver diagnostics while continuing to accept configured sig
   }
 });
 
+test("reserves global OTLP limits across concurrent uploads", async () => {
+  const root = await temporaryRoot();
+  try {
+    const capture = await runFake(root, "concurrent-otlp", ["logs"]);
+    assert.ok(capture.telemetry.telemetry.records.length <= 256);
+    assert.ok(capture.telemetry.telemetry.receiverErrors.some((error) => error.includes("256-record")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("does not count malformed OTLP JSON as a collector receipt", async () => {
   const root = await temporaryRoot();
   try {

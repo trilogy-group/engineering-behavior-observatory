@@ -820,7 +820,7 @@ async function openOtlpReceiver(signals: readonly CodexTelemetrySignal[], now = 
   }
   const records: CodexOtlpRecord[] = [];
   const receiverErrors: string[] = [];
-  const receiverState = { records, receiverErrors, bytes: 0 };
+  const receiverState = { records, receiverErrors, bytes: 0, inFlightBytes: 0, inFlightRecords: 0 };
   let server: Server | undefined;
   const configArgs: string[] = ["-c", "otel.log_user_prompt=false", "-c", 'otel.environment="ebo"'];
   if (enabled.length === 0) {
@@ -930,7 +930,13 @@ async function openOtlpReceiver(signals: readonly CodexTelemetrySignal[], now = 
 async function receiveOtlp(
   incoming: IncomingMessage,
   enabled: readonly CodexTelemetrySignal[],
-  state: { records: CodexOtlpRecord[]; receiverErrors: string[]; bytes: number },
+  state: {
+    records: CodexOtlpRecord[];
+    receiverErrors: string[];
+    bytes: number;
+    inFlightBytes: number;
+    inFlightRecords: number;
+  },
   now: () => string,
 ): Promise<number> {
   const signal = (["logs", "traces", "metrics"] as const).find((candidate) => incoming.url === `/v1/${candidate}`);
@@ -939,39 +945,47 @@ async function receiveOtlp(
     recordReceiverError(state, "Rejected an unconfigured OTLP route or method.");
     return 404;
   }
-  if (state.records.length >= 256) {
+  if (state.records.length + state.inFlightRecords >= 256) {
     incoming.resume();
     recordReceiverError(state, `Rejected ${signal} after the 256-record receiver limit.`);
     return 429;
   }
+  state.inFlightRecords += 1;
   const chunks: Buffer[] = [];
   let bytes = 0;
-  for await (const chunk of incoming) {
-    const value = Buffer.from(chunk as Uint8Array);
-    bytes += value.length;
-    if (bytes > 4 * 1024 * 1024 || state.bytes + bytes > 16 * 1024 * 1024) {
-      incoming.destroy();
-      recordReceiverError(state, `Rejected oversized ${signal} OTLP evidence.`);
-      return 413;
-    }
-    chunks.push(value);
-  }
-  const raw = Buffer.concat(chunks).toString("utf8");
-  const record: CodexOtlpRecord = {
-    signal,
-    receivedAt: now(),
-    ...(typeof incoming.headers["content-type"] === "string" ? { contentType: incoming.headers["content-type"] } : {}),
-  };
   try {
-    record.payload = JSON.parse(raw);
-  } catch (error) {
-    record.raw = raw;
-    record.parseError = errorMessage(error);
-    recordReceiverError(state, `Rejected malformed ${signal} OTLP JSON.`);
+    for await (const chunk of incoming) {
+      const value = Buffer.from(chunk as Uint8Array);
+      if (bytes + value.length > 4 * 1024 * 1024
+          || state.bytes + state.inFlightBytes + value.length > 16 * 1024 * 1024) {
+        incoming.destroy();
+        recordReceiverError(state, `Rejected oversized ${signal} OTLP evidence.`);
+        return 413;
+      }
+      bytes += value.length;
+      state.inFlightBytes += value.length;
+      chunks.push(value);
+    }
+    const raw = Buffer.concat(chunks).toString("utf8");
+    const record: CodexOtlpRecord = {
+      signal,
+      receivedAt: now(),
+      ...(typeof incoming.headers["content-type"] === "string" ? { contentType: incoming.headers["content-type"] } : {}),
+    };
+    try {
+      record.payload = JSON.parse(raw);
+    } catch (error) {
+      record.raw = raw;
+      record.parseError = errorMessage(error);
+      recordReceiverError(state, `Rejected malformed ${signal} OTLP JSON.`);
+    }
+    state.records.push(record);
+    state.bytes += bytes;
+    return record.parseError === undefined ? 200 : 400;
+  } finally {
+    state.inFlightRecords -= 1;
+    state.inFlightBytes -= bytes;
   }
-  state.records.push(record);
-  state.bytes += bytes;
-  return record.parseError === undefined ? 200 : 400;
 }
 
 function recordReceiverError(state: { receiverErrors: string[] }, message: string): void {
