@@ -324,7 +324,8 @@ function projectRun(entry: CorpusIndexEntry, manifest: RunManifest, manifestRoot
     assignString(entry, "stopReason", manifest.terminal.stopReason);
   }
   projectEvidence(entry, manifestRoot, Array.isArray(manifest.evidence) ? manifest.evidence : [],
-    isRecord(manifest.terminal) && typeof manifest.terminal.workspaceArtifactId === "string" ? manifest.terminal.workspaceArtifactId : undefined);
+    isRecord(manifest.terminal) && typeof manifest.terminal.workspaceArtifactId === "string" ? manifest.terminal.workspaceArtifactId : undefined,
+    true);
 }
 
 function projectExport(entry: CorpusIndexEntry, manifest: PortableExportManifest, manifestRoot: string): void {
@@ -357,6 +358,7 @@ function projectEvidence(
   root: string,
   descriptors: readonly unknown[],
   terminalWorkspaceArtifactId?: string,
+  terminalVerifierOnly = false,
 ): void {
   for (const candidate of descriptors) {
     if (!isRecord(candidate) || typeof candidate.id !== "string") continue;
@@ -365,8 +367,9 @@ function projectEvidence(
       entry.verifierArtifactIds.push(descriptor.id);
       const document = readDescriptorJson(root, candidate, entry.issues);
       const workspace = isRecord(document) && isRecord(document.workspace) ? document.workspace : undefined;
-      if (!isRecord(candidate.sanitizedFrom) && terminalWorkspaceArtifactId !== undefined && isRecord(document)
-          && workspace?.artifactId === terminalWorkspaceArtifactId && typeof document.status === "string") {
+      if (isRecord(document) && typeof document.status === "string" && (!terminalVerifierOnly
+          || !isRecord(candidate.sanitizedFrom) && terminalWorkspaceArtifactId !== undefined
+            && workspace?.artifactId === terminalWorkspaceArtifactId)) {
         entry.verifierStatuses.push(document.status);
       }
     } else if (descriptor.kind === "capture-report") {

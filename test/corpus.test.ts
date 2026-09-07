@@ -53,6 +53,7 @@ test("builds, queries, and validates a deterministic mixed corpus index", async 
     assert.equal(queryCorpusIndex(first, { verifierStatus: "failed" })[0]?.attemptId, "attempt-task-failed-1");
     assert.equal(queryCorpusIndex(first, { failureClass: "infrastructure" })[0]?.attemptId, "attempt-interrupted-1");
     assert.equal(queryCorpusIndex(first, { exportStatus: "ready" }).length, 1);
+    assert.equal(queryCorpusIndex(first, { manifestKind: "export", verifierStatus: "passed" }).length, 1);
     assert.equal(queryCorpusIndex(first, { runId: "run-complete" })[0]?.attemptNumber, 1);
     const indexed = readCorpusIndex(indexPath);
     assert.deepEqual(validateCorpusIndex(corpus, indexed), []);
