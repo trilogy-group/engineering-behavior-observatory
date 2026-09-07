@@ -71,6 +71,7 @@ export type ReviewSample = {
   criteria: ReviewSampleCriteria;
   population: {
     sourceCount: number;
+    sourceRoots: readonly string[];
     eligibleAssertionIds: readonly string[];
     selectedAssertionIds: readonly string[];
     unavailableStrata: readonly string[];
@@ -171,6 +172,7 @@ export async function selectReviewSample(
     criteria: structuredClone(criteria),
     population: {
       sourceCount: loaded.length,
+      sourceRoots: [...new Set(loaded.map(({ source }) => source.bundleRoot))].sort(),
       eligibleAssertionIds: loaded.filter(({ assertion }) => assignments.has(assertionKey(assertion))).map(({ assertion }) => assertion.id).sort(),
       selectedAssertionIds: candidates.map(({ assertion }) => assertion.id),
       unavailableStrata: strata.filter(({ eligible }) => eligible === 0).map(({ id }) => id),
@@ -185,7 +187,7 @@ export async function selectReviewSample(
 export async function writeReviewPacket(selection: ReviewSample, outputRoot: string, now = () => new Date().toISOString()): Promise<void> {
   assertValid("review sample", selection);
   const root = resolve(outputRoot);
-  assertCalibrationDestination(selection.candidates.map(({ source }) => source.bundleRoot), root);
+  assertCalibrationDestination(selection.population.sourceRoots, root);
   if (existsSync(root)) throw new Error("Review packet destination already exists.");
   const loaded = await Promise.all(selection.candidates.map(reloadCandidate));
   for (const candidate of loaded) {
@@ -223,7 +225,7 @@ export async function importReviewDecision(
 ): Promise<{ appended: boolean; history: ReviewHistory }> {
   assertValid("review sample", selection);
   assertValid("human review decision", decision);
-  assertCalibrationDestination(selection.candidates.map(({ source }) => source.bundleRoot), historyPath);
+  assertCalibrationDestination(selection.population.sourceRoots, historyPath);
   const selectionBinding = { schemaVersion: selection.schemaVersion, digest: digest(selection) } as const;
   const existing = existsSync(historyPath) ? readJson(historyPath) as ReviewHistory : {
     schemaVersion: "ebo.review-history/v1" as const,

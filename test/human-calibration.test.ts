@@ -37,13 +37,25 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
   try {
     const bundleRoot = await qualifiedBundle(temporary);
     const assertions = await writeAssertions(temporary, bundleRoot);
+    const unselectedBundle = join(temporary, "unselected-bundle");
+    cpSync(bundleRoot, unselectedBundle, { recursive: true, preserveTimestamps: true });
+    const unselectedAssertion = {
+      ...structuredClone(assertions[0]!),
+      id: "assertion-unselected",
+      behavior: { vocabularyVersion: "1.0.0", categoryId: "permission-escalation", dimensionId: "permission-escalation" },
+    };
+    const unselectedAssertionPath = join(temporary, "assertion-unselected.json");
+    writeJson(unselectedAssertionPath, unselectedAssertion);
     const sources: ReviewSourceSet = {
       schemaVersion: "ebo.review-source-set/v1",
-      sources: assertions.map((assertion) => ({
-        bundleRoot,
-        assertionPath: join(temporary, `${assertion.id}.json`),
-        taskContext: "Inspect <img src=x onerror=alert(1)> result.txt and report the retained change.\u0080",
-      })),
+      sources: [
+        ...assertions.map((assertion) => ({
+          bundleRoot,
+          assertionPath: join(temporary, `${assertion.id}.json`),
+          taskContext: "Inspect <img src=x onerror=alert(1)> result.txt and report the retained change.\u0080",
+        })),
+        { bundleRoot: unselectedBundle, assertionPath: unselectedAssertionPath, taskContext: "Unselected fixture context." },
+      ],
     };
     const criteria: ReviewSampleCriteria = {
       schemaVersion: "ebo.review-sample-criteria/v1",
@@ -58,6 +70,7 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     const second = await selectReviewSample(sources, criteria, () => "2026-09-07T12:01:00Z");
     assert.deepEqual(first.population.selectedAssertionIds, second.population.selectedAssertionIds);
     assert.deepEqual(first.population.unavailableStrata, ["unavailable"]);
+    assert.deepEqual(first.population.sourceRoots, [bundleRoot, unselectedBundle].sort());
     assert.equal(first.candidates.every(({ context }) => context.outcome === "unavailable"), true, "observational runs have no verifier outcome");
     const duplicateId = { ...structuredClone(assertions[1]!), id: assertions[0]!.id };
     duplicateId.judgment = { ...duplicateId.judgment, rationale: "A second run may reuse the request-derived assertion ID." };
@@ -85,10 +98,10 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     const packetRoot = join(temporary, "packet");
     output = "";
     assert.equal(await main(["calibration", "packet", selectionPath, packetRoot], (message) => { output += message; }), 0);
-    assert.throws(() => assertCalibrationDestination(selection.candidates.map(({ source }) => source.bundleRoot), join(bundleRoot, "derived.json")), /outside immutable/u);
+    assert.throws(() => assertCalibrationDestination(selection.population.sourceRoots, join(unselectedBundle, "derived.json")), /outside immutable/u);
     const sourceAlias = join(temporary, "source-alias");
     symlinkSync(bundleRoot, sourceAlias, "dir");
-    assert.throws(() => assertCalibrationDestination(selection.candidates.map(({ source }) => source.bundleRoot), join(sourceAlias, "derived.json")), /outside immutable/u);
+    assert.throws(() => assertCalibrationDestination(selection.population.sourceRoots, join(sourceAlias, "derived.json")), /outside immutable/u);
     const html = readFileSync(join(packetRoot, "index.html"), "utf8");
     assert.match(html, /&lt;script&gt;fixture&lt;\/script&gt;/u);
     assert.doesNotMatch(html, /<script>fixture<\/script>/u);

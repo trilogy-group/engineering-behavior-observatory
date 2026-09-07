@@ -56,8 +56,8 @@ stratum with empty filters is an unstratified sample.
 node dist/src/cli.js calibration sample sources.json criteria.json selection.json
 ```
 
-The saved selection retains the criteria and seed, source and eligible
-population sizes, eligible and selected assertion IDs, per-stratum requested,
+The saved selection retains the criteria and seed, every source root, source and
+eligible population sizes, eligible and selected assertion IDs, per-stratum requested,
 eligible, and selected counts, and any zero-candidate strata. Ordering is a
 SHA-256 function of the seed, stratum, assertion ID, and assertion digest.
 Repeated request-derived assertion IDs across runs remain distinct through

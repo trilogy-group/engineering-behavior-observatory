@@ -130,9 +130,10 @@
         "population": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["sourceCount", "eligibleAssertionIds", "selectedAssertionIds", "unavailableStrata", "strata"],
+          "required": ["sourceCount", "sourceRoots", "eligibleAssertionIds", "selectedAssertionIds", "unavailableStrata", "strata"],
           "properties": {
             "sourceCount": { "type": "integer", "minimum": 0 },
+            "sourceRoots": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/path" } },
             "eligibleAssertionIds": { "type": "array", "items": { "$ref": "#/$defs/identifier" } },
             "selectedAssertionIds": { "type": "array", "items": { "$ref": "#/$defs/identifier" } },
             "unavailableStrata": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/identifier" } },
