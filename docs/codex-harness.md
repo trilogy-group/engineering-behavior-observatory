@@ -79,6 +79,12 @@ Malformed frames, early exit, auth failure, and bounded teardown remain valid
 partial evidence. Workspace outcome capture runs independently and leaves the
 source workspace available when post-start packaging fails.
 
+The `ebo codex run` command turns scoped `SIGINT` and `SIGTERM` handlers into
+the run's abort signal, allowing interruption, history readback, process
+teardown, and partial-bundle finalization to complete before the CLI exits.
+Library callers receive the same two-second default shutdown grace at both the
+lifecycle and app-server boundaries unless they provide an explicit value.
+
 Unattended runs never fabricate human input or broaden permissions. Command and
 file approvals receive `decline`; MCP elicitation receives `decline`; dynamic
 tool calls fail without content; other unsupported server requests receive a
@@ -103,6 +109,11 @@ values separately, including `totalTokens`, `inputTokens`,
 `reasoningOutputTokens` when emitted. EBO does not sum cumulative updates or
 turn cache/reasoning subsets into additional cost. Account quota and billing
 remain unavailable unless supplied by separate evidence.
+
+Restricted native session evidence retains Codex reasoning records unchanged.
+Partner and public derivatives remove `item/reasoning/textDelta` content,
+reasoning-item summary/content fields, and matching duplicated raw frames;
+portable readback fails closed if any of those content forms remain.
 
 ## Uniform mapping
 
