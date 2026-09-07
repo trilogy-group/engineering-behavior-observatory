@@ -229,6 +229,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
   let turnId: string | undefined;
   let terminal: Record<string, unknown> | undefined;
   let history: Record<string, unknown> | undefined;
+  let historyReadPending = false;
   let nextRequestId = 1;
   const pending = new Map<ProtocolIdentity, {
     method: string;
@@ -408,7 +409,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
         ]);
       }
     }
-    if (terminal === undefined) await protocolProcess.interrupt();
+    if (terminal === undefined || historyReadPending) await protocolProcess.interrupt();
   };
   const abortListener = () => { void abort(); };
   if (request.signal?.aborted) abortListener();
@@ -469,12 +470,15 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
       }),
     ]);
     try {
+      historyReadPending = true;
       history = await sendRequest("thread/read", { threadId, includeTurns: true } satisfies ThreadReadParams);
       if (!historyMatches(history, threadId, turnId)) {
         addGap({ kind: "history-mismatch", detail: "thread/read history did not contain the owned terminal turn." });
       }
     } catch (error) {
       addGap({ kind: "history-readback", detail: errorMessage(error) });
+    } finally {
+      historyReadPending = false;
     }
   } catch (error) {
     captureError = errorMessage(error);
@@ -705,7 +709,8 @@ function itemFamily(type: string | undefined): UniformEvent["family"] | undefine
 function nativeTimestamp(method: string, payload: Record<string, unknown>): UniformEvent["nativeTime"] {
   const milliseconds = method === "item/completed" ? payload.completedAtMs : undefined;
   if (typeof milliseconds === "number" && Number.isFinite(milliseconds)) {
-    return { status: "known", value: new Date(milliseconds).toISOString() };
+    const date = new Date(milliseconds);
+    if (!Number.isNaN(date.getTime())) return { status: "known", value: date.toISOString() };
   }
   return { status: "unknown", reason: "Native record omitted a lifecycle timestamp." };
 }

@@ -203,6 +203,22 @@ test("keeps streamed and persisted history evidence separate and declares mismat
   }
 });
 
+test("interrupts a post-terminal history read when the caller aborts", async () => {
+  const root = await temporaryRoot();
+  const controller = new AbortController();
+  try {
+    const capturePromise = runFake(root, "history-hang", [], controller.signal);
+    await waitForRecord(join(root, "session.jsonl"), (record) => record.kind === "request" && record.method === "thread/read");
+    controller.abort();
+    const capture = await capturePromise;
+    assert.equal(capture.terminalStatus, "completed");
+    assert.ok(capture.gaps.some(({ kind }) => kind === "history-readback"));
+    assert.equal(capture.process.status, "interrupted");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("declares every server-applied material policy mismatch", async () => {
   const root = await temporaryRoot();
   try {
@@ -348,6 +364,18 @@ test("keeps UTF-8 stderr intact across split chunks", async () => {
       .map(({ record }) => (record.payload as { text?: string }).text ?? "").join("");
     assert.match(diagnostic, /🙂/u);
     assert.doesNotMatch(diagnostic, /�/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("keeps out-of-range native timestamps explicitly unknown", async () => {
+  const root = await temporaryRoot();
+  try {
+    const capture = await runFake(root, "timestamp-range");
+    const normalized = await normalizeCodexCapture(capture);
+    const tool = normalized.events.find(({ family }) => family === "tool");
+    assert.equal(tool?.nativeTime.status, "unknown");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

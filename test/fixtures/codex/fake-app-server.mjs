@@ -92,7 +92,7 @@ async function finishTurn(status = "completed") {
       modelContextWindow: 128000,
     },
   } });
-  send({ method: "item/completed", params: { threadId: "thread-1", turnId: "turn-1", completedAtMs: 1_700_000_000_100, item: { id: "tool-1", type: "commandExecution", status: status === "completed" ? "completed" : "declined", command: "printf ok", aggregatedOutput: "ok" } } });
+  send({ method: "item/completed", params: { threadId: "thread-1", turnId: "turn-1", completedAtMs: mode === "timestamp-range" ? 1e20 : 1_700_000_000_100, item: { id: "tool-1", type: "commandExecution", status: status === "completed" ? "completed" : "declined", command: "printf ok", aggregatedOutput: "ok" } } });
   send({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", threadId: "thread-1", status, items: [] } } });
 }
 
@@ -146,6 +146,7 @@ lines.on("line", async (line) => {
     send({ id: message.id, result: {} });
     void finishTurn("interrupted");
   } else if (message.method === "thread/read") {
+    if (mode === "history-hang") return;
     send({ id: message.id, result: { thread: { id: "thread-1", turns: [{ id: mode === "history-mismatch" ? "other-turn" : "turn-1", status: "completed", items: [] }] } } });
   }
 });
