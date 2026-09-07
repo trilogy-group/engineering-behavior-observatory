@@ -194,6 +194,32 @@ test("registers teardown so lifecycle shutdown can await an unacknowledged inter
   }
 });
 
+test("honors an abort latched before asynchronous capture setup", async () => {
+  const root = await temporaryRoot();
+  const workspace = join(root, "workspace");
+  const controller = new AbortController();
+  controller.abort();
+  try {
+    await mkdir(workspace);
+    const capture = await captureCodexAppServer({
+      runId: "run-pre-aborted",
+      attemptId: "attempt-pre-aborted",
+      workspacePath: workspace,
+      prompt: "Do not start after cancellation.",
+      configuration: fakeConfiguration("ignore-interrupt"),
+      evidencePath: join(root, "session.jsonl"),
+      signal: controller.signal,
+      shutdownGraceMs: 100,
+    });
+    assert.equal(capture.process.termination, "interrupted");
+    assert.equal(capture.process.partial, true);
+    assert.equal(capture.terminalStatus, undefined);
+    assert.ok(capture.gaps.some(({ kind }) => kind === "capture-error"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("keeps streamed and persisted history evidence separate and declares mismatch", async () => {
   const root = await temporaryRoot();
   try {

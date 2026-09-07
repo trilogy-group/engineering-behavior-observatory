@@ -416,7 +416,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     abortRequested = true;
     abortDeadline ??= performance.now() + shutdownGraceMs;
     if ((threadId === undefined || turnId === undefined) && terminal === undefined) {
-      await settleOrDelay(ownedTurnPromise, Math.min(250, shutdownGraceMs));
+      await settleOrDelay(ownedTurnPromise, Math.min(250, remainingAbortGrace()));
     }
     if (threadId !== undefined && turnId !== undefined && terminal === undefined) {
       try {
