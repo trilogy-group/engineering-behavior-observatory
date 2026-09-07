@@ -18,6 +18,7 @@ import {
   readQualifiedClaudeAgentSdkCapture,
   selectReviewSample,
   summarizeCalibration,
+  terminalVerifierOutcome,
   assertCalibrationDestination,
   type AgentSdkNativeRecord,
   type BehaviorAssertion,
@@ -29,6 +30,7 @@ import {
   type ReviewSample,
   type ReviewSampleCriteria,
   type ReviewSourceSet,
+  type RunManifest,
   type RunBundleDefinition,
 } from "../src/index.js";
 import { main } from "../src/cli.js";
@@ -124,7 +126,9 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     assert.equal(await main(["calibration", "inspect", join(packetRoot, "packet.json"), "assertion-a", citedEventId], (message) => { output += message; }), 0);
     assert.match(output, /"nativeHref":"\.\.\/bundle%23question%3F\/session\.jsonl"/u);
     const evidenceHref = (JSON.parse(output) as { href: string }).href;
-    assert.equal(readJson<{ evidenceBoundary: { copiedNativeEvidence: boolean } }>(join(packetRoot, "packet.json")).evidenceBoundary.copiedNativeEvidence, true);
+    const packet = readJson<{ evidenceBoundary: { copiedNativeEvidence: boolean }; items: Array<{ citations: Array<{ content?: unknown }> }> }>(join(packetRoot, "packet.json"));
+    assert.equal(packet.evidenceBoundary.copiedNativeEvidence, true);
+    assert.equal(packet.items.some(({ citations }) => citations.some(({ content }) => content !== undefined)), false, "packet metadata does not retain heavyweight native records");
     const evidenceHtml = readFileSync(join(packetRoot, evidenceHref), "utf8");
     assert.match(evidenceHtml, /the native artifact/u);
     assert.match(evidenceHtml, /<code>.+<\/code>/u);
@@ -241,6 +245,21 @@ test("reports agreement as unavailable when no human reviews exist", async () =>
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
+});
+
+test("selects the verifier outcome bound to the terminal workspace", () => {
+  const capture = {
+    runId: "run",
+    attemptId: "attempt",
+    qualification: "qualified",
+    records: [
+      { reference: { artifactId: "old-verifier", recordLocator: "#" }, record: { kind: "verifier", document: { status: "failed", workspace: { artifactId: "old-workspace" } } } },
+      { reference: { artifactId: "terminal-verifier", recordLocator: "#" }, record: { kind: "verifier", document: { status: "passed", workspace: { artifactId: "terminal-workspace" } } } },
+    ],
+  } as NormalizationInput<AgentSdkNativeRecord>;
+  const manifest = { run: { assessmentMode: "verified" }, terminal: { workspaceArtifactId: "terminal-workspace" } } as RunManifest;
+
+  assert.equal(terminalVerifierOutcome(capture, manifest), "passed");
 });
 
 function decision(

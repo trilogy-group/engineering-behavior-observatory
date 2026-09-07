@@ -129,7 +129,7 @@ type CalibrationCounts = {
 type LoadedCandidate = ReviewCandidate & {
   assertionDocument: BehaviorAssertion;
   manifest: RunManifest;
-  capture: AgentSdkBehaviorEvidence["capture"];
+  capture?: AgentSdkBehaviorEvidence["capture"];
 };
 
 export async function selectReviewSample(
@@ -148,7 +148,7 @@ export async function selectReviewSample(
       throw new Error(`Review sample stratum "${id}" has an inverted confidence range.`);
     }
   }
-  const loaded = await Promise.all(sourceSet.sources.map(loadCandidate));
+  const loaded = await loadCandidates(sourceSet.sources);
   const identities = loaded.map(({ assertion }) => assertionKey(assertion));
   if (new Set(identities).size !== identities.length) throw new Error("Review source assertion identities must be unique.");
 
@@ -191,17 +191,25 @@ export async function writeReviewPacket(selection: ReviewSample, outputRoot: str
   const root = resolve(outputRoot);
   assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot }) => bundleRoot), root);
   if (existsSync(root)) throw new Error("Review packet destination already exists.");
-  const loaded = await Promise.all(selection.candidates.map(reloadCandidate));
-  for (const candidate of loaded) {
-    if (candidate.assertion.digest !== digest(candidate.assertionDocument)) {
-      throw new Error(`Review assertion "${candidate.assertion.id}" changed after sample selection.`);
-    }
-  }
   const parent = dirname(root);
   mkdirSync(parent, { recursive: true, mode: 0o700 });
   const stagingRoot = mkdtempSync(join(parent, ".ebo-review-packet-"));
   let published = false;
   try {
+    mkdirSync(join(stagingRoot, "evidence"), { mode: 0o700 });
+    const items: any[] = [];
+    for (const candidate of selection.candidates) {
+      const loaded = await reloadCandidate(candidate);
+      if (loaded.assertion.digest !== digest(loaded.assertionDocument)) {
+        throw new Error(`Review assertion "${loaded.assertion.id}" changed after sample selection.`);
+      }
+      const item = packetItem(root, loaded);
+      for (const citation of item.citations) {
+        writeFileSync(join(stagingRoot, citation.href), renderEvidenceHtml(citation), { encoding: "utf8", mode: 0o600, flag: "wx" });
+        delete citation.content;
+      }
+      items.push(item);
+    }
     const packet = {
       schemaVersion: "ebo.review-packet/v1" as const,
       createdAt: now(),
@@ -211,15 +219,9 @@ export async function writeReviewPacket(selection: ReviewSample, outputRoot: str
         copiedNativeEvidence: true as const,
         note: "Only cited native records are copied into this restricted local packet; links retain the source bundle path. This is not a partner or public export.",
       },
-      items: loaded.map((candidate) => packetItem(root, candidate)),
+      items,
     };
     assertValid("review packet", packet);
-    mkdirSync(join(stagingRoot, "evidence"), { mode: 0o700 });
-    for (const item of packet.items) {
-      for (const citation of item.citations) {
-        writeFileSync(join(stagingRoot, citation.href), renderEvidenceHtml(citation), { encoding: "utf8", mode: 0o600, flag: "wx" });
-      }
-    }
     writeFileSync(join(stagingRoot, "index.html"), renderPacketHtml(packet), { encoding: "utf8", mode: 0o600, flag: "wx" });
     writeFileSync(join(stagingRoot, "packet.json"), `${canonicalizeMetadata(packet)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
     renameSync(stagingRoot, root);
@@ -348,43 +350,63 @@ export function validateReviewSample(selection: ReviewSample): void {
   }
 }
 
-async function loadCandidate(source: ReviewSourceSet["sources"][number]): Promise<LoadedCandidate> {
+async function loadCandidates(sources: ReviewSourceSet["sources"]): Promise<LoadedCandidate[]> {
+  const grouped = new Map<string, ReviewSourceSet["sources"][number][]>();
+  for (const source of sources) {
+    const root = resolve(source.bundleRoot);
+    const group = grouped.get(root) ?? [];
+    group.push(source);
+    grouped.set(root, group);
+  }
+  const loaded: LoadedCandidate[] = [];
+  for (const [bundleRoot, group] of grouped) {
+    const evidence = await createAgentSdkBehaviorEvidence(bundleRoot);
+    const manifest = readManifest(bundleRoot);
+    for (const source of group) loaded.push(await loadCandidate(source, evidence, manifest));
+  }
+  return loaded;
+}
+
+async function loadCandidate(
+  source: ReviewSourceSet["sources"][number],
+  evidence?: AgentSdkBehaviorEvidence,
+  manifest?: RunManifest,
+  retainCapture = false,
+): Promise<LoadedCandidate> {
   const bundleRoot = resolve(source.bundleRoot);
   const assertionPath = resolve(source.assertionPath);
   const assertionDocument = readJson(assertionPath) as BehaviorAssertion;
-  const evidence = await createAgentSdkBehaviorEvidence(bundleRoot);
-  await validateBehaviorAssertion(assertionDocument, evidence.dataset, evidence.resolver);
-  const manifest = readManifest(bundleRoot);
-  if (manifest.run.id !== assertionDocument.runId || manifest.attempt.id !== assertionDocument.attemptId) {
+  const resolvedEvidence = evidence ?? await createAgentSdkBehaviorEvidence(bundleRoot);
+  const resolvedManifest = manifest ?? readManifest(bundleRoot);
+  await validateBehaviorAssertion(assertionDocument, resolvedEvidence.dataset, resolvedEvidence.resolver);
+  if (resolvedManifest.run.id !== assertionDocument.runId || resolvedManifest.attempt.id !== assertionDocument.attemptId) {
     throw new Error(`Review assertion "${assertionDocument.id}" belongs to another run bundle.`);
   }
-  const verifier = evidence.capture.records.find(({ record }) => record.kind === "verifier")?.record.document as { status?: unknown } | undefined;
-  const outcome: Outcome = manifest.run.assessmentMode === "observational" ? "unavailable"
-    : ["passed", "failed", "not-run", "error"].includes(String(verifier?.status)) ? verifier!.status as Outcome : "unavailable";
+  const outcome = terminalVerifierOutcome(resolvedEvidence.capture, resolvedManifest);
   return {
     assertion: { id: assertionDocument.id, schemaVersion: assertionDocument.schemaVersion, digest: digest(assertionDocument) },
     source: { bundleRoot, assertionPath },
     context: {
-      runId: manifest.run.id,
-      attemptId: manifest.attempt.id,
-      taskId: manifest.run.task.id,
+      runId: resolvedManifest.run.id,
+      attemptId: resolvedManifest.attempt.id,
+      taskId: resolvedManifest.run.task.id,
       taskContext: source.taskContext,
-      modelId: manifest.run.model.id,
-      harnessId: manifest.run.harness.id,
-      terminalState: manifest.terminal.state,
+      modelId: resolvedManifest.run.model.id,
+      harnessId: resolvedManifest.run.harness.id,
+      terminalState: resolvedManifest.terminal.state,
       outcome,
       categoryId: assertionDocument.behavior.categoryId,
       abstained: assertionDocument.judgment.disposition === "abstained",
       confidence: assertionDocument.judgment.disposition === "assessed" ? assertionDocument.judgment.confidence.value : null,
     },
     assertionDocument,
-    manifest,
-    capture: evidence.capture,
+    manifest: resolvedManifest,
+    ...(retainCapture ? { capture: resolvedEvidence.capture } : {}),
   };
 }
 
 async function reloadCandidate(candidate: ReviewCandidate): Promise<LoadedCandidate> {
-  const loaded = await loadCandidate({ ...candidate.source, taskContext: candidate.context.taskContext });
+  const loaded = await loadCandidate({ ...candidate.source, taskContext: candidate.context.taskContext }, undefined, undefined, true);
   if (canonicalizeMetadata(publicCandidate(loaded)) !== canonicalizeMetadata(candidate)) {
     throw new Error(`Review candidate "${candidate.assertion.id}" source metadata changed after selection.`);
   }
@@ -454,10 +476,25 @@ function renderEvidenceHtml(citation: any): string {
 }
 
 function resolveCitationContent(candidate: LoadedCandidate, reference: { artifactId: string; recordLocator: string }): unknown {
-  const captured = candidate.capture.records.find(({ reference: current }) => current.artifactId === reference.artifactId
+  const captured = candidate.capture?.records.find(({ reference: current }) => current.artifactId === reference.artifactId
     && current.recordLocator === reference.recordLocator);
   if (captured === undefined) throw new Error(`Assertion "${candidate.assertion.id}" cites a native record that cannot be rendered.`);
   return structuredClone(captured.record.document);
+}
+
+export function terminalVerifierOutcome(capture: AgentSdkBehaviorEvidence["capture"], manifest: RunManifest): Outcome {
+  if (manifest.run.assessmentMode === "observational") return "unavailable";
+  const workspaceId = manifest.terminal.workspaceArtifactId;
+  if (workspaceId === undefined) return "unavailable";
+  const outcomes = capture.records.flatMap(({ record }) => {
+    if (record.kind !== "verifier" || typeof record.document !== "object" || record.document === null) return [];
+    const verifier = record.document as { status?: unknown; workspace?: { artifactId?: unknown } };
+    return verifier.workspace?.artifactId === workspaceId && ["passed", "failed", "not-run", "error"].includes(String(verifier.status))
+      ? [verifier.status as Outcome] : [];
+  });
+  const distinct = [...new Set(outcomes)];
+  if (distinct.length > 1) throw new Error("Run bundle has conflicting verifier outcomes for the terminal workspace.");
+  return distinct[0] ?? "unavailable";
 }
 
 function validateDecisionSemantics(decision: ReviewDecision, prior: readonly ReviewDecision[]): void {

@@ -308,14 +308,13 @@
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": ["eventId", "nativeReference", "sharingClass", "href", "nativeHref", "content"],
+                  "required": ["eventId", "nativeReference", "sharingClass", "href", "nativeHref"],
                   "properties": {
                     "eventId": { "$ref": "#/$defs/identifier" },
                     "nativeReference": { "$ref": "urn:ebo:schema:uniform-events:v1#/$defs/nativeReference" },
                     "sharingClass": { "enum": ["unknown", "restricted", "internal", "partner", "public"] },
                     "href": { "$ref": "#/$defs/path" },
-                    "nativeHref": { "$ref": "#/$defs/path" },
-                    "content": true
+                    "nativeHref": { "$ref": "#/$defs/path" }
                   }
                 }
               }

@@ -81,7 +81,8 @@ exact cited native records. Each evidence page also links to its source artifact
 and names the native locator. All task, assertion, and evidence content is
 HTML-escaped. Links remain relative to the packet and its declared local bundle
 root. The packet copies only cited records, keeps them `restricted-local-only`
-with mode `0600`, and is not a partner or public export. Moving the packet
+with mode `0600`, and keeps those heavyweight records out of `packet.json`.
+It is not a partner or public export. Moving the packet
 separately from its source bundles breaks the original-artifact links by design.
 Packet files are staged together and the completed directory is published in
 one rename, so `packet.json` never names partially rendered evidence pages.
