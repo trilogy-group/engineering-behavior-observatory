@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import { lstat, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 
 import type { ClientNotification } from "../contracts/codex-app-server-0.150.1/types/ClientNotification.js";
 import type { AskForApproval } from "../contracts/codex-app-server-0.150.1/types/AskForApproval.js";
@@ -230,6 +231,16 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
   let terminal: Record<string, unknown> | undefined;
   let history: Record<string, unknown> | undefined;
   let abortRequested = request.signal?.aborted ?? false;
+  const shutdownGraceMs = request.shutdownGraceMs ?? 2_000;
+  let abortDeadline = abortRequested ? performance.now() + shutdownGraceMs : undefined;
+  const remainingAbortGrace = (): number => abortDeadline === undefined
+    ? shutdownGraceMs
+    : Math.max(0, abortDeadline - performance.now());
+  const interruptWithinAbortGrace = async (): Promise<void> => {
+    const terminationBudget = Math.floor(remainingAbortGrace() * 2 / 3);
+    const signalGrace = Math.floor(terminationBudget / 2);
+    await protocolProcess.interrupt(signalGrace, terminationBudget - signalGrace);
+  };
   let nextRequestId = 1;
   const pending = new Map<ProtocolIdentity, {
     method: string;
@@ -353,7 +364,9 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
       },
     });
     request.registerShutdown?.(async () => {
-      await protocolProcess.interrupt();
+      abortRequested = true;
+      abortDeadline ??= performance.now() + shutdownGraceMs;
+      await interruptWithinAbortGrace();
     });
   } catch (error) {
     await telemetry.close();
@@ -388,29 +401,25 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
 
   const abort = async (): Promise<void> => {
     abortRequested = true;
+    abortDeadline ??= performance.now() + shutdownGraceMs;
     if ((threadId === undefined || turnId === undefined) && terminal === undefined) {
-      await Promise.race([
-        ownedTurnPromise,
-        new Promise<void>((resolvePromise) => setTimeout(resolvePromise, Math.min(250, request.shutdownGraceMs ?? 2_000))),
-      ]);
+      await settleOrDelay(ownedTurnPromise, Math.min(250, shutdownGraceMs));
     }
     if (threadId !== undefined && turnId !== undefined && terminal === undefined) {
       try {
-        await Promise.race([
+        await withTimeout(
           sendRequest("turn/interrupt", { threadId, turnId } satisfies TurnInterruptParams),
-          timeout(request.shutdownGraceMs ?? 2_000, "Codex turn/interrupt acknowledgement timed out."),
-        ]);
+          Math.floor(remainingAbortGrace() / 4),
+          "Codex turn/interrupt acknowledgement timed out.",
+        );
       } catch (error) {
         addGap({ kind: "interrupt-acknowledgement", detail: errorMessage(error) });
       }
       if (terminal === undefined) {
-        await Promise.race([
-          terminalPromise.then(() => undefined),
-          new Promise<void>((resolvePromise) => setTimeout(resolvePromise, Math.min(250, request.shutdownGraceMs ?? 2_000))),
-        ]);
+        await settleOrDelay(terminalPromise, Math.min(250, Math.floor(remainingAbortGrace() / 4)));
       }
     }
-    if (terminal === undefined) await protocolProcess.interrupt();
+    if (terminal === undefined) await interruptWithinAbortGrace();
   };
   const abortListener = () => { void abort(); };
   if (request.signal?.aborted) abortListener();
@@ -472,16 +481,29 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     ]);
     try {
       const historyRequest = sendRequest("thread/read", { threadId, includeTurns: true } satisfies ThreadReadParams);
-      history = await Promise.race([
+      // The lifecycle owner starts the same grace window when it aborts us.
+      // Spend at most one quarter of what remains on optional history so
+      // process teardown and evidence finalization can finish inside it.
+      const historyGraceMs = abortDeadline === undefined
+        ? shutdownGraceMs
+        : Math.max(0, Math.floor((abortDeadline - performance.now()) / 4));
+      history = await withAbortAwareTimeout(
         historyRequest,
-        timeout(request.shutdownGraceMs ?? 2_000, "Persisted history readback timed out."),
-      ]);
+        historyGraceMs,
+        "Persisted history readback timed out.",
+        request.signal,
+        () => {
+          abortDeadline ??= performance.now() + shutdownGraceMs;
+          return Math.max(0, Math.floor((abortDeadline - performance.now()) / 4));
+        },
+      );
       if (!historyMatches(history, threadId, turnId)) {
         addGap({ kind: "history-mismatch", detail: "thread/read history did not contain the owned terminal turn." });
       }
     } catch (error) {
       addGap({ kind: "history-readback", detail: errorMessage(error) });
-      if (abortRequested || errorMessage(error).includes("timed out")) await protocolProcess.interrupt();
+      if (abortRequested) await interruptWithinAbortGrace();
+      else if (errorMessage(error).includes("timed out")) await protocolProcess.interrupt();
     }
   } catch (error) {
     captureError = errorMessage(error);
@@ -1057,8 +1079,56 @@ function isolatedEnvironment(codexHome: string): NodeJS.ProcessEnv {
   return environment;
 }
 
-function timeout(milliseconds: number, message: string): Promise<never> {
-  return new Promise((_, reject) => setTimeout(() => reject(new Error(message)), milliseconds));
+async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), Math.max(0, milliseconds));
+  });
+  try {
+    return await Promise.race([promise, timedOut]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function withAbortAwareTimeout<T>(
+  promise: Promise<T>,
+  milliseconds: number,
+  message: string,
+  signal: AbortSignal | undefined,
+  abortTimeoutMs: () => number,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  let rejectTimeout: ((error: Error) => void) | undefined;
+  const schedule = (delay: number): void => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = setTimeout(() => rejectTimeout?.(new Error(message)), Math.max(0, delay));
+  };
+  const onAbort = (): void => schedule(abortTimeoutMs());
+  const timedOut = new Promise<never>((_, reject) => {
+    rejectTimeout = reject;
+    schedule(milliseconds);
+  });
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) onAbort();
+  try {
+    return await Promise.race([promise, timedOut]);
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function settleOrDelay(promise: Promise<unknown>, milliseconds: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      promise.then(() => undefined),
+      new Promise<void>((resolvePromise) => { timer = setTimeout(resolvePromise, Math.max(0, milliseconds)); }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 function requireText(value: string, label: string): void {

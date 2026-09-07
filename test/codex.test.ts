@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import test from "node:test";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { gzipSync } from "node:zlib";
@@ -211,8 +212,10 @@ test("interrupts a post-terminal history read when the caller aborts", async () 
   try {
     const capturePromise = runFake(root, "history-hang", [], controller.signal);
     await waitForRecord(join(root, "session.jsonl"), (record) => record.kind === "request" && record.method === "thread/read");
+    const abortedAt = performance.now();
     controller.abort();
     const capture = await capturePromise;
+    assert.ok(performance.now() - abortedAt < 400, "an in-flight readback must adopt the outer abort grace");
     assert.equal(capture.terminalStatus, "completed");
     assert.ok(capture.gaps.some(({ kind }) => kind === "history-readback"));
     assert.equal(capture.process.status, "interrupted");
@@ -225,6 +228,7 @@ test("latches aborts that arrive while terminal evidence is being recorded", asy
   const root = await temporaryRoot();
   const workspace = join(root, "workspace");
   const controller = new AbortController();
+  let abortedAt: number | undefined;
   try {
     await mkdir(workspace);
     const capture = await Promise.race([
@@ -236,15 +240,19 @@ test("latches aborts that arrive while terminal evidence is being recorded", asy
         configuration: fakeConfiguration("history-hang"),
         evidencePath: join(root, "session.jsonl"),
         signal: controller.signal,
-        shutdownGraceMs: 100,
+        shutdownGraceMs: 400,
         now: () => {
-          if (!controller.signal.aborted && new Error().stack?.includes("recordCompletion")) controller.abort();
+          if (!controller.signal.aborted && new Error().stack?.includes("recordCompletion")) {
+            abortedAt = performance.now();
+            controller.abort();
+          }
           return new Date().toISOString();
         },
       }),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error("terminal abort race hung")), 2_000)),
     ]);
     assert.equal(controller.signal.aborted, true);
+    assert.ok(abortedAt !== undefined && performance.now() - abortedAt < 300, "history readback must leave the outer grace for finalization");
     assert.ok(capture.gaps.some(({ kind, detail }) => kind === "history-readback" && detail.includes("timed out")));
     assert.equal(capture.records.some(({ record }) => record.method === "thread/read" && record.kind === "request"), true);
   } finally {

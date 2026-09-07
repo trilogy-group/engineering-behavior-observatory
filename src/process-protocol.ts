@@ -753,10 +753,15 @@ export class ProtocolProcess {
     return this.wait();
   }
 
-  public async interrupt(): Promise<ProtocolProcessResult> {
+  public async interrupt(graceMs = this.shutdownGraceMs, killGraceMs = this.killGraceMs): Promise<ProtocolProcessResult> {
     if (this.closeObserved) return this.wait();
+    const boundedGraceMs = nonnegativeInteger(graceMs, "Interrupt grace period");
+    const boundedKillGraceMs = nonnegativeInteger(killGraceMs, "Interrupt kill grace period");
+    if (boundedGraceMs > MAX_TIMER_MS || boundedKillGraceMs > MAX_TIMER_MS) {
+      throw new Error("Interrupt grace periods must not exceed the Node timer maximum.");
+    }
     this.setTermination("interrupted");
-    await this.sendSignal("SIGINT", this.shutdownGraceMs);
+    await this.sendSignal("SIGINT", boundedGraceMs, boundedKillGraceMs);
     return this.wait();
   }
 
@@ -919,13 +924,13 @@ export class ProtocolProcess {
     if (this.termination === "natural") this.termination = termination;
   }
 
-  private sendSignal(signal: NodeJS.Signals, graceMs: number): Promise<void> {
-    const operation = this.signalQueue.then(() => this.sendSignalNow(signal, graceMs));
+  private sendSignal(signal: NodeJS.Signals, graceMs: number, killGraceMs = this.killGraceMs): Promise<void> {
+    const operation = this.signalQueue.then(() => this.sendSignalNow(signal, graceMs, killGraceMs));
     this.signalQueue = operation.catch(() => undefined);
     return operation;
   }
 
-  private async sendSignalNow(signal: NodeJS.Signals, graceMs: number): Promise<void> {
+  private async sendSignalNow(signal: NodeJS.Signals, graceMs: number, killGraceMs: number): Promise<void> {
     if (this.closeObserved) return;
     const pid = this.child.pid;
     if (pid === undefined) {
@@ -954,7 +959,7 @@ export class ProtocolProcess {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ESRCH") this.childError ??= errorMessage(error);
       }
-      if (this.killGraceMs > 0) await this.waitForClose(this.killGraceMs);
+      if (killGraceMs > 0) await this.waitForClose(killGraceMs);
     }
     if (!this.closeObserved && (this.detached || this.child.exitCode !== null || this.child.signalCode !== null)) {
       this.forceFinish();
