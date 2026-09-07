@@ -350,17 +350,30 @@ function followedOperations(operations: readonly ToolOperation[]): { same: numbe
   let alternate = 0;
   const records: UniformEvent[] = [];
   for (const current of ordered.filter(({ operation }) => operation.failed)) {
+    const nextOperations: ToolOperation[] = [];
     for (const failure of current.failures) {
       const next = ordered.flatMap(({ operation, starts }) => starts.map((start) => ({ operation, start })))
         .filter(({ operation, start }) => operation.id !== current.operation.id
           && start.domain === failure.domain && start.value > failure.value)
         .sort((left, right) => left.start.value - right.start.value)[0];
-      if (next === undefined) continue;
-      if (next.operation.toolName === current.operation.toolName) same += 1;
-      else alternate += 1;
-      records.push(...current.operation.events, ...next.operation.events);
-      break;
+      if (next !== undefined) nextOperations.push(next.operation);
     }
+    const classifications = new Set(nextOperations.map((operation) =>
+      operation.toolName === current.operation.toolName ? "same" : "alternate"));
+    if (classifications.size > 1) {
+      const events = [current.operation, ...nextOperations].flatMap(({ events }) => events);
+      return {
+        same: 0,
+        alternate: 0,
+        citations: citations(events),
+        events,
+        reason: "Independent native-order domains disagree on the next tool operation classification.",
+      };
+    }
+    const classification = [...classifications][0];
+    if (classification === "same") same += 1;
+    if (classification === "alternate") alternate += 1;
+    if (classification !== undefined) records.push(...current.operation.events, ...nextOperations.flatMap(({ events }) => events));
   }
   return { same, alternate, citations: citations(records), events: records };
 }

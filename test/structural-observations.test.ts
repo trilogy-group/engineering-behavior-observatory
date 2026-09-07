@@ -98,6 +98,21 @@ test("native operation IDs are scoped by explicit actors and unscoped duplicates
   });
 });
 
+test("duplicate failure evidence across native order domains classifies one logical operation once", () => {
+  const events = [
+    event(1, "tool", "before", { toolUseId: "failed", toolName: "Read", inputDigest: digest }, "failed-session-start", "session"),
+    event(2, "tool", "after", { toolUseId: "failed", toolName: "Read", isError: true }, "failed-session-end", "session"),
+    event(1, "tool", "before", { toolUseId: "failed", toolName: "Read", inputDigest: digest }, "failed-hook-start", "hooks"),
+    event(2, "tool", "after", { toolUseId: "failed", toolName: "Read", isError: true }, "failed-hook-end", "hooks"),
+    event(3, "tool", "before", { toolUseId: "next", toolName: "Read", inputDigest: digest }, "next-session", "session"),
+    event(3, "tool", "before", { toolUseId: "next", toolName: "Read", inputDigest: digest }, "next-hook", "hooks"),
+  ];
+  const report = createStructuralObservationSet(dataset(events), coverage(events));
+  assert.deepEqual(observation(report, "failure-followed-by-same-tool-count").value, {
+    status: "known", value: 1, unit: "failed-logical-tool-operations",
+  });
+});
+
 test("source event IDs do not absorb another projection of the same native record", () => {
   const resource = event(1, "runtime", "after", { inputTokens: 5, resourceSemantics: "cumulative-final" }, "resource");
   const outcome = event(1, "outcome", "after", { state: "completed" }, "outcome");
@@ -142,6 +157,9 @@ test("CLI reads a qualified observational bundle, validates it, and writes deriv
   assert.deepEqual(observation(report, "input-token-count").value, { status: "known", value: 3, unit: "tokens" });
   assert.deepEqual(observation(report, "output-token-count").value, { status: "known", value: 2, unit: "tokens" });
   assert.deepEqual(observation(report, "attempt-latency-ms").value, { status: "known", value: 12, unit: "milliseconds" });
+  const originalOutput = readFileSync(output);
+  assert.equal(await main(["observations", "create", source, output], () => undefined), 1);
+  assert.deepEqual(readFileSync(output), originalOutput, "atomic no-clobber publication preserves the completed report");
   assert.equal(await main(["observations", "create", source, join(source, "derived.json")], () => undefined), 1);
   const sourceAlias = join(root, "source-alias");
   const forbiddenParent = join(source, "derived-via-alias");

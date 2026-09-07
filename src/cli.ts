@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { mkdirSync, realpathSync } from "node:fs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { assertNoDuplicateJsonKeys, canonicalizeMetadata, validateArtifact, validateExportManifest, validateRunManifestEvidence } from "./artifacts.js";
+import { assertNoDuplicateJsonKeys, canonicalizeMetadata, validateArtifact, validateExportManifest, validateRunManifestEvidence, writeMetadataAtomically } from "./artifacts.js";
 import {
   buildCorpusIndex,
   packPortableExport,
@@ -264,7 +264,7 @@ async function runObservationsCommand(args: string[], write: (message: string) =
     if (command === "create" && first !== undefined && second !== undefined && args.length === 3) {
       assertDerivedDestination(first, second);
       const report = await createAgentSdkStructuralObservationSet(first);
-      writeObservationReport(second, report, first);
+      await writeObservationReport(second, report, first);
       write(`Created ${report.observations.length} structural observations for attempt ${report.attemptId}.\n`);
       return 0;
     }
@@ -281,7 +281,7 @@ async function runObservationsCommand(args: string[], write: (message: string) =
         if (entry.runId === undefined || entry.attemptId === undefined || entry.issues.length > 0) throw new Error(`Corpus entry ${entry.manifestPath} is not observation-ready.`);
         const bundleRoot = dirname(join(resolve(first), ...entry.manifestPath.split("/")));
         const report = await createAgentSdkStructuralObservationSet(bundleRoot);
-        writeObservationReport(join(third, observationFileName(entry.runId, entry.attemptId)), report, first);
+        await writeObservationReport(join(third, observationFileName(entry.runId, entry.attemptId)), report, first);
       }
       write(`Created structural observations for ${selected.length} corpus run bundle(s).\n`);
       return 0;
@@ -294,10 +294,10 @@ async function runObservationsCommand(args: string[], write: (message: string) =
   return 1;
 }
 
-function writeObservationReport(path: string, report: unknown, sourceRoot: string): void {
+async function writeObservationReport(path: string, report: unknown, sourceRoot: string): Promise<void> {
   const destination = resolve(path);
   assertOutside(realpathSync(sourceRoot), realpathSync(dirname(destination)));
-  writeFileSync(destination, `${canonicalizeMetadata(report)}\n`, { flag: "wx", mode: 0o600 });
+  await writeMetadataAtomically(dirname(destination), basename(destination), report, undefined, { overwrite: false });
 }
 
 function assertDerivedDestination(sourceRoot: string, destination: string): void {
