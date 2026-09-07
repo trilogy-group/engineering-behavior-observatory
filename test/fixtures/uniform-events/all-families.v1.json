@@ -24,16 +24,16 @@
     "id": "event-model-request",
     "runId": "run-qualified-agent-sdk",
     "attemptId": "attempt-qualified-agent-sdk",
-    "source": { "harness": "claude-agent-sdk", "nativeType": "PreModelSwitch", "nativeReference": { "artifactId": "hooks", "recordLocator": "line:1" } },
-    "nativeOrder": { "status": "known", "value": 1, "domain": "hooks" },
-    "nativeTime": { "status": "unknown", "reason": "hook record has no timestamp" },
+    "source": { "harness": "deepseek-harness", "nativeType": "request/model", "nativeReference": { "artifactId": "process", "recordLocator": "line:1" } },
+    "nativeOrder": { "status": "known", "value": 1, "domain": "rpc" },
+    "nativeTime": { "status": "unknown", "reason": "request record has no timestamp" },
     "actor": { "kind": "harness" },
     "family": "model-request",
     "phase": "before",
-    "scope": { "kind": "operation", "id": "model-switch-1" },
+    "scope": { "kind": "operation", "id": "model-request-1" },
     "relations": { "parent": { "status": "known", "value": "event-message" }, "known": [] },
-    "attributes": { "requestedModel": "claude-b" },
-    "content": { "status": "unknown", "reason": "hook exposes no request body" }
+    "attributes": { "model": "deepseek-test" },
+    "content": { "status": "unknown", "reason": "request body remains in native evidence" }
   },
   {
     "schemaVersion": "ebo.uniform-event/v1",

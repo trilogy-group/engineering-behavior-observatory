@@ -67,7 +67,9 @@ export type CaptureOpenHandsAgentServerRunResult = {
   manifest: RunManifest;
   qualification: CaptureQualificationReport;
   capture?: OpenHandsCapture;
-  normalized: NormalizationResult;
+  normalized?: NormalizationResult;
+  normalizationError?: string;
+  retainedWorkspacePath?: string;
 };
 
 /** Execute and retain one caller-configured OpenHands Agent Server attempt. */
@@ -96,6 +98,7 @@ export async function captureOpenHandsAgentServerRun(
   let workspace: WorkspaceExecutionResult | undefined;
   let workspaceOutcome: CapturedWorkspaceOutcome | undefined;
   let workspaceOutcomePromise: Promise<CapturedWorkspaceOutcome> | undefined;
+  let workspaceCaptureError: string | undefined;
   let verifierResult: VerifierResult | undefined;
   let capture: OpenHandsCapture | undefined;
   let nativeEvidenceWritten = false;
@@ -138,6 +141,7 @@ export async function captureOpenHandsAgentServerRun(
     }, verifierContext === undefined || options.verifier === undefined
       ? undefined
       : async (projectedPath, outcome) => {
+          workspaceOutcome = outcome;
           verifierResult = await options.verifier!(verifierContext, outcome, projectedPath);
         });
     workspaceOutcome = await workspaceOutcomePromise;
@@ -191,24 +195,15 @@ export async function captureOpenHandsAgentServerRun(
       return workspace;
     },
     cleanup: async (context) => {
-      let workspaceCaptureFailure: unknown;
       try {
         if (workspace?.status === "ready") await captureWorkspace();
       } catch (error) {
-        workspaceCaptureFailure = error;
-      }
-      try {
-        await options.workspace.cleanup?.(context);
-      } catch (cleanupFailure) {
-        if (workspaceCaptureFailure !== undefined) {
-          throw new AggregateError(
-            [workspaceCaptureFailure, cleanupFailure],
-            "OpenHands workspace evidence capture and caller cleanup both failed.",
-          );
+        if (workspaceOutcome === undefined) {
+          workspaceCaptureError = error instanceof Error ? error.message : String(error);
+          throw error;
         }
-        throw cleanupFailure;
       }
-      if (workspaceCaptureFailure !== undefined) throw workspaceCaptureFailure;
+      await options.workspace.cleanup?.(context);
     },
   };
   const run = createRunIdentity({
@@ -341,13 +336,16 @@ export async function captureOpenHandsAgentServerRun(
       qualification: qualificationOptions,
     });
     const qualification = await qualifyRunBundle(assembler.bundleRoot, qualificationOptions);
-    return { attempt, manifest, qualification, normalized: { events: [], unmapped: [] } };
+    return {
+      attempt,
+      manifest,
+      qualification,
+      ...(workspace?.status === "ready" && workspaceOutcome === undefined
+        ? { retainedWorkspacePath: workspace.path }
+        : {}),
+    };
   }
   await writeNativeEvidence();
-  const normalized = await normalizeOpenHandsCapture(capture);
-  await validateUniformEvents(normalized.events, {
-    resolve: (reference) => resolvesCaptureReference(capture!, reference),
-  });
   const terminal = structuredClone(attempt.terminal);
   if (workspaceOutcome === undefined) delete terminal.workspaceArtifactId;
   const missingEvidence: CaptureMissingEvidence[] = [
@@ -381,10 +379,42 @@ export async function captureOpenHandsAgentServerRun(
       affects: ["semantic" as const],
       detail: `Transport gaps: ${capture.reconciliation.transportGaps.join(", ")}`,
     }]),
+    ...(workspaceOutcome === undefined && workspaceCaptureError !== undefined ? [{
+      kind: "workspace",
+      reason: "not-collected" as const,
+      affects: ["outcome" as const],
+      detail: workspaceCaptureError.slice(0, 4096),
+    }] : []),
   ];
   const manifest = await assembler.finalize({ terminal, missingEvidence, qualification: qualificationOptions });
   const qualification = await qualifyRunBundle(assembler.bundleRoot, qualificationOptions);
-  return { attempt, manifest, qualification, capture, normalized };
+  const retainedWorkspacePath = workspace?.status === "ready" && workspaceOutcome === undefined
+    ? workspace.path
+    : undefined;
+  if (!["qualified", "qualified-with-gaps"].includes(qualification.status)) {
+    return {
+      attempt,
+      manifest,
+      qualification,
+      capture,
+      ...(retainedWorkspacePath === undefined ? {} : { retainedWorkspacePath }),
+    };
+  }
+  try {
+    const normalized = await normalizeOpenHandsCapture(capture);
+    await validateUniformEvents(normalized.events, {
+      resolve: (reference) => resolvesCaptureReference(capture!, reference),
+    });
+    return { attempt, manifest, qualification, capture, normalized };
+  } catch (error) {
+    return {
+      attempt,
+      manifest,
+      qualification,
+      capture,
+      normalizationError: (error instanceof Error ? error.message : String(error)).slice(0, 4096),
+    };
+  }
 }
 
 function resolvesCaptureReference(capture: OpenHandsCapture, reference: NativeEvidenceReference): boolean {
