@@ -131,10 +131,11 @@ export type SemanticJudgeBackendResult =
     usage?: SemanticJudgeUsage;
   };
 
-export type SemanticJudgeBackend = (
-  prompt: string,
-  request: SemanticJudgeRequest,
-) => Promise<SemanticJudgeBackendResult>;
+export type SemanticJudgeBackend = {
+  id: typeof CLAUDE_SEMANTIC_JUDGE_BACKEND_ID;
+  version: string;
+  run: (prompt: string, request: SemanticJudgeRequest) => Promise<SemanticJudgeBackendResult>;
+};
 
 type RecordReference = {
   path: string;
@@ -208,6 +209,16 @@ export async function runAgentSdkSemanticJudge(
   }
 
   const outputRoot = resolve(options.outputRoot);
+  const installedSdkVersion = probeClaudeAgentSdkCapabilities().sdkVersion;
+  const backend: SemanticJudgeBackend = options.backend ?? {
+    id: CLAUDE_SEMANTIC_JUDGE_BACKEND_ID,
+    version: installedSdkVersion,
+    run: runClaudeAgentSdkSemanticJudge,
+  };
+  if (backend.id !== CLAUDE_SEMANTIC_JUDGE_BACKEND_ID || requiredText(backend.version, "Judge backend version", 256) !== backend.version
+      || typeof backend.run !== "function") {
+    throw new Error("Semantic judge backend identity is invalid.");
+  }
   prepareOutputRoot(options.bundleRoot, outputRoot);
   const inputReference = writeRestrictedJson(outputRoot, "input.json", input);
   const base = {
@@ -222,15 +233,15 @@ export async function runAgentSdkSemanticJudge(
       model: options.request.evaluator.model,
       effort: options.request.evaluator.effort,
       backend: {
-        id: "claude-agent-sdk" as const,
-        version: probeClaudeAgentSdkCapabilities().sdkVersion,
+        id: backend.id,
+        version: backend.version,
       },
       limits: structuredClone(options.request.limits),
     },
   };
   let backendResult: SemanticJudgeBackendResult;
   try {
-    backendResult = await (options.backend ?? runClaudeAgentSdkSemanticJudge)(prompt, options.request);
+    backendResult = await backend.run(prompt, options.request);
   } catch (error) {
     backendResult = { status: "failed", kind: "provider", message: errorMessage(error) };
   }
@@ -286,7 +297,7 @@ export async function runAgentSdkSemanticJudge(
   }
 
   try {
-    const assertion = parseSemanticJudgeResponse(backendResult.response, options.request, input);
+    const assertion = parseSemanticJudgeResponse(backendResult.response, options.request, input, backend.version);
     await validateBehaviorAssertion(assertion, evidence.dataset, evidence.resolver);
     const assertionReference = writeRestrictedJson(outputRoot, "assertion.json", assertion);
     const record: SemanticJudgmentRecord = {
@@ -525,6 +536,7 @@ export function parseSemanticJudgeResponse(
   value: unknown,
   request: SemanticJudgeRequest,
   input: SemanticJudgeInput,
+  evaluatorVersion: string = probeClaudeAgentSdkCapabilities().sdkVersion,
 ): BehaviorAssertion {
   const response = record(value, "Judge response");
   const disposition = response.disposition;
@@ -589,7 +601,7 @@ export function parseSemanticJudgeResponse(
     dataset: structuredClone(input.dataset),
     behavior: structuredClone(request.behavior),
     rubric: { id: request.rubric.id, version: request.rubric.version },
-    evaluator: { id: `${request.evaluator.provider}/${request.evaluator.model}`, version: probeClaudeAgentSdkCapabilities().sdkVersion },
+    evaluator: { id: `${request.evaluator.provider}/${request.evaluator.model}`, version: evaluatorVersion },
     judgment,
   };
   const errors = validateArtifact("semantic judge assertion", assertion);

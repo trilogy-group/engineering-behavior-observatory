@@ -144,6 +144,8 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
     assert.equal(existsSync(join(root, "proposal-a", "judgment.json")), true);
     const retainedInput = JSON.parse(readFileSync(join(root, "proposal-a", "input.json"), "utf8"));
     const retainedJudgment = JSON.parse(readFileSync(join(root, "proposal-a", "judgment.json"), "utf8"));
+    const retainedAssertion = JSON.parse(readFileSync(join(root, "proposal-a", "assertion.json"), "utf8")) as { evaluator: { version: string } };
+    assert.equal(retainedAssertion.evaluator.version, first.evaluator.backend.version);
     assert.deepEqual(validateArtifact("semantic input", retainedInput), []);
     assert.deepEqual(validateArtifact("semantic judgment", retainedJudgment), []);
     let validationOutput = "";
@@ -151,13 +153,13 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
       (message) => (validationOutput += message)), 0);
     assert.match(validationOutput, /Validated 2 artifact\(s\)/u);
 
-    const malformedMetadata = await run(root, "malformed-metadata", bundleRoot, observations, request, async () => ({
+    const malformedMetadata = await run(root, "malformed-metadata", bundleRoot, observations, request, backend(async () => ({
       status: "completed",
       response: assessed,
       raw: { invalid: Number.NaN },
       timing: { durationMs: Number.NaN, durationApiMs: 1 },
       usage: { totalCostUsd: 0, numTurns: 1, mainLoop: undefined, byModel: {} },
-    }));
+    })));
     assert.equal(malformedMetadata.status, "proposed");
     assert.equal(malformedMetadata.timing.status, "unavailable");
     assert.equal(malformedMetadata.usage.status, "unavailable");
@@ -211,12 +213,12 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
       assert.equal(existsSync(join(root, name, "assertion.json")), false, name);
     }
 
-    const timeout = await run(root, "timeout", bundleRoot, observations, request, async () => ({
+    const timeout = await run(root, "timeout", bundleRoot, observations, request, backend(async () => ({
       status: "failed", kind: "timeout", message: "bounded timeout",
-    }));
-    const provider = await run(root, "provider", bundleRoot, observations, request, async () => {
+    })));
+    const provider = await run(root, "provider", bundleRoot, observations, request, backend(async () => {
       throw new Error("provider unavailable");
-    });
+    }));
     assert.equal(timeout.parse.status, "failed");
     assert.equal(provider.parse.status, "failed");
     const tight = structuredClone(request);
@@ -229,7 +231,7 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
     tight.limits.maxRecordChars = 512;
     tight.limits.maxInputChars = 8_000;
     let boundedPromptLength = 0;
-    const bounded = await run(root, "bounded-omissions", bundleRoot, observations, tight, async (prompt) => {
+    const bounded = await run(root, "bounded-omissions", bundleRoot, observations, tight, backend(async (prompt) => {
       boundedPromptLength = prompt.length;
       return completed({
         disposition: "abstained",
@@ -240,8 +242,8 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
         rationale: "No assessment is safe.",
         alternativeExplanation: "A larger input might support assessment.",
         citations: [],
-      })(prompt, tight);
-    });
+      }).run(prompt, tight);
+    }));
     assert.equal(bounded.status, "proposed");
     assert.ok(boundedPromptLength <= tight.limits.maxInputChars);
     const boundedInput = JSON.parse(readFileSync(join(root, "bounded-omissions", "input.json"), "utf8")) as {
@@ -367,10 +369,14 @@ async function run(
 }
 
 function completed(response: unknown): SemanticJudgeBackend {
-  return async (prompt) => {
+  return backend(async (prompt) => {
     assert.match(prompt, /<EVIDENCE_DATA>/u);
     return { status: "completed", response, raw: { response } };
-  };
+  });
+}
+
+function backend(run: SemanticJudgeBackend["run"]): SemanticJudgeBackend {
+  return { id: "claude-agent-sdk", version: probeClaudeAgentSdkCapabilities().sdkVersion, run };
 }
 
 function judgeRequest(eventId: string, observationId: string): SemanticJudgeRequest {
