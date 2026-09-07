@@ -18,6 +18,11 @@ The versioned [behavior assertion contract](docs/behavior-assertions.md) binds
 one declared behavior dimension to the exact normalized dataset, event, and
 reachable native source. Human review remains a separate record.
 
+The [semantic judge runner](docs/semantic-judge.md) packages caller-selected,
+bounded evidence for one dimension and retains proposed assertions,
+abstentions, and failed judgments through one isolated Claude Agent SDK
+backend.
+
 The [OpenHands Agent Server adapter](docs/openhands-agent-server.md) implements
 the pinned `1.44.1` REST/WebSocket boundary with native-first reconciliation,
 explicit completeness gaps, and verified run-bundle packaging.
@@ -111,6 +116,7 @@ node dist/src/cli.js corpus pack <approved-export-root> <policy.json> <archive.t
 node dist/src/cli.js corpus unpack <archive.tar.gz> <destination-root>
 node dist/src/cli.js comparison check <request.json>
 node dist/src/cli.js assertions validate <run-bundle-root> <assertion.json> [review.json]
+node dist/src/cli.js judge run <run-bundle-root> <observations.json> <request.json> <output-root>
 node dist/src/cli.js observations create <run-bundle-root> <output.json>
 node dist/src/cli.js observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
 # Optional approved OAuth smoke; provide OAuth auth, never API-key overrides.

@@ -81,6 +81,12 @@ export type ResolvedBehaviorCitation = BehaviorCitation & {
   resolution: NativeEvidenceResolution;
 };
 
+export type AgentSdkBehaviorEvidence = {
+  capture: NormalizationInput<AgentSdkNativeRecord>;
+  dataset: NormalizedDataset;
+  resolver: NativeEvidenceResolver;
+};
+
 export const DEFAULT_BEHAVIOR_VOCABULARY = loadDefaultVocabulary();
 
 export async function validateBehaviorAssertion(
@@ -161,6 +167,13 @@ export async function validateAgentSdkBehaviorAssertion(
   assertion: BehaviorAssertion,
   review?: BehaviorReview,
 ): Promise<readonly ResolvedBehaviorCitation[]> {
+  const { dataset, resolver } = await createAgentSdkBehaviorEvidence(bundleRoot);
+  const citations = await validateBehaviorAssertion(assertion, dataset, resolver);
+  if (review !== undefined) validateBehaviorReview(assertion, review);
+  return citations;
+}
+
+export async function createAgentSdkBehaviorEvidence(bundleRoot: string): Promise<AgentSdkBehaviorEvidence> {
   const capture = await readQualifiedClaudeAgentSdkCapture(bundleRoot);
   const normalization = await claudeAgentSdkNormalizationAdapter.normalize(capture);
   const dataset = describeNormalizedDataset({
@@ -171,13 +184,9 @@ export async function validateAgentSdkBehaviorAssertion(
     nativeType: agentSdkNativeType,
     contentDigest: (reference) => agentSdkContentDigest(capture, reference),
   });
-  const citations = await validateBehaviorAssertion(
-    assertion,
-    dataset,
-    createAgentSdkNativeEvidenceResolver(capture),
-  );
-  if (review !== undefined) validateBehaviorReview(assertion, review);
-  return citations;
+  const resolver = createAgentSdkNativeEvidenceResolver(capture);
+  await validateNormalizedDataset(dataset, resolver);
+  return { capture, dataset, resolver };
 }
 
 function assertVocabulary(vocabulary: BehaviorVocabulary): void {

@@ -367,6 +367,7 @@ export type {
   StructuralObservationSet,
 } from "./structural-observations.js";
 export {
+  createAgentSdkBehaviorEvidence,
   DEFAULT_BEHAVIOR_VOCABULARY,
   isConfirmedBehaviorAssertion,
   validateAgentSdkBehaviorAssertion,
@@ -374,12 +375,31 @@ export {
   validateBehaviorReview,
 } from "./behavior-assertions.js";
 export type {
+  AgentSdkBehaviorEvidence,
   BehaviorAssertion,
   BehaviorCitation,
   BehaviorReview,
   BehaviorVocabulary,
   ResolvedBehaviorCitation,
 } from "./behavior-assertions.js";
+export {
+  CLAUDE_SEMANTIC_JUDGE_BACKEND_ID,
+  packageSemanticJudgeInput,
+  parseSemanticJudgeResponse,
+  runAgentSdkSemanticJudge,
+  runClaudeAgentSdkSemanticJudge,
+  SEMANTIC_JUDGE_PROMPT_VERSION,
+} from "./semantic-judge.js";
+export type {
+  RunAgentSdkSemanticJudgeOptions,
+  SemanticJudgeBackend,
+  SemanticJudgeBackendResult,
+  SemanticJudgeEvidenceItem,
+  SemanticJudgeInput,
+  SemanticJudgeRequest,
+  SemanticJudgmentRecord,
+  SemanticJudgeUsage,
+} from "./semantic-judge.js";
 export type {
   AdapterCoverageReport,
   ComparisonCandidate,
