@@ -12,6 +12,7 @@ last_memory_sync: 2026-09-07T11:28:07.710639+00:00
 ## Current model
 
 - COE-581 contributed: PR #35: COE-581: Add outcome and structural observations (merge `447db73`)
+- COE-582 contributed: PR #36: COE-582: Add evidence-bound behavior assertions (merge `70f2776`)
 
 ## Important invariants
 
@@ -29,9 +30,11 @@ last_memory_sync: 2026-09-07T11:28:07.710639+00:00
 ## Recent changes
 
 - COE-581: Implement outcome ingestion and structural observations
+- COE-582: Define behavior assertions and evidence resolution
 
 ## Source refs
 
 - COE-581
+- COE-582
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

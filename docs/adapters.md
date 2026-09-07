@@ -16,6 +16,7 @@ last_memory_sync: 2026-09-07T07:19:40.801865+00:00
 - COE-578 contributed: PR #30: COE-578: Add pinned OpenHands Agent Server adapter (merge `07bf452`)
 - COE-579 contributed: PR #29: COE-579: Add the DeepSeek Harness runtime adapter (merge `49a5721`)
 - COE-581 contributed: PR #35: COE-581: Add outcome and structural observations (merge `447db73`)
+- COE-582 contributed: PR #36: COE-582: Add evidence-bound behavior assertions (merge `70f2776`)
 
 ## Important invariants
 
@@ -37,6 +38,7 @@ last_memory_sync: 2026-09-07T07:19:40.801865+00:00
 - COE-578: Implement the OpenHands harness adapter
 - COE-579: Implement the DeepSeek Harness adapter
 - COE-581: Implement outcome ingestion and structural observations
+- COE-582: Define behavior assertions and evidence resolution
 
 ## Source refs
 
@@ -45,5 +47,6 @@ last_memory_sync: 2026-09-07T07:19:40.801865+00:00
 - COE-578
 - COE-579
 - COE-581
+- COE-582
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

@@ -41,6 +41,7 @@ last_memory_sync: 2026-08-31T17:10:33.049054+00:00
 - COE-579: Implement the DeepSeek Harness adapter
 - COE-580: Implement normalization integrity and comparison gates
 - COE-581: Implement outcome ingestion and structural observations
+- COE-582: Define behavior assertions and evidence resolution
 - COE-591: Operationalize one Agent SDK run from a frozen queue entry
 - COE-592: Support observational Agent SDK tasks without verifiers
 - COE-593: Admit common framework filenames in observational fixtures
@@ -57,6 +58,7 @@ last_memory_sync: 2026-08-31T17:10:33.049054+00:00
 - COE-579
 - COE-580
 - COE-581
+- COE-582
 - COE-591
 - COE-592
 - COE-593
