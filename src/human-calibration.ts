@@ -573,5 +573,5 @@ function toPosix(path: string): string {
 }
 
 function escapeHtml(value: unknown): string {
-  return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+  return [...String(value)].map((character) => `&#${character.codePointAt(0)};`).join("");
 }
