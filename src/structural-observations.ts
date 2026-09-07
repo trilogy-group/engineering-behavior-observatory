@@ -183,7 +183,7 @@ function extractStructuralFacts(dataset: NormalizedDataset): StructuralObservati
   const requests = logicalRequestCount(modelEvents);
   const failed = operations.filter(({ failed }) => failed);
   const repeated = repeatedOperations(operations);
-  const followed = followedOperations(operations);
+  const followed = followedOperations(operations, ambiguousTools.filter(isToolStart));
   const compactions = dataset.events.filter(isCompactionBoundary);
   return [
     countOrUnavailable(dataset, registration("model-request-count"), requests.count, citations(modelEvents), requests.reason, "requests", modelEvents),
@@ -343,9 +343,22 @@ function repeatedOperations(operations: readonly ToolOperation[]): { count: numb
   return { count, citations: citations(records), events: records };
 }
 
-function followedOperations(operations: readonly ToolOperation[]): { same: number; alternate: number; citations: NativeEvidenceReference[]; events: UniformEvent[]; reason?: string } {
+function followedOperations(
+  operations: readonly ToolOperation[],
+  ambiguousStarts: readonly UniformEvent[],
+): { same: number; alternate: number; citations: NativeEvidenceReference[]; events: UniformEvent[]; reason?: string } {
   const failed = operations.filter(({ failed }) => failed);
   if (failed.length === 0) return { same: 0, alternate: 0, citations: [], events: [] };
+  if (ambiguousStarts.some(({ nativeOrder }) => nativeOrder.status !== "known")) {
+    const events = [...failed.flatMap(({ events }) => events), ...ambiguousStarts];
+    return {
+      same: 0,
+      alternate: 0,
+      citations: citations(events),
+      events,
+      reason: "An identity-less tool start has unknown native order relative to a failed operation.",
+    };
+  }
   const ordered = operations.map((operation) => ({ operation, starts: orderedEvents(operation.events, false), failures: orderedEvents(operation.events, true) }));
   if (ordered.some(({ operation, starts }) => starts.length === 0 || operation.toolName === undefined)
       || ordered.filter(({ operation }) => operation.failed).some(({ failures }) => failures.length === 0)) {
@@ -362,13 +375,27 @@ function followedOperations(operations: readonly ToolOperation[]): { same: numbe
   let alternate = 0;
   const records: UniformEvent[] = [];
   for (const current of ordered.filter(({ operation }) => operation.failed)) {
+    records.push(...current.operation.events);
     const nextOperations: ToolOperation[] = [];
     for (const failure of current.failures) {
       const candidates = ordered.flatMap(({ operation, starts }) => starts.map((start) => ({ operation, start })))
         .filter(({ operation, start }) => operation.id !== current.operation.id
           && start.domain === failure.domain && start.value > failure.value);
+      const nextOrder = candidates.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...candidates.map(({ start }) => start.value));
+      const intervening = ambiguousStarts.filter(({ nativeOrder }) => nativeOrder.status === "known"
+        && nativeOrder.domain === failure.domain && nativeOrder.value > failure.value && nativeOrder.value <= nextOrder);
+      if (intervening.length > 0) {
+        const next = candidates.filter(({ start }) => start.value === nextOrder).flatMap(({ operation }) => operation.events);
+        const events = [...current.operation.events, ...intervening, ...next];
+        return {
+          same: 0,
+          alternate: 0,
+          citations: citations(events),
+          events,
+          reason: "An identity-less tool start can be the next operation after a failure.",
+        };
+      }
       if (candidates.length === 0) continue;
-      const nextOrder = Math.min(...candidates.map(({ start }) => start.value));
       const tied = candidates.filter(({ start }) => start.value === nextOrder);
       const tiedClassifications = new Set(tied.map(({ operation }) =>
         operation.toolName === current.operation.toolName ? "same" : "alternate"));
@@ -399,9 +426,13 @@ function followedOperations(operations: readonly ToolOperation[]): { same: numbe
     const classification = [...classifications][0];
     if (classification === "same") same += 1;
     if (classification === "alternate") alternate += 1;
-    if (classification !== undefined) records.push(...current.operation.events, ...nextOperations.flatMap(({ events }) => events));
+    if (classification !== undefined) records.push(...nextOperations.flatMap(({ events }) => events));
   }
   return { same, alternate, citations: citations(records), events: records };
+}
+
+function isToolStart(event: UniformEvent): boolean {
+  return event.family === "tool" && (event.phase === "before" || event.phase === "instant");
 }
 
 function validationAfterMutation(dataset: NormalizedDataset): StructuralObservation {

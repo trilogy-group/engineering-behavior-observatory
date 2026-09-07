@@ -124,6 +124,30 @@ test("duplicate failure evidence across native order domains classifies one logi
   });
 });
 
+test("terminal failures cite native evidence for zero follow-up counts", () => {
+  const start = event(1, "tool", "before", { toolUseId: "failed", toolName: "Read", inputDigest: digest }, "terminal-failure-start");
+  const failure = event(2, "tool", "after", { toolUseId: "failed", toolName: "Read", isError: true }, "terminal-failure-end");
+  const report = createStructuralObservationSet(dataset([start, failure]), coverage([start, failure]));
+  for (const id of ["failure-followed-by-same-tool-count", "failure-followed-by-alternate-tool-count"]) {
+    const followup = observation(report, id);
+    assert.deepEqual(followup.value, { status: "known", value: 0, unit: "failed-logical-tool-operations" });
+    assert.deepEqual(followup.sourceEventIds, [failure.id, start.id].sort());
+  }
+});
+
+test("an identity-less intervening tool start makes failure follow-up unavailable", () => {
+  const failedStart = event(1, "tool", "before", { toolUseId: "failed", toolName: "Read", inputDigest: digest }, "failed-before-unknown");
+  const failure = event(2, "tool", "after", { toolUseId: "failed", toolName: "Read", isError: true }, "failed-before-unknown-result");
+  const unknown = event(3, "tool", "before", { toolName: "Write", inputDigest: digest }, "identity-less-start");
+  const later = event(4, "tool", "before", { toolUseId: "later", toolName: "Read", inputDigest: digest }, "later-known-start");
+  const report = createStructuralObservationSet(dataset([failedStart, failure, unknown, later]), coverage([failedStart, failure, unknown, later]));
+  for (const id of ["failure-followed-by-same-tool-count", "failure-followed-by-alternate-tool-count"]) {
+    const followup = observation(report, id);
+    assert.equal(followup.value.status, "unavailable");
+    assert.equal(followup.sourceEventIds.includes(unknown.id), true);
+  }
+});
+
 test("tied same-tool and alternate-tool successors remain unavailable", () => {
   const events = [
     event(1, "tool", "before", { toolUseId: "failed", toolName: "Read", inputDigest: digest }, "failed-start"),
