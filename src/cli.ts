@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { realpathSync } from "node:fs";
-import { dirname } from "node:path";
+import { createHash } from "node:crypto";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { assertNoDuplicateJsonKeys, canonicalizeMetadata, validateArtifact, validateExportManifest, validateRunManifestEvidence } from "./artifacts.js";
@@ -19,6 +20,7 @@ import { runAgentSdkQueueEntry } from "./agent-sdk-runner.js";
 import { runCodexQueueEntry } from "./codex-run.js";
 import { createPortableRunBundleExport, type PortableExportPolicy } from "./exports.js";
 import { assessComparisonEligibility, type ComparisonRequest } from "./normalization-integrity.js";
+import { createAgentSdkStructuralObservationSet } from "./structural-observations.js";
 import {
   admitTaskPacket,
   formatErrors,
@@ -48,6 +50,8 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo corpus pack <export-root> <policy.json> <archive.tar.gz>
        ebo corpus unpack <archive.tar.gz> <destination-root>
        ebo comparison check <request.json>
+       ebo observations create <run-bundle-root> <output.json>
+       ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
 
 Engineering Behavior Observatory
 `;
@@ -121,6 +125,10 @@ export function main(
       write(`${errorMessage(error)}\n`);
       return 1;
     }
+  }
+
+  if (args[0] === "observations") {
+    return runObservationsCommand(args.slice(1), write);
   }
 
   if (args[0] === "validate") {
@@ -248,6 +256,65 @@ function parseCorpusQuery(args: string[]): CorpusIndexQuery {
     query[field] = value;
   }
   return query as CorpusIndexQuery;
+}
+
+async function runObservationsCommand(args: string[], write: (message: string) => void): Promise<number> {
+  const [command, first, second, third] = args;
+  try {
+    if (command === "create" && first !== undefined && second !== undefined && args.length === 3) {
+      assertDerivedDestination(first, second);
+      const report = await createAgentSdkStructuralObservationSet(first);
+      writeObservationReport(second, report, first);
+      write(`Created ${report.observations.length} structural observations for attempt ${report.attemptId}.\n`);
+      return 0;
+    }
+    if (command === "corpus" && first !== undefined && second !== undefined && third !== undefined) {
+      assertDerivedDestination(first, third);
+      const index = readCorpusIndex(second);
+      const issues = validateCorpusIndex(first, index);
+      if (issues.length > 0) throw new Error(`Corpus index is not current: ${issues[0]!.manifestPath} ${issues[0]!.message}`);
+      const selected = queryCorpusIndex(index, { ...parseCorpusQuery(args.slice(4)), manifestKind: "run" });
+      if (selected.length === 0) throw new Error("Corpus selection matched no retained run bundles.");
+      assertOutside(realpathSync(first), realpathSync(dirname(resolve(third))));
+      mkdirSync(third, { recursive: true, mode: 0o700 });
+      for (const entry of selected) {
+        if (entry.runId === undefined || entry.attemptId === undefined || entry.issues.length > 0) throw new Error(`Corpus entry ${entry.manifestPath} is not observation-ready.`);
+        const bundleRoot = dirname(join(resolve(first), ...entry.manifestPath.split("/")));
+        const report = await createAgentSdkStructuralObservationSet(bundleRoot);
+        writeObservationReport(join(third, observationFileName(entry.runId, entry.attemptId)), report, first);
+      }
+      write(`Created structural observations for ${selected.length} corpus run bundle(s).\n`);
+      return 0;
+    }
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  }
+  write("Usage: ebo observations <create|corpus> ...\n");
+  return 1;
+}
+
+function writeObservationReport(path: string, report: unknown, sourceRoot: string): void {
+  const destination = resolve(path);
+  assertOutside(realpathSync(sourceRoot), realpathSync(dirname(destination)));
+  writeFileSync(destination, `${canonicalizeMetadata(report)}\n`, { flag: "wx", mode: 0o600 });
+}
+
+function assertDerivedDestination(sourceRoot: string, destination: string): void {
+  const source = resolve(sourceRoot);
+  const output = resolve(destination);
+  assertOutside(source, output);
+}
+
+function assertOutside(source: string, output: string): void {
+  const locator = relative(source, output);
+  if (locator === "" || locator !== ".." && !locator.startsWith(`..${sep}`)) {
+    throw new Error("Structural observations must be written outside immutable source evidence.");
+  }
+}
+
+function observationFileName(runId: string, attemptId: string): string {
+  return `sha256-${createHash("sha256").update(JSON.stringify([runId, attemptId])).digest("hex")}.json`;
 }
 
 async function runAgentSdkCommand(

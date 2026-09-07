@@ -315,7 +315,7 @@ test("produces stable event identities and ordering on repeated normalization", 
   assert.equal(new Set(first.events.map(({ id }) => id)).size, first.events.length);
   assert.deepEqual(first.events.filter(({ nativeOrder }) => nativeOrder.status === "known")
     .map(({ nativeOrder }) => nativeOrder.status === "known" ? nativeOrder.domain : ""), [
-    "session:session", "session:session", "session:session", "session:session", "session:session",
+    "session:session", "session:session", "session:session", "session:session", "session:session", "session:session",
     "hooks:hooks", "hooks:hooks", "hooks:hooks", "hooks:hooks", "hooks:hooks",
     "hooks:hooks", "hooks:hooks", "hooks:hooks", "hooks:hooks",
   ]);
@@ -399,7 +399,7 @@ test("loads a retained bundle only after structural qualification and validates 
     assert.deepEqual(normalized.events.find(({ source }) => source.nativeType === "assessment-mode")?.attributes,
       { assessmentMode: "observational" });
     assert.deepEqual(normalized.events.filter(({ source }) => source.nativeReference.artifactId === "session")
-      .map(({ source }) => source.nativeReference.recordLocator), ["line:2", "line:3"]);
+      .map(({ source }) => source.nativeReference.recordLocator), ["line:2", "line:3", "line:3"]);
     assert.equal(normalized.events.find(({ source }) => source.nativeReference.artifactId === "hooks")
       ?.source.nativeReference.recordLocator, "#");
 

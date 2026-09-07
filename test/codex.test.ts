@@ -62,6 +62,16 @@ test("captures matching native lifecycle, interleaving, usage, history, and inde
     const normalized = await normalizeCodexCapture(capture);
     assert.equal(normalized.events.filter(({ family }) => family === "tool").length, 1, "item start and deltas must not inflate tool counts");
     assert.equal(normalized.events.filter(({ family }) => family === "outcome").length, 1);
+    assert.deepEqual(normalized.events.find(({ source }) => source.nativeType === "thread/tokenUsage/updated")?.attributes, {
+      method: "thread/tokenUsage/updated",
+      totalTokens: 14,
+      inputTokens: 8,
+      cachedInputTokens: 2,
+      cacheWriteInputTokens: 1,
+      outputTokens: 4,
+      reasoningOutputTokens: 2,
+      resourceSemantics: "cumulative-snapshot",
+    });
     assert.ok(normalized.unmapped.some(({ reference }) => {
       const record = capture.records.find(({ reference: candidate }) => candidate.recordLocator === reference.recordLocator)?.record;
       return record?.method === "unknown/native";

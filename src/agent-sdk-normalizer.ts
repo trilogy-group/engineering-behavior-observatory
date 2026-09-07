@@ -330,10 +330,53 @@ function mapSessionRecord(
       parentKey: parentToolKey(message),
     }));
   }
+  if (nativeType === "result") drafts.push(...mapResultResources(common, message));
   if (nativeType === "assistant" || nativeType === "user") {
     drafts.push(...mapToolBlocks(common, message));
   }
   return drafts;
+}
+
+function mapResultResources(
+  common: {
+    input: NormalizationInput<AgentSdkNativeRecord>;
+    captured: CapturedNativeRecord<AgentSdkNativeRecord>;
+    nativeType: string;
+    nativeOrder: UniformEvent["nativeOrder"];
+    nativeTime: UniformEvent["nativeTime"];
+    sessionId?: string;
+  },
+  message: JsonRecord,
+): DraftEvent[] {
+  const modelUsage = asRecord(message.modelUsage);
+  if (modelUsage === undefined && typeof message.total_cost_usd !== "number") return [];
+  return [draftEvent({
+    ...common,
+    discriminator: "resources",
+    family: "runtime",
+    phase: "after",
+    actor: { kind: "harness" },
+    scope: common.sessionId === undefined
+      ? { kind: "attempt", id: common.input.attemptId }
+      : { kind: "session", id: common.sessionId },
+    attributes: compactAttributes({
+      inputTokens: summedModelUsage(modelUsage, "inputTokens"),
+      outputTokens: summedModelUsage(modelUsage, "outputTokens"),
+      cacheReadInputTokens: summedModelUsage(modelUsage, "cacheReadInputTokens"),
+      cacheCreationInputTokens: summedModelUsage(modelUsage, "cacheCreationInputTokens"),
+      totalCostUsd: scalar(message.total_cost_usd),
+      resourceSemantics: "cumulative-final",
+    }),
+    content: { status: "unknown", reason: "Native resource details remain in the Agent SDK result record" },
+  })];
+}
+
+function summedModelUsage(modelUsage: JsonRecord | undefined, field: string): number | undefined {
+  const records = Object.values(modelUsage ?? {}).map(asRecord);
+  const values = records.map((record) => record?.[field]);
+  return records.length > 0 && values.every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0)
+    ? (values as number[]).reduce((total, value) => total + value, 0)
+    : undefined;
 }
 
 function sessionEventShape(
@@ -400,7 +443,11 @@ function mapToolBlocks(
         phase: "before",
         actor: { kind: "model" },
         scope: { kind: "operation", id: toolUseId },
-        attributes: { toolName, toolUseId },
+        attributes: {
+          toolName,
+          toolUseId,
+          ...(block.input === undefined ? {} : { inputDigest: digestAttribute(block.input) }),
+        },
         content: knownContent(contentReference(common.captured.reference, `/message/message/content/${index}`, "tool-input")),
         anchors: [{ key: `tool:${toolUseId}`, rank: 0 }],
       })];
@@ -864,9 +911,11 @@ function sessionAttributes(nativeType: string, subtype: string | undefined, mess
     isError: scalar(message.is_error),
     stopReason: scalar(message.stop_reason),
     numTurns: scalar(message.num_turns),
-    totalCostUsd: scalar(message.total_cost_usd),
     toolName: scalar(message.tool_name),
     elapsedSeconds: scalar(message.elapsed_time_seconds),
+    durationMs: scalar(message.duration_ms),
+    apiDurationMs: scalar(message.duration_api_ms),
+    resourceSemantics: nativeType === "result" && typeof message.duration_ms === "number" ? "cumulative-final" : undefined,
     rateLimitStatus: nativeType === "rate_limit_event" ? scalar(rateLimit?.status) : undefined,
     rateLimitType: nativeType === "rate_limit_event" ? scalar(rateLimit?.rateLimitType) : undefined,
     utilization: nativeType === "rate_limit_event" ? scalar(rateLimit?.utilization) : undefined,
@@ -931,8 +980,12 @@ function hookAttributes(
 ): Record<string, UniformAttributeValue> {
   return compactAttributes({
     hook,
+    mutation: ["FileChanged", "DirectoryAdded"].includes(hook) ? true : undefined,
     toolUseId,
     toolName: scalar(payload.tool_name),
+    inputDigest: hook === "PreToolUse" && payload.tool_input !== undefined
+      ? digestAttribute(payload.tool_input)
+      : undefined,
     agentId,
     agentType: scalar(payload.agent_type),
     taskId,
@@ -1025,6 +1078,10 @@ function scalarList(value: unknown): UniformAttributeValue | undefined {
   return Array.isArray(value) && value.length <= 16 && value.every(validAttributeScalar)
     ? value as UniformAttributeValue
     : undefined;
+}
+
+function digestAttribute(value: unknown): string {
+  return `sha256:${digestMetadata(value).value}`;
 }
 
 function validAttributeValue(value: UniformAttributeValue): boolean {

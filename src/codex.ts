@@ -673,6 +673,16 @@ function mapCodexRecord(
     copyScalar(attributes, "itemType", payload.item.type);
     copyScalar(attributes, "itemId", payload.item.id);
     copyScalar(attributes, "status", payload.item.status);
+    if (payload.item.type === "fileChange") attributes.mutation = true;
+  }
+  if (method === "thread/tokenUsage/updated" && isRecord(payload.tokenUsage)) {
+    const total = numberRecord(payload.tokenUsage.total);
+    if (total !== undefined) {
+      for (const key of ["totalTokens", "inputTokens", "cachedInputTokens", "cacheWriteInputTokens", "outputTokens", "reasoningOutputTokens"] as const) {
+        copyScalar(attributes, key, total[key]);
+      }
+      attributes.resourceSemantics = "cumulative-snapshot";
+    }
   }
   return {
     schemaVersion: "ebo.uniform-event/v1",
