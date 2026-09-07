@@ -234,12 +234,12 @@ export async function runAgentSdkSemanticJudge(
   } catch (error) {
     backendResult = { status: "failed", kind: "provider", message: errorMessage(error) };
   }
-  const timing = backendResult.timing === undefined
-    ? unavailable("Judge timing was not reported.")
-    : available(backendResult.timing);
-  const usage = backendResult.usage === undefined
-    ? unavailable("Judge usage and cost were not reported.")
-    : available(backendResult.usage);
+  const timing = !validTiming(backendResult.timing)
+    ? unavailable(backendResult.timing === undefined ? "Judge timing was not reported." : "Judge timing was invalid.")
+    : available(structuredClone(backendResult.timing));
+  const usage = !validUsage(backendResult.usage, options.request.limits.maxOutputChars)
+    ? unavailable(backendResult.usage === undefined ? "Judge usage and cost were not reported." : "Judge usage or cost was invalid or exceeded the output bound.")
+    : available(structuredClone(backendResult.usage));
   const rawResponse = backendResult.raw === undefined
     ? undefined
     : writeBoundedRawResponse(outputRoot, backendResult.raw, options.request.limits.maxOutputChars);
@@ -805,6 +805,12 @@ function writeBoundedRawResponse(root: string, value: unknown, maxChars: number)
 }
 
 function writeRestrictedJson(root: string, name: string, value: unknown, truncated?: boolean): RecordReference {
+  const schemaVersion = value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as { schemaVersion?: unknown }).schemaVersion : undefined;
+  if (typeof schemaVersion === "string") {
+    const errors = validateArtifact(name, value);
+    if (errors.length > 0) throw new Error(errors.map(({ field, message }) => `${name} ${field}: ${message}`).join("\n"));
+  }
   const path = join(root, name);
   writeFileSync(path, `${canonicalizeMetadata(value)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
   return {
@@ -900,6 +906,22 @@ function integerInRange(value: unknown, label: string, minimum: number, maximum:
 
 function available<Value>(value: Value): Availability<Value> {
   return { status: "available", value };
+}
+
+function validTiming(value: SemanticJudgeBackendResult["timing"]): value is { durationMs: number; durationApiMs: number } {
+  return value !== undefined
+    && Number.isFinite(value.durationMs) && value.durationMs >= 0
+    && Number.isFinite(value.durationApiMs) && value.durationApiMs >= 0;
+}
+
+function validUsage(value: SemanticJudgeBackendResult["usage"], maxChars: number): value is SemanticJudgeUsage {
+  if (value === undefined || !Number.isFinite(value.totalCostUsd) || value.totalCostUsd < 0
+      || !Number.isSafeInteger(value.numTurns) || value.numTurns < 0) return false;
+  try {
+    return canonicalizeMetadata(value).length <= maxChars;
+  } catch {
+    return false;
+  }
 }
 
 function unavailable(reason: string): Availability<never> {

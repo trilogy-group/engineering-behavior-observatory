@@ -101,6 +101,10 @@ record enters review, no retry occurs, and native evidence is never changed.
 Timing, cost, and usage are recorded only when the backend reports them;
 otherwise the record says they are unavailable.
 
+`ebo.semantic-judge-request/v1`, `ebo.semantic-judge-input/v1`, and
+`ebo.semantic-judgment/v1` are registered artifacts and can be independently
+checked with `ebo validate`.
+
 This runner does not confirm assertions, create human reviews, adjudicate,
 aggregate rates, build an Atlas, or publish evidence.
 

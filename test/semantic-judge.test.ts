@@ -15,6 +15,7 @@ import {
   probeClaudeAgentSdkCapabilities,
   runAgentSdkSemanticJudge,
   runClaudeAgentSdkSemanticJudge,
+  validateArtifact,
   type ClaudeAgentSdkQuery,
   type RunBundleDefinition,
   type SemanticJudgeBackend,
@@ -141,6 +142,26 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
     assert.equal(first.timing.status, "unavailable");
     assert.equal(statSync(join(root, "proposal-a", "input.json")).mode & 0o777, 0o600);
     assert.equal(existsSync(join(root, "proposal-a", "judgment.json")), true);
+    const retainedInput = JSON.parse(readFileSync(join(root, "proposal-a", "input.json"), "utf8"));
+    const retainedJudgment = JSON.parse(readFileSync(join(root, "proposal-a", "judgment.json"), "utf8"));
+    assert.deepEqual(validateArtifact("semantic input", retainedInput), []);
+    assert.deepEqual(validateArtifact("semantic judgment", retainedJudgment), []);
+    let validationOutput = "";
+    assert.equal(main(["validate", join(root, "proposal-a", "input.json"), join(root, "proposal-a", "judgment.json")],
+      (message) => (validationOutput += message)), 0);
+    assert.match(validationOutput, /Validated 2 artifact\(s\)/u);
+
+    const malformedMetadata = await run(root, "malformed-metadata", bundleRoot, observations, request, async () => ({
+      status: "completed",
+      response: assessed,
+      raw: { invalid: Number.NaN },
+      timing: { durationMs: Number.NaN, durationApiMs: 1 },
+      usage: { totalCostUsd: 0, numTurns: 1, mainLoop: undefined, byModel: {} },
+    }));
+    assert.equal(malformedMetadata.status, "proposed");
+    assert.equal(malformedMetadata.timing.status, "unavailable");
+    assert.equal(malformedMetadata.usage.status, "unavailable");
+    assert.equal(existsSync(join(root, "malformed-metadata", "judgment.json")), true);
 
     const tampered = structuredClone(observations);
     tampered.observations[0]!.definition = "Invented structural fact.";
