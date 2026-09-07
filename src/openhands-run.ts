@@ -141,6 +141,7 @@ export async function captureOpenHandsAgentServerRun(
     }, verifierContext === undefined || options.verifier === undefined
       ? undefined
       : async (projectedPath, outcome) => {
+          workspaceOutcome = outcome;
           verifierResult = await options.verifier!(verifierContext, outcome, projectedPath);
         });
     workspaceOutcome = await workspaceOutcomePromise;
@@ -197,8 +198,10 @@ export async function captureOpenHandsAgentServerRun(
       try {
         if (workspace?.status === "ready") await captureWorkspace();
       } catch (error) {
-        workspaceCaptureError = error instanceof Error ? error.message : String(error);
-        throw error;
+        if (workspaceOutcome === undefined) {
+          workspaceCaptureError = error instanceof Error ? error.message : String(error);
+          throw error;
+        }
       }
       await options.workspace.cleanup?.(context);
     },
@@ -388,7 +391,7 @@ export async function captureOpenHandsAgentServerRun(
   const retainedWorkspacePath = workspace?.status === "ready" && workspaceOutcome === undefined
     ? workspace.path
     : undefined;
-  if (!qualification.semanticAnalysisUsable) {
+  if (!["qualified", "qualified-with-gaps"].includes(qualification.status)) {
     return {
       attempt,
       manifest,

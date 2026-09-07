@@ -1078,6 +1078,15 @@ test("preserves and reports the source workspace when workspace evidence capture
   cpSync(start, final, { recursive: true, preserveTimestamps: true });
   writeFileSync(join(final, "result.txt"), "after\n");
   symlinkSync("result.txt", join(final, "unsafe-link"));
+  const sessionHook = {
+    id: "hook-workspace-capture-failure",
+    kind: "HookExecutionEvent",
+    source: "hook",
+    timestamp: "2026-09-02T07:00:01Z",
+    hook_event_type: "SessionEnd",
+    success: true,
+    exit_code: 0,
+  };
   const definition: RunBundleDefinition = {
     bundleRoot: join(root, "bundle"),
     bundleId: "bundle-openhands-workspace-capture-failure",
@@ -1102,7 +1111,9 @@ test("preserves and reports the source workspace when workspace evidence capture
     if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
       return json({ id: "conversation-1", execution_status: "finished" });
     }
-    if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [message], next_page_id: null });
+    if (url.includes("/api/conversations/conversation-1/events/search")) {
+      return json({ items: [message, sessionHook], next_page_id: null });
+    }
     if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
     throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
   };
@@ -1129,6 +1140,7 @@ test("preserves and reports the source workspace when workspace evidence capture
           queueMicrotask(() => {
             socket.open();
             socket.message(message);
+            socket.message(sessionHook);
           });
           return socket;
         },
@@ -1150,6 +1162,102 @@ test("preserves and reports the source workspace when workspace evidence capture
     };
     assert.equal(report.missingEvidence.some(({ kind, detail }) =>
       kind === "workspace" && /symbolic link/u.test(detail ?? "")), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("keeps retained workspace evidence distinct from a verifier failure", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-openhands-verifier-failure-"));
+  const start = join(root, "start");
+  const final = join(root, "final");
+  const bundleRoot = join(root, "bundle");
+  mkdirSync(start);
+  writeFileSync(join(start, "result.txt"), "before\n");
+  cpSync(start, final, { recursive: true, preserveTimestamps: true });
+  writeFileSync(join(final, "result.txt"), "after\n");
+  const hook = {
+    id: "hook-verifier-failure",
+    kind: "HookExecutionEvent",
+    source: "hook",
+    timestamp: "2026-09-02T07:00:01Z",
+    hook_event_type: "SessionEnd",
+    success: true,
+    exit_code: 0,
+  };
+  const definition: RunBundleDefinition = {
+    bundleRoot,
+    bundleId: "bundle-openhands-verifier-failure",
+    run: {
+      id: "run-openhands-verifier-failure",
+      assessmentMode: "verified",
+      task: { id: "task-openhands-verifier-failure" },
+      fixture: { id: "fixture-openhands-verifier-failure", digest: SHA("a") },
+      model: { provider: "test", id: "test/model" },
+      harness: { id: "openhands-agent-server", version: OPENHANDS_AGENT_SERVER_VERSION },
+      runtime: [],
+    },
+    attempt: { id: "attempt-openhands-verifier-failure", number: 1 },
+    configuration: { digest: SHA("b"), budgetDigest: SHA("c"), toolPolicyDigest: SHA("d") },
+  };
+  let callerCleanupRan = false;
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
+    if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
+    if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
+      return json({ id: "conversation-1", execution_status: "finished" });
+    }
+    if (url.includes("/api/conversations/conversation-1/events/search")) {
+      return json({ items: [message, hook], next_page_id: null });
+    }
+    if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  };
+
+  try {
+    const result = await captureOpenHandsAgentServerRun({
+      definition,
+      startingWorkspacePath: start,
+      workspace: {
+        setup: async () => ({ status: "ready", path: final, artifactId: "workspace", retained: true }),
+        cleanup: async () => {
+          callerCleanupRan = true;
+          rmSync(final, { recursive: true, force: true });
+        },
+      },
+      configuration: {
+        model: "test/model",
+        baseUrl: "http://127.0.0.1:8000",
+        startConversation: { agent: { kind: "Agent", llm: { model: "test/model" } } },
+        message: { role: "user", content: [{ type: "text", text: "update result.txt" }], run: true },
+        fetch,
+        webSocket: (url) => {
+          const socket = new FakeWebSocket(url);
+          queueMicrotask(() => {
+            socket.open();
+            socket.message(message);
+            socket.message(hook);
+          });
+          return socket;
+        },
+        pollIntervalMs: 0,
+      },
+      verifier: async () => { throw new Error("verifier failed after workspace packaging"); },
+    });
+    const reportDescriptor = result.manifest.evidence.find(({ kind }) => kind === "capture-report")!;
+    const report = JSON.parse(readFileSync(join(bundleRoot, reportDescriptor.relativePath), "utf8")) as {
+      missingEvidence: Array<{ kind: string }>;
+    };
+
+    assert.equal(result.attempt.classification.kind, "verifier-error");
+    assert.equal(result.manifest.evidence.some(({ kind }) => kind === "workspace"), true);
+    assert.equal(report.missingEvidence.some(({ kind }) => kind === "workspace"), false);
+    assert.equal(callerCleanupRan, true);
+    assert.equal(result.attempt.record.cleanup?.status, "completed");
+    assert.equal(result.retainedWorkspacePath, undefined);
+    assert.equal(result.normalized, undefined);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
