@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { hostname, uptime } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+
+import lockfile from "proper-lockfile";
 
 import {
   createAgentSdkBehaviorEvidence,
@@ -236,7 +237,13 @@ export async function importReviewDecision(
   validateReviewSample(selection);
   assertValid("human review decision", decision);
   assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot }) => bundleRoot), historyPath);
-  const { descriptor: lock, path: lockPath } = acquireHistoryLock(historyPath);
+  let release: () => Promise<void>;
+  try {
+    release = await lockfile.lock(resolve(historyPath), { realpath: false, retries: 0, stale: 30_000, update: 10_000 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOCKED") throw new Error("Another review-history import is already in progress.");
+    throw error;
+  }
   // ponytail: one local lock serializes imports; use transactional storage only if a hosted multi-writer workflow is introduced.
   try {
     const selectionBinding = { schemaVersion: selection.schemaVersion, digest: digest(selection) } as const;
@@ -275,82 +282,8 @@ export async function importReviewDecision(
     await writeMetadataAtomically(dirname(resolve(historyPath)), resolve(historyPath).split(sep).at(-1)!, history, undefined, { overwrite: true });
     return { appended: true, history };
   } finally {
-    closeSync(lock);
-    unlinkSync(lockPath);
+    await release();
   }
-}
-
-function acquireHistoryLock(historyPath: string): { descriptor: number; path: string } {
-  const path = `${resolve(historyPath)}.lock`;
-  try {
-    return createHistoryLock(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !isStaleHistoryLock(path)) throw lockError(error);
-  }
-  const reclaimPath = `${path}.reclaim`;
-  let reclaim: number;
-  try {
-    reclaim = openSync(reclaimPath, "wx", 0o600);
-  } catch (error) {
-    throw lockError(error);
-  }
-  try {
-    if (!isStaleHistoryLock(path)) throw new Error("Another review-history import is already in progress.");
-    unlinkSync(path);
-    try {
-      return createHistoryLock(path);
-    } catch (error) {
-      throw lockError(error);
-    }
-  } finally {
-    closeSync(reclaim);
-    unlinkSync(reclaimPath);
-  }
-}
-
-function createHistoryLock(path: string): { descriptor: number; path: string } {
-  let descriptor: number | undefined;
-  try {
-    descriptor = openSync(path, "wx", 0o600);
-    writeFileSync(descriptor, canonicalizeMetadata({ pid: process.pid, hostname: hostname(), createdAt: new Date().toISOString() }));
-    return { descriptor, path };
-  } catch (error) {
-    if (descriptor !== undefined) closeSync(descriptor);
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") rmSync(path, { force: true });
-    throw error;
-  }
-}
-
-function lockError(error: unknown): Error {
-  return (error as NodeJS.ErrnoException).code === "EEXIST"
-    ? new Error("Another review-history import is already in progress.")
-    : error instanceof Error ? error : new Error("Unable to acquire review-history import lock.");
-}
-
-function isStaleHistoryLock(path: string): boolean {
-  try {
-    const value = JSON.parse(readFile(path)) as { pid?: unknown; hostname?: unknown; createdAt?: unknown };
-    if (value.hostname !== hostname() || !Number.isSafeInteger(value.pid) || typeof value.createdAt !== "string") return false;
-    const createdAt = Date.parse(value.createdAt);
-    if (!Number.isFinite(createdAt)) return false;
-    if (Date.now() - createdAt > uptime() * 1_000) return true;
-    try {
-      process.kill(value.pid as number, 0);
-      return false;
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code === "ESRCH";
-    }
-  } catch {
-    try {
-      return Date.now() - statSync(path).mtimeMs > 30_000;
-    } catch {
-      return true;
-    }
-  }
-}
-
-function readFile(path: string): string {
-  return new TextDecoder("utf-8", { fatal: true }).decode(readBoundedFile(path, "Review-history lock", undefined, 4096));
 }
 
 export function summarizeCalibration(selection: ReviewSample, history: ReviewHistory): CalibrationSummary {

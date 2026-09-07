@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { hostname, tmpdir } from "node:os";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
 
 import type { HookInput, SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
+import lockfile from "proper-lockfile";
 
 import {
   CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_VERSION,
@@ -139,15 +140,15 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
       ...decision("review-locked", "review", byId.get("assertion-a")!, "synthetic-fixture-reviewer-locked", "confirmed"),
       previousHistory: null,
     };
-    writeFileSync(`${historyPath}.lock`, "");
+    const release = await lockfile.lock(historyPath, { realpath: false, stale: 30_000, update: 10_000 });
     await assert.rejects(importReviewDecision(selection, historyPath, lockedDecision), /already in progress/u);
-    rmSync(`${historyPath}.lock`);
+    await release();
     const staleHistoryPath = join(temporary, "stale-history.json");
-    writeJson(`${staleHistoryPath}.lock`, { pid: 999_999, hostname: hostname(), createdAt: new Date().toISOString() });
+    mkdirSync(`${staleHistoryPath}.lock`);
+    utimesSync(`${staleHistoryPath}.lock`, new Date(0), new Date(0));
     const recovered = await importReviewDecision(selection, staleHistoryPath, lockedDecision);
     assert.equal(recovered.appended, true);
     assert.equal(existsSync(`${staleHistoryPath}.lock`), false);
-    assert.equal(existsSync(`${staleHistoryPath}.lock.reclaim`), false);
     let history: ReviewHistory | undefined;
     const append = async (decision: Omit<ReviewDecision, "previousHistory">): Promise<ReviewDecision> => {
       const record: ReviewDecision = {

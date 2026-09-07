@@ -129,9 +129,9 @@ Import appends to one history and never rewrites an earlier decision. It rejects
 unknown or changed assertions, stale history bindings, invalid adjudication
 targets, and reuse of a decision ID with different content. Reimporting the
 exact same decision is idempotent.
-Imports serialize through a per-history local lock. Locks owned by a dead
-same-host process or left before the current boot are recovered automatically;
-an active import makes a concurrent command fail closed for an idempotent retry.
+Imports serialize through a per-history portable filesystem lock with a stale
+timeout and heartbeat. Interrupted imports are recovered automatically; an
+active import makes a concurrent command fail closed for an idempotent retry.
 
 An adjudication is another explicit human decision. It names at least two prior
 review decisions for the same assertion:
