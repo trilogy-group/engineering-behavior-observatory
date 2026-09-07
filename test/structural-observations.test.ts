@@ -161,6 +161,41 @@ test("resource aliases are deduplicated per event and conflicts stay unavailable
   assert.equal(observation(conflictingReport, "cache-read-input-token-count").value.status, "unavailable");
 });
 
+test("an omitted category in the latest cumulative resource snapshot stays unavailable", () => {
+  const earlier = event(1, "runtime", "during", {
+    cacheWriteInputTokens: 5,
+    resourceSemantics: "cumulative-snapshot",
+  }, "earlier-resource-snapshot");
+  const latest = event(2, "runtime", "during", {
+    outputTokens: 8,
+    resourceSemantics: "cumulative-snapshot",
+  }, "latest-resource-snapshot");
+  const report = createStructuralObservationSet(dataset([earlier, latest]), coverage([earlier, latest]));
+  const cacheCreation = observation(report, "cache-creation-input-token-count");
+  assert.equal(cacheCreation.value.status, "unavailable");
+  assert.deepEqual(cacheCreation.sourceEventIds, [latest.id]);
+  assert.deepEqual(cacheCreation.citations, [latest.source.nativeReference]);
+});
+
+test("workspace outcome count follows the terminal workspace reference", () => {
+  const checkpoint = event(1, "artifact", "after", {}, "checkpoint-workspace");
+  checkpoint.source.nativeType = "workspace-outcome";
+  checkpoint.scope = { kind: "workspace", id: "checkpoint" };
+  checkpoint.content = { status: "known", value: [{ nativeReference: { artifactId: "checkpoint", recordLocator: "#" }, role: "workspace-outcome" }] };
+  const final = event(2, "artifact", "after", {}, "final-workspace");
+  final.source.nativeType = "workspace-outcome";
+  final.scope = { kind: "workspace", id: "final" };
+  final.content = { status: "known", value: [{ nativeReference: { artifactId: "final", recordLocator: "#" }, role: "workspace-outcome" }] };
+  const terminal = event(3, "outcome", "after", { state: "completed" }, "terminal");
+  terminal.source.nativeType = "terminal-record";
+  terminal.content = { status: "known", value: [{ nativeReference: { artifactId: "final", recordLocator: "#" }, role: "final-workspace" }] };
+  const report = createStructuralObservationSet(dataset([checkpoint, final, terminal]), coverage([checkpoint, final, terminal]));
+  const workspace = observation(report, "outcome-workspace-outcome-count");
+  assert.deepEqual(workspace.value, { status: "known", value: 1, unit: "workspace-outcomes" });
+  assert.deepEqual(workspace.sourceEventIds, [final.id, terminal.id].sort());
+  assert.equal(workspace.sourceEventIds.includes(checkpoint.id), false);
+});
+
 test("verified outcomes retain assertion-level citations while observational outcomes make no verifier claim", () => {
   const verifiedCapture: NormalizationInput<AgentSdkNativeRecord> = {
     runId: "run-structural-golden",

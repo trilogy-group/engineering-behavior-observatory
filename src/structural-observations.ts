@@ -215,8 +215,13 @@ function importOutcomes(
   assessmentMode: "observational" | "verified" | "unknown",
 ): StructuralObservation[] {
   const terminal = dataset.events.find((event) => event.family === "outcome" && event.source.nativeType === "terminal-record");
+  const terminalWorkspaceIds = new Set(terminal?.content.status === "known"
+    ? terminal.content.value.flatMap(({ nativeReference, role }) => role === "final-workspace" ? [nativeReference.artifactId] : [])
+    : []);
   const workspace = dataset.events.filter((event) => event.family === "artifact"
-    && event.content.status === "known" && event.content.value.some(({ role }) => role === "workspace-outcome"));
+    && event.scope.kind === "workspace" && typeof event.scope.id === "string" && terminalWorkspaceIds.has(event.scope.id)
+    && event.content.status === "known" && event.content.value.some(({ nativeReference, role }) =>
+      role === "workspace-outcome" && terminalWorkspaceIds.has(nativeReference.artifactId)));
   const captureReports = capture?.records.filter(({ record }) => record.kind === "capture-report") ?? [];
   const captureReferences = captureReports.length > 0
     ? captureReports.map(({ reference }) => reference)
@@ -236,8 +241,11 @@ function importOutcomes(
       : directObservation(dataset, "capture-qualification", "Structural capture qualification used to admit normalization.",
         capture.qualification, "qualification", [], captureReferences),
     workspace.length === 0
-      ? unavailable(dataset, outcomeRegistry("workspace-outcome-count", "Retained final workspace outcomes referenced by the attempt."), "Workspace outcome evidence is missing.", [])
-      : directObservation(dataset, "workspace-outcome-count", "Retained final workspace outcomes referenced by the attempt.", workspace.length, "workspace-outcomes", workspace),
+      ? unavailable(dataset, outcomeRegistry("workspace-outcome-count", "Retained final workspace outcomes referenced by the attempt."),
+        terminalWorkspaceIds.size === 0 ? "Terminal outcome does not reference a final workspace artifact." : "Terminal-referenced workspace outcome evidence is missing.",
+        terminal === undefined ? [] : citations([terminal]), terminal === undefined ? [] : [terminal])
+      : directObservation(dataset, "workspace-outcome-count", "Retained final workspace outcomes referenced by the attempt.",
+        new Set(workspace.map(({ scope }) => scope.id)).size, "workspace-outcomes", [...workspace, ...(terminal === undefined ? [] : [terminal])]),
   ];
   if (assessmentMode !== "verified" || capture === undefined) return base;
   const assertions = capture.records.flatMap(({ record, reference }) => {
@@ -417,7 +425,8 @@ function validationAfterMutation(dataset: NormalizedDataset): StructuralObservat
 }
 
 function resourceObservation(dataset: NormalizedDataset, id: ExtractorRegistration["id"], fields: readonly string[], unit: string): StructuralObservation {
-  const candidates = dataset.events.flatMap((event) => {
+  const resourceEvents = dataset.events.filter((event) => typeof event.attributes.resourceSemantics === "string");
+  const candidates = resourceEvents.flatMap((event) => {
     if (typeof event.attributes.resourceSemantics !== "string") return [];
     const aliases = fields.flatMap((field) => typeof event.attributes[field] === "number"
       ? [{ field, value: event.attributes[field] as number }] : []);
@@ -431,38 +440,68 @@ function resourceObservation(dataset: NormalizedDataset, id: ExtractorRegistrati
   });
   const field = fields.join("/");
   const registrationValue = registration(id);
-  const capabilityReason = unavailableCapability(dataset, registrationValue, candidates.length === 0);
+  const capabilityReason = unavailableCapability(dataset, registrationValue, resourceEvents.length === 0);
   if (capabilityReason !== undefined) return unavailable(dataset, registrationValue, capabilityReason, citations(candidates.map(({ event }) => event)), candidates.map(({ event }) => event));
   if (candidates.length === 0) return unavailable(dataset, registrationValue, `No supported native ${field} record is available.`, []);
-  if (candidates.some(({ aliasConflict }) => aliasConflict)) {
-    return unavailable(dataset, registrationValue, `${field} aliases conflict within one native record.`, citations(candidates.map(({ event }) => event)), candidates.map(({ event }) => event));
-  }
-  if (candidates.some(({ value }) => !Number.isFinite(value) || value < 0 || unit === "tokens" && !Number.isSafeInteger(value))) {
-    return unavailable(dataset, registrationValue, `${field} contains a negative or non-integral native value.`, citations(candidates.map(({ event }) => event)), candidates.map(({ event }) => event));
-  }
   const finals = candidates.filter(({ semantics }) => semantics === "cumulative-final");
   if (finals.length > 0) {
+    const invalid = invalidResourceReason(finals, field, unit);
+    if (invalid !== undefined) return unavailable(dataset, registrationValue, invalid, citations(finals.map(({ event }) => event)), finals.map(({ event }) => event));
     const values = new Set(finals.map(({ value }) => value));
     return values.size === 1
       ? known(dataset, registrationValue, finals[0]!.value, unit, citations(finals.map(({ event }) => event)), finals.map(({ event }) => event))
       : unavailable(dataset, registrationValue, `Conflicting cumulative-final ${field} records are available.`, citations(finals.map(({ event }) => event)), finals.map(({ event }) => event));
   }
   if (candidates.every(({ semantics }) => semantics === "increment")) {
-    return known(dataset, registrationValue, candidates.reduce((sum, { value }) => sum + value, 0), unit, citations(candidates.map(({ event }) => event)), candidates.map(({ event }) => event));
+    const invalid = invalidResourceReason(candidates, field, unit);
+    return invalid === undefined
+      ? known(dataset, registrationValue, candidates.reduce((sum, { value }) => sum + value, 0), unit, citations(candidates.map(({ event }) => event)), candidates.map(({ event }) => event))
+      : unavailable(dataset, registrationValue, invalid, citations(candidates.map(({ event }) => event)), candidates.map(({ event }) => event));
   }
   if (candidates.every(({ semantics }) => semantics === "cumulative-snapshot")) {
-    const ordered = candidates.flatMap(({ event, value }) => event.nativeOrder.status === "known"
-      ? [{ event, value, order: event.nativeOrder.value, domain: event.nativeOrder.domain }] : []);
-    if (ordered.length === candidates.length && new Set(ordered.map(({ domain }) => domain)).size === 1) {
-      const latestOrder = Math.max(...ordered.map(({ order }) => order));
-      const latest = ordered.filter(({ order }) => order === latestOrder);
-      const values = new Set(latest.map(({ value }) => value));
-      return values.size === 1
-        ? known(dataset, registrationValue, latest[0]!.value, unit, citations(latest.map(({ event }) => event)), latest.map(({ event }) => event))
-        : unavailable(dataset, registrationValue, `Conflicting latest cumulative ${field} snapshots are available.`, citations(latest.map(({ event }) => event)), latest.map(({ event }) => event));
-    }
+    const snapshots = resourceEvents.filter(({ attributes }) => attributes.resourceSemantics === "cumulative-snapshot");
+    return cumulativeResourceObservation(dataset, registrationValue, candidates, snapshots, field, unit);
   }
   return unavailable(dataset, registrationValue, `${field} records have overlapping or unordered usage semantics.`, citations(candidates.map(({ event }) => event)), candidates.map(({ event }) => event));
+}
+
+function cumulativeResourceObservation(
+  dataset: NormalizedDataset,
+  extractor: ExtractorRegistration,
+  candidates: readonly { event: UniformEvent; value: number; semantics: string; aliasConflict: boolean }[],
+  semanticEvents: readonly UniformEvent[],
+  field: string,
+  unit: string,
+): StructuralObservation {
+  const ordered = semanticEvents.flatMap((event) => event.nativeOrder.status === "known"
+    ? [{ event, order: event.nativeOrder.value, domain: event.nativeOrder.domain }] : []);
+  if (semanticEvents.length > 1 && (ordered.length !== semanticEvents.length || new Set(ordered.map(({ domain }) => domain)).size !== 1)) {
+    return unavailable(dataset, extractor, `${field} cumulative snapshot records have unknown or unrelated native order.`, citations(semanticEvents), semanticEvents);
+  }
+  const latestEvents = semanticEvents.length === 1
+    ? semanticEvents
+    : ordered.filter(({ order }) => order === Math.max(...ordered.map(({ order: value }) => value))).map(({ event }) => event);
+  const latestIds = new Set(latestEvents.map(({ id }) => id));
+  const latest = candidates.filter(({ event }) => latestIds.has(event.id));
+  if (latest.length === 0) {
+    return unavailable(dataset, extractor, `Latest cumulative snapshot omits ${field}.`, citations(latestEvents), latestEvents);
+  }
+  const invalid = invalidResourceReason(latest, field, unit);
+  if (invalid !== undefined) return unavailable(dataset, extractor, invalid, citations(latest.map(({ event }) => event)), latest.map(({ event }) => event));
+  const values = new Set(latest.map(({ value }) => value));
+  return values.size === 1
+    ? known(dataset, extractor, latest[0]!.value, unit, citations(latest.map(({ event }) => event)), latest.map(({ event }) => event))
+    : unavailable(dataset, extractor, `Conflicting latest cumulative ${field} snapshots are available.`, citations(latest.map(({ event }) => event)), latest.map(({ event }) => event));
+}
+
+function invalidResourceReason(
+  candidates: readonly { value: number; aliasConflict: boolean }[],
+  field: string,
+  unit: string,
+): string | undefined {
+  if (candidates.some(({ aliasConflict }) => aliasConflict)) return `${field} aliases conflict within one native record.`;
+  return candidates.some(({ value }) => !Number.isFinite(value) || value < 0 || unit === "tokens" && !Number.isSafeInteger(value))
+    ? `${field} contains a negative or non-integral native value.` : undefined;
 }
 
 function countOrUnavailable(
