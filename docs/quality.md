@@ -11,12 +11,12 @@ last_memory_sync: 2026-08-26T03:34:35.394130+00:00
 
 ## Current model
 
-- COE-576 contributed: PR #25: COE-576: Define the uniform event adapter contract (merge `a302d38`)
-- COE-577 contributed: PR #28: feat: normalize Agent SDK capture into uniform events (merge `4050f9e`)
-- COE-578 contributed: PR #30: COE-578: Add pinned OpenHands Agent Server adapter (merge `07bf452`)
-- COE-579 contributed: PR #29: COE-579: Add the DeepSeek Harness runtime adapter (merge `49a5721`)
-- COE-580 contributed: PR #31: COE-580: Gate normalization integrity and comparisons (merge `035bdab`)
-- COE-592 contributed: PR #23: COE-592: support observational Agent SDK runs (merge `03d1cd5`)
+- COE-559 contributed: PR #1: Bootstrap the EBO TypeScript command surface (merge `dbeb33e`)
+- COE-568 contributed: PR #15: COE-570: capture TypeScript Agent SDK lifecycle hooks (merge `8ca6c62`)
+- COE-569 contributed: PR #15: COE-570: capture TypeScript Agent SDK lifecycle hooks (merge `8ca6c62`)
+- COE-570 contributed: PR #15: COE-570: capture TypeScript Agent SDK lifecycle hooks (merge `8ca6c62`)
+- COE-571 contributed: PR #13: COE-571: configure correlated Agent SDK OTLP receipt checks (merge `113490f`)
+- COE-572 contributed: PR #17: COE-572: assemble complete and partial run bundles (merge `affd9de`)
 
 ## Important invariants
 
@@ -33,22 +33,46 @@ last_memory_sync: 2026-08-26T03:34:35.394130+00:00
 
 ## Recent changes
 
+- COE-559: Bootstrap the EBO implementation repository
+- COE-568: Implement the Claude Agent SDK executor
+- COE-569: Capture Agent SDK streams and session identity
+- COE-570: Capture the supported TypeScript Agent SDK lifecycle hooks
+- COE-571: Configure Agent SDK OpenTelemetry correlation and receipt checks
+- COE-572: Package outcome and partial run evidence
+- COE-573: Implement capture qualification and end-to-end smoke coverage
+- COE-574: Implement the fail-closed export pipeline
+- COE-575: Implement corpus indexing and portable bundles
 - COE-576: Define the uniform event IR and adapter contract
 - COE-577: Implement the Agent SDK normalization adapter
 - COE-578: Implement the OpenHands harness adapter
 - COE-579: Implement the DeepSeek Harness adapter
 - COE-580: Implement normalization integrity and comparison gates
+- COE-581: Implement outcome ingestion and structural observations
+- COE-590: Complete the production Agent SDK capture path
+- COE-591: Operationalize one Agent SDK run from a frozen queue entry
 - COE-592: Support observational Agent SDK tasks without verifiers
 - COE-593: Admit common framework filenames in observational fixtures
 - COE-594: Qualify real package-manager workspaces and trajectory exports
 
 ## Source refs
 
+- COE-559
+- COE-568
+- COE-569
+- COE-570
+- COE-571
+- COE-572
+- COE-573
+- COE-574
+- COE-575
 - COE-576
 - COE-577
 - COE-578
 - COE-579
 - COE-580
+- COE-581
+- COE-590
+- COE-591
 - COE-592
 - COE-593
 - COE-594

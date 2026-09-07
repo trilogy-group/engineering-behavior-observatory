@@ -15,6 +15,7 @@ last_memory_sync: 2026-09-07T07:19:40.803748+00:00
 - COE-578 contributed: PR #30: COE-578: Add pinned OpenHands Agent Server adapter (merge `07bf452`)
 - COE-579 contributed: PR #29: COE-579: Add the DeepSeek Harness runtime adapter (merge `49a5721`)
 - COE-580 contributed: PR #31: COE-580: Gate normalization integrity and comparisons (merge `035bdab`)
+- COE-581 contributed: PR #35: COE-581: Add outcome and structural observations (merge `447db73`)
 
 ## Important invariants
 
@@ -35,6 +36,7 @@ last_memory_sync: 2026-09-07T07:19:40.803748+00:00
 - COE-578: Implement the OpenHands harness adapter
 - COE-579: Implement the DeepSeek Harness adapter
 - COE-580: Implement normalization integrity and comparison gates
+- COE-581: Implement outcome ingestion and structural observations
 
 ## Source refs
 
@@ -42,5 +44,6 @@ last_memory_sync: 2026-09-07T07:19:40.803748+00:00
 - COE-578
 - COE-579
 - COE-580
+- COE-581
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

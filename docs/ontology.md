@@ -12,6 +12,7 @@ last_memory_sync: 2026-09-07T07:19:40.803790+00:00
 ## Current model
 
 - COE-576 contributed: PR #25: COE-576: Define the uniform event adapter contract (merge `a302d38`)
+- COE-581 contributed: PR #35: COE-581: Add outcome and structural observations (merge `447db73`)
 
 ## Important invariants
 
@@ -29,9 +30,11 @@ last_memory_sync: 2026-09-07T07:19:40.803790+00:00
 ## Recent changes
 
 - COE-576: Define the uniform event IR and adapter contract
+- COE-581: Implement outcome ingestion and structural observations
 
 ## Source refs
 
 - COE-576
+- COE-581
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

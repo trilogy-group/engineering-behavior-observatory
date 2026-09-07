@@ -12,6 +12,7 @@ last_memory_sync: 2026-09-07T07:19:40.803726+00:00
 ## Current model
 
 - COE-579 contributed: PR #29: COE-579: Add the DeepSeek Harness runtime adapter (merge `49a5721`)
+- COE-581 contributed: PR #35: COE-581: Add outcome and structural observations (merge `447db73`)
 
 ## Important invariants
 
@@ -29,9 +30,11 @@ last_memory_sync: 2026-09-07T07:19:40.803726+00:00
 ## Recent changes
 
 - COE-579: Implement the DeepSeek Harness adapter
+- COE-581: Implement outcome ingestion and structural observations
 
 ## Source refs
 
 - COE-579
+- COE-581
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

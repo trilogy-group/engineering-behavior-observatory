@@ -12,6 +12,7 @@ last_memory_sync: 2026-09-07T07:19:40.803811+00:00
 ## Current model
 
 - COE-578 contributed: PR #30: COE-578: Add pinned OpenHands Agent Server adapter (merge `07bf452`)
+- COE-581 contributed: PR #35: COE-581: Add outcome and structural observations (merge `447db73`)
 
 ## Important invariants
 
@@ -29,9 +30,11 @@ last_memory_sync: 2026-09-07T07:19:40.803811+00:00
 ## Recent changes
 
 - COE-578: Implement the OpenHands harness adapter
+- COE-581: Implement outcome ingestion and structural observations
 
 ## Source refs
 
 - COE-578
+- COE-581
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

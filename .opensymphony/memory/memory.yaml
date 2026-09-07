@@ -31,13 +31,17 @@ areas:
       - area:adapters
       - area:agent-sdk
       - area:deepseek-runtime
+      - area:evaluation
       - area:evidence
       - area:json-rpc
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:outcomes
+      - area:structural-analysis
       linear_milestones:
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   agent-sdk:
     title: Agent Sdk
     docs_target: docs/agent-sdk.md
@@ -54,6 +58,7 @@ areas:
       - area:capture
       - area:corpus
       - area:deepseek-runtime
+      - area:evaluation
       - area:evidence
       - area:export
       - area:hooks
@@ -67,10 +72,12 @@ areas:
       - area:runner
       - area:security
       - area:sessions
+      - area:structural-analysis
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   capture:
     title: Capture
     docs_target: docs/capture.md
@@ -86,6 +93,7 @@ areas:
       - area:capture
       - area:corpus
       - area:deepseek-runtime
+      - area:evaluation
       - area:evidence
       - area:export
       - area:hooks
@@ -99,10 +107,12 @@ areas:
       - area:runner
       - area:security
       - area:sessions
+      - area:structural-analysis
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   corpus:
     title: Corpus
     docs_target: docs/corpus.md
@@ -117,16 +127,20 @@ areas:
       - area:agent-sdk
       - area:corpus
       - area:deepseek-runtime
+      - area:evaluation
       - area:evidence
       - area:export
       - area:json-rpc
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:outcomes
       - area:quality
+      - area:structural-analysis
       linear_milestones:
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   deepseek-runtime:
     title: Deepseek Runtime
     docs_target: docs/deepseek-runtime.md
@@ -139,10 +153,29 @@ areas:
     source_refs:
       linear_labels:
       - area:deepseek-runtime
+      - area:evaluation
       - area:json-rpc
       - area:normalization
+      - area:outcomes
+      - area:structural-analysis
       linear_milestones:
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
+  evaluation:
+    title: Evaluation
+    docs_target: docs/evaluation.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - evaluation
+    source_refs:
+      linear_labels:
+      - area:evaluation
+      - area:outcomes
+      - area:structural-analysis
+      linear_milestones:
+      - 'M5: Behavioral Evaluation'
   evidence:
     title: Evidence
     docs_target: docs/evidence.md
@@ -158,6 +191,7 @@ areas:
       - area:capture
       - area:corpus
       - area:deepseek-runtime
+      - area:evaluation
       - area:evidence
       - area:export
       - area:json-rpc
@@ -168,10 +202,12 @@ areas:
       - area:quality
       - area:runner
       - area:security
+      - area:structural-analysis
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   export:
     title: Export
     docs_target: docs/export.md
@@ -186,17 +222,21 @@ areas:
       - area:agent-sdk
       - area:corpus
       - area:deepseek-runtime
+      - area:evaluation
       - area:evidence
       - area:export
       - area:json-rpc
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:outcomes
       - area:quality
       - area:security
+      - area:structural-analysis
       linear_milestones:
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   hooks:
     title: Hooks
     docs_target: docs/hooks.md
@@ -212,6 +252,7 @@ areas:
       - area:capture
       - area:corpus
       - area:deepseek-runtime
+      - area:evaluation
       - area:evidence
       - area:export
       - area:hooks
@@ -219,13 +260,16 @@ areas:
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:outcomes
       - area:quality
       - area:runner
       - area:security
+      - area:structural-analysis
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   json-rpc:
     title: Json Rpc
     docs_target: docs/json-rpc.md
@@ -237,10 +281,14 @@ areas:
     - json-rpc
     source_refs:
       linear_labels:
+      - area:evaluation
       - area:json-rpc
       - area:normalization
+      - area:outcomes
+      - area:structural-analysis
       linear_milestones:
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   m2-native-agent-sdk-capture:
     title: M2 Native Agent Sdk Capture
     docs_target: docs/m2-native-agent-sdk-capture.md
@@ -265,13 +313,17 @@ areas:
       linear_labels:
       - area:adapters
       - area:deepseek-runtime
+      - area:evaluation
       - area:evidence
       - area:json-rpc
       - area:normalization
       - area:openhands-runtime
+      - area:outcomes
       - area:quality
+      - area:structural-analysis
       linear_milestones:
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   ontology:
     title: Ontology
     docs_target: docs/ontology.md
@@ -282,9 +334,13 @@ areas:
     - ontology
     source_refs:
       linear_labels:
+      - area:evaluation
       - area:ontology
+      - area:outcomes
+      - area:structural-analysis
       linear_milestones:
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   openhands-runtime:
     title: Openhands Runtime
     docs_target: docs/openhands-runtime.md
@@ -296,9 +352,13 @@ areas:
     - openhands-runtime
     source_refs:
       linear_labels:
+      - area:evaluation
       - area:openhands-runtime
+      - area:outcomes
+      - area:structural-analysis
       linear_milestones:
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   opentelemetry:
     title: Opentelemetry
     docs_target: docs/opentelemetry.md
@@ -314,6 +374,7 @@ areas:
       - area:capture
       - area:corpus
       - area:deepseek-runtime
+      - area:evaluation
       - area:evidence
       - area:export
       - area:json-rpc
@@ -321,13 +382,16 @@ areas:
       - area:ontology
       - area:openhands-runtime
       - area:opentelemetry
+      - area:outcomes
       - area:quality
       - area:runner
       - area:security
+      - area:structural-analysis
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   outcomes:
     title: Outcomes
     docs_target: docs/outcomes.md
@@ -343,6 +407,7 @@ areas:
       - area:capture
       - area:corpus
       - area:deepseek-runtime
+      - area:evaluation
       - area:evidence
       - area:export
       - area:json-rpc
@@ -353,10 +418,12 @@ areas:
       - area:quality
       - area:runner
       - area:security
+      - area:structural-analysis
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   quality:
     title: Quality
     docs_target: docs/quality.md
@@ -372,6 +439,7 @@ areas:
       - area:capture
       - area:corpus
       - area:deepseek-runtime
+      - area:evaluation
       - area:evidence
       - area:export
       - area:hooks
@@ -386,11 +454,13 @@ areas:
       - area:runner
       - area:security
       - area:sessions
+      - area:structural-analysis
       linear_milestones:
       - 'M0: Foundation And Evidence Contracts'
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   repository:
     title: Repository
     docs_target: docs/repository.md
@@ -406,6 +476,7 @@ areas:
       - area:capture
       - area:corpus
       - area:deepseek-runtime
+      - area:evaluation
       - area:evidence
       - area:export
       - area:hooks
@@ -420,11 +491,13 @@ areas:
       - area:runner
       - area:security
       - area:sessions
+      - area:structural-analysis
       linear_milestones:
       - 'M0: Foundation And Evidence Contracts'
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   runner:
     title: Runner
     docs_target: docs/runner.md
@@ -440,19 +513,23 @@ areas:
       - area:capture
       - area:corpus
       - area:deepseek-runtime
+      - area:evaluation
       - area:evidence
       - area:export
       - area:json-rpc
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:outcomes
       - area:quality
       - area:runner
       - area:security
+      - area:structural-analysis
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   security:
     title: Security
     docs_target: docs/security.md
@@ -466,16 +543,20 @@ areas:
       - area:adapters
       - area:agent-sdk
       - area:deepseek-runtime
+      - area:evaluation
       - area:evidence
       - area:json-rpc
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:outcomes
       - area:quality
       - area:security
+      - area:structural-analysis
       linear_milestones:
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
   sessions:
     title: Sessions
     docs_target: docs/sessions.md
@@ -491,19 +572,37 @@ areas:
       - area:capture
       - area:corpus
       - area:deepseek-runtime
+      - area:evaluation
       - area:evidence
       - area:export
       - area:json-rpc
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:outcomes
       - area:quality
       - area:runner
       - area:security
       - area:sessions
+      - area:structural-analysis
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
+      - 'M5: Behavioral Evaluation'
+  structural-analysis:
+    title: Structural Analysis
+    docs_target: docs/structural-analysis.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - structural analysis
+    - structural-analysis
+    source_refs:
+      linear_labels:
+      - area:structural-analysis
+      linear_milestones:
+      - 'M5: Behavioral Evaluation'
 redaction:
   deny_patterns: []
