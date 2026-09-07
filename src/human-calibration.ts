@@ -573,5 +573,6 @@ function toPosix(path: string): string {
 }
 
 function escapeHtml(value: unknown): string {
-  return [...String(value)].map((character) => `&#${character.codePointAt(0)};`).join("");
+  const entities: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+  return String(value).replace(/[&<>"']/gu, (character) => entities[character]!);
 }

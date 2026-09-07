@@ -42,7 +42,7 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
       sources: assertions.map((assertion) => ({
         bundleRoot,
         assertionPath: join(temporary, `${assertion.id}.json`),
-        taskContext: "Inspect <img src=x onerror=alert(1)> result.txt and report the retained change.",
+        taskContext: "Inspect <img src=x onerror=alert(1)> result.txt and report the retained change.\u0080",
       })),
     };
     const criteria: ReviewSampleCriteria = {
@@ -90,9 +90,10 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     symlinkSync(bundleRoot, sourceAlias, "dir");
     assert.throws(() => assertCalibrationDestination(selection.candidates.map(({ source }) => source.bundleRoot), join(sourceAlias, "derived.json")), /outside immutable/u);
     const html = readFileSync(join(packetRoot, "index.html"), "utf8");
-    assert.match(html, /&#60;&#115;&#99;&#114;&#105;&#112;&#116;&#62;/u);
+    assert.match(html, /&lt;script&gt;fixture&lt;\/script&gt;/u);
     assert.doesNotMatch(html, /<script>fixture<\/script>/u);
     assert.doesNotMatch(html, /<img src=x onerror=alert\(1\)>/u);
+    assert.match(html, /\u0080/u, "non-markup evidence characters are preserved exactly");
     assert.equal(existsSync(join(packetRoot, "session.jsonl")), false, "the source artifact is not copied wholesale");
     assert.equal(relative(packetRoot, bundleRoot).startsWith(".."), true, "packet links remain relative to the declared local evidence root");
     output = "";
@@ -105,7 +106,7 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     assert.match(evidenceHtml, /the native artifact/u);
     assert.match(evidenceHtml, /<code>.+<\/code>/u);
     assert.doesNotMatch(evidenceHtml, /<script>|<img/u);
-    assert.match(evidenceHtml, /&#/u);
+    assert.match(evidenceHtml, /&quot;/u);
     output = "";
     assert.equal(await main(["calibration", "binding", selectionPath, "assertion-a"], (message) => { output += message; }), 0);
     assert.match(output, /"previousHistory":null/u);
