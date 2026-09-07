@@ -102,6 +102,7 @@ test("session-scoped progress remains part of an explicitly agent-scoped native 
   const hook = event(1, "tool", "before", {
     toolUseId: "shared-operation",
     agentId: "worker-1",
+    sessionId: "session-1",
     toolName: "Read",
     inputDigest: digest,
   }, "agent-hook", "hooks");
@@ -116,6 +117,29 @@ test("session-scoped progress remains part of an explicitly agent-scoped native 
   });
   assert.deepEqual(observation(report, "unidentified-tool-native-record-count").value, {
     status: "known", value: 0, unit: "native-records",
+  });
+});
+
+test("additional agent identity does not erase distinct native sessions", () => {
+  const root = event(1, "tool", "before", {
+    callId: "1",
+    toolName: "Read",
+    inputDigest: digest,
+  }, "root-session-operation", "root-order");
+  root.scope = { kind: "session", id: "root-session" };
+  const child = event(1, "tool", "before", {
+    callId: "1",
+    agentId: "worker-1",
+    toolName: "Read",
+    inputDigest: digest,
+  }, "child-session-operation", "child-order");
+  child.scope = { kind: "session", id: "child-session" };
+  const report = createStructuralObservationSet(dataset([root, child]), coverage([root, child]));
+  assert.deepEqual(observation(report, "tool-operation-count").value, {
+    status: "known", value: 2, unit: "identified-logical-tool-operations",
+  });
+  assert.deepEqual(observation(report, "repeated-tool-operation-count").value, {
+    status: "known", value: 1, unit: "logical-tool-operations",
   });
 });
 

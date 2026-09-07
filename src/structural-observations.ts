@@ -277,14 +277,8 @@ function toolOperations(events: readonly UniformEvent[]): ToolOperation[] {
     grouped.push(event);
     groups.set(id, grouped);
   }
-  return [...groups].sort(([left], [right]) => left.localeCompare(right)).flatMap(([id, grouped]) => {
-    const preferAgentScope = grouped.some((event) => explicitAgentScope(event) !== undefined);
-    const actorScopes = new Set(grouped.flatMap((event) => toolActorScope(event, preferAgentScope) ?? []));
-    const scopedGroups = actorScopes.size <= 1
-      ? [[id, grouped] as const]
-      : [...actorScopes].sort().map((scope) => [`${scope}:${id}`, grouped.filter((event) => toolActorScope(event, preferAgentScope) === scope)] as const);
-    return scopedGroups.map(([scopedId, scoped]) => operation(scopedId, scoped));
-  });
+  return [...groups].sort(([left], [right]) => left.localeCompare(right))
+    .flatMap(([id, grouped]) => groupToolEvents(id, grouped, events).groups.map(([scopedId, scoped]) => operation(scopedId, scoped)));
 }
 
 function operation(id: string, grouped: UniformEvent[]): ToolOperation {
@@ -300,9 +294,7 @@ function operation(id: string, grouped: UniformEvent[]): ToolOperation {
 }
 
 function actorScope(event: UniformEvent): string | undefined {
-  const scopeId = scalarString(event.scope.id);
-  return explicitAgentScope(event)
-    ?? ((event.scope.kind === "session" || event.scope.kind === "turn") && scopeId !== undefined ? `${event.scope.kind}:${scopeId}` : undefined);
+  return directSessionScope(event) ?? explicitAgentScope(event);
 }
 
 function explicitAgentScope(event: UniformEvent): string | undefined {
@@ -310,8 +302,78 @@ function explicitAgentScope(event: UniformEvent): string | undefined {
   return id === undefined ? undefined : `agent:${id}`;
 }
 
-function toolActorScope(event: UniformEvent, preferAgentScope: boolean): string | undefined {
-  return explicitAgentScope(event) ?? (preferAgentScope ? undefined : actorScope(event));
+function directSessionScope(event: UniformEvent): string | undefined {
+  const retained = scalarString(event.attributes.sessionId);
+  if (retained !== undefined) return `session:${retained}`;
+  const scopeId = scalarString(event.scope.id);
+  return (event.scope.kind === "session" || event.scope.kind === "turn") && scopeId !== undefined
+    ? `${event.scope.kind}:${scopeId}` : undefined;
+}
+
+function sessionScope(event: UniformEvent, allEvents: readonly UniformEvent[]): string | undefined {
+  const direct = directSessionScope(event);
+  if (direct !== undefined) return direct;
+  const reference = canonicalizeMetadata(event.source.nativeReference);
+  const sibling = allEvents.find((candidate) => candidate.id !== event.id
+    && canonicalizeMetadata(candidate.source.nativeReference) === reference && directSessionScope(candidate) !== undefined);
+  if (sibling !== undefined) return directSessionScope(sibling);
+  for (const relation of event.relations.known) {
+    const related = allEvents.find(({ id }) => id === relation.eventId);
+    if (related === undefined) continue;
+    const relatedDirect = directSessionScope(related);
+    if (relatedDirect !== undefined) return relatedDirect;
+    const relatedReference = canonicalizeMetadata(related.source.nativeReference);
+    const relatedSibling = allEvents.find((candidate) => candidate.id !== related.id
+      && canonicalizeMetadata(candidate.source.nativeReference) === relatedReference && directSessionScope(candidate) !== undefined);
+    if (relatedSibling !== undefined) return directSessionScope(relatedSibling);
+  }
+  return undefined;
+}
+
+function groupToolEvents(
+  id: string,
+  events: readonly UniformEvent[],
+  allEvents: readonly UniformEvent[],
+): { groups: Array<readonly [string, UniformEvent[]]>; ambiguous: UniformEvent[] } {
+  const sessions = new Set(events.flatMap((event) => sessionScope(event, allEvents) ?? []));
+  if (sessions.size === 0) return splitToolEventsByAgent(id, events);
+  const bySession = new Map([...sessions].sort().map((session) => [session, [] as UniformEvent[]]));
+  const agentSessions = new Map<string, Set<string>>();
+  for (const event of events) {
+    const agent = explicitAgentScope(event);
+    const session = sessionScope(event, allEvents);
+    if (agent === undefined || session === undefined) continue;
+    const linked = agentSessions.get(agent) ?? new Set<string>();
+    linked.add(session);
+    agentSessions.set(agent, linked);
+  }
+  const ambiguous: UniformEvent[] = [];
+  for (const event of events) {
+    const session = sessionScope(event, allEvents);
+    if (session !== undefined) bySession.get(session)!.push(event);
+    else if (sessions.size === 1) bySession.values().next().value!.push(event);
+    else {
+      const linked = agentSessions.get(explicitAgentScope(event) ?? "");
+      if (linked?.size === 1) bySession.get([...linked][0]!)!.push(event);
+      else ambiguous.push(event);
+    }
+  }
+  const groups: Array<readonly [string, UniformEvent[]]> = [];
+  for (const [session, grouped] of bySession) {
+    const split = splitToolEventsByAgent(`${session}:${id}`, grouped);
+    groups.push(...split.groups);
+    ambiguous.push(...split.ambiguous);
+  }
+  return { groups, ambiguous };
+}
+
+function splitToolEventsByAgent(id: string, events: readonly UniformEvent[]): { groups: Array<readonly [string, UniformEvent[]]>; ambiguous: UniformEvent[] } {
+  const agents = new Set(events.flatMap((event) => explicitAgentScope(event) ?? []));
+  if (agents.size <= 1) return { groups: [[id, [...events]]], ambiguous: [] };
+  return {
+    groups: [...agents].sort().map((agent) => [`${agent}:${id}`, events.filter((event) => explicitAgentScope(event) === agent)] as const),
+    ambiguous: events.filter((event) => explicitAgentScope(event) === undefined),
+  };
 }
 
 function ambiguousActorScopedToolEvents(events: readonly UniformEvent[]): UniformEvent[] {
@@ -323,11 +385,7 @@ function ambiguousActorScopedToolEvents(events: readonly UniformEvent[]): Unifor
     grouped.push(event);
     groups.set(id, grouped);
   }
-  return [...groups.values()].flatMap((grouped) => {
-    const preferAgentScope = grouped.some((event) => explicitAgentScope(event) !== undefined);
-    const scopes = new Set(grouped.flatMap((event) => toolActorScope(event, preferAgentScope) ?? []));
-    return scopes.size > 1 ? grouped.filter((event) => toolActorScope(event, preferAgentScope) === undefined) : [];
-  });
+  return [...groups.entries()].flatMap(([id, grouped]) => groupToolEvents(id, grouped, events).ambiguous);
 }
 
 function uniqueEvents(events: readonly UniformEvent[]): UniformEvent[] {
