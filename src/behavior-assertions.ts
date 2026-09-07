@@ -11,6 +11,7 @@ import { canonicalizeMetadata, digestMetadata, validateArtifact } from "./artifa
 import {
   describeNormalizedDataset,
   validateNormalizedDataset,
+  type AdapterCoverageReport,
   type NormalizedDataset,
 } from "./normalization-integrity.js";
 import type {
@@ -79,6 +80,13 @@ export type BehaviorReview = {
 
 export type ResolvedBehaviorCitation = BehaviorCitation & {
   resolution: NativeEvidenceResolution;
+};
+
+export type AgentSdkBehaviorEvidence = {
+  capture: NormalizationInput<AgentSdkNativeRecord>;
+  dataset: NormalizedDataset;
+  resolver: NativeEvidenceResolver;
+  coverage: AdapterCoverageReport;
 };
 
 export const DEFAULT_BEHAVIOR_VOCABULARY = loadDefaultVocabulary();
@@ -161,6 +169,13 @@ export async function validateAgentSdkBehaviorAssertion(
   assertion: BehaviorAssertion,
   review?: BehaviorReview,
 ): Promise<readonly ResolvedBehaviorCitation[]> {
+  const { dataset, resolver } = await createAgentSdkBehaviorEvidence(bundleRoot);
+  const citations = await validateBehaviorAssertion(assertion, dataset, resolver);
+  if (review !== undefined) validateBehaviorReview(assertion, review);
+  return citations;
+}
+
+export async function createAgentSdkBehaviorEvidence(bundleRoot: string): Promise<AgentSdkBehaviorEvidence> {
   const capture = await readQualifiedClaudeAgentSdkCapture(bundleRoot);
   const normalization = await claudeAgentSdkNormalizationAdapter.normalize(capture);
   const dataset = describeNormalizedDataset({
@@ -171,13 +186,9 @@ export async function validateAgentSdkBehaviorAssertion(
     nativeType: agentSdkNativeType,
     contentDigest: (reference) => agentSdkContentDigest(capture, reference),
   });
-  const citations = await validateBehaviorAssertion(
-    assertion,
-    dataset,
-    createAgentSdkNativeEvidenceResolver(capture),
-  );
-  if (review !== undefined) validateBehaviorReview(assertion, review);
-  return citations;
+  const resolver = createAgentSdkNativeEvidenceResolver(capture);
+  const coverage = await validateNormalizedDataset(dataset, resolver);
+  return { capture, dataset, resolver, coverage };
 }
 
 function assertVocabulary(vocabulary: BehaviorVocabulary): void {

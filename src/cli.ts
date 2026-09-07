@@ -21,7 +21,13 @@ import { validateAgentSdkBehaviorAssertion, type BehaviorAssertion, type Behavio
 import { runCodexQueueEntry } from "./codex-run.js";
 import { createPortableRunBundleExport, type PortableExportPolicy } from "./exports.js";
 import { assessComparisonEligibility, type ComparisonRequest } from "./normalization-integrity.js";
+import {
+  runAgentSdkSemanticJudge,
+  type SemanticJudgeBackend,
+  type SemanticJudgeRequest,
+} from "./semantic-judge.js";
 import { createAgentSdkStructuralObservationSet } from "./structural-observations.js";
+import type { StructuralObservationSet } from "./structural-observations.js";
 import {
   admitTaskPacket,
   formatErrors,
@@ -54,6 +60,7 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo observations create <run-bundle-root> <output.json>
        ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
        ebo assertions validate <run-bundle-root> <assertion.json> [review.json]
+       ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root>
 
 Engineering Behavior Observatory
 `;
@@ -65,6 +72,7 @@ export function main(
   write: (message: string) => void = (message) => {
     process.stdout.write(message);
   },
+  dependencies: { semanticJudgeBackend?: SemanticJudgeBackend } = {},
 ): number | Promise<number> {
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     write(usage);
@@ -147,6 +155,36 @@ export function main(
       return validateAgentSdkBehaviorAssertion(bundleRoot, assertion, review).then((citations) => {
         write(`Validated behavior assertion "${assertion.id}" (${citations.length} citation(s); review=${review?.state ?? "unreviewed"}).\n`);
         return 0;
+      }, (error: unknown) => {
+        write(`${errorMessage(error)}\n`);
+        return 1;
+      });
+    } catch (error) {
+      write(`${errorMessage(error)}\n`);
+      return 1;
+    }
+  }
+
+  if (args[0] === "judge" && args[1] === "run") {
+    const bundleRoot = args[2];
+    const observationsPath = args[3];
+    const requestPath = args[4];
+    const outputRoot = args[5];
+    if (bundleRoot === undefined || observationsPath === undefined || requestPath === undefined
+        || outputRoot === undefined || args.length !== 6) {
+      write("Usage: ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root>\n");
+      return 1;
+    }
+    try {
+      return runAgentSdkSemanticJudge({
+        bundleRoot,
+        observations: readJson(observationsPath) as StructuralObservationSet,
+        request: readJson(requestPath) as SemanticJudgeRequest,
+        outputRoot,
+        ...(dependencies.semanticJudgeBackend === undefined ? {} : { backend: dependencies.semanticJudgeBackend }),
+      }).then((record) => {
+        write(`${canonicalizeMetadata(record)}\n`);
+        return record.status === "proposed" ? 0 : 1;
       }, (error: unknown) => {
         write(`${errorMessage(error)}\n`);
         return 1;

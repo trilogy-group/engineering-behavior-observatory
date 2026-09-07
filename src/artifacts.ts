@@ -1137,6 +1137,7 @@ function loadValidators(): Map<string, ValidateFunction> {
   ajv.addSchema(readSchema("normalization-integrity.v1.json"));
   ajv.addSchema(readSchema("structural-observations.v1.json"));
   ajv.addSchema(readSchema("behavior-assertions.v1.json"));
+  ajv.addSchema(readSchema("semantic-judge.v1.json"));
   ajv.addSchema(readSchema("deepseek-runtime-composition.v1.schema.json"));
 
   return new Map([
@@ -1159,6 +1160,9 @@ function loadValidators(): Map<string, ValidateFunction> {
     ["ebo.behavior-vocabulary/v1", requiredValidator(ajv, "urn:ebo:schema:behavior-assertions:v1#/$defs/vocabulary")],
     ["ebo.behavior-assertion/v1", requiredValidator(ajv, "urn:ebo:schema:behavior-assertions:v1#/$defs/assertion")],
     ["ebo.behavior-review/v1", requiredValidator(ajv, "urn:ebo:schema:behavior-assertions:v1#/$defs/review")],
+    ["ebo.semantic-judge-request/v1", requiredValidator(ajv, "urn:ebo:schema:semantic-judge:v1#/$defs/request")],
+    ["ebo.semantic-judge-input/v1", requiredValidator(ajv, "urn:ebo:schema:semantic-judge:v1#/$defs/input")],
+    ["ebo.semantic-judgment/v1", requiredValidator(ajv, "urn:ebo:schema:semantic-judge:v1#/$defs/judgment")],
     ["ebo.deepseek-runtime-composition/v1", requiredValidator(ajv, "https://ebo.dev/schemas/deepseek-runtime-composition.v1.schema.json")],
   ]);
 }
