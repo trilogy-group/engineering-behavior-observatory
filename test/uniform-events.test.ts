@@ -57,7 +57,7 @@ test("validates golden events for every initial family without inventing missing
   assert.ok(fixture.some(({ nativeTime }) => nativeTime.status === "unsupported"));
   assert.deepEqual(fixture.filter(({ nativeOrder }) => nativeOrder.status === "known")
     .map(({ nativeOrder }) => nativeOrder.status === "known" ? nativeOrder.domain : ""),
-  ["session", "hooks", "hooks", "hooks", "hooks", "hooks", "hooks"]);
+  ["session", "rpc", "hooks", "hooks", "hooks", "hooks", "hooks"]);
   assert.ok(fixture.some(({ relations }) => relations.parent.status === "unknown"));
   assert.ok(fixture.some(({ content }) => content.status === "unknown"));
   assert.ok(fixture.some(({ content }) => content.status === "known" && content.value.length === 0));

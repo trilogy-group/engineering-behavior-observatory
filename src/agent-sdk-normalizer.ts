@@ -98,7 +98,10 @@ const BASE_CAPABILITY_PROFILE: AdapterCapabilityProfile = {
   nativeTypes: ADAPTER_NATIVE_TYPES,
   families: {
     message: { status: "available" },
-    "model-request": { status: "available" },
+    "model-request": {
+      status: "unsupported",
+      detail: "Retained Agent SDK evidence does not expose inference-request lifecycle records.",
+    },
     tool: { status: "available" },
     context: { status: "available" },
     permission: { status: "available" },
@@ -463,8 +466,8 @@ function hookEventShape(hook: string): { family: UniformEventFamily; phase: Unif
   if (hook === "MessageDisplay") return { family: "message", phase: "after" };
   if (hook === "PreCompact") return { family: "context", phase: "before" };
   if (["PostCompact", "InstructionsLoaded"].includes(hook)) return { family: "context", phase: "after" };
-  if (hook === "PreModelSwitch") return { family: "model-request", phase: "before" };
-  if (hook === "PostModelSwitch") return { family: "model-request", phase: "after" };
+  if (hook === "PreModelSwitch") return { family: "runtime", phase: "before" };
+  if (hook === "PostModelSwitch") return { family: "runtime", phase: "after" };
   if (["PermissionRequest", "Elicitation"].includes(hook)) return { family: "permission", phase: "before" };
   if (["PermissionDenied", "ElicitationResult"].includes(hook)) return { family: "permission", phase: "after" };
   if (["SubagentStart", "TaskCreated"].includes(hook)) return { family: "delegation", phase: "before" };
@@ -693,6 +696,13 @@ function resolveRelations(drafts: readonly DraftEvent[]): UniformEvent[] {
 function capabilityProfileFor(
   records: readonly CapturedNativeRecord<AgentSdkNativeRecord>[],
 ): AdapterCapabilityProfile {
+  const retainedCapabilities = records.flatMap(({ record }) => {
+    if (record.kind !== "capture-report") return [];
+    const agentSdk = asRecord(asRecord(record.document)?.agentSdk);
+    const capabilities = asRecord(agentSdk?.capabilities);
+    return capabilities === undefined ? [] : [capabilities];
+  })[0];
+  const sdkVersion = text(retainedCapabilities?.sdkVersion);
   const detailedBetaConfigured = records.some(({ record }) => {
     if (record.kind !== "telemetry") return false;
     const telemetry = asRecord(asRecord(record.document)?.telemetry);
@@ -700,6 +710,15 @@ function capabilityProfileFor(
   });
   return {
     ...structuredClone(BASE_CAPABILITY_PROFILE),
+    families: {
+      ...structuredClone(BASE_CAPABILITY_PROFILE.families),
+      "model-request": {
+        status: "unsupported",
+        detail: sdkVersion === undefined
+          ? "Retained Agent SDK evidence does not establish inference-request lifecycle coverage."
+          : `Retained Agent SDK ${sdkVersion} exposes model-switch callbacks, not inference-request lifecycle records.`,
+      },
+    },
     evidence: {
       ...structuredClone(BASE_CAPABILITY_PROFILE.evidence),
       nativeTime: {
