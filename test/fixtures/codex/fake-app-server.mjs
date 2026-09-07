@@ -20,12 +20,28 @@ async function emitTurn() {
     send({ method: "item/tool/requestUserInput", id: 901, params: { threadId: "thread-1", turnId: "turn-1", itemId: "tool-1", questions: [] } });
     return;
   }
+  if (mode === "non-permission-request") {
+    send({ method: "currentTime/read", id: 902, params: {} });
+    return;
+  }
+  if (mode === "noisy") {
+    for (let index = 0; index < 20; index += 1) send({ method: "unknown/noisy", params: { threadId: "thread-1", turnId: "turn-1", index } });
+  }
   await finishTurn();
 }
 
 async function finishTurn(status = "completed") {
+  if (mode === "receiver-errors" && endpoints[0]) {
+    const origin = new URL(endpoints[0]).origin;
+    for (let index = 0; index < 70; index += 1) await fetch(`${origin}/invalid`);
+  }
   for (const endpoint of endpoints) {
-    await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ resourceLogs: [], resourceSpans: [], resourceMetrics: [] }) });
+    await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: mode === "malformed-otlp" ? "{" : JSON.stringify({ resourceLogs: [], resourceSpans: [], resourceMetrics: [] }) });
+  }
+  if (mode === "stderr-split") {
+    process.stderr.write(Buffer.from([0xf0, 0x9f]));
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+    process.stderr.write(Buffer.from([0x99, 0x82]));
   }
   send({ method: "thread/tokenUsage/updated", params: {
     threadId: "thread-1",
@@ -42,7 +58,7 @@ async function finishTurn(status = "completed") {
 
 lines.on("line", async (line) => {
   const message = JSON.parse(line);
-  if (message.id === 900 || message.id === 901) {
+  if (message.id === 900 || message.id === 901 || message.id === 902) {
     approvalPending = false;
     void finishTurn("completed");
     return;
@@ -76,10 +92,11 @@ lines.on("line", async (line) => {
       process.stdout.write("{bad json\n");
     } else if (mode === "crash") {
       setImmediate(() => process.exit(9));
-    } else if (mode !== "interrupt") {
+    } else if (mode !== "interrupt" && mode !== "ignore-interrupt") {
       void emitTurn();
     }
   } else if (message.method === "turn/interrupt") {
+    if (mode === "ignore-interrupt") return;
     send({ id: message.id, result: {} });
     void finishTurn("interrupted");
   } else if (message.method === "thread/read") {

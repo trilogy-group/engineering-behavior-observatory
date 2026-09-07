@@ -100,6 +100,20 @@ test("rejects unexpected user input without fabricating an answer or hanging", a
   }
 });
 
+test("leaves non-permission server requests unmapped", async () => {
+  const root = await temporaryRoot();
+  try {
+    const capture = await runFake(root, "non-permission-request");
+    const normalized = await normalizeCodexCapture(capture);
+    const request = capture.records.find(({ record }) => record.kind === "request" && record.method === "currentTime/read");
+    assert.ok(request);
+    assert.equal(normalized.events.some(({ source }) => source.nativeReference.recordLocator === request.reference.recordLocator), false);
+    assert.ok(normalized.unmapped.some(({ reference }) => reference.recordLocator === request.reference.recordLocator));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("preserves recoverable partial evidence for malformed output, auth failure, and process crash", async () => {
   for (const mode of ["malformed", "auth-failure", "crash"] as const) {
     const root = await temporaryRoot();
@@ -133,6 +147,38 @@ test("interrupts the owned turn, records acknowledgement, and finishes on matchi
   }
 });
 
+test("registers teardown so lifecycle shutdown can await an unacknowledged interrupt", async () => {
+  const root = await temporaryRoot();
+  const workspace = join(root, "workspace");
+  const controller = new AbortController();
+  let shutdown: (() => Promise<void>) | undefined;
+  try {
+    await mkdir(workspace);
+    const capturePromise = captureCodexAppServer({
+      runId: "run-ignore-interrupt",
+      attemptId: "attempt-ignore-interrupt",
+      workspacePath: workspace,
+      prompt: "Wait for interruption.",
+      configuration: fakeConfiguration("ignore-interrupt"),
+      evidencePath: join(root, "session.jsonl"),
+      signal: controller.signal,
+      shutdownGraceMs: 100,
+      registerShutdown: (callback) => { shutdown = callback; },
+    });
+    await waitForRecord(join(root, "session.jsonl"), (record) => record.kind === "response" && record.method === "turn/start");
+    controller.abort();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+    assert.ok(shutdown);
+    await shutdown();
+    const capture = await capturePromise;
+    assert.equal(capture.terminalStatus, undefined);
+    assert.ok(capture.records.some(({ record }) => record.method === "turn/interrupt"));
+    assert.ok(capture.records.some(({ record }) => record.kind === "process"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("keeps streamed and persisted history evidence separate and declares mismatch", async () => {
   const root = await temporaryRoot();
   try {
@@ -140,6 +186,55 @@ test("keeps streamed and persisted history evidence separate and declares mismat
     assert.equal(capture.terminalStatus, "completed");
     assert.ok(capture.gaps.some(({ kind }) => kind === "history-mismatch"));
     assert.ok(capture.records.some(({ record }) => record.method === "thread/read" && record.kind === "response"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("bounds OTLP receiver diagnostics while continuing to accept configured signals", async () => {
+  const root = await temporaryRoot();
+  try {
+    const capture = await runFake(root, "receiver-errors", ["logs"]);
+    assert.equal(capture.terminalStatus, "completed");
+    assert.equal(capture.telemetry.telemetry.receiverErrors.length, 65);
+    assert.equal(capture.telemetry.telemetry.receiverErrors.at(-1), "Additional OTLP receiver errors were truncated.");
+    assert.equal(capture.telemetry.telemetry.receipt.signals.logs.status, "received");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("does not count malformed OTLP JSON as a collector receipt", async () => {
+  const root = await temporaryRoot();
+  try {
+    const capture = await runFake(root, "malformed-otlp", ["logs"]);
+    assert.equal(capture.telemetry.telemetry.receipt.signals.logs.status, "missing");
+    assert.ok(capture.telemetry.telemetry.receiverErrors.some((error) => error.includes("malformed logs")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("keeps UTF-8 stderr intact across split chunks", async () => {
+  const root = await temporaryRoot();
+  try {
+    const capture = await runFake(root, "stderr-split");
+    const diagnostic = capture.records.filter(({ record }) => record.method === "diagnostic/stderr")
+      .map(({ record }) => (record.payload as { text?: string }).text ?? "").join("");
+    assert.match(diagnostic, /🙂/u);
+    assert.doesNotMatch(diagnostic, /�/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("uses a bounded normalization projection while session JSONL remains authoritative", async () => {
+  const root = await temporaryRoot();
+  try {
+    const capture = await runFake(root, "noisy", [], undefined, 8);
+    assert.equal(capture.records.length, 8);
+    assert.ok(capture.gaps.some(({ kind }) => kind === "normalization-projection-truncated"));
+    assert.ok((await readFile(join(root, "session.jsonl"), "utf8")).split(/\r?\n/u).filter(Boolean).length > 8);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -304,6 +399,7 @@ async function runFake(
   mode: string,
   signals: readonly ("logs" | "traces" | "metrics")[] = [],
   signal?: AbortSignal,
+  maxInMemoryObservations?: number,
 ): Promise<CodexAppServerCapture> {
   const workspace = join(root, "workspace");
   await mkdir(workspace, { recursive: true });
@@ -317,6 +413,7 @@ async function runFake(
     stderrPath: join(root, "diagnostics/stderr.txt"),
     shutdownGraceMs: 500,
     ...(signal === undefined ? {} : { signal }),
+    ...(maxInMemoryObservations === undefined ? {} : { maxInMemoryObservations }),
   });
 }
 

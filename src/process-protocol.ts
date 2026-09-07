@@ -390,7 +390,7 @@ export type ProtocolProcessOptions = {
   signal?: AbortSignal;
   now?: () => string;
   spawnOptions?: Omit<SpawnOptions, "stdio" | "env" | "cwd" | "signal" | "timeout" | "killSignal">;
-  onStderr?: (chunk: Uint8Array, recorder: ProtocolEvidenceRecorder) => void | Promise<void>;
+  onStderr?: (chunk: Uint8Array, final: boolean, recorder: ProtocolEvidenceRecorder) => void | Promise<void>;
   onFrame?: (payload: unknown, recorder: ProtocolEvidenceRecorder) => void | Promise<void>;
 };
 
@@ -762,7 +762,15 @@ export class ProtocolProcess {
         this.stderrCapture.write(chunk);
         if (this.options.onStderr !== undefined) {
           this.lineQueue = this.lineQueue
-            .then(() => this.options.onStderr!(chunk, this.recorder))
+            .then(() => this.options.onStderr!(chunk, false, this.recorder))
+            .then(() => undefined)
+            .catch((error: unknown) => this.failRecorder(`Protocol stderr recording failed: ${errorMessage(error)}`));
+        }
+      });
+      this.child.stderr.on("end", () => {
+        if (this.options.onStderr !== undefined) {
+          this.lineQueue = this.lineQueue
+            .then(() => this.options.onStderr!(Buffer.alloc(0), true, this.recorder))
             .then(() => undefined)
             .catch((error: unknown) => this.failRecorder(`Protocol stderr recording failed: ${errorMessage(error)}`));
         }

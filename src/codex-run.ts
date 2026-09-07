@@ -223,7 +223,7 @@ export async function captureCodexAppServerRun(
     assessmentMode: options.definition.run.assessmentMode,
     attempt: attemptIdentity,
     workspace: coordinatedWorkspace,
-    harness: async ({ signal }) => {
+    harness: async ({ signal, registerShutdown }) => {
       if (workspace?.status !== "ready" || workspace.path === undefined) throw new Error("Codex run requires a ready workspace.");
       capture = await performCapture({
         runId: options.definition.run.id,
@@ -233,6 +233,7 @@ export async function captureCodexAppServerRun(
         configuration: options.configuration,
         evidencePath: `${assembler.bundleRoot}/session.jsonl`,
         signal,
+        registerShutdown,
         ...(options.shutdownGraceMs === undefined ? {} : { shutdownGraceMs: options.shutdownGraceMs }),
       });
       if (capture.terminalStatus === "completed") {

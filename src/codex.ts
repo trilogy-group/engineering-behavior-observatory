@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
-import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -128,7 +128,9 @@ export type CodexAppServerCaptureRequest = {
   signal?: AbortSignal;
   shutdownGraceMs?: number;
   maxLineBytes?: number;
+  maxInMemoryObservations?: number;
   now?: () => string;
+  registerShutdown?: (shutdown: () => Promise<void>) => void;
 };
 
 export type CodexAppServerCapture = QualifiedNativeCapture<ProtocolObservation> & {
@@ -239,6 +241,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     resolveOwnedTurn = resolvePromise;
   });
   let protocolProcess: ProtocolProcess;
+  const stderrDecoder = new TextDecoder("utf-8");
   try {
     protocolProcess = spawnProtocolProcess({
       command: request.configuration.executable,
@@ -256,14 +259,18 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
       evidencePath: request.evidencePath,
       ...(request.stderrPath === undefined ? {} : { stderrPath: request.stderrPath }),
       ...(request.maxLineBytes === undefined ? {} : { maxLineBytes: request.maxLineBytes }),
+      ...(request.maxInMemoryObservations === undefined ? {} : { maxInMemoryObservations: request.maxInMemoryObservations }),
       shutdownGraceMs: request.shutdownGraceMs ?? 2_000,
       ...(request.now === undefined ? {} : { now: request.now }),
-      onStderr: async (chunk, recorder) => {
-        await recorder.recordNotification({
-          source: CODEX_HARNESS,
-          method: "diagnostic/stderr",
-          payload: { text: Buffer.from(chunk).toString("utf8") },
-        });
+      onStderr: async (chunk, final, recorder) => {
+        const diagnostic = stderrDecoder.decode(chunk, { stream: !final });
+        if (diagnostic !== "") {
+          await recorder.recordNotification({
+            source: CODEX_HARNESS,
+            method: "diagnostic/stderr",
+            payload: { text: diagnostic },
+          });
+        }
       },
       onFrame: async (payload, recorder) => {
         if (!isRecord(payload)) return;
@@ -340,6 +347,9 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
           }
         }
       },
+    });
+    request.registerShutdown?.(async () => {
+      await protocolProcess.interrupt();
     });
   } catch (error) {
     await telemetry.close();
@@ -462,13 +472,16 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     if (terminal === undefined && request.signal?.aborted !== true) await protocolProcess.shutdown();
     else if (terminal !== undefined) await protocolProcess.shutdown();
     processResult = await protocolProcess.wait();
-    for (const waiter of pending.values()) waiter.reject(new Error("Codex app-server process ended."));
     pending.clear();
     await telemetry.close();
     await rm(isolatedCodexHome, { recursive: true, force: true });
   }
 
-  const records = await readProtocolRecords(request.evidencePath);
+  const records = processResult.observations;
+  if (processResult.droppedObservations > 0) gaps.push({
+    kind: "normalization-projection-truncated",
+    detail: `${processResult.droppedObservations} earlier observations remain authoritative in session.jsonl but are outside the bounded in-memory projection.`,
+  });
   const terminalStatus = text(terminal?.status);
   const telemetryEvidence = telemetry.evidence({
     attemptId: request.attemptId,
@@ -558,7 +571,7 @@ function mapCodexRecord(
   let phase: UniformEvent["phase"] = "instant";
   let scope: UniformEvent["scope"] = { kind: "attempt", id: capture.attemptId };
   let contentPath: string | undefined;
-  if (record.kind === "request" && record.source === CODEX_HARNESS) {
+  if (record.kind === "request" && record.source === CODEX_HARNESS && isPermissionRequest(method)) {
     family = "permission";
     actor = "harness";
     phase = "before";
@@ -701,6 +714,18 @@ function scopedThreadId(payload: unknown): string | undefined {
     ?? text(isRecord(payload.thread) ? payload.thread.id : undefined);
 }
 
+function isPermissionRequest(method: string): boolean {
+  return [
+    "item/commandExecution/requestApproval",
+    "item/fileChange/requestApproval",
+    "item/permissions/requestApproval",
+    "item/tool/requestUserInput",
+    "mcpServer/elicitation/request",
+    "applyPatchApproval",
+    "execCommandApproval",
+  ].includes(method);
+}
+
 function unattendedServerResponse(method: string): {
   result?: Record<string, unknown>;
   error?: { code: number; message: string };
@@ -719,11 +744,6 @@ function historyMatches(history: Record<string, unknown>, threadId: string, turn
   const thread = isRecord(history.thread) ? history.thread : undefined;
   if (text(thread?.id) !== threadId || !Array.isArray(thread?.turns)) return false;
   return thread.turns.some((candidate) => isRecord(candidate) && text(candidate.id) === turnId);
-}
-
-async function readProtocolRecords(path: string): Promise<ProtocolObservation[]> {
-  const text = await readFile(path, "utf8");
-  return text.split(/\r?\n/u).filter((line) => line.trim() !== "").map((line) => JSON.parse(line) as ProtocolObservation);
 }
 
 async function writeProtocolLine(stream: NodeJS.WritableStream, message: unknown): Promise<void> {
@@ -811,7 +831,7 @@ async function openOtlpReceiver(signals: readonly CodexTelemetrySignal[], now = 
     },
     evidence: (input) => {
       const statuses = Object.fromEntries((["logs", "traces", "metrics"] as const).map((signal) => {
-        const count = records.filter((record) => record.signal === signal).length;
+        const count = records.filter((record) => record.signal === signal && record.parseError === undefined && record.payload !== undefined).length;
         return [signal, { status: enabled.includes(signal) ? count > 0 ? "received" : "missing" : "disabled", count }];
       })) as CodexTelemetryEvidence["telemetry"]["receipt"]["signals"];
       const usageUpdates = input.records.flatMap((record) => {
@@ -885,12 +905,12 @@ async function receiveOtlp(
   const signal = (["logs", "traces", "metrics"] as const).find((candidate) => incoming.url === `/v1/${candidate}`);
   if (incoming.method !== "POST" || signal === undefined || !enabled.includes(signal)) {
     incoming.resume();
-    state.receiverErrors.push("Rejected an unconfigured OTLP route or method.");
+    recordReceiverError(state, "Rejected an unconfigured OTLP route or method.");
     return 404;
   }
   if (state.records.length >= 256) {
     incoming.resume();
-    state.receiverErrors.push(`Rejected ${signal} after the 256-record receiver limit.`);
+    recordReceiverError(state, `Rejected ${signal} after the 256-record receiver limit.`);
     return 429;
   }
   const chunks: Buffer[] = [];
@@ -900,7 +920,7 @@ async function receiveOtlp(
     bytes += value.length;
     if (bytes > 4 * 1024 * 1024 || state.bytes + bytes > 16 * 1024 * 1024) {
       incoming.destroy();
-      state.receiverErrors.push(`Rejected oversized ${signal} OTLP evidence.`);
+      recordReceiverError(state, `Rejected oversized ${signal} OTLP evidence.`);
       return 413;
     }
     chunks.push(value);
@@ -916,10 +936,16 @@ async function receiveOtlp(
   } catch (error) {
     record.raw = raw;
     record.parseError = errorMessage(error);
+    recordReceiverError(state, `Rejected malformed ${signal} OTLP JSON.`);
   }
   state.records.push(record);
   state.bytes += bytes;
-  return 200;
+  return record.parseError === undefined ? 200 : 400;
+}
+
+function recordReceiverError(state: { receiverErrors: string[] }, message: string): void {
+  if (state.receiverErrors.length < 64) state.receiverErrors.push(message);
+  else if (state.receiverErrors.length === 64) state.receiverErrors.push("Additional OTLP receiver errors were truncated.");
 }
 
 function numberRecord(value: unknown): Partial<TokenUsageBreakdown> | undefined {
