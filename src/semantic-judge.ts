@@ -456,6 +456,16 @@ export function packageSemanticJudgeInput(
       omitted.push(`${removed.kind}:${removed.id}:maxInputChars`);
     }
   }
+  const includedEventIds = new Set(evidenceItems.filter(({ kind }) => kind === "event").map(({ id }) => id));
+  const structuralSources = new Map(selectedObservations.map(({ id, sourceEventIds }) => [id, sourceEventIds]));
+  for (let index = evidenceItems.length - 1; index >= 0; index -= 1) {
+    const item = evidenceItems[index]!;
+    const sources = item.kind === "structural-observation" ? structuralSources.get(item.id) : undefined;
+    if (sources === undefined || sources.every((id) => includedEventIds.has(id))) continue;
+    evidenceItems.splice(index, 1);
+    includedRedactions -= candidates.find(({ item: candidate }) => candidate === item)!.redactions;
+    omitted.push(`${item.kind}:${item.id}:source-event-omitted`);
+  }
   const result = baseInput(evidenceItems, omitted, includedRedactions);
   if (semanticJudgePrompt(result).length > request.limits.maxInputChars) {
     throw new Error("Semantic judge selection metadata exceeds maxInputChars.");

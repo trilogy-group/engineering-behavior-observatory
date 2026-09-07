@@ -198,8 +198,15 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
     });
     assert.equal(bounded.status, "proposed");
     assert.ok(boundedPromptLength <= tight.limits.maxInputChars);
-    const boundedInput = JSON.parse(readFileSync(join(root, "bounded-omissions", "input.json"), "utf8")) as { selection: { omitted: string[] } };
+    const boundedInput = JSON.parse(readFileSync(join(root, "bounded-omissions", "input.json"), "utf8")) as {
+      selection: { omitted: string[]; includedEventIds: string[]; includedStructuralObservationIds: string[] };
+    };
     assert.ok(boundedInput.selection.omitted.length > 0);
+    const includedEvents = new Set(boundedInput.selection.includedEventIds);
+    for (const id of boundedInput.selection.includedStructuralObservationIds) {
+      assert.equal(observations.observations.find((observation) => observation.id === id)!.sourceEventIds
+        .every((eventId) => includedEvents.has(eventId)), true, id);
+    }
     await assert.rejects(
       runAgentSdkSemanticJudge({ bundleRoot, observations, request, outputRoot: join(root, "proposal-a"), backend: completed(assessed) }),
       /EEXIST/u,
