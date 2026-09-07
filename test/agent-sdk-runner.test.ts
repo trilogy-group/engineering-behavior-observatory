@@ -12,7 +12,10 @@ import { RunBundleAssembler } from "../src/run-bundles.js";
 import type { HookEvent, HookInput, Options, SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import {
+  aggregateEvaluation,
+  assessComparisonEligibility,
   buildCorpusIndex,
+  createAgentSdkStructuralObservationSet,
   digestBytes,
   digestMetadata,
   freezeTaskPacket,
@@ -23,6 +26,7 @@ import {
   writeRunQueue,
   compileRunQueue,
   type ClaudeAgentSdkTelemetryConfiguration,
+  type ComparisonRequest,
   type ExperimentConfiguration,
   type RunManifest,
   type TaskPacket,
@@ -80,7 +84,46 @@ test("executes one frozen queue entry end to end and retains a qualified bundle"
     assert.equal(manifest.run.verifier?.locator, "restricted/verifier.cjs");
     assert.equal(manifest.run.verifier?.format, "commonjs");
     assert.equal(manifest.run.trial?.index, 1);
-    assert.equal(buildCorpusIndex(summary.bundlePath)[0]?.trialId, "1");
+    const corpusEntries = buildCorpusIndex(summary.bundlePath);
+    const corpusEntry = corpusEntries[0]!;
+    assert.equal(corpusEntry.trialId, "1");
+    const observationSet = await createAgentSdkStructuralObservationSet(summary.bundlePath);
+    const candidate = {
+      id: manifest.run.id,
+      manifestDigest: corpusEntry.manifestDigest,
+      adapterVersion: observationSet.normalization.adapter.version,
+      task: { id: corpusEntry.taskId!, digest: corpusEntry.taskDigest! },
+      fixture: { id: corpusEntry.fixtureId!, digest: corpusEntry.fixtureDigest! },
+      model: { id: corpusEntry.modelId!, configurationDigest: corpusEntry.modelConfigurationDigest! },
+      harness: { id: corpusEntry.harnessId!, version: corpusEntry.harnessVersion!, configurationDigest: corpusEntry.harnessConfigurationDigest! },
+      assessmentMode: "verified" as const,
+      captureProfileDigest: corpusEntry.captureProfileDigest!,
+      budgetDigest: corpusEntry.budgetDigest!,
+      toolPolicyDigest: corpusEntry.toolPolicyDigest!,
+      capabilityProfile: observationSet.normalization.capabilityProfile,
+    };
+    const comparisonRequest: ComparisonRequest = {
+      schemaVersion: "ebo.comparison-request/v1",
+      measure: "structural:tool-operation-count",
+      left: candidate,
+      right: structuredClone(candidate),
+      policy: { declaredDifferences: [], requiredCapabilities: ["family:tool"] },
+    };
+    const aggregate = await aggregateEvaluation({
+      corpusEntries,
+      observationSets: [{ bundleRoot: summary.bundlePath, document: observationSet }],
+      assertions: [],
+      calibrations: [],
+      comparisons: [{
+        id: "structural-self-comparison",
+        measure: comparisonRequest.measure,
+        left: { trial: "1" },
+        right: { trial: "1" },
+        matchBy: ["trial"],
+        eligibility: [{ request: comparisonRequest, report: assessComparisonEligibility(comparisonRequest) }],
+      }],
+    }, { groupBy: ["task"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 } });
+    assert.equal(aggregate.comparisons[0]!.claimStatus, "no-difference");
 
     const verifier = readVerifierResult(summary.bundlePath, manifest);
     assert.equal(verifier.status, "passed");

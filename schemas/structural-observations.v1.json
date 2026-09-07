@@ -108,10 +108,11 @@
         "normalization": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["datasetDigest", "adapter", "coverage"],
+          "required": ["datasetDigest", "adapter", "capabilityProfile", "coverage"],
           "properties": {
             "datasetDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
             "adapter": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/adapter" },
+            "capabilityProfile": { "$ref": "urn:ebo:schema:uniform-events:v1#/$defs/capabilityProfile" },
             "coverage": { "$ref": "urn:ebo:schema:normalization-integrity:v1#/$defs/coverageReport" }
           }
         },

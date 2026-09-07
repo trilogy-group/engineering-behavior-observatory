@@ -388,17 +388,8 @@ function candidateMatchesAttempt(
   if (!exact || !measure.startsWith("structural:")) return exact;
   const observationSet = observations.get(attemptKey(attempt));
   if (observationSet === undefined) return false;
-  const coverage = observationSet.normalization.coverage;
-  const profile = {
-    schemaVersion: "ebo.adapter-capability-profile/v1",
-    adapterId: observationSet.normalization.adapter.id,
-    harness: observationSet.normalization.adapter.harness,
-    nativeTypes: coverage.nativeTypes.map(({ nativeType }) => nativeType),
-    families: Object.fromEntries(Object.entries(coverage.families).map(([family, value]) => [family, value.capability])),
-    evidence: coverage.evidence,
-  };
   return candidate.adapterVersion === observationSet.normalization.adapter.version
-    && canonicalizeMetadata(candidate.capabilityProfile) === canonicalizeMetadata(profile);
+    && canonicalizeMetadata(candidate.capabilityProfile) === canonicalizeMetadata(observationSet.normalization.capabilityProfile);
 }
 
 function measureCapabilities(
