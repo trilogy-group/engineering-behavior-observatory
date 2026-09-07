@@ -316,13 +316,25 @@ test("configures the Claude Agent SDK backend with no tools, settings, plugins, 
     } as unknown as ReturnType<typeof import("@anthropic-ai/claude-agent-sdk").query>;
   };
   const previousEffort = process.env.CLAUDE_CODE_EFFORT_LEVEL;
+  const previousTelemetry = process.env.CLAUDE_CODE_ENABLE_TELEMETRY;
+  const previousLogExporter = process.env.OTEL_LOGS_EXPORTER;
+  const previousPromptLogging = process.env.OTEL_LOG_USER_PROMPTS;
   let result: Awaited<ReturnType<typeof runClaudeAgentSdkSemanticJudge>>;
   try {
     process.env.CLAUDE_CODE_EFFORT_LEVEL = "max";
+    process.env.CLAUDE_CODE_ENABLE_TELEMETRY = "1";
+    process.env.OTEL_LOGS_EXPORTER = "console";
+    process.env.OTEL_LOG_USER_PROMPTS = "1";
     result = await runClaudeAgentSdkSemanticJudge("tiny non-sensitive fixture", judgeRequest("event-1", "observation-1"), query);
   } finally {
     if (previousEffort === undefined) delete process.env.CLAUDE_CODE_EFFORT_LEVEL;
     else process.env.CLAUDE_CODE_EFFORT_LEVEL = previousEffort;
+    if (previousTelemetry === undefined) delete process.env.CLAUDE_CODE_ENABLE_TELEMETRY;
+    else process.env.CLAUDE_CODE_ENABLE_TELEMETRY = previousTelemetry;
+    if (previousLogExporter === undefined) delete process.env.OTEL_LOGS_EXPORTER;
+    else process.env.OTEL_LOGS_EXPORTER = previousLogExporter;
+    if (previousPromptLogging === undefined) delete process.env.OTEL_LOG_USER_PROMPTS;
+    else process.env.OTEL_LOG_USER_PROMPTS = previousPromptLogging;
   }
   assert.equal(result.status, "completed");
   assert.deepEqual(captured?.tools, []);
@@ -336,6 +348,9 @@ test("configures the Claude Agent SDK backend with no tools, settings, plugins, 
   assert.equal(captured?.persistSession, false);
   assert.equal(captured?.permissionMode, "dontAsk");
   assert.equal(captured?.env?.CLAUDE_CODE_EFFORT_LEVEL, undefined);
+  assert.equal(captured?.env?.CLAUDE_CODE_ENABLE_TELEMETRY, undefined);
+  assert.equal(captured?.env?.OTEL_LOGS_EXPORTER, undefined);
+  assert.equal(captured?.env?.OTEL_LOG_USER_PROMPTS, undefined);
   const schema = captured?.outputFormat?.schema;
   assert.equal(schema?.type, "object");
   assert.deepEqual(schema?.required, ["judgment"]);

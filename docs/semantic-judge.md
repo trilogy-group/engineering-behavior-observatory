@@ -86,6 +86,9 @@ The SDK subprocess inherits the parent environment for authentication and
 routing, but EBO removes ambient model and effort override variables before
 launch so the caller request remains authoritative. The retained evaluator
 metadata records that policy without retaining secret values.
+Ambient OpenTelemetry and Claude telemetry/tracing controls are also removed;
+restricted rubric and trajectory content is never sent to a parent-configured
+collector, and a console exporter cannot corrupt the SDK protocol channel.
 
 The response can contain only an assessed proposal or an abstention. Assessed
 responses require confidence, rationale, an alternative explanation, and at

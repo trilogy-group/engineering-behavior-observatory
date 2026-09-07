@@ -275,10 +275,11 @@
             "environment": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["parentPreserved", "modelEffortOverrides", "removedKeys"],
+              "required": ["parentPreserved", "modelEffortOverrides", "ambientTelemetry", "removedKeys"],
               "properties": {
                 "parentPreserved": { "const": true },
                 "modelEffortOverrides": { "const": "removed" },
+                "ambientTelemetry": { "const": "removed" },
                 "removedKeys": { "$ref": "#/$defs/stringList" }
               }
             },

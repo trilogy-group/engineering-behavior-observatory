@@ -49,6 +49,13 @@ const JUDGE_ENVIRONMENT_OVERRIDE_KEYS = [
   "CLAUDE_CODE_EFFORT_LEVEL",
   "MAX_THINKING_TOKENS",
 ] as const;
+const JUDGE_TELEMETRY_ENVIRONMENT_KEYS = [
+  "CLAUDE_CODE_ENABLE_TELEMETRY",
+  "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA",
+  "CLAUDE_CODE_OTEL_DIAG_STDERR",
+  "ENABLE_BETA_TRACING_DETAILED",
+  "BETA_TRACING_ENDPOINT",
+] as const;
 
 export type SemanticJudgeRequest = {
   schemaVersion: "ebo.semantic-judge-request/v1";
@@ -171,6 +178,7 @@ export type SemanticJudgmentRecord = {
     environment: {
       parentPreserved: true;
       modelEffortOverrides: "removed";
+      ambientTelemetry: "removed";
       removedKeys: readonly string[];
     };
     limits: SemanticJudgeRequest["limits"];
@@ -253,7 +261,8 @@ export async function runAgentSdkSemanticJudge(
       environment: {
         parentPreserved: true as const,
         modelEffortOverrides: "removed" as const,
-        removedKeys: [...JUDGE_ENVIRONMENT_OVERRIDE_KEYS],
+        ambientTelemetry: "removed" as const,
+        removedKeys: [...JUDGE_ENVIRONMENT_OVERRIDE_KEYS, ...JUDGE_TELEMETRY_ENVIRONMENT_KEYS, "OTEL_*"],
       },
       limits: structuredClone(options.request.limits),
     },
@@ -368,6 +377,8 @@ export async function runClaudeAgentSdkSemanticJudge(
   try {
     const env = { ...process.env };
     for (const key of JUDGE_ENVIRONMENT_OVERRIDE_KEYS) delete env[key];
+    for (const key of JUDGE_TELEMETRY_ENVIRONMENT_KEYS) delete env[key];
+    for (const key of Object.keys(env)) if (key.startsWith("OTEL_")) delete env[key];
     const options: Options = {
       abortController: controller,
       cwd: isolatedCwd,
