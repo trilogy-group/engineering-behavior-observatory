@@ -383,6 +383,27 @@ export type {
   ResolvedBehaviorCitation,
 } from "./behavior-assertions.js";
 export {
+  assertCalibrationDestination,
+  importReviewDecision,
+  selectReviewSample,
+  summarizeCalibration,
+  revalidateReviewSample,
+  terminalVerifierOutcome,
+  validateReviewSample,
+  validateReviewHistory,
+  writeReviewPacket,
+} from "./human-calibration.js";
+export type {
+  CalibrationSummary,
+  ReviewCandidate,
+  ReviewDecision,
+  ReviewFilters,
+  ReviewHistory,
+  ReviewSample,
+  ReviewSampleCriteria,
+  ReviewSourceSet,
+} from "./human-calibration.js";
+export {
   CLAUDE_SEMANTIC_JUDGE_BACKEND_ID,
   packageSemanticJudgeInput,
   parseSemanticJudgeResponse,

@@ -115,6 +115,13 @@ node dist/src/cli.js corpus validate <corpus-root> <index.jsonl>
 node dist/src/cli.js corpus pack <approved-export-root> <policy.json> <archive.tar.gz>
 node dist/src/cli.js corpus unpack <archive.tar.gz> <destination-root>
 node dist/src/cli.js comparison check <request.json>
+node dist/src/cli.js calibration sample <sources.json> <criteria.json> <selection.json>
+node dist/src/cli.js calibration packet <selection.json> <output-root>
+node dist/src/cli.js calibration inspect <packet.json> <assertion-id> [event-id]
+node dist/src/cli.js calibration binding <selection.json> <assertion-id> [history.json]
+node dist/src/cli.js calibration import <selection.json> <history.json> <decision.json>
+node dist/src/cli.js calibration adjudicate <selection.json> <history.json> <decision.json>
+node dist/src/cli.js calibration summarize <selection.json> <history.json> <summary.json>
 node dist/src/cli.js assertions validate <run-bundle-root> <assertion.json> [review.json]
 node dist/src/cli.js judge run <run-bundle-root> <observations.json> <request.json> <output-root>
 node dist/src/cli.js observations create <run-bundle-root> <output.json>
@@ -188,6 +195,13 @@ check` evaluates one inspectable comparison request and returns `supported`,
 `qualified-with-caveats`, or `unsupported`; declared harness differences remain
 caveats and never become causal claims. See
 [docs/normalization-integrity.md](docs/normalization-integrity.md).
+
+The [local human calibration workflow](docs/human-calibration.md) selects
+digest-bound review samples, renders escaped static packets with only the cited
+restricted records and relative links back to native evidence, appends human review and
+adjudication decisions, and reports agreement with explicit populations and
+denominators. It does not host review, assign people, confirm assertions on an
+agent's behalf, or produce comparison aggregates.
 
 Versioned [structural observations](docs/structural-observations.md) ingest
 terminal, capture, workspace, and mode-appropriate verifier outcomes, then

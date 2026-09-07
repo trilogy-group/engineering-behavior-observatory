@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } 
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { assertNoDuplicateJsonKeys, canonicalizeMetadata, validateArtifact, validateExportManifest, validateRunManifestEvidence, writeMetadataAtomically } from "./artifacts.js";
+import { assertNoDuplicateJsonKeys, canonicalizeMetadata, digestMetadata, validateArtifact, validateExportManifest, validateRunManifestEvidence, writeMetadataAtomically } from "./artifacts.js";
 import {
   buildCorpusIndex,
   packPortableExport,
@@ -20,6 +20,20 @@ import { runAgentSdkQueueEntry } from "./agent-sdk-runner.js";
 import { validateAgentSdkBehaviorAssertion, type BehaviorAssertion, type BehaviorReview } from "./behavior-assertions.js";
 import { runCodexQueueEntry } from "./codex-run.js";
 import { createPortableRunBundleExport, type PortableExportPolicy } from "./exports.js";
+import {
+  assertCalibrationDestination,
+  importReviewDecision,
+  selectReviewSample,
+  summarizeCalibration,
+  revalidateReviewSample,
+  validateReviewHistory,
+  writeReviewPacket,
+  type ReviewDecision,
+  type ReviewHistory,
+  type ReviewSample,
+  type ReviewSampleCriteria,
+  type ReviewSourceSet,
+} from "./human-calibration.js";
 import { assessComparisonEligibility, type ComparisonRequest } from "./normalization-integrity.js";
 import {
   runAgentSdkSemanticJudge,
@@ -61,6 +75,12 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
        ebo assertions validate <run-bundle-root> <assertion.json> [review.json]
        ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root>
+       ebo calibration sample <sources.json> <criteria.json> <selection.json>
+       ebo calibration packet <selection.json> <output-root>
+       ebo calibration inspect <packet.json> <assertion-id> [event-id]
+       ebo calibration binding <selection.json> <assertion-id> [history.json]
+       ebo calibration <import|adjudicate> <selection.json> <history.json> <decision.json>
+       ebo calibration summarize <selection.json> <history.json> <summary.json>
 
 Engineering Behavior Observatory
 `;
@@ -195,6 +215,10 @@ export function main(
     }
   }
 
+  if (args[0] === "calibration") {
+    return runCalibrationCommand(args.slice(1), write);
+  }
+
   if (args[0] === "validate") {
     if (args.length === 1) {
       write("Usage: ebo validate <artifact.json>...\n");
@@ -250,6 +274,86 @@ export function main(
 
   process.stderr.write(`Unknown argument: ${args[0]}\n`);
   return 1;
+}
+
+async function runCalibrationCommand(args: string[], write: (message: string) => void): Promise<number> {
+  const [command, first, second, third] = args;
+  try {
+    if (command === "sample" && first !== undefined && second !== undefined && third !== undefined && args.length === 4) {
+      const sources = readJson(first) as ReviewSourceSet;
+      assertCalibrationDestination(sources.sources.map(({ bundleRoot }) => bundleRoot), third);
+      const sample = await selectReviewSample(sources, readJson(second) as ReviewSampleCriteria);
+      await writeMetadataAtomically(dirname(resolve(third)), basename(third), sample, undefined, { overwrite: false });
+      write(`Selected ${sample.candidates.length} of ${sample.population.eligibleAssertionIds.length} eligible behavior assertions.\n`);
+      return 0;
+    }
+    if (command === "packet" && first !== undefined && second !== undefined && args.length === 3) {
+      const sample = readJson(first) as ReviewSample;
+      await writeReviewPacket(sample, second);
+      write(`Created local review packet for ${sample.candidates.length} assertion(s).\n`);
+      return 0;
+    }
+    if (command === "inspect" && first !== undefined && second !== undefined && args.length >= 3 && args.length <= 4) {
+      const packet = readJson(first);
+      const errors = validateArtifact(first, packet);
+      if (errors.length > 0) throw new Error(errors.map(({ field, message }) => `${field}: ${message}`).join("\n"));
+      const items = (packet as { items?: Array<{ assertion?: { id?: string }; assertionBinding?: { id: string; digest: string }; citations?: Array<{ eventId?: string }> }> }).items ?? [];
+      const matching = items.filter(({ assertionBinding }) => matchesAssertionSelector(assertionBinding, second));
+      if (matching.length !== 1) throw new Error(matching.length === 0
+        ? `Review packet has no assertion "${second}".` : `Review packet assertion "${second}" is ambiguous; append @<digest>.`);
+      const item = matching[0]!;
+      const value = third === undefined ? item : item.citations?.find(({ eventId }) => eventId === third);
+      if (value === undefined) throw new Error(`Review assertion "${second}" has no citation "${third}".`);
+      write(`${canonicalizeMetadata(value)}\n`);
+      return 0;
+    }
+    if (command === "binding" && first !== undefined && second !== undefined && args.length >= 3 && args.length <= 4) {
+      const selection = readJson(first) as ReviewSample;
+      await revalidateReviewSample(selection);
+      const matching = selection.candidates.filter(({ assertion }) => matchesAssertionSelector(assertion, second));
+      if (matching.length !== 1) throw new Error(matching.length === 0
+        ? `Review sample has no assertion "${second}".` : `Review sample assertion "${second}" is ambiguous; append @<digest>.`);
+      const candidate = matching[0]!;
+      const history = third === undefined ? undefined : readJson(third) as ReviewHistory;
+      if (history !== undefined) validateReviewHistory(selection, history);
+      write(`${canonicalizeMetadata({
+        assertion: candidate.assertion,
+        previousHistory: history === undefined || history.decisions.length === 0 ? null : {
+          schemaVersion: history.schemaVersion,
+          digest: `sha256:${digestMetadata(history).value}`,
+        },
+      })}\n`);
+      return 0;
+    }
+    if ((command === "import" || command === "adjudicate") && first !== undefined && second !== undefined && third !== undefined && args.length === 4) {
+      const decision = readJson(third) as ReviewDecision;
+      const expectedKind = command === "adjudicate" ? "adjudication" : "review";
+      if (decision.kind !== expectedKind) throw new Error(`The calibration ${command} command requires a ${expectedKind} decision.`);
+      const result = await importReviewDecision(readJson(first) as ReviewSample, second, decision);
+      write(`${result.appended ? "Appended" : "Already imported"} human ${command === "adjudicate" ? "adjudication" : "review"} decision.\n`);
+      return 0;
+    }
+    if (command === "summarize" && first !== undefined && second !== undefined && third !== undefined && args.length === 4) {
+      const selection = readJson(first) as ReviewSample;
+      assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot }) => bundleRoot), third);
+      const summary = await summarizeCalibration(selection, readJson(second) as ReviewHistory);
+      await writeMetadataAtomically(dirname(resolve(third)), basename(third), summary, undefined, { overwrite: false });
+      write(`Summarized ${summary.totals.selectedAssertions} selected assertion(s); confirmed=${summary.totals.confirmedEligibleAssertions}, unresolved=${summary.totals.unresolvedAssertions}.\n`);
+      return 0;
+    }
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  }
+  write("Usage: ebo calibration <sample|packet|inspect|binding|import|adjudicate|summarize> ...\n");
+  return 1;
+}
+
+function matchesAssertionSelector(assertion: { id: string; digest: string } | undefined, selector: string): boolean {
+  if (assertion === undefined) return false;
+  const separator = selector.lastIndexOf("@sha256:");
+  return separator < 0 ? assertion.id === selector
+    : assertion.id === selector.slice(0, separator) && assertion.digest === selector.slice(separator + 1);
 }
 
 function runCorpusCommand(args: string[], write: (message: string) => void): number | Promise<number> {
