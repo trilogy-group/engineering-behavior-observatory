@@ -87,6 +87,7 @@ export type ComparisonCandidate = {
 
 export type ComparisonRequest = {
   schemaVersion: "ebo.comparison-request/v1";
+  measure: string;
   left: ComparisonCandidate;
   right: ComparisonCandidate;
   policy: {
@@ -112,8 +113,10 @@ export type ComparisonReason = {
 
 export type ComparisonReport = {
   schemaVersion: "ebo.comparison-report/v1";
+  measure: string;
   status: "supported" | "qualified-with-caveats" | "unsupported";
   candidates: [string, string];
+  policy: ComparisonRequest["policy"];
   reasons: readonly ComparisonReason[];
 };
 
@@ -377,8 +380,10 @@ export function assessComparisonEligibility(request: ComparisonRequest): Compari
   const reasons = [...blockers, ...caveats];
   const report: ComparisonReport = {
     schemaVersion: "ebo.comparison-report/v1",
+    measure: request.measure,
     status: blockers.length > 0 ? "unsupported" : caveats.length > 0 ? "qualified-with-caveats" : "supported",
     candidates: [request.left.id, request.right.id],
+    policy: structuredClone(request.policy),
     reasons,
   };
   assertValidArtifact("comparison report", report);

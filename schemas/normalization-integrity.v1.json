@@ -197,9 +197,10 @@
     "comparisonRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "left", "right", "policy"],
+      "required": ["schemaVersion", "measure", "left", "right", "policy"],
       "properties": {
         "schemaVersion": { "const": "ebo.comparison-request/v1" },
+        "measure": { "$ref": "#/$defs/identifier" },
         "left": { "$ref": "#/$defs/comparisonCandidate" },
         "right": { "$ref": "#/$defs/comparisonCandidate" },
         "policy": {
@@ -239,9 +240,10 @@
     "comparisonReport": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "status", "candidates", "reasons"],
+      "required": ["schemaVersion", "measure", "status", "candidates", "policy", "reasons"],
       "properties": {
         "schemaVersion": { "const": "ebo.comparison-report/v1" },
+        "measure": { "$ref": "#/$defs/identifier" },
         "status": { "enum": ["supported", "qualified-with-caveats", "unsupported"] },
         "candidates": {
           "type": "array",
@@ -249,6 +251,7 @@
           "maxItems": 2,
           "items": { "$ref": "#/$defs/identifier" }
         },
+        "policy": { "$ref": "#/$defs/comparisonRequest/properties/policy" },
         "reasons": {
           "type": "array",
           "maxItems": 64,
