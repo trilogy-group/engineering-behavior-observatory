@@ -336,7 +336,7 @@ async function runCalibrationCommand(args: string[], write: (message: string) =>
     if (command === "summarize" && first !== undefined && second !== undefined && third !== undefined && args.length === 4) {
       const selection = readJson(first) as ReviewSample;
       assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot }) => bundleRoot), third);
-      const summary = summarizeCalibration(selection, readJson(second) as ReviewHistory);
+      const summary = await summarizeCalibration(selection, readJson(second) as ReviewHistory);
       await writeMetadataAtomically(dirname(resolve(third)), basename(third), summary, undefined, { overwrite: false });
       write(`Summarized ${summary.totals.selectedAssertions} selected assertion(s); confirmed=${summary.totals.confirmedEligibleAssertions}, unresolved=${summary.totals.unresolvedAssertions}.\n`);
       return 0;

@@ -296,8 +296,9 @@ export async function importReviewDecision(
   }
 }
 
-export function summarizeCalibration(selection: ReviewSample, history: ReviewHistory): CalibrationSummary {
+export async function summarizeCalibration(selection: ReviewSample, history: ReviewHistory): Promise<CalibrationSummary> {
   validateReviewHistory(selection, history);
+  for (const candidate of selection.candidates) await reloadCandidate(candidate);
   const byCategory = new Map<string, ReviewCandidate[]>();
   for (const candidate of selection.candidates) {
     const group = byCategory.get(candidate.context.categoryId) ?? [];

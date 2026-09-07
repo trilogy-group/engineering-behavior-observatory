@@ -94,11 +94,22 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
         selectedAssertionIds: [...first.population.selectedAssertionIds, first.candidates[0]!.assertion.id],
       },
     };
-    assert.throws(() => summarizeCalibration(duplicateCandidateSelection, {
+    await assert.rejects(summarizeCalibration(duplicateCandidateSelection, {
       schemaVersion: "ebo.review-history/v1",
       selection: { schemaVersion: duplicateCandidateSelection.schemaVersion, digest: digest(duplicateCandidateSelection) },
       decisions: [],
     }), /candidate bindings must be unique/u);
+    const tamperedSelection: ReviewSample = {
+      ...structuredClone(first),
+      candidates: first.candidates.map((candidate, index) => index === 0
+        ? { ...structuredClone(candidate), context: { ...structuredClone(candidate.context), categoryId: "tampered-category" } }
+        : structuredClone(candidate)),
+    };
+    await assert.rejects(summarizeCalibration(tamperedSelection, {
+      schemaVersion: "ebo.review-history/v1",
+      selection: { schemaVersion: tamperedSelection.schemaVersion, digest: digest(tamperedSelection) },
+      decisions: [],
+    }), /source metadata changed after selection/u);
     assert.equal(first.candidates.every(({ context }) => context.outcome === "unavailable"), true, "observational runs have no verifier outcome");
     const duplicateId = { ...structuredClone(assertions[1]!), id: assertions[0]!.id };
     duplicateId.judgment = { ...duplicateId.judgment, rationale: "A second run may reuse the request-derived assertion ID." };
@@ -210,7 +221,7 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
       previousHistory: { schemaVersion: history!.schemaVersion, digest: digest(history!) },
     }), /stale/u);
 
-    const summary = summarizeCalibration(selection, history!);
+    const summary = await summarizeCalibration(selection, history!);
     assert.deepEqual(summary.totals.judgeHumanAgreement, {
       status: "available",
       denominator: 5,
@@ -237,7 +248,7 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
       ...decision("adjudication-disputed", "adjudication", byId.get("assertion-a")!, "synthetic-fixture-adjudicator", "disputed"),
       adjudicates: [confirmed.id, reviewerB.id, reviewerE.id],
     });
-    assert.equal(summarizeCalibration(selection, history!).totals.disputedAssertions, 2, "a current disputed adjudication counts as a dispute");
+    assert.equal((await summarizeCalibration(selection, history!)).totals.disputedAssertions, 2, "a current disputed adjudication counts as a dispute");
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
@@ -261,7 +272,7 @@ test("reports agreement as unavailable when no human reviews exist", async () =>
       selection: { schemaVersion: selection.schemaVersion, digest: digest(selection) },
       decisions: [],
     };
-    const summary = summarizeCalibration(selection, history);
+    const summary = await summarizeCalibration(selection, history);
     assert.equal(summary.totals.judgeHumanAgreement.status, "unavailable");
     assert.equal(summary.totals.judgeHumanAgreement.denominator, 0);
     assert.equal(summary.totals.humanHumanAgreement.status, "unavailable");
