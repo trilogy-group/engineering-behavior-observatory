@@ -63,6 +63,9 @@ SHA-256 function of the seed, stratum, assertion ID, and assertion digest.
 Repeated request-derived assertion IDs across runs remain distinct through
 their digest-bound identity. Where a CLI selector is ambiguous, append the
 digest as `<assertion-id>@sha256:<digest>`.
+Every command that reuses a saved selection deterministically revalidates its
+criteria, eligible population, strata, seeded ordering, and candidate bindings
+against the retained source evidence.
 Observational runs always record verifier outcome as `unavailable`; normal
 completion is never substituted for verifier success.
 

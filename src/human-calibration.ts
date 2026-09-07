@@ -195,7 +195,7 @@ export async function selectReviewSample(
 }
 
 export async function writeReviewPacket(selection: ReviewSample, outputRoot: string, now = () => new Date().toISOString()): Promise<void> {
-  validateReviewSample(selection);
+  await revalidateReviewSample(selection);
   const root = resolve(outputRoot);
   assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot }) => bundleRoot), root);
   if (existsSync(root)) throw new Error("Review packet destination already exists.");
@@ -244,7 +244,7 @@ export async function importReviewDecision(
   historyPath: string,
   decision: ReviewDecision,
 ): Promise<{ appended: boolean; history: ReviewHistory }> {
-  validateReviewSample(selection);
+  await revalidateReviewSample(selection);
   assertValid("human review decision", decision);
   assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot }) => bundleRoot), historyPath);
   let release: () => Promise<void>;
@@ -297,8 +297,8 @@ export async function importReviewDecision(
 }
 
 export async function summarizeCalibration(selection: ReviewSample, history: ReviewHistory): Promise<CalibrationSummary> {
+  await revalidateReviewSample(selection);
   validateReviewHistory(selection, history);
-  await revalidateCandidates(selection.candidates);
   const byCategory = new Map<string, ReviewCandidate[]>();
   for (const candidate of selection.candidates) {
     const group = byCategory.get(candidate.context.categoryId) ?? [];
@@ -322,22 +322,35 @@ export function validateReviewHistory(selection: ReviewSample, history: ReviewHi
   assertValid("review history", history);
   if (history.selection.digest !== digest(selection)) throw new Error("Review history selection binding is stale.");
   const ids = new Set<string>();
+  const candidatesById = new Map<string, ReviewCandidate[]>();
+  for (const candidate of selection.candidates) {
+    const matches = candidatesById.get(candidate.assertion.id) ?? [];
+    matches.push(candidate);
+    candidatesById.set(candidate.assertion.id, matches);
+  }
+  const prefix = createHash("sha256").update('{"decisions":[');
+  const suffix = `],"schemaVersion":${canonicalizeMetadata(history.schemaVersion)},"selection":${canonicalizeMetadata(history.selection)}}`;
+  const prior: ReviewDecision[] = [];
   for (const [index, decision] of history.decisions.entries()) {
     if (ids.has(decision.id)) throw new Error(`Review history repeats decision "${decision.id}".`);
     ids.add(decision.id);
-    const matchingId = selection.candidates.filter(({ assertion }) => assertion.id === decision.assertion.id);
+    const matchingId = candidatesById.get(decision.assertion.id) ?? [];
     if (matchingId.length === 0) throw new Error(`Review history targets unknown assertion "${decision.assertion.id}".`);
     const candidate = matchingId.find(({ assertion }) => assertionKey(assertion) === assertionKey(decision.assertion));
     if (candidate === undefined) throw new Error(`Review history decision "${decision.id}" has a stale assertion binding.`);
     if (canonicalizeMetadata(candidate.assertion) !== canonicalizeMetadata(decision.assertion)) {
       throw new Error(`Review history decision "${decision.id}" has a stale assertion binding.`);
     }
-    const prefix: ReviewHistory = { ...history, decisions: history.decisions.slice(0, index) };
-    const expected = index === 0 ? null : { schemaVersion: history.schemaVersion, digest: digest(prefix) };
+    const expected = index === 0 ? null : {
+      schemaVersion: history.schemaVersion,
+      digest: `sha256:${prefix.copy().update(suffix).digest("hex")}` as DigestString,
+    };
     if (canonicalizeMetadata(decision.previousHistory) !== canonicalizeMetadata(expected)) {
       throw new Error(`Review history decision "${decision.id}" has a stale previous-history binding.`);
     }
-    validateDecisionSemantics(decision, history.decisions.slice(0, index));
+    validateDecisionSemantics(decision, prior);
+    prefix.update(`${index === 0 ? "" : ","}${canonicalizeMetadata(decision)}`);
+    prior.push(decision);
   }
 }
 
@@ -354,12 +367,42 @@ export function validateReviewSample(selection: ReviewSample): void {
       !== canonicalizeMetadata(selection.candidates.map(({ assertion }) => assertion.id))) {
     throw new Error("Review sample selected assertion IDs do not match its candidates.");
   }
+  if (selection.population.strata.length !== selection.criteria.strata.length) {
+    throw new Error("Review sample strata do not match its retained criteria.");
+  }
+  const matched = new Map<string, number>();
+  for (const candidate of selection.candidates) {
+    const strata = selection.criteria.strata.filter(({ filters }) => matchesFilters(candidate, filters));
+    if (strata.length !== 1) throw new Error(`Review candidate "${candidate.assertion.id}" must match exactly one retained stratum.`);
+    matched.set(strata[0]!.id, (matched.get(strata[0]!.id) ?? 0) + 1);
+  }
+  for (const [index, criterion] of selection.criteria.strata.entries()) {
+    const stratum = selection.population.strata[index]!;
+    if (stratum.id !== criterion.id || stratum.requested !== criterion.sampleSize
+        || stratum.selected !== (matched.get(criterion.id) ?? 0)
+        || stratum.selected > stratum.eligible) {
+      throw new Error(`Review sample stratum "${criterion.id}" is inconsistent with its criteria or selected candidates.`);
+    }
+  }
+  const unavailable = selection.population.strata.filter(({ eligible }) => eligible === 0).map(({ id }) => id);
+  if (canonicalizeMetadata(selection.population.unavailableStrata) !== canonicalizeMetadata(unavailable)
+      || selection.population.eligibleAssertionIds.length !== selection.population.strata.reduce((total, { eligible }) => total + eligible, 0)) {
+    throw new Error("Review sample eligible or unavailable population is inconsistent with its strata.");
+  }
   for (const candidate of selection.candidates) {
     if (!selection.sources.sources.some((source) => resolve(source.bundleRoot) === candidate.source.bundleRoot
         && resolve(source.assertionPath) === candidate.source.assertionPath
         && source.taskContext === candidate.context.taskContext)) {
       throw new Error(`Review candidate "${candidate.assertion.id}" is absent from the retained source set.`);
     }
+  }
+}
+
+export async function revalidateReviewSample(selection: ReviewSample): Promise<void> {
+  validateReviewSample(selection);
+  const expected = await selectReviewSample(selection.sources, selection.criteria, () => selection.createdAt);
+  if (canonicalizeMetadata(expected) !== canonicalizeMetadata(selection)) {
+    throw new Error("Review sample does not match the reproducible selection from its retained sources and criteria.");
   }
 }
 
@@ -418,31 +461,12 @@ async function loadCandidate(
   };
 }
 
-async function reloadCandidate(
-  candidate: ReviewCandidate,
-  evidence?: AgentSdkBehaviorEvidence,
-  manifest?: RunManifest,
-  retainCapture = true,
-): Promise<LoadedCandidate> {
-  const loaded = await loadCandidate({ ...candidate.source, taskContext: candidate.context.taskContext }, evidence, manifest, retainCapture);
+async function reloadCandidate(candidate: ReviewCandidate): Promise<LoadedCandidate> {
+  const loaded = await loadCandidate({ ...candidate.source, taskContext: candidate.context.taskContext }, undefined, undefined, true);
   if (canonicalizeMetadata(publicCandidate(loaded)) !== canonicalizeMetadata(candidate)) {
     throw new Error(`Review candidate "${candidate.assertion.id}" source metadata changed after selection.`);
   }
   return loaded;
-}
-
-async function revalidateCandidates(candidates: readonly ReviewCandidate[]): Promise<void> {
-  const grouped = new Map<string, ReviewCandidate[]>();
-  for (const candidate of candidates) {
-    const group = grouped.get(candidate.source.bundleRoot) ?? [];
-    group.push(candidate);
-    grouped.set(candidate.source.bundleRoot, group);
-  }
-  for (const [bundleRoot, group] of grouped) {
-    const evidence = await createAgentSdkBehaviorEvidence(bundleRoot);
-    const manifest = readManifest(bundleRoot);
-    for (const candidate of group) await reloadCandidate(candidate, evidence, manifest, false);
-  }
 }
 
 function publicCandidate(candidate: LoadedCandidate): ReviewCandidate {

@@ -387,6 +387,7 @@ export {
   importReviewDecision,
   selectReviewSample,
   summarizeCalibration,
+  revalidateReviewSample,
   terminalVerifierOutcome,
   validateReviewSample,
   validateReviewHistory,

@@ -25,7 +25,7 @@ import {
   importReviewDecision,
   selectReviewSample,
   summarizeCalibration,
-  validateReviewSample,
+  revalidateReviewSample,
   validateReviewHistory,
   writeReviewPacket,
   type ReviewDecision,
@@ -309,7 +309,7 @@ async function runCalibrationCommand(args: string[], write: (message: string) =>
     }
     if (command === "binding" && first !== undefined && second !== undefined && args.length >= 3 && args.length <= 4) {
       const selection = readJson(first) as ReviewSample;
-      validateReviewSample(selection);
+      await revalidateReviewSample(selection);
       const matching = selection.candidates.filter(({ assertion }) => matchesAssertionSelector(assertion, second));
       if (matching.length !== 1) throw new Error(matching.length === 0
         ? `Review sample has no assertion "${second}".` : `Review sample assertion "${second}" is ambiguous; append @<digest>.`);

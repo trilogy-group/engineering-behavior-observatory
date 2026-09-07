@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -10,6 +11,7 @@ import lockfile from "proper-lockfile";
 import {
   CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_VERSION,
   captureClaudeAgentSdkRun,
+  canonicalizeMetadata,
   claudeAgentSdkNormalizationAdapter,
   describeNormalizedDataset,
   digestMetadata,
@@ -19,6 +21,8 @@ import {
   selectReviewSample,
   summarizeCalibration,
   terminalVerifierOutcome,
+  validateReviewHistory,
+  writeReviewPacket,
   assertCalibrationDestination,
   type AgentSdkNativeRecord,
   type BehaviorAssertion,
@@ -102,14 +106,44 @@ test("reproducibly samples, renders safe native drilldown, imports lineage, and 
     const tamperedSelection: ReviewSample = {
       ...structuredClone(first),
       candidates: first.candidates.map((candidate, index) => index === 0
-        ? { ...structuredClone(candidate), context: { ...structuredClone(candidate.context), categoryId: "tampered-category" } }
+        ? { ...structuredClone(candidate), context: { ...structuredClone(candidate.context), modelId: "tampered-model" } }
         : structuredClone(candidate)),
     };
     await assert.rejects(summarizeCalibration(tamperedSelection, {
       schemaVersion: "ebo.review-history/v1",
       selection: { schemaVersion: tamperedSelection.schemaVersion, digest: digest(tamperedSelection) },
       decisions: [],
-    }), /source metadata changed after selection/u);
+    }), /does not match the reproducible selection/u);
+    const contradictorySelection: ReviewSample = {
+      ...structuredClone(relativeSelection),
+      criteria: {
+        ...structuredClone(relativeSelection.criteria),
+        strata: [{ id: "all", sampleSize: 1, filters: { taskIds: ["not-this-task"] } }],
+      },
+      population: {
+        ...structuredClone(relativeSelection.population),
+        eligibleAssertionIds: [],
+        unavailableStrata: ["all"],
+        strata: [{ id: "all", eligible: 0, selected: 0, requested: 1 }],
+      },
+    };
+    await assert.rejects(
+      writeReviewPacket(contradictorySelection, join(temporary, "contradictory-packet")),
+      /exactly one retained stratum/u,
+    );
+    const reorderedSelection: ReviewSample = {
+      ...structuredClone(first),
+      candidates: [...first.candidates].reverse(),
+      population: {
+        ...structuredClone(first.population),
+        selectedAssertionIds: [...first.population.selectedAssertionIds].reverse(),
+      },
+    };
+    await assert.rejects(summarizeCalibration(reorderedSelection, {
+      schemaVersion: "ebo.review-history/v1",
+      selection: { schemaVersion: reorderedSelection.schemaVersion, digest: digest(reorderedSelection) },
+      decisions: [],
+    }), /does not match the reproducible selection/u);
     assert.equal(first.candidates.every(({ context }) => context.outcome === "unavailable"), true, "observational runs have no verifier outcome");
     const duplicateId = { ...structuredClone(assertions[1]!), id: assertions[0]!.id };
     duplicateId.judgment = { ...duplicateId.judgment, rationale: "A second run may reuse the request-derived assertion ID." };
@@ -296,6 +330,47 @@ test("selects the verifier outcome bound to the terminal workspace", () => {
   assert.equal(terminalVerifierOutcome(capture, manifest), "passed");
 });
 
+test("validates a large review lineage without starving an active import lock", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "ebo-human-calibration-lineage-"));
+  try {
+    const bundleRoot = await qualifiedBundle(temporary);
+    const [assertion] = await writeAssertions(temporary, bundleRoot);
+    const selection = await selectReviewSample({
+      schemaVersion: "ebo.review-source-set/v1",
+      sources: [{ bundleRoot, assertionPath: join(temporary, `${assertion!.id}.json`), taskContext: "Synthetic fixture task context." }],
+    }, {
+      schemaVersion: "ebo.review-sample-criteria/v1",
+      seed: "large-history-fixture",
+      strata: [{ id: "all", sampleSize: 1, filters: {} }],
+    });
+    const history = largeReviewHistory(selection, 2_500);
+    assert.equal(
+      history.decisions.at(-1)!.previousHistory?.digest,
+      digest({ ...history, decisions: history.decisions.slice(0, -1) }),
+      "incremental lineage digests preserve the canonical history binding",
+    );
+    const startedAt = performance.now();
+    validateReviewHistory(selection, history);
+    assert.ok(performance.now() - startedAt < 30_000, "valid history validation must finish within the lock stale window");
+
+    const historyPath = join(temporary, "large-history.json");
+    writeJson(historyPath, history);
+    const previousHistory = { schemaVersion: history.schemaVersion, digest: digest(history) } as const;
+    const owner = importReviewDecision(selection, historyPath, {
+      ...decision("review-owner", "review", selection.candidates[0]!.assertion, "synthetic-fixture-reviewer-owner", "confirmed"),
+      previousHistory,
+    });
+    while (!existsSync(`${historyPath}.lock`)) await new Promise<void>((resolve) => setImmediate(resolve));
+    await assert.rejects(importReviewDecision(selection, historyPath, {
+      ...decision("review-competitor", "review", selection.candidates[0]!.assertion, "synthetic-fixture-reviewer-competitor", "confirmed"),
+      previousHistory,
+    }), /already in progress/u);
+    assert.equal((await owner).appended, true);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 function decision(
   id: string,
   kind: ReviewDecision["kind"],
@@ -313,6 +388,27 @@ function decision(
     state,
     rationale: "Synthetic test fixture decision only.",
   };
+}
+
+function largeReviewHistory(selection: ReviewSample, count: number): ReviewHistory {
+  const selectionBinding = { schemaVersion: selection.schemaVersion, digest: digest(selection) } as const;
+  const history: ReviewHistory = { schemaVersion: "ebo.review-history/v1", selection: selectionBinding, decisions: [] };
+  const decisions: ReviewDecision[] = [];
+  const prefix = createHash("sha256").update('{"decisions":[');
+  const suffix = `],"schemaVersion":${canonicalizeMetadata(history.schemaVersion)},"selection":${canonicalizeMetadata(selectionBinding)}}`;
+  for (let index = 0; index < count; index += 1) {
+    const record: ReviewDecision = {
+      ...decision(`review-large-${index}`, "review", selection.candidates[0]!.assertion, "synthetic-fixture-reviewer-large", "confirmed"),
+      rationale: "x".repeat(8_192),
+      previousHistory: index === 0 ? null : {
+        schemaVersion: history.schemaVersion,
+        digest: `sha256:${prefix.copy().update(suffix).digest("hex")}`,
+      },
+    };
+    decisions.push(record);
+    prefix.update(`${index === 0 ? "" : ","}${canonicalizeMetadata(record)}`);
+  }
+  return { ...history, decisions };
 }
 
 async function writeAssertions(root: string, bundleRoot: string): Promise<BehaviorAssertion[]> {
