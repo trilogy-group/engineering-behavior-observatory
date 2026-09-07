@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { gzipSync } from "node:zlib";
 
@@ -18,7 +20,7 @@ import {
   type CodexAppServerConfiguration,
 } from "../src/codex.js";
 import { captureCodexAppServerRun, runCodexQueueEntry } from "../src/codex-run.js";
-import { RunBundleAssembler, type RunBundleDefinition } from "../src/run-bundles.js";
+import { RunBundleAssembler, type RunBundleDefinition, type RunManifest } from "../src/run-bundles.js";
 import {
   buildCorpusIndex,
   compileRunQueue,
@@ -38,6 +40,7 @@ import {
 
 const fixture = resolve("test/fixtures/codex/fake-app-server.mjs");
 const contractRoot = resolve("contracts/codex-app-server-0.150.1");
+const reasoningSentinel = "EBO_RAW_REASONING_SENTINEL";
 
 test("captures matching native lifecycle, interleaving, usage, history, and independent OTLP receipts", async () => {
   const root = await temporaryRoot();
@@ -551,6 +554,32 @@ test("composes a qualified observational run bundle with workspace, protocol, di
   }
 });
 
+test("shares the omitted shutdown grace across lifecycle and Codex capture finalization", async () => {
+  const root = await temporaryRoot();
+  const start = join(root, "start");
+  const workspace = join(root, "workspace");
+  try {
+    await mkdir(start);
+    await mkdir(workspace);
+    await writeFile(join(start, "README.md"), "before\n");
+    await writeFile(join(workspace, "README.md"), "after\n");
+    const result = await captureCodexAppServerRun({
+      definition: codexDefinition(join(root, "bundle-default-grace"), "default-grace"),
+      startingWorkspacePath: start,
+      workspace: { setup: () => ({ status: "ready", path: workspace, artifactId: "workspace", retained: true }) },
+      configuration: fakeConfiguration("ignore-all-interrupts"),
+      prompt: "Wait until the coordinator interrupts this attempt.",
+      maxWallClockMs: 500,
+    });
+    assert.ok(result.capture, "the lifecycle must wait for the capture's default finalization window");
+    assert.equal(result.capture.process.termination, "interrupted");
+    assert.ok(result.manifest.evidence.some(({ kind }) => kind === "session"));
+    assert.ok(result.manifest.evidence.some(({ kind }) => kind === "telemetry"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("keeps native evidence and the source workspace when post-start packaging fails", async (t) => {
   const root = await temporaryRoot();
   const start = join(root, "start");
@@ -657,6 +686,83 @@ test("runs one frozen observational queue entry and passes export, corpus, and a
   }
 });
 
+test("keeps Codex reasoning restricted while removing every portable representation", async () => {
+  const root = await temporaryRoot();
+  try {
+    const queueFixture = createQueueFixture(root);
+    const outputRoot = join(root, "runs");
+    const summary = await runCodexQueueEntry({
+      bundleRoot: queueFixture.bundleRoot,
+      queuePath: queueFixture.queuePath,
+      runId: queueFixture.runId,
+      outputRoot,
+      workspaceRoot: join(root, "workspaces"),
+      probeRuntime: async () => ({ path: process.execPath, version: `codex-cli ${CODEX_APP_SERVER_VERSION}` }),
+      executableArgs: [fixture, "--mode=reasoning-evidence"],
+    });
+    const restrictedSession = await readFile(join(summary.bundlePath, "session.jsonl"), "utf8");
+    assert.ok(restrictedSession.includes(reasoningSentinel));
+
+    const policy: PortableExportPolicy = { sharingClass: "partner", maxArtifactBytes: 8 * 1024 * 1024, maxStringBytes: 64 * 1024 };
+    const exportRoot = join(root, "portable");
+    const exported = await createPortableRunBundleExport({ sourceRoot: summary.bundlePath, destinationRoot: exportRoot, policy });
+    await readPortableRunBundleExport(exportRoot, policy);
+    const session = exported.artifacts.find(({ kind }) => kind === "session");
+    assert.ok(session);
+    const portableSession = await readFile(join(exportRoot, session.relativePath), "utf8");
+    assert.equal(portableSession.includes(reasoningSentinel), false);
+    for (const line of portableSession.trim().split("\n")) {
+      assert.equal(containsPortableReasoningContent(JSON.parse(line) as unknown), false);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI signals interrupt and finalize the detached Codex child", async () => {
+  const root = await temporaryRoot();
+  try {
+    const executable = join(root, "fake-codex.mjs");
+    writeFileSync(executable, `#!/usr/bin/env node\nif (process.argv.includes("--version")) console.log("codex-cli ${CODEX_APP_SERVER_VERSION}");\nelse { process.argv.push("--mode=ignore-all-interrupts"); await import(${JSON.stringify(pathToFileURL(fixture).href)}); }\n`, { mode: 0o700 });
+    const queueFixture = createQueueFixture(root, executable);
+    const outputRoot = join(root, "cli-runs");
+    const child = spawn(process.execPath, [
+      resolve("dist/src/cli.js"),
+      "codex", "run",
+      queueFixture.bundleRoot,
+      queueFixture.queuePath,
+      queueFixture.runId,
+      outputRoot,
+      "--workspace-root", join(root, "cli-workspaces"),
+    ], { cwd: resolve("."), stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    const exitPromise = waitForChild(child);
+    const sessionPath = await waitForNestedRecord(outputRoot, (record) => record.kind === "response" && record.method === "turn/start");
+    child.kill("SIGINT");
+    const exit = await exitPromise;
+    assert.deepEqual(exit, { code: 0, signal: null }, stderr);
+    const summary = JSON.parse(stdout.trim()) as { bundlePath: string; classification: string };
+    assert.equal(summary.classification, "interrupted");
+    const manifest = JSON.parse(await readFile(join(summary.bundlePath, "manifest.json"), "utf8")) as RunManifest;
+    assert.ok(manifest.evidence.some(({ kind }) => kind === "session"));
+    assert.ok(manifest.evidence.some(({ kind }) => kind === "telemetry"));
+    const records = (await readFile(sessionPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as {
+      kind?: string;
+      evidence?: { signal?: string; pid?: number };
+    });
+    const processRecord = records.find(({ kind }) => kind === "process");
+    assert.equal(processRecord?.evidence?.signal, "SIGKILL");
+    assert.equal(typeof processRecord?.evidence?.pid, "number");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function runFake(
   root: string,
   mode: string,
@@ -693,7 +799,80 @@ function fakeConfiguration(mode: string): CodexAppServerConfiguration {
   };
 }
 
-function createQueueFixture(parent: string): { bundleRoot: string; queuePath: string; runId: string } {
+function codexDefinition(bundleRoot: string, suffix: string): RunBundleDefinition {
+  return {
+    bundleRoot,
+    bundleId: `bundle-codex-${suffix}`,
+    run: {
+      id: `run-codex-${suffix}`,
+      assessmentMode: "observational",
+      task: { id: "task-codex" },
+      fixture: { id: "fixture", digest: `sha256:${"1".repeat(64)}` },
+      model: { provider: "openai", id: "gpt-5.6-sol" },
+      harness: { id: "codex-app-server", version: CODEX_APP_SERVER_VERSION },
+      runtime: [],
+    },
+    attempt: { id: `attempt-codex-${suffix}`, number: 1 },
+    configuration: {
+      digest: `sha256:${"2".repeat(64)}`,
+      budgetDigest: `sha256:${"3".repeat(64)}`,
+      toolPolicyDigest: `sha256:${"4".repeat(64)}`,
+    },
+  };
+}
+
+function containsPortableReasoningContent(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsPortableReasoningContent);
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  const hidden = new Set(["content", "delta", "encryptedContent", "summary", "text"]);
+  if (record.type === "reasoning" && Object.keys(record).some((key) => hidden.has(key))) return true;
+  if (record.method === "item/reasoning/textDelta") {
+    for (const container of [record.params, record.payload]) {
+      if (typeof container === "object" && container !== null
+          && Object.keys(container).some((key) => hidden.has(key))) return true;
+    }
+  }
+  return Object.values(record).some(containsPortableReasoningContent);
+}
+
+async function waitForNestedRecord(
+  root: string,
+  predicate: (record: Record<string, unknown>) => boolean,
+): Promise<string> {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    let paths: string[] = [];
+    try {
+      paths = await readdir(root, { recursive: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    for (const path of paths.filter((candidate) => candidate.endsWith("session.jsonl"))) {
+      const sessionPath = join(root, path);
+      const records = (await readFile(sessionPath, "utf8")).split(/\r?\n/u).filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      if (records.some(predicate)) return sessionPath;
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+  }
+  throw new Error("Timed out waiting for nested Codex session evidence.");
+}
+
+async function waitForChild(child: ReturnType<typeof spawn>): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolvePromise) => {
+        child.once("exit", (code, signal) => resolvePromise({ code, signal }));
+      }),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Codex CLI did not exit after SIGINT.")), 10_000); }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+function createQueueFixture(parent: string, executable = process.execPath): { bundleRoot: string; queuePath: string; runId: string } {
   const bundleRoot = join(parent, "queue-bundle");
   mkdirSync(bundleRoot, { recursive: true });
   const packet = JSON.parse(readFileSync(resolve("tests/fixtures/task-packet.valid.v1.json"), "utf8")) as Extract<TaskPacket, { assessmentMode: "verified" }>;
@@ -724,7 +903,7 @@ function createQueueFixture(parent: string): { bundleRoot: string; queuePath: st
 
   const configs = {
     model: { schemaVersion: "ebo.codex-config/v1", kind: "model", provider: "openai", model: "gpt-5.6-sol", effort: "high" },
-    harness: { schemaVersion: "ebo.codex-config/v1", kind: "harness", adapter: "codex-app-server", executable: process.execPath, version: "0.150.1", contractDigest: "sha256:844b52d4a5a8cda58794e28b3b119c3a3d20a588b7db83209c298bec62704092" },
+    harness: { schemaVersion: "ebo.codex-config/v1", kind: "harness", adapter: "codex-app-server", executable, version: "0.150.1", contractDigest: "sha256:844b52d4a5a8cda58794e28b3b119c3a3d20a588b7db83209c298bec62704092" },
     limits: { schemaVersion: "ebo.codex-config/v1", kind: "native-limits", shutdownGraceMs: 1_000 },
     tools: { schemaVersion: "ebo.codex-config/v1", kind: "native-tool-policy", approvalPolicy: "never", sandbox: "workspace-write" },
     capture: { schemaVersion: "ebo.codex-config/v1", kind: "capture-profile", telemetrySignals: ["logs", "traces", "metrics"], workspaceOutcome: { excludeDirectoryNames: ["node_modules"] } },

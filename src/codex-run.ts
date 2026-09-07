@@ -10,6 +10,7 @@ import {
   captureCodexAppServer,
   CODEX_ADAPTER_VERSION,
   CODEX_APP_SERVER_VERSION,
+  CODEX_DEFAULT_SHUTDOWN_GRACE_MS,
   CODEX_HARNESS,
   describeAndValidateCodexDataset,
   type CodexAppServerCapture,
@@ -137,6 +138,7 @@ export async function captureCodexAppServerRun(
   if (options.definition.run.model.id !== options.configuration.model) {
     throw new Error("The declared model must match the Codex app-server configuration.");
   }
+  const shutdownGraceMs = options.shutdownGraceMs ?? CODEX_DEFAULT_SHUTDOWN_GRACE_MS;
   const assembler = await createRunBundleAssembler(withPinnedRuntime(options.definition));
   let workspace: WorkspaceExecutionResult | undefined;
   let workspaceOutcome: CapturedWorkspaceOutcome | undefined;
@@ -234,7 +236,7 @@ export async function captureCodexAppServerRun(
         evidencePath: `${assembler.bundleRoot}/session.jsonl`,
         signal,
         registerShutdown,
-        ...(options.shutdownGraceMs === undefined ? {} : { shutdownGraceMs: options.shutdownGraceMs }),
+        shutdownGraceMs,
       });
       if (capture.terminalStatus === "completed") {
         return { status: "completed", completionEvidence: capture.terminal, evidence: durableCaptureEvidence(capture) };
@@ -267,7 +269,7 @@ export async function captureCodexAppServerRun(
     evidence: { flush: registerNativeEvidence },
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.maxWallClockMs === undefined ? {} : { maxWallClockMs: options.maxWallClockMs }),
-    ...(options.shutdownGraceMs === undefined ? {} : { shutdownGraceMs: options.shutdownGraceMs }),
+    shutdownGraceMs,
   });
   if (workspace?.status === "ready") await captureWorkspace().catch(() => undefined);
   await registerNativeEvidence();

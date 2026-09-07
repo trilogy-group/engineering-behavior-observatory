@@ -11,7 +11,7 @@ const sandboxPolicy = (mode, cwd) => mode === "danger-full-access" ? { type: "da
   : mode === "read-only" ? { type: "readOnly", networkAccess: false }
     : { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true };
 let approvalPending = false;
-if (mode === "history-success-stall-shutdown") {
+if (mode === "history-success-stall-shutdown" || mode === "ignore-all-interrupts") {
   process.on("SIGINT", () => {});
   process.on("SIGTERM", () => {});
 }
@@ -55,6 +55,12 @@ async function emitTurn() {
       last: { totalTokens: 999, inputTokens: 999, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
     } } });
     send({ method: "item/commandExecution/requestApproval", id: 903, params: { ...scope, itemId: "foreign-item" } });
+  }
+  if (mode === "reasoning-evidence") {
+    const reasoning = { type: "reasoning", id: "reasoning-1", summary: ["EBO_RAW_REASONING_SENTINEL"], content: ["EBO_RAW_REASONING_SENTINEL"] };
+    send({ method: "item/started", params: { threadId: "thread-1", turnId: "turn-1", item: reasoning } });
+    send({ method: "item/reasoning/textDelta", params: { threadId: "thread-1", turnId: "turn-1", itemId: "reasoning-1", contentIndex: 0, delta: "EBO_RAW_REASONING_SENTINEL" } });
+    send({ method: "item/completed", params: { threadId: "thread-1", turnId: "turn-1", item: reasoning } });
   }
   await finishTurn();
 }
@@ -142,16 +148,19 @@ lines.on("line", async (line) => {
       process.stdout.write("{bad json\n");
     } else if (mode === "crash") {
       setImmediate(() => process.exit(9));
-    } else if (mode !== "interrupt" && mode !== "ignore-interrupt") {
+    } else if (mode !== "interrupt" && mode !== "ignore-interrupt" && mode !== "ignore-all-interrupts") {
       void emitTurn();
     }
   } else if (message.method === "turn/interrupt") {
-    if (mode === "ignore-interrupt") return;
+    if (mode === "ignore-interrupt" || mode === "ignore-all-interrupts") return;
     send({ id: message.id, result: {} });
     void finishTurn("interrupted");
   } else if (message.method === "thread/read") {
     if (mode === "history-hang") return;
-    send({ id: message.id, result: { thread: { id: "thread-1", turns: [{ id: mode === "history-mismatch" ? "other-turn" : "turn-1", status: "completed", items: [] }] } } });
+    const items = mode === "reasoning-evidence"
+      ? [{ type: "reasoning", id: "reasoning-history-1", summary: ["EBO_RAW_REASONING_SENTINEL"], content: ["EBO_RAW_REASONING_SENTINEL"] }]
+      : [];
+    send({ id: message.id, result: { thread: { id: "thread-1", turns: [{ id: mode === "history-mismatch" ? "other-turn" : "turn-1", status: "completed", items }] } } });
   }
 });
 

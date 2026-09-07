@@ -312,12 +312,17 @@ async function runCodexCommand(
     write(commandUsage);
     return 1;
   }
+  const controller = new AbortController();
+  const abort = (): void => controller.abort();
+  process.on("SIGINT", abort);
+  process.on("SIGTERM", abort);
   try {
     const summary = await runCodexQueueEntry({
       bundleRoot,
       queuePath,
       runId,
       outputRoot,
+      signal: controller.signal,
       ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
     });
     write(`${canonicalizeMetadata(summary)}\n`);
@@ -325,6 +330,9 @@ async function runCodexCommand(
   } catch (error) {
     write(`${errorMessage(error)}\n`);
     return 1;
+  } finally {
+    process.off("SIGINT", abort);
+    process.off("SIGTERM", abort);
   }
 }
 

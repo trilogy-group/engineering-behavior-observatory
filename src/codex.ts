@@ -39,6 +39,7 @@ import {
 export const CODEX_APP_SERVER_VERSION = "0.150.1";
 export const CODEX_ADAPTER_VERSION = "0.1.0";
 export const CODEX_HARNESS = "codex-app-server";
+export const CODEX_DEFAULT_SHUTDOWN_GRACE_MS = 2_000;
 
 export type CodexReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type CodexApprovalPolicy = Extract<AskForApproval, string>;
@@ -204,7 +205,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
   requireText(request.workspacePath, "Codex workspace path");
   requireText(request.prompt, "Codex prompt");
   requireText(request.configuration.executable, "Codex executable");
-  const shutdownGraceMs = request.shutdownGraceMs ?? 2_000;
+  const shutdownGraceMs = request.shutdownGraceMs ?? CODEX_DEFAULT_SHUTDOWN_GRACE_MS;
   let abortRequested = request.signal?.aborted ?? false;
   let abortDeadline = abortRequested ? performance.now() + shutdownGraceMs : undefined;
   let abortAction: (() => Promise<void>) | undefined;
@@ -287,7 +288,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
       ...(request.stderrPath === undefined ? {} : { stderrPath: request.stderrPath }),
       ...(request.maxLineBytes === undefined ? {} : { maxLineBytes: request.maxLineBytes }),
       ...(request.maxInMemoryObservations === undefined ? {} : { maxInMemoryObservations: request.maxInMemoryObservations }),
-      shutdownGraceMs: request.shutdownGraceMs ?? 2_000,
+      shutdownGraceMs,
       ...(request.now === undefined ? {} : { now: request.now }),
       onStderr: async (chunk, final, recorder) => {
         const diagnostic = stderrDecoder.decode(chunk, { stream: !final });
