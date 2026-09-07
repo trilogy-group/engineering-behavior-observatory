@@ -154,6 +154,15 @@ test("session-local request IDs remain distinct across root and subagent session
   assert.deepEqual(observation(report, "model-request-count").value, { status: "known", value: 2, unit: "requests" });
 });
 
+test("actor-local request IDs remain distinct inside one native session", () => {
+  const first = event(1, "model-request", "before", { callId: "1", agentId: "agent-a" }, "agent-a-request");
+  first.scope = { kind: "session", id: "shared-session" };
+  const second = event(2, "model-request", "before", { callId: "1", agentId: "agent-b" }, "agent-b-request");
+  second.scope = { kind: "session", id: "shared-session" };
+  const report = createStructuralObservationSet(dataset([first, second]), coverage([first, second]));
+  assert.deepEqual(observation(report, "model-request-count").value, { status: "known", value: 2, unit: "requests" });
+});
+
 test("duplicate failure evidence across native order domains classifies one logical operation once", () => {
   const events = [
     event(1, "tool", "before", { toolUseId: "failed", toolName: "Read", inputDigest: digest }, "failed-session-start", "session"),

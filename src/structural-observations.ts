@@ -294,7 +294,7 @@ function operation(id: string, grouped: UniformEvent[]): ToolOperation {
 }
 
 function actorScope(event: UniformEvent): string | undefined {
-  return directSessionScope(event) ?? explicitAgentScope(event);
+  return explicitAgentScope(event) ?? directSessionScope(event);
 }
 
 function explicitAgentScope(event: UniformEvent): string | undefined {
