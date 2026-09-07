@@ -298,7 +298,7 @@ export async function importReviewDecision(
 
 export async function summarizeCalibration(selection: ReviewSample, history: ReviewHistory): Promise<CalibrationSummary> {
   validateReviewHistory(selection, history);
-  for (const candidate of selection.candidates) await reloadCandidate(candidate);
+  await revalidateCandidates(selection.candidates);
   const byCategory = new Map<string, ReviewCandidate[]>();
   for (const candidate of selection.candidates) {
     const group = byCategory.get(candidate.context.categoryId) ?? [];
@@ -418,12 +418,31 @@ async function loadCandidate(
   };
 }
 
-async function reloadCandidate(candidate: ReviewCandidate): Promise<LoadedCandidate> {
-  const loaded = await loadCandidate({ ...candidate.source, taskContext: candidate.context.taskContext }, undefined, undefined, true);
+async function reloadCandidate(
+  candidate: ReviewCandidate,
+  evidence?: AgentSdkBehaviorEvidence,
+  manifest?: RunManifest,
+  retainCapture = true,
+): Promise<LoadedCandidate> {
+  const loaded = await loadCandidate({ ...candidate.source, taskContext: candidate.context.taskContext }, evidence, manifest, retainCapture);
   if (canonicalizeMetadata(publicCandidate(loaded)) !== canonicalizeMetadata(candidate)) {
     throw new Error(`Review candidate "${candidate.assertion.id}" source metadata changed after selection.`);
   }
   return loaded;
+}
+
+async function revalidateCandidates(candidates: readonly ReviewCandidate[]): Promise<void> {
+  const grouped = new Map<string, ReviewCandidate[]>();
+  for (const candidate of candidates) {
+    const group = grouped.get(candidate.source.bundleRoot) ?? [];
+    group.push(candidate);
+    grouped.set(candidate.source.bundleRoot, group);
+  }
+  for (const [bundleRoot, group] of grouped) {
+    const evidence = await createAgentSdkBehaviorEvidence(bundleRoot);
+    const manifest = readManifest(bundleRoot);
+    for (const candidate of group) await reloadCandidate(candidate, evidence, manifest, false);
+  }
 }
 
 function publicCandidate(candidate: LoadedCandidate): ReviewCandidate {
