@@ -18,6 +18,26 @@ docs:
   default_visibility: public
   deny_private_links: true
 areas:
+  adapters:
+    title: Adapters
+    docs_target: docs/adapters.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - adapters
+    source_refs:
+      linear_labels:
+      - area:adapters
+      - area:agent-sdk
+      - area:deepseek-runtime
+      - area:evidence
+      - area:json-rpc
+      - area:normalization
+      - area:ontology
+      - area:openhands-runtime
+      linear_milestones:
+      - 'M4: Uniform Events And Harness Adapters'
   agent-sdk:
     title: Agent Sdk
     docs_target: docs/agent-sdk.md
@@ -29,12 +49,18 @@ areas:
     - agent-sdk
     source_refs:
       linear_labels:
+      - area:adapters
       - area:agent-sdk
       - area:capture
       - area:corpus
+      - area:deepseek-runtime
       - area:evidence
       - area:export
       - area:hooks
+      - area:json-rpc
+      - area:normalization
+      - area:ontology
+      - area:openhands-runtime
       - area:opentelemetry
       - area:outcomes
       - area:quality
@@ -44,6 +70,7 @@ areas:
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
+      - 'M4: Uniform Events And Harness Adapters'
   capture:
     title: Capture
     docs_target: docs/capture.md
@@ -54,12 +81,18 @@ areas:
     - capture
     source_refs:
       linear_labels:
+      - area:adapters
       - area:agent-sdk
       - area:capture
       - area:corpus
+      - area:deepseek-runtime
       - area:evidence
       - area:export
       - area:hooks
+      - area:json-rpc
+      - area:normalization
+      - area:ontology
+      - area:openhands-runtime
       - area:opentelemetry
       - area:outcomes
       - area:quality
@@ -69,6 +102,7 @@ areas:
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
+      - 'M4: Uniform Events And Harness Adapters'
   corpus:
     title: Corpus
     docs_target: docs/corpus.md
@@ -79,11 +113,36 @@ areas:
     - corpus
     source_refs:
       linear_labels:
+      - area:adapters
+      - area:agent-sdk
       - area:corpus
+      - area:deepseek-runtime
       - area:evidence
       - area:export
+      - area:json-rpc
+      - area:normalization
+      - area:ontology
+      - area:openhands-runtime
+      - area:quality
       linear_milestones:
       - 'M3: Safe Export And Corpus Access'
+      - 'M4: Uniform Events And Harness Adapters'
+  deepseek-runtime:
+    title: Deepseek Runtime
+    docs_target: docs/deepseek-runtime.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - deepseek runtime
+    - deepseek-runtime
+    source_refs:
+      linear_labels:
+      - area:deepseek-runtime
+      - area:json-rpc
+      - area:normalization
+      linear_milestones:
+      - 'M4: Uniform Events And Harness Adapters'
   evidence:
     title: Evidence
     docs_target: docs/evidence.md
@@ -94,11 +153,17 @@ areas:
     - evidence
     source_refs:
       linear_labels:
+      - area:adapters
       - area:agent-sdk
       - area:capture
       - area:corpus
+      - area:deepseek-runtime
       - area:evidence
       - area:export
+      - area:json-rpc
+      - area:normalization
+      - area:ontology
+      - area:openhands-runtime
       - area:outcomes
       - area:quality
       - area:runner
@@ -106,6 +171,7 @@ areas:
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
+      - 'M4: Uniform Events And Harness Adapters'
   export:
     title: Export
     docs_target: docs/export.md
@@ -116,12 +182,21 @@ areas:
     - export
     source_refs:
       linear_labels:
+      - area:adapters
+      - area:agent-sdk
       - area:corpus
+      - area:deepseek-runtime
       - area:evidence
       - area:export
+      - area:json-rpc
+      - area:normalization
+      - area:ontology
+      - area:openhands-runtime
+      - area:quality
       - area:security
       linear_milestones:
       - 'M3: Safe Export And Corpus Access'
+      - 'M4: Uniform Events And Harness Adapters'
   hooks:
     title: Hooks
     docs_target: docs/hooks.md
@@ -132,18 +207,40 @@ areas:
     - hooks
     source_refs:
       linear_labels:
+      - area:adapters
       - area:agent-sdk
       - area:capture
       - area:corpus
+      - area:deepseek-runtime
       - area:evidence
       - area:export
       - area:hooks
+      - area:json-rpc
+      - area:normalization
+      - area:ontology
+      - area:openhands-runtime
       - area:quality
       - area:runner
       - area:security
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
+      - 'M4: Uniform Events And Harness Adapters'
+  json-rpc:
+    title: Json Rpc
+    docs_target: docs/json-rpc.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - json rpc
+    - json-rpc
+    source_refs:
+      linear_labels:
+      - area:json-rpc
+      - area:normalization
+      linear_milestones:
+      - 'M4: Uniform Events And Harness Adapters'
   m2-native-agent-sdk-capture:
     title: M2 Native Agent Sdk Capture
     docs_target: docs/m2-native-agent-sdk-capture.md
@@ -156,6 +253,52 @@ areas:
     source_refs:
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
+  normalization:
+    title: Normalization
+    docs_target: docs/normalization.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - normalization
+    source_refs:
+      linear_labels:
+      - area:adapters
+      - area:deepseek-runtime
+      - area:evidence
+      - area:json-rpc
+      - area:normalization
+      - area:openhands-runtime
+      - area:quality
+      linear_milestones:
+      - 'M4: Uniform Events And Harness Adapters'
+  ontology:
+    title: Ontology
+    docs_target: docs/ontology.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - ontology
+    source_refs:
+      linear_labels:
+      - area:ontology
+      linear_milestones:
+      - 'M4: Uniform Events And Harness Adapters'
+  openhands-runtime:
+    title: Openhands Runtime
+    docs_target: docs/openhands-runtime.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - openhands runtime
+    - openhands-runtime
+    source_refs:
+      linear_labels:
+      - area:openhands-runtime
+      linear_milestones:
+      - 'M4: Uniform Events And Harness Adapters'
   opentelemetry:
     title: Opentelemetry
     docs_target: docs/opentelemetry.md
@@ -166,11 +309,17 @@ areas:
     - opentelemetry
     source_refs:
       linear_labels:
+      - area:adapters
       - area:agent-sdk
       - area:capture
       - area:corpus
+      - area:deepseek-runtime
       - area:evidence
       - area:export
+      - area:json-rpc
+      - area:normalization
+      - area:ontology
+      - area:openhands-runtime
       - area:opentelemetry
       - area:quality
       - area:runner
@@ -178,6 +327,7 @@ areas:
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
+      - 'M4: Uniform Events And Harness Adapters'
   outcomes:
     title: Outcomes
     docs_target: docs/outcomes.md
@@ -188,11 +338,17 @@ areas:
     - outcomes
     source_refs:
       linear_labels:
+      - area:adapters
       - area:agent-sdk
       - area:capture
       - area:corpus
+      - area:deepseek-runtime
       - area:evidence
       - area:export
+      - area:json-rpc
+      - area:normalization
+      - area:ontology
+      - area:openhands-runtime
       - area:outcomes
       - area:quality
       - area:runner
@@ -200,6 +356,7 @@ areas:
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
+      - 'M4: Uniform Events And Harness Adapters'
   quality:
     title: Quality
     docs_target: docs/quality.md
@@ -210,12 +367,18 @@ areas:
     - quality
     source_refs:
       linear_labels:
+      - area:adapters
       - area:agent-sdk
       - area:capture
       - area:corpus
+      - area:deepseek-runtime
       - area:evidence
       - area:export
       - area:hooks
+      - area:json-rpc
+      - area:normalization
+      - area:ontology
+      - area:openhands-runtime
       - area:opentelemetry
       - area:outcomes
       - area:quality
@@ -227,6 +390,7 @@ areas:
       - 'M0: Foundation And Evidence Contracts'
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
+      - 'M4: Uniform Events And Harness Adapters'
   repository:
     title: Repository
     docs_target: docs/repository.md
@@ -237,12 +401,18 @@ areas:
     - repository
     source_refs:
       linear_labels:
+      - area:adapters
       - area:agent-sdk
       - area:capture
       - area:corpus
+      - area:deepseek-runtime
       - area:evidence
       - area:export
       - area:hooks
+      - area:json-rpc
+      - area:normalization
+      - area:ontology
+      - area:openhands-runtime
       - area:opentelemetry
       - area:outcomes
       - area:quality
@@ -254,6 +424,7 @@ areas:
       - 'M0: Foundation And Evidence Contracts'
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
+      - 'M4: Uniform Events And Harness Adapters'
   runner:
     title: Runner
     docs_target: docs/runner.md
@@ -264,17 +435,24 @@ areas:
     - runner
     source_refs:
       linear_labels:
+      - area:adapters
       - area:agent-sdk
       - area:capture
       - area:corpus
+      - area:deepseek-runtime
       - area:evidence
       - area:export
+      - area:json-rpc
+      - area:normalization
+      - area:ontology
+      - area:openhands-runtime
       - area:quality
       - area:runner
       - area:security
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
+      - 'M4: Uniform Events And Harness Adapters'
   security:
     title: Security
     docs_target: docs/security.md
@@ -285,9 +463,19 @@ areas:
     - security
     source_refs:
       linear_labels:
+      - area:adapters
+      - area:agent-sdk
+      - area:deepseek-runtime
+      - area:evidence
+      - area:json-rpc
+      - area:normalization
+      - area:ontology
+      - area:openhands-runtime
+      - area:quality
       - area:security
       linear_milestones:
       - 'M3: Safe Export And Corpus Access'
+      - 'M4: Uniform Events And Harness Adapters'
   sessions:
     title: Sessions
     docs_target: docs/sessions.md
@@ -298,11 +486,17 @@ areas:
     - sessions
     source_refs:
       linear_labels:
+      - area:adapters
       - area:agent-sdk
       - area:capture
       - area:corpus
+      - area:deepseek-runtime
       - area:evidence
       - area:export
+      - area:json-rpc
+      - area:normalization
+      - area:ontology
+      - area:openhands-runtime
       - area:quality
       - area:runner
       - area:security
@@ -310,5 +504,6 @@ areas:
       linear_milestones:
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
+      - 'M4: Uniform Events And Harness Adapters'
 redaction:
   deny_patterns: []
