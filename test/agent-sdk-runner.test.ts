@@ -124,6 +124,7 @@ test("executes one frozen queue entry end to end and retains a qualified bundle"
       }],
     }, { groupBy: ["task"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 } });
     assert.equal(aggregate.comparisons[0]!.claimStatus, "no-difference");
+    assert.equal(aggregate.comparisons[0]!.matchedDifference.numerator.unit, "right-minus-left-identified-logical-tool-operations");
 
     const verifier = readVerifierResult(summary.bundlePath, manifest);
     assert.equal(verifier.status, "passed");

@@ -72,6 +72,7 @@ test("aggregates distinct populations, retries, variation, and gated matched dif
   assert.equal(modelA.variations.find(({ measure }) => measure === "terminal-state")!.claimStatus, "case-study");
   assert.equal(report.comparisons[0]!.claimStatus, "case-study", JSON.stringify(report.comparisons[0]));
   assert.equal(report.comparisons[0]!.matchedDifference.rate, -1);
+  assert.equal(report.comparisons[0]!.matchedDifference.numerator.unit, "right-minus-left-verified-attempt");
   assert.equal(report.comparisons[1]!.claimStatus, "unavailable");
   assert.equal(report.comparisons[2]!.matchedDifference.exclusions[0]!.reason, "comparison-measure-not-gated");
   assert.equal(JSON.stringify(report).includes("statistical significance"), true);

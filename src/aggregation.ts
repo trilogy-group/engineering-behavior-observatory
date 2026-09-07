@@ -306,6 +306,7 @@ function compare(
   const rightByMatch = indexedMatches(right.filter((attempt) => !hasMissingDimension(attempt, comparison.matchBy)), comparison.matchBy);
   const keys = [...new Set([...leftByMatch.keys(), ...rightByMatch.keys()])].sort();
   const differences: number[] = [];
+  let differenceUnit: string | undefined;
   for (const key of keys) {
     const leftMatches = leftByMatch.get(key) ?? [];
     const rightMatches = rightByMatch.get(key) ?? [];
@@ -341,14 +342,17 @@ function compare(
     const leftValue = measureValue(leftMatches[0]!, comparison.measure, observations);
     const rightValue = measureValue(rightMatches[0]!, comparison.measure, observations);
     if (leftValue === undefined || rightValue === undefined) exclusions.push("measure-unavailable");
-    else if (leftValue.unit !== rightValue.unit) exclusions.push("measure-unit-mismatch");
-    else differences.push(rightValue.value - leftValue.value);
+    else if (leftValue.unit !== rightValue.unit || differenceUnit !== undefined && differenceUnit !== leftValue.unit) exclusions.push("measure-unit-mismatch");
+    else {
+      differenceUnit = leftValue.unit;
+      differences.push(rightValue.value - leftValue.value);
+    }
   }
   const differing = differences.filter((value) => value !== 0).length;
   const measurement = differences.length === 0
     ? unavailableMeasurement("No uniquely matched units have the requested measure on both sides.", 0, "matched-unit", exclusionCounts(exclusions, "matched-unit"))
     : availableMeasurement(differences.reduce((sum, value) => sum + value, 0), differences.length,
-      "right-minus-left-value", "matched-unit", exclusionCounts(exclusions, "matched-unit"));
+      `right-minus-left-${differenceUnit!}`, "matched-unit", exclusionCounts(exclusions, "matched-unit"));
   return {
     id: comparison.id,
     measure: comparison.measure,

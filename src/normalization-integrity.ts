@@ -332,11 +332,6 @@ export async function validateNormalizedCorpus(
 
 export function assessComparisonEligibility(request: ComparisonRequest): ComparisonReport {
   assertValidArtifact("comparison request", request);
-  for (const candidate of [request.left, request.right]) {
-    if (candidate.capabilityProfile.harness !== candidate.harness.id) {
-      throw new Error(`Comparison candidate "${candidate.id}" harness does not match its capability profile.`);
-    }
-  }
   const blockers: ComparisonReason[] = [];
   const caveats: ComparisonReason[] = [];
   compareExact(request.left.task, request.right.task, "task", "task-mismatch", blockers);
