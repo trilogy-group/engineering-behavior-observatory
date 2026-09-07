@@ -412,6 +412,7 @@ export async function runCodexQueueEntry(options: RunCodexQueueEntryOptions): Pr
         executable: runtime.path,
         ...(options.executableArgs === undefined ? {} : { executableArgs: options.executableArgs }),
         version: harness.version,
+        provider: model.provider,
         model: model.model,
         effort: model.effort,
         approvalPolicy: toolPolicy.approvalPolicy,

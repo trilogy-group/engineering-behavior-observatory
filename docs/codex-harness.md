@@ -114,7 +114,7 @@ remain unavailable unless supplied by separate evidence.
 | completed exposed collaboration item | `delegation` | no inferred child history |
 | turn plan or compaction notification | `context` | only when emitted |
 | token usage, reroute, or completed hook | `runtime` | native values only |
-| server-initiated request | `permission` | request and decision remain separate native records |
+| approval, permission, user-input, or elicitation request | `permission` | request and decision remain separate native records; other server requests stay unmapped |
 | matching `turn/completed` | `outcome` | terminal status is native |
 
 Model requests are deliberately unsupported: EBO does not infer an inference

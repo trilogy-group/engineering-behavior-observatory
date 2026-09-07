@@ -47,6 +47,7 @@ export type CodexTelemetrySignal = "logs" | "traces" | "metrics";
 export type CodexAppServerConfiguration = {
   executable: string;
   version: typeof CODEX_APP_SERVER_VERSION;
+  provider: "openai";
   model: string;
   effort: CodexReasoningEffort;
   approvalPolicy: CodexApprovalPolicy;
@@ -77,6 +78,7 @@ export type CodexTelemetryEvidence = {
   };
   effectiveConfiguration: {
     model: string;
+    provider: "openai";
     effort: CodexReasoningEffort;
     approvalPolicy: CodexApprovalPolicy;
     sandbox: CodexSandbox;
@@ -438,6 +440,15 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     if (text(threadStart.reasoningEffort) !== request.configuration.effort) {
       gaps.push({ kind: "effort-mismatch", detail: `Requested ${request.configuration.effort}; launched ${String(threadStart.reasoningEffort)}.` });
     }
+    if (text(threadStart.modelProvider) !== request.configuration.provider) {
+      gaps.push({ kind: "provider-mismatch", detail: `Requested ${request.configuration.provider}; launched ${String(threadStart.modelProvider)}.` });
+    }
+    if (threadStart.approvalPolicy !== request.configuration.approvalPolicy) {
+      gaps.push({ kind: "approval-policy-mismatch", detail: `Requested ${request.configuration.approvalPolicy}; applied ${JSON.stringify(threadStart.approvalPolicy)}.` });
+    }
+    if (!sandboxMatches(request.configuration.sandbox, threadStart.sandbox, request.workspacePath)) {
+      gaps.push({ kind: "sandbox-mismatch", detail: `Requested ${request.configuration.sandbox}; applied ${JSON.stringify(threadStart.sandbox)}.` });
+    }
     const started = await sendRequest("turn/start", {
       threadId,
       input: [{ type: "text", text: request.prompt }],
@@ -488,6 +499,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     executable: request.configuration.executable,
     version: request.configuration.version,
     model: request.configuration.model,
+    provider: request.configuration.provider,
     effort: request.configuration.effort,
     approvalPolicy: request.configuration.approvalPolicy,
     sandbox: request.configuration.sandbox,
@@ -735,6 +747,16 @@ function turnSandboxPolicy(sandbox: CodexSandbox, workspace: string): Record<str
   };
 }
 
+function sandboxMatches(requested: CodexSandbox, applied: unknown, workspace: string): boolean {
+  if (!isRecord(applied)) return false;
+  if (requested === "danger-full-access") return applied.type === "dangerFullAccess";
+  if (requested === "read-only") return applied.type === "readOnly" && applied.networkAccess === false;
+  return applied.type === "workspaceWrite"
+    && applied.networkAccess === false
+    && Array.isArray(applied.writableRoots)
+    && applied.writableRoots.includes(workspace);
+}
+
 function scopedThreadId(payload: unknown): string | undefined {
   if (!isRecord(payload)) return undefined;
   return text(payload.threadId)
@@ -800,6 +822,7 @@ type OtlpReceiver = {
     executable: string;
     version: string;
     model: string;
+    provider: "openai";
     effort: CodexReasoningEffort;
     approvalPolicy: CodexApprovalPolicy;
     sandbox: CodexSandbox;
@@ -894,6 +917,7 @@ async function openOtlpReceiver(signals: readonly CodexTelemetrySignal[], now = 
         },
         effectiveConfiguration: {
           model: input.model,
+          provider: input.provider,
           effort: input.effort,
           approvalPolicy: input.approvalPolicy,
           sandbox: input.sandbox,
@@ -982,6 +1006,9 @@ async function receiveOtlp(
     state.records.push(record);
     state.bytes += bytes;
     return record.parseError === undefined ? 200 : 400;
+  } catch (error) {
+    recordReceiverError(state, `Failed receiving ${signal} OTLP body: ${errorMessage(error).slice(0, 256)}`);
+    return 400;
   } finally {
     state.inFlightRecords -= 1;
     state.inFlightBytes -= bytes;

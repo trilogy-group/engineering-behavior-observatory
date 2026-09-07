@@ -1,11 +1,15 @@
 import readline from "node:readline";
 import { writeFile } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { join } from "node:path";
 
 const mode = process.argv.find((argument) => argument.startsWith("--mode="))?.slice(7) ?? "success";
 const endpoints = process.argv.flatMap((argument) => [...argument.matchAll(/endpoint = \"([^\"]+)\"/g)].map((match) => match[1]));
 const lines = readline.createInterface({ input: process.stdin });
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
+const sandboxPolicy = (mode, cwd) => mode === "danger-full-access" ? { type: "dangerFullAccess" }
+  : mode === "read-only" ? { type: "readOnly", networkAccess: false }
+    : { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true };
 let approvalPending = false;
 
 async function emitTurn() {
@@ -58,7 +62,15 @@ async function finishTurn(status = "completed") {
       body: "{}",
     })));
   }
-  for (const endpoint of endpoints) {
+  if (mode === "reset-otlp" && endpoints[0]) {
+    await new Promise((resolvePromise) => {
+      const request = httpRequest(endpoints[0], { method: "POST", headers: { "content-type": "application/json" } });
+      request.on("error", resolvePromise);
+      request.write('{"partial":');
+      setTimeout(() => request.destroy(), 10);
+    });
+  }
+  for (const endpoint of mode === "reset-otlp" ? [] : endpoints) {
     await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: mode === "malformed-otlp" ? "{" : JSON.stringify({ resourceLogs: [], resourceSpans: [], resourceMetrics: [] }) });
   }
   if (mode === "stderr-split") {
@@ -92,14 +104,14 @@ lines.on("line", async (line) => {
     send({ id: message.id, result: {
       thread: { id: "thread-1", turns: [] },
       model: "gpt-5.6-sol",
-      modelProvider: "openai",
+      modelProvider: mode === "policy-mismatch" ? "other" : "openai",
       serviceTier: null,
       cwd: message.params.cwd,
       runtimeWorkspaceRoots: message.params.runtimeWorkspaceRoots,
       instructionSources: [],
-      approvalPolicy: message.params.approvalPolicy,
+      approvalPolicy: mode === "policy-mismatch" ? "untrusted" : message.params.approvalPolicy,
       approvalsReviewer: "user",
-      sandbox: { type: message.params.sandbox },
+      sandbox: mode === "policy-mismatch" ? { type: "readOnly", networkAccess: false } : sandboxPolicy(message.params.sandbox, message.params.cwd),
       activePermissionProfile: null,
       reasoningEffort: "high",
       multiAgentMode: "explicitRequestOnly",

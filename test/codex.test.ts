@@ -191,6 +191,19 @@ test("keeps streamed and persisted history evidence separate and declares mismat
   }
 });
 
+test("declares every server-applied material policy mismatch", async () => {
+  const root = await temporaryRoot();
+  try {
+    const capture = await runFake(root, "policy-mismatch");
+    assert.equal(capture.qualification, "qualified-with-gaps");
+    for (const kind of ["provider-mismatch", "approval-policy-mismatch", "sandbox-mismatch"]) {
+      assert.ok(capture.gaps.some((gap) => gap.kind === kind), kind);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("normalizes only the matching owned turn completion", async () => {
   const root = await temporaryRoot();
   try {
@@ -253,6 +266,17 @@ test("does not count malformed OTLP JSON as a collector receipt", async () => {
     const capture = await runFake(root, "malformed-otlp", ["logs"]);
     assert.equal(capture.telemetry.telemetry.receipt.signals.logs.status, "missing");
     assert.ok(capture.telemetry.telemetry.receiverErrors.some((error) => error.includes("malformed logs")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("retains reset OTLP body streams as explicit delivery failures", async () => {
+  const root = await temporaryRoot();
+  try {
+    const capture = await runFake(root, "reset-otlp", ["logs"]);
+    assert.equal(capture.telemetry.telemetry.receipt.signals.logs.status, "missing");
+    assert.ok(capture.telemetry.telemetry.receiverErrors.some((error) => error.includes("Failed receiving logs OTLP body")));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -465,6 +489,7 @@ function fakeConfiguration(mode: string): CodexAppServerConfiguration {
     executable: process.execPath,
     executableArgs: [fixture, `--mode=${mode}`],
     version: CODEX_APP_SERVER_VERSION,
+    provider: "openai",
     model: "gpt-5.6-sol",
     effort: "high" as const,
     approvalPolicy: "never" as const,
