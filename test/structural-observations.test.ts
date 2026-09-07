@@ -146,6 +146,9 @@ test("an identity-less intervening tool start makes failure follow-up unavailabl
     assert.equal(followup.value.status, "unavailable");
     assert.equal(followup.sourceEventIds.includes(unknown.id), true);
   }
+  const repeated = observation(report, "repeated-tool-operation-count");
+  assert.equal(repeated.value.status, "unavailable");
+  assert.equal(repeated.sourceEventIds.includes(unknown.id), true);
 });
 
 test("tied same-tool and alternate-tool successors remain unavailable", () => {

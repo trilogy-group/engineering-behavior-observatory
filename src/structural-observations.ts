@@ -182,8 +182,9 @@ function extractStructuralFacts(dataset: NormalizedDataset): StructuralObservati
   const modelEvents = dataset.events.filter(({ family }) => family === "model-request");
   const requests = logicalRequestCount(modelEvents);
   const failed = operations.filter(({ failed }) => failed);
-  const repeated = repeatedOperations(operations);
-  const followed = followedOperations(operations, ambiguousTools.filter(isToolStart));
+  const ambiguousToolStarts = ambiguousTools.filter(isToolStart);
+  const repeated = repeatedOperations(operations, ambiguousToolStarts);
+  const followed = followedOperations(operations, ambiguousToolStarts);
   const compactions = dataset.events.filter(isCompactionBoundary);
   return [
     countOrUnavailable(dataset, registration("model-request-count"), requests.count, citations(modelEvents), requests.reason, "requests", modelEvents),
@@ -322,7 +323,14 @@ function uniqueEvents(events: readonly UniformEvent[]): UniformEvent[] {
   return [...new Map(events.map((event) => [event.id, event])).values()];
 }
 
-function repeatedOperations(operations: readonly ToolOperation[]): { count: number; citations: NativeEvidenceReference[]; events: UniformEvent[]; reason?: string } {
+function repeatedOperations(
+  operations: readonly ToolOperation[],
+  ambiguousStarts: readonly UniformEvent[],
+): { count: number; citations: NativeEvidenceReference[]; events: UniformEvent[]; reason?: string } {
+  if (ambiguousStarts.length > 0) {
+    const events = [...operations.flatMap(({ events }) => events), ...ambiguousStarts];
+    return { count: 0, citations: citations(events), events, reason: "Identity-less tool starts make repeated-operation identity ambiguous." };
+  }
   if (operations.length === 0) return { count: 0, citations: [], events: [] };
   if (operations.some(({ toolName, inputDigest }) => toolName === undefined || inputDigest === undefined)) {
     const events = operations.flatMap(({ events }) => events);
