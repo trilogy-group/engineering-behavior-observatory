@@ -260,6 +260,38 @@ test("latches aborts that arrive while terminal evidence is being recorded", asy
   }
 });
 
+test("uses the abort deadline after successful history readback", async () => {
+  const root = await temporaryRoot();
+  const workspace = join(root, "workspace");
+  const controller = new AbortController();
+  let abortedAt: number | undefined;
+  try {
+    await mkdir(workspace);
+    const capture = await captureCodexAppServer({
+      runId: "run-successful-history-abort",
+      attemptId: "attempt-successful-history-abort",
+      workspacePath: workspace,
+      prompt: "Complete, retain history, and stop within the original grace.",
+      configuration: fakeConfiguration("history-success-stall-shutdown"),
+      evidencePath: join(root, "session.jsonl"),
+      signal: controller.signal,
+      shutdownGraceMs: 400,
+      now: () => {
+        if (!controller.signal.aborted && new Error().stack?.includes("recordCompletion")) {
+          abortedAt = performance.now();
+          controller.abort();
+        }
+        return new Date().toISOString();
+      },
+    });
+    assert.ok(abortedAt !== undefined && performance.now() - abortedAt < 350, "successful history must not start a fresh shutdown grace");
+    assert.ok(capture.history);
+    assert.equal(capture.process.status, "interrupted");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("declares every server-applied material policy mismatch", async () => {
   const root = await temporaryRoot();
   try {

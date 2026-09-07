@@ -11,6 +11,10 @@ const sandboxPolicy = (mode, cwd) => mode === "danger-full-access" ? { type: "da
   : mode === "read-only" ? { type: "readOnly", networkAccess: false }
     : { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true };
 let approvalPending = false;
+if (mode === "history-success-stall-shutdown") {
+  process.on("SIGINT", () => {});
+  process.on("SIGTERM", () => {});
+}
 
 async function emitTurn() {
   send({ method: "unknown/native", params: { threadId: "thread-1", turnId: "turn-1", value: 1 } });

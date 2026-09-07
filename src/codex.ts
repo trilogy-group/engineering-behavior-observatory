@@ -204,7 +204,21 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
   requireText(request.workspacePath, "Codex workspace path");
   requireText(request.prompt, "Codex prompt");
   requireText(request.configuration.executable, "Codex executable");
-  const telemetry = await openOtlpReceiver(request.configuration.telemetry?.signals ?? [], request.now);
+  const shutdownGraceMs = request.shutdownGraceMs ?? 2_000;
+  let abortRequested = request.signal?.aborted ?? false;
+  let abortDeadline = abortRequested ? performance.now() + shutdownGraceMs : undefined;
+  let abortAction: (() => Promise<void>) | undefined;
+  const abortListener = (): void => {
+    abortRequested = true;
+    abortDeadline ??= performance.now() + shutdownGraceMs;
+    if (abortAction !== undefined) void abortAction();
+  };
+  request.signal?.addEventListener("abort", abortListener, { once: true });
+  if (request.signal?.aborted) abortListener();
+  const telemetry = await openOtlpReceiver(request.configuration.telemetry?.signals ?? [], request.now).catch((error: unknown) => {
+    request.signal?.removeEventListener("abort", abortListener);
+    throw error;
+  });
   let isolatedCodexHome: string;
   let localLoginReference: "available" | "unavailable" = "unavailable";
   try {
@@ -219,6 +233,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   } catch (error) {
+    request.signal?.removeEventListener("abort", abortListener);
     await telemetry.close();
     throw error;
   }
@@ -230,9 +245,6 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
   let turnId: string | undefined;
   let terminal: Record<string, unknown> | undefined;
   let history: Record<string, unknown> | undefined;
-  let abortRequested = request.signal?.aborted ?? false;
-  const shutdownGraceMs = request.shutdownGraceMs ?? 2_000;
-  let abortDeadline = abortRequested ? performance.now() + shutdownGraceMs : undefined;
   const remainingAbortGrace = (): number => abortDeadline === undefined
     ? shutdownGraceMs
     : Math.max(0, abortDeadline - performance.now());
@@ -369,6 +381,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
       await interruptWithinAbortGrace();
     });
   } catch (error) {
+    request.signal?.removeEventListener("abort", abortListener);
     await telemetry.close();
     await rm(isolatedCodexHome, { recursive: true, force: true });
     throw error;
@@ -421,9 +434,8 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     }
     if (terminal === undefined) await interruptWithinAbortGrace();
   };
-  const abortListener = () => { void abort(); };
-  if (request.signal?.aborted) abortListener();
-  else request.signal?.addEventListener("abort", abortListener, { once: true });
+  abortAction = abort;
+  if (abortRequested) void abort();
 
   let processResult: ProtocolProcessResult;
   let captureError: string | undefined;
@@ -510,8 +522,8 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     addGap({ kind: "capture-error", detail: captureError });
   } finally {
     request.signal?.removeEventListener("abort", abortListener);
-    if (terminal === undefined && request.signal?.aborted !== true) await protocolProcess.shutdown();
-    else if (terminal !== undefined) await protocolProcess.shutdown();
+    if (abortRequested) await interruptWithinAbortGrace();
+    else await protocolProcess.shutdown();
     processResult = await protocolProcess.wait();
     pending.clear();
     await telemetry.close();
