@@ -93,7 +93,8 @@ collector, and a console exporter cannot corrupt the SDK protocol channel.
 
 For the native Codex backend, set `evaluator.backend` to `codex-app-server`,
 `provider` to `openai`, and supply `model` and `effort`. The optional
-`executable` selects the installed `codex` executable (default: PATH); its version
+`executable` selects the installed `codex` executable (default: PATH). Relative
+paths resolve against the caller's working directory before isolation; its version
 must be `0.150.1`. Set `maxTurns` to `1` and omit `maxBudgetUsd`: this backend
 does not support USD budget enforcement. No automatic provider fallback occurs.
 Backend selection is independent of the evaluated harness.
@@ -123,6 +124,10 @@ must match both owned thread and turn IDs. See the
 [official app-server contract](https://developers.openai.com/codex/app-server/).
 New assertions carry optional `evaluator.configurationDigest`, binding the
 prompt version, rubric instructions, evaluator parameters, limits and blinding.
+Evaluator defaults are made explicit before hashing: omitted and explicit
+Claude backend defaults match, as do omitted/explicit native `codex`
+executables and equivalent relative/absolute executable paths. Model or effort
+changes still produce distinct configuration digests.
 Existing v1 requests and assertions remain readable without rewriting them.
 
 The response can contain only an assessed proposal or an abstention. Assessed
