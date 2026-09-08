@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { aggregateEvaluation, buildCorpusIndex, createRetainedBehaviorEvidence, createRetainedStructuralObservationSet,
-  digestMetadata, main, probeClaudeAgentSdkCapabilities, runRetainedSemanticJudge, selectReviewSample, writeReviewPacket, CODEX_APP_SERVER_VERSION,
+  digestMetadata, main, probeClaudeAgentSdkCapabilities, runRetainedSemanticJudge, selectReviewSample, writeReviewPacket, validateArtifact, CODEX_APP_SERVER_VERSION,
   type BehaviorAssertion, type ReviewHistory, type SemanticJudgeRequest } from "../src/index.js";
 
 const digest = (value: unknown): `sha256:${string}` => `sha256:${digestMetadata(value).value}`;
@@ -54,6 +54,12 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
     const policy = { groupBy: ["task" as const], selectedAttemptPolicy: "all-attempts" as const, recurrence: { minimumOccurrences: 2 } };
     const report = await aggregateEvaluation(input, policy);
     const behavior = report.groups[0]!.behaviors![0]!;
+    const permuted = structuredClone(report);
+    permuted.groups[0]!.behaviors![0]!.assessments = [...behavior.assessments].reverse();
+    assert.deepEqual(validateArtifact("permuted behavior assessments", permuted), []);
+    const repeated = structuredClone(report);
+    repeated.groups[0]!.behaviors![0]!.assessments[1]!.assessment = behavior.assessments[0]!.assessment;
+    assert.ok(validateArtifact("duplicate behavior assessment", repeated).length > 0);
     assert.equal(behavior.assessments.find((value) => value.assessment === assessment)!.measurement.rate, 1);
     assert.equal(behavior.assertions[0]!.included, true);
     const unreviewed = await aggregateEvaluation({ ...input, calibrations: [] }, policy);

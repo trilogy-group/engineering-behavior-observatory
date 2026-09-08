@@ -44,6 +44,17 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
   let dataset: NormalizedDataset;
   if (harness === CODEX_HARNESS) {
     const native = capture as NormalizationInput<ProtocolObservation> & { threadId?: string; turnId?: string };
+    const handshakeVersions = native.records.filter(({ record }) => record.kind === "response" && record.source === CODEX_HARNESS && record.method === "initialize")
+      .map(({ record }) => String((record.payload as Record<string, unknown> | undefined)?.userAgent ?? "").match(/^[^\s/]+\/([^\s]+)/u)?.[1]);
+    const telemetryVersions = outcomeCapture.records.flatMap(({ record }) => {
+      const document = record.document as Record<string, any> | undefined;
+      return document?.schemaVersion === "ebo.codex-telemetry/v1" ? [document.runtime?.version] : [];
+    });
+    if (handshakeVersions.length === 0 || [...handshakeVersions, ...telemetryVersions,
+      ...manifest.run.runtime.filter(({ name }) => name === CODEX_HARNESS).map(({ version }) => version),
+    ].some((version) => version !== manifest.run.harness.version)) {
+      throw new Error("Retained Codex native runtime version differs from the run manifest.");
+    }
     const identities = (method: string, key: "thread" | "turn"): string | undefined => {
       const ids = new Set(native.records.flatMap(({ record }) => {
         const payload = record.payload as Record<string, any> | undefined;
