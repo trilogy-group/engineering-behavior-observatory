@@ -72,18 +72,20 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
     native.threadId = identities("thread/start", "thread");
     native.turnId = identities("turn/start", "turn");
     if (native.threadId !== manifest.run.native?.sessionId) throw new Error("Retained Codex thread identity differs from the run manifest.");
-    const terminal = native.records.find(({ record }) => {
+    const terminals = native.records.filter(({ record }) => {
       const payload = record.payload as Record<string, any> | undefined;
       return record.kind === "notification" && record.source === CODEX_HARNESS && record.method === "turn/completed"
         && payload?.threadId === native.threadId && payload?.turn?.id === native.turnId;
     });
-    if (expectsCompletion && (terminal?.record.payload as Record<string, any> | undefined)?.turn?.status !== "completed") {
-      throw new Error("Completed retained Codex capture lacks matching owned terminal evidence.");
+    if (terminals.length > 1 || expectsCompletion && (terminals[0]?.record.payload as Record<string, any> | undefined)?.turn?.status !== "completed") {
+      throw new Error("Retained Codex capture requires unambiguous matching owned terminal evidence.");
     }
     dataset = (await describeAndValidateCodexDataset(native, manifest.run.harness.version)).dataset;
   } else if (harness === "openhands-agent-server") {
     const native = capture as NormalizationInput<OpenHandsNativeRecord>;
     const sessionId = manifest.run.native?.sessionId;
+    const serverInfo = native.records.filter(({ record }) => record.channel === "server-info");
+    if (serverInfo.length !== 1) throw new Error("Retained OpenHands capture requires exactly one native server-info record.");
     for (const { record } of native.records) {
       if (record.channel === "server-info" && record.payload.version !== manifest.run.harness.version) {
         throw new Error("Retained OpenHands native server version differs from the run manifest.");

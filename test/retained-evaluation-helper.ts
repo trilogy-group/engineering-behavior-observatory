@@ -107,7 +107,7 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
     const path = join(bundleRoot, session.relativePath);
     const original = readFileSync(path);
     const sourceMutations = evidence.dataset.adapter.harness === "codex-app-server" ? ["source", "client-source", "method", "client-thread", "client-turn"]
-      : evidence.dataset.adapter.harness === "openhands-agent-server" ? ["server-version", "foreign-conversation", "foreign-final", "missing-final", "error-final", "stuck-final"]
+      : evidence.dataset.adapter.harness === "openhands-agent-server" ? ["server-version", "missing-server-info", "duplicate-server-info", "foreign-conversation", "foreign-final", "missing-final", "error-final", "stuck-final"]
         : ["client-version"];
     for (const mutation of ["schema", "sequence", ...sourceMutations]) {
       let records = original.toString().trim().split("\n").map((line) => JSON.parse(line));
@@ -119,6 +119,8 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
       if (mutation === "client-thread" || mutation === "client-turn") records.find((record) => record.kind === "response"
         && record.method === (mutation === "client-thread" ? "thread/start" : "turn/start")).source = "ebo-codex-client";
       if (mutation === "server-version") records.find((record) => record.channel === "server-info").payload.version = "0.0.0";
+      if (mutation === "missing-server-info") records = records.filter((record) => record.channel !== "server-info").map((record, index) => ({ ...record, sequence: index + 1 }));
+      if (mutation === "duplicate-server-info") records = [records.find((record) => record.channel === "server-info"), ...records].map((record, index) => ({ ...record, sequence: index + 1 }));
       if (mutation === "foreign-conversation") records.find((record) => record.channel === "rest-event").session_id = "foreign-conversation";
       if (mutation === "foreign-final") records.find((record) => record.channel === "conversation-final").payload.id = "foreign-conversation";
       if (mutation === "missing-final") records = records.filter((record) => record.channel !== "conversation-final").map((record, index) => ({ ...record, sequence: index + 1 }));
@@ -142,7 +144,7 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
         }
         writeFileSync(path, bytes);
         writeFileSync(join(bundleRoot, "manifest.json"), JSON.stringify(changed));
-        await assert.rejects(createRetainedBehaviorEvidence(bundleRoot), /native envelope|protocol observation|protocol method|owned identity|native server version|conversation identity|finished conversation|native client version/u, mutation);
+        await assert.rejects(createRetainedBehaviorEvidence(bundleRoot), /native envelope|protocol observation|protocol method|owned identity|native server version|server-info record|conversation identity|finished conversation|native client version/u, mutation);
       } finally {
         writeFileSync(path, original);
         writeFileSync(reportPath, reportBefore);

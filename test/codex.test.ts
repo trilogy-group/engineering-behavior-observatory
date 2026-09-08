@@ -662,12 +662,16 @@ test("composes a qualified observational run bundle with workspace, protocol, di
     const sessionPath = join(definition.bundleRoot, session.relativePath);
     const originalBytes = await readFile(sessionPath);
     const records = originalBytes.toString().trim().split("\n").map((line) => JSON.parse(line));
-    for (const mutation of ["missing", "foreign-thread", "foreign-turn", "failed-status", "failed-before-completed"]) {
+    for (const mutation of ["missing", "foreign-thread", "foreign-turn", "failed-status", "failed-before-completed", "completed-then-failed", "completed-then-interrupted", "duplicate-completed"]) {
       const changedRecords = structuredClone(records).flatMap((record) => {
         if (record.kind !== "notification" || record.method !== "turn/completed") return [record];
         if (mutation === "missing") return [];
         if (mutation === "failed-before-completed") return [
           { ...record, payload: { ...record.payload, turn: { ...record.payload.turn, status: "failed" } } }, record,
+        ];
+        if (["completed-then-failed", "completed-then-interrupted", "duplicate-completed"].includes(mutation)) return [record,
+          { ...record, payload: { ...record.payload, turn: { ...record.payload.turn,
+            status: mutation === "completed-then-failed" ? "failed" : mutation === "completed-then-interrupted" ? "interrupted" : "completed" } } },
         ];
         if (mutation === "foreign-thread") record.payload.threadId = "foreign-thread";
         if (mutation === "foreign-turn") record.payload.turn.id = "foreign-turn";
