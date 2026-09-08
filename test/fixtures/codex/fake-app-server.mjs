@@ -114,21 +114,23 @@ lines.on("line", async (line) => {
     return;
   }
   if (message.method === "initialize") {
-    send({ id: message.id, result: { userAgent: "codex_cli_rs/0.150.1", codexHome: "/redacted", platformFamily: "unix", platformOs: "linux" } });
+    send({ id: message.id, result: { userAgent: "codex_cli_rs/0.153.4", codexHome: "/redacted", platformFamily: "unix", platformOs: "linux" } });
   } else if (message.method === "thread/start") {
     send({ id: message.id, result: {
-      thread: { id: "thread-1", turns: [] },
+      thread: { id: "thread-1", historyMode: mode === "history-paginated" ? "paginated" : message.params.historyMode, turns: [] },
       model: "gpt-5.6-sol",
       modelProvider: mode === "policy-mismatch" ? "other" : "openai",
       serviceTier: null,
-      cwd: message.params.cwd,
+      cwd: mode === "sandbox-cwd-mismatch" ? "/unexpected-workspace" : message.params.cwd,
       runtimeWorkspaceRoots: message.params.runtimeWorkspaceRoots,
       instructionSources: [],
       approvalPolicy: mode === "policy-mismatch" ? "untrusted" : message.params.approvalPolicy,
       approvalsReviewer: "user",
       sandbox: mode === "policy-mismatch" ? { type: "readOnly", networkAccess: false }
         : mode === "sandbox-root-mismatch" ? { type: "workspaceWrite", writableRoots: [message.params.cwd, "/tmp"], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }
-          : sandboxPolicy(message.params.sandbox, message.params.cwd),
+          : mode === "sandbox-implicit-cwd" || mode === "sandbox-cwd-mismatch"
+            ? { ...sandboxPolicy(message.params.sandbox, message.params.cwd), writableRoots: [] }
+            : sandboxPolicy(message.params.sandbox, message.params.cwd),
       activePermissionProfile: null,
       reasoningEffort: "high",
       multiAgentMode: "explicitRequestOnly",
@@ -142,7 +144,7 @@ lines.on("line", async (line) => {
       send({ id: message.id, error: { code: -32000, message: "Unauthorized" } });
       return;
     }
-    send({ id: message.id, result: { turn: { id: "turn-1", threadId: "thread-1", status: "inProgress", items: [] } } });
+    send({ id: message.id, result: { turn: { id: "turn-1", threadId: "thread-1", status: "inProgress", itemsView: "notLoaded", items: [] } } });
     await writeFile(join(message.params.cwd, "codex-result.txt"), "done\n");
     if (mode === "malformed") {
       process.stdout.write("{bad json\n");
@@ -160,7 +162,8 @@ lines.on("line", async (line) => {
     const items = mode === "reasoning-evidence"
       ? [{ type: "reasoning", id: "reasoning-history-1", summary: ["EBO_RAW_REASONING_SENTINEL"], content: ["EBO_RAW_REASONING_SENTINEL"] }]
       : [];
-    send({ id: message.id, result: { thread: { id: "thread-1", turns: [{ id: mode === "history-mismatch" ? "other-turn" : "turn-1", status: "completed", items }] } } });
+    send({ id: message.id, result: { thread: { id: "thread-1", historyMode: mode === "history-paginated" ? "paginated" : "legacy",
+      turns: [{ id: mode === "history-mismatch" ? "other-turn" : "turn-1", status: "completed", itemsView: mode === "history-summary" ? "summary" : mode === "history-not-loaded" ? "notLoaded" : "full", items }] } } });
   }
 });
 

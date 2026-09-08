@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { loadAtlas, queryAtlas } from "../src/atlas.js";
 import { writeCorpusIndex } from "../src/corpus.js";
 import { aggregateEvaluation, buildCorpusIndex, createRetainedBehaviorEvidence, createRetainedStructuralObservationSet,
-  digestMetadata, main, probeClaudeAgentSdkCapabilities, runRetainedSemanticJudge, selectReviewSample, writeReviewPacket,
+  digestMetadata, main, probeClaudeAgentSdkCapabilities, runRetainedSemanticJudge, selectReviewSample, writeReviewPacket, CODEX_APP_SERVER_VERSION,
   type BehaviorAssertion, type ReviewHistory, type SemanticJudgeRequest } from "../src/index.js";
 
 const digest = (value: unknown): `sha256:${string}` => `sha256:${digestMetadata(value).value}`;
@@ -14,6 +14,7 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
   const before = readFileSync(join(bundleRoot, "manifest.json"));
   const evidence = await createRetainedBehaviorEvidence(bundleRoot);
   const observations = await createRetainedStructuralObservationSet(bundleRoot);
+  if (evidence.dataset.adapter.harness === "openhands-agent-server") assert.equal(evidence.dataset.adapter.version, "1.44.1");
   assert.ok(evidence.dataset.events.length > 0);
   assert.equal(await main(["observations", "create", bundleRoot, join(outputRoot, "observations.json")], () => undefined), 0);
   const event = evidence.dataset.events[0]!;
@@ -31,7 +32,7 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
     configured.evaluator.backend = backend;
     configured.evaluator.provider = backend === "claude-agent-sdk" ? "anthropic" : "openai";
     const result = await runRetainedSemanticJudge({ bundleRoot, observations, request: configured, outputRoot: join(outputRoot, backend),
-      backend: { id: backend, version: backend === "claude-agent-sdk" ? probeClaudeAgentSdkCapabilities().sdkVersion : "0.150.1",
+      backend: { id: backend, version: backend === "claude-agent-sdk" ? probeClaudeAgentSdkCapabilities().sdkVersion : CODEX_APP_SERVER_VERSION,
         run: async () => ({ status: "completed", raw: { synthetic: true }, response: { judgment: { disposition: "assessed", assessment: "constructive",
           confidence: { value: 0.8, scale: "evaluator-reported-0-to-1" }, reason: null, missingEvidenceCapability: null,
           rationale: "Synthetic fixture only.", alternativeExplanation: "Not a human decision.", citations: [{ eventId: event.id, nativeReference: event.source.nativeReference }] } } }) } });

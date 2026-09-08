@@ -2,8 +2,8 @@ import { join } from "node:path";
 import { readQualifiedRunCapture, createAgentSdkNativeEvidenceResolver, type AgentSdkNativeRecord } from "./agent-sdk-normalizer.js";
 import { createAgentSdkBehaviorEvidence } from "./behavior-assertions.js";
 import { describeAndValidateCodexDataset, CODEX_HARNESS } from "./codex.js";
-import { normalizeOpenHandsCapture, OPENHANDS_AGENT_SERVER_CAPABILITIES, type OpenHandsNativeRecord } from "./openhands.js";
-import { createDeepSeekHarnessAdapter, DEEPSEEK_HARNESS_ID, DEEPSEEK_SDK_VERSION, normalizeDeepSeekCapture, type DeepSeekNativeObservation } from "./deepseek-adapter.js";
+import { normalizeOpenHandsCapture, OPENHANDS_AGENT_SERVER_CAPABILITIES, OPENHANDS_AGENT_SERVER_VERSION, type OpenHandsNativeRecord } from "./openhands.js";
+import { createDeepSeekHarnessAdapter, DEEPSEEK_HARNESS_ID, DEEPSEEK_SDK_VERSION, normalizeDeepSeekCapture, qualifyRetainedDeepSeekCapture, type DeepSeekNativeObservation } from "./deepseek-adapter.js";
 import { createCapturedNativeEvidenceResolver, describeNormalizedDataset, validateNormalizedDataset, type AdapterCoverageReport, type NormalizedDataset } from "./normalization-integrity.js";
 import { readBoundedFile } from "./scheduler.js";
 import type { ProtocolObservation } from "./process-protocol.js";
@@ -49,14 +49,17 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
     native.threadId = identities("thread/start", "thread");
     native.turnId = identities("turn/start", "turn");
     if (native.threadId !== manifest.run.native?.sessionId) throw new Error("Retained Codex thread identity differs from the run manifest.");
-    dataset = (await describeAndValidateCodexDataset(native)).dataset;
+    dataset = (await describeAndValidateCodexDataset(native, manifest.run.harness.version)).dataset;
   } else if (harness === "openhands-agent-server") {
     const native = capture as NormalizationInput<OpenHandsNativeRecord>;
     dataset = describeNormalizedDataset({ capture: native, normalization: await normalizeOpenHandsCapture(native),
-      capabilityProfile: OPENHANDS_AGENT_SERVER_CAPABILITIES, adapterVersion: "0.1.0",
+      capabilityProfile: OPENHANDS_AGENT_SERVER_CAPABILITIES, adapterVersion: OPENHANDS_AGENT_SERVER_VERSION,
       nativeType: (record) => typeof record.payload.kind === "string" ? record.payload.kind : record.channel });
   } else {
-    const native = capture as NormalizationInput<DeepSeekNativeObservation>;
+    const native = qualifyRetainedDeepSeekCapture(capture as NormalizationInput<DeepSeekNativeObservation>,
+      manifest.run.native?.sessionId, manifest.terminal.state === "completed");
+    capture.qualification = native.qualification;
+    outcomeCapture.qualification = native.qualification;
     dataset = describeNormalizedDataset({ capture: native, normalization: normalizeDeepSeekCapture(native),
       capabilityProfile: createDeepSeekHarnessAdapter().normalization.capabilityProfile, adapterVersion: DEEPSEEK_SDK_VERSION,
       nativeType: (record) => record.method ?? record.kind });

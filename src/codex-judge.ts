@@ -10,11 +10,14 @@ import { semanticJudgeResponseSchema, type SemanticJudgeRequest, type SemanticJu
 export const CODEX_JUDGE_CONFIG = {
   approval_policy: "never", sandbox_mode: "read-only", web_search: "disabled",
   tools: { update_plan: { enabled: false }, experimental_request_user_input: { enabled: false } },
-  features: Object.fromEntries(["shell_tool", "unified_exec", "apps", "plugins", "hooks", "memories", "multi_agent",
+  features: { ...Object.fromEntries(["shell_tool", "unified_exec", "apps", "plugins", "hooks", "memories", "multi_agent",
     "multi_agent_v2", "browser_use", "browser_use_external", "computer_use", "image_generation", "view_image",
     "code_mode", "code_mode_host", "goals", "skill_search", "skill_mcp_dependency_install", "tool_suggest",
-    "remote_plugin", "recommended_plugins", "shell_snapshot", "workspace_dependencies"].map((name) => [name, false])),
+    "remote_plugin", "recommended_plugins", "shell_snapshot", "workspace_dependencies", "sleep_tool",
+    "default_mode_request_user_input", "request_permissions_tool"].map((name) => [name, false])), skip_host_skill_discovery: true },
   mcp_servers: {}, plugins: {}, hooks: {}, project_doc_max_bytes: 0,
+  orchestrator: { skills: { enabled: false } },
+  skills: { bundled: { enabled: false }, include_instructions: false },
   analytics: { enabled: false }, otel: { exporter: "none", trace_exporter: "none", log_user_prompt: false },
 };
 export const CODEX_JUDGE_INHERITED_KEYS = ["PATH", "LANG", "LC_ALL", "TMPDIR"] as const;
@@ -151,16 +154,16 @@ export async function runCodexSemanticJudge(prompt: string, request: SemanticJud
       timedOut = true;
       stop();
     }, remaining());
-    await send("initialize", { clientInfo: { name: "ebo-semantic-judge", version: "1.0.0" }, capabilities: null });
+    await send("initialize", { clientInfo: { name: "ebo-semantic-judge", version: "1.0.0" }, capabilities: { experimentalApi: true } });
     await writeProtocolLine(child.stdin, { method: "initialized", params: {} });
     const start = await send("thread/start", { model: request.evaluator.model, modelProvider: "openai", cwd,
-      approvalPolicy: "never", sandbox: "read-only", ephemeral: true, baseInstructions: instructions, developerInstructions: instructions, config });
+      approvalPolicy: "never", sandbox: "read-only", ephemeral: true, environments: [], baseInstructions: instructions, developerInstructions: instructions, config });
     threadId = start.thread?.id;
     if (typeof threadId !== "string" || start.model !== request.evaluator.model || start.modelProvider !== "openai"
       || start.reasoningEffort !== request.evaluator.effort || start.thread.ephemeral !== true
       || !Array.isArray(start.instructionSources) || start.instructionSources.length !== 0
       || start.approvalPolicy !== "never" || start.sandbox?.type !== "readOnly" || start.sandbox.networkAccess !== false) throw new Error("Codex judge runtime configuration did not match requested isolation/model.");
-    const turn = await send("turn/start", { threadId, model: request.evaluator.model, effort: request.evaluator.effort,
+    const turn = await send("turn/start", { threadId, model: request.evaluator.model, effort: request.evaluator.effort, environments: [],
       input: [{ type: "text", text: prompt }], outputSchema: semanticJudgeResponseSchema(request.limits.maxCitations) });
     turnId = turn.turn?.id;
     if (typeof turnId !== "string") throw new Error("Codex judge returned no turn identity.");

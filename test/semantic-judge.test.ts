@@ -12,6 +12,7 @@ import type { HookInput, Options, SDKMessage, SDKResultMessage } from "@anthropi
 
 import {
   captureClaudeAgentSdkRun,
+  CODEX_APP_SERVER_VERSION,
   createAgentSdkBehaviorEvidence,
   createAgentSdkStructuralObservationSet,
   main,
@@ -26,6 +27,23 @@ import {
   type SemanticJudgeBackend,
   type SemanticJudgeRequest,
 } from "../src/index.js";
+
+test("request schema admits exactly the supported backend combinations", () => {
+  const legacy = judgeRequest("event", "observation");
+  assert.deepEqual(validateArtifact("request", legacy), []);
+  assert.deepEqual(validateArtifact("request", { ...legacy, evaluator: { ...legacy.evaluator, backend: "claude-agent-sdk" } }), []);
+  const native: SemanticJudgeRequest = { ...legacy, evaluator: { backend: "codex-app-server", provider: "openai", model: "fixture", effort: "low" } };
+  assert.deepEqual(validateArtifact("request", native), []);
+  for (const invalid of [
+    { ...legacy, evaluator: { ...legacy.evaluator, provider: "openai" } },
+    { ...legacy, evaluator: { ...legacy.evaluator, executable: "codex" } },
+    { ...legacy, evaluator: { ...legacy.evaluator, effort: "none" } },
+    { ...native, evaluator: { ...native.evaluator, provider: "anthropic" } },
+    { ...native, evaluator: { ...native.evaluator, executable: "   " } },
+    { ...native, limits: { ...native.limits, maxTurns: 2 } },
+    { ...native, limits: { ...native.limits, maxBudgetUsd: 1 } },
+  ]) assert.ok(validateArtifact("request", invalid).length > 0, JSON.stringify(invalid));
+});
 
 test("judge CLI SIGINT retains interruption and reaps its owned native child", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-judge-cli-interrupt-"));
@@ -133,6 +151,7 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
       abstention, { ...request, evaluator }, packaged, "fixture-runtime").evaluator.configurationDigest;
     assert.equal(evaluatorDigest(request.evaluator), evaluatorDigest({ ...request.evaluator, backend: "claude-agent-sdk" }));
     const codexEvaluator = { backend: "codex-app-server", provider: "openai", model: "fixture", effort: "low" } as const;
+    assert.equal(parseSemanticJudgeResponse(abstention, { ...request, evaluator: codexEvaluator }, packaged).evaluator.version, CODEX_APP_SERVER_VERSION);
     assert.equal(evaluatorDigest(codexEvaluator), evaluatorDigest({ ...codexEvaluator, executable: "codex" }));
     assert.equal(evaluatorDigest({ ...codexEvaluator, executable: "./fixture-codex" }),
       evaluatorDigest({ ...codexEvaluator, executable: resolve("fixture-codex") }));

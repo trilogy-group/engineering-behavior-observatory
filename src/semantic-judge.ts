@@ -633,7 +633,7 @@ export function parseSemanticJudgeResponse(
   value: unknown,
   request: SemanticJudgeRequest,
   input: SemanticJudgeInput,
-  evaluatorVersion: string = probeClaudeAgentSdkCapabilities().sdkVersion,
+  evaluatorVersion: string = request.evaluator.backend === "codex-app-server" ? CODEX_APP_SERVER_VERSION : probeClaudeAgentSdkCapabilities().sdkVersion,
 ): BehaviorAssertion {
   const envelope = record(value, "Judge response envelope");
   exactKeys(envelope, ["judgment"], "Judge response envelope");

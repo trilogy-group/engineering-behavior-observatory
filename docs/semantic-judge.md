@@ -95,7 +95,7 @@ For the native Codex backend, set `evaluator.backend` to `codex-app-server`,
 `provider` to `openai`, and supply `model` and `effort`. The optional
 `executable` selects the installed `codex` executable (default: PATH). Relative
 paths resolve against the caller's working directory before isolation; its version
-must be `0.150.1`. Set `maxTurns` to `1` and omit `maxBudgetUsd`: this backend
+must be `0.153.4`. Set `maxTurns` to `1` and omit `maxBudgetUsd`: this backend
 does not support USD budget enforcement. No automatic provider fallback occurs.
 Backend selection is independent of the evaluated harness.
 The selected model must exist in the pinned executable's bundled catalog.
@@ -106,7 +106,9 @@ runtime response. Unknown catalog models fail before a turn starts.
 Codex owns a fresh stdio app-server child with an empty working directory and
 temporary HOME/CODEX_HOME. Only an existing `auth.json` login is copied into it;
 personal settings, plugins, MCP, hooks, memories, shell, browser, image,
-delegation, plan, and interactive tools are disabled. The child environment
+delegation, plan, sleep, and interactive tools are disabled. Thread and turn
+environment selections are explicitly empty, and host skill discovery is
+disabled. The child environment
 allows only PATH, locale, and temporary-directory variables. Analytics and
 telemetry exporters are disabled. The thread is ephemeral with no instruction
 sources, read-only sandbox and no sandbox network access; supplied evidence

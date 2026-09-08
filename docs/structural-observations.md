@@ -24,6 +24,12 @@ loader supplies judge input, assertion validation, calibration, and aggregation.
 Unsupported source fields remain unavailable; native schemas and identities
 are preserved. Supplemental bundle metadata is retained separately as
 `outcomeCapture`, so it cannot replace source-native session records.
+OpenHands datasets retain the existing pinned adapter version `1.44.1`.
+DeepSeek reapplies its native composition, capability, initialization, prompt,
+and completed receipt-to-idle/runtime-reap gate before normalization; qualified
+partial captures remain qualified-with-gaps. Physical JSONL locators stay
+unchanged, and normalization qualification cannot exceed either the structural
+bundle gate or the source-specific gate.
 
 Each `ebo.structural-observation/v1` states its extractor/version, exact
 definition, one-attempt denominator, unit, uniform event IDs, native-record
