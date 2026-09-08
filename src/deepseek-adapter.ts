@@ -522,9 +522,10 @@ function deepSeekCaptureQualification(
   const requiredBoundary = has("composition") && has("capability")
     && has("response", "initialize") && has("response", "session/prompt") && hasSessionEvent;
   if (!requiredBoundary) throw new Error("DeepSeek capture is unqualified: runtime, prompt receipt, or durable session evidence is missing.");
+  const reap = records.find((observation) => observation.kind === "response" && observation.method === "client.close"
+    && record(observation.payload)?.status === "runtime-reaped");
   const complete = receiptSequence !== undefined && idleSequence !== undefined
-    && records.some((observation) => observation.kind === "response" && observation.method === "client.close"
-      && record(observation.payload)?.status === "runtime-reaped");
+    && reap !== undefined && reap.sequence > idleSequence;
   if (completed && !complete) throw new Error("Completed DeepSeek capture lacks durable receipt-to-idle or clean runtime-reap evidence.");
   return complete ? "qualified" : "qualified-with-gaps";
 }

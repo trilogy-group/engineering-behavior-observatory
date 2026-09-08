@@ -60,14 +60,29 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
     ].some((version) => version !== manifest.run.harness.version)) {
       throw new Error("Retained Codex native runtime version differs from the run manifest.");
     }
+    let acceptedStartSequence = 0;
     const identities = (method: string, key: "thread" | "turn"): string | undefined => {
-      const ids = new Set(native.records.flatMap(({ record }) => {
+      const accepted = native.records.filter(({ record }) => {
         const payload = record.payload as Record<string, any> | undefined;
-        return record.kind === "response" && record.source === CODEX_HARNESS && record.method === method && typeof payload?.[key]?.id === "string" ? [payload[key].id as string] : [];
-      }));
+        return record.kind === "response" && record.source === CODEX_HARNESS && record.method === method
+          && typeof payload?.[key]?.id === "string" && payload[key].id.trim() !== "";
+      });
       const optionalPartialTurn = key === "turn" && !expectsCompletion;
-      if (ids.size > 1 || ids.size === 0 && !optionalPartialTurn) throw new Error(`Retained Codex ${method} requires one owned identity.`);
-      return [...ids][0];
+      if (accepted.length === 0 && optionalPartialTurn) return undefined;
+      if (accepted.length !== 1) throw new Error(`Retained Codex ${method} requires one owned identity.`);
+      const response = accepted[0]!.record;
+      const requests = native.records.filter(({ record }) => record.kind === "request" && record.source === "ebo-codex-client" && record.id === response.id);
+      const responses = native.records.filter(({ record }) => record.kind === "response" && record.source === CODEX_HARNESS && record.id === response.id);
+      const request = requests[0]?.record;
+      const payload = response.payload as Record<string, any>;
+      if (response.id === undefined || response.id === null || requests.length !== 1 || responses.length !== 1
+        || request?.method !== method || request.sequence <= acceptedStartSequence || request.sequence >= response.sequence
+        || key === "turn" && ((request.payload as Record<string, unknown> | undefined)?.threadId !== native.threadId
+          || payload.turn.threadId !== undefined && payload.turn.threadId !== native.threadId)) {
+        throw new Error(`Retained Codex ${method} requires a unique ordered owned request/response pair.`);
+      }
+      acceptedStartSequence = response.sequence;
+      return payload[key].id as string;
     };
     native.threadId = identities("thread/start", "thread");
     native.turnId = identities("turn/start", "turn");
@@ -77,7 +92,8 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
       return record.kind === "notification" && record.source === CODEX_HARNESS && record.method === "turn/completed"
         && payload?.threadId === native.threadId && payload?.turn?.id === native.turnId;
     });
-    if (terminals.length > 1 || expectsCompletion && (terminals[0]?.record.payload as Record<string, any> | undefined)?.turn?.status !== "completed") {
+    if (terminals.length > 1 || terminals.some(({ record }) => record.sequence <= acceptedStartSequence)
+      || expectsCompletion && (terminals[0]?.record.payload as Record<string, any> | undefined)?.turn?.status !== "completed") {
       throw new Error("Retained Codex capture requires unambiguous matching owned terminal evidence.");
     }
     dataset = (await describeAndValidateCodexDataset(native, manifest.run.harness.version)).dataset;

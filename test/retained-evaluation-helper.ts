@@ -106,9 +106,11 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
     const session = manifest.evidence.find((entry: { kind: string }) => entry.kind === "session");
     const path = join(bundleRoot, session.relativePath);
     const original = readFileSync(path);
-    const sourceMutations = evidence.dataset.adapter.harness === "codex-app-server" ? ["source", "client-source", "method", "client-thread", "client-turn"]
+    const sourceMutations = evidence.dataset.adapter.harness === "codex-app-server" ? ["source", "client-source", "method", "client-thread", "client-turn",
+      "missing-thread-request", "missing-turn-request", "mismatched-thread-rpc", "mismatched-turn-rpc", "duplicate-thread-request", "duplicate-turn-request",
+      "duplicate-thread-response", "duplicate-turn-response", "foreign-turn-request", "foreign-turn-response", "late-turn-request", "early-terminal"]
       : evidence.dataset.adapter.harness === "openhands-agent-server" ? ["server-version", "missing-server-info", "duplicate-server-info", "foreign-conversation", "foreign-final", "missing-final", "error-final", "stuck-final"]
-        : ["client-version"];
+        : ["client-version", "early-reap", "early-and-late-reap"];
     for (const mutation of ["schema", "sequence", ...sourceMutations]) {
       let records = original.toString().trim().split("\n").map((line) => JSON.parse(line));
       if (mutation === "schema") records[0].schemaVersion = "not-native";
@@ -118,6 +120,24 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
       if (mutation === "method") delete records[0].method;
       if (mutation === "client-thread" || mutation === "client-turn") records.find((record) => record.kind === "response"
         && record.method === (mutation === "client-thread" ? "thread/start" : "turn/start")).source = "ebo-codex-client";
+      if (/^(missing|mismatched|duplicate)-(thread|turn)-(request|response|rpc)$/u.test(mutation)) {
+        const method = mutation.includes("thread") ? "thread/start" : "turn/start";
+        const kind = mutation.endsWith("response") ? "response" : "request";
+        const selected = records.find((record) => record.kind === kind && record.method === method);
+        if (mutation.startsWith("missing")) records = records.filter((record) => record !== selected);
+        if (mutation.startsWith("mismatched")) selected.id = "unmatched-rpc-id";
+        if (mutation.startsWith("duplicate")) records.push(structuredClone(selected));
+        records = records.map((record, index) => ({ ...record, sequence: index + 1 }));
+      }
+      if (mutation === "foreign-turn-request") records.find((record) => record.kind === "request" && record.method === "turn/start").payload.threadId = "foreign-thread";
+      if (mutation === "foreign-turn-response") records.find((record) => record.kind === "response" && record.method === "turn/start").payload.turn.threadId = "foreign-thread";
+      if (mutation === "late-turn-request" || mutation === "early-terminal") {
+        const selected = records.find((record) => mutation === "late-turn-request"
+          ? record.kind === "request" && record.method === "turn/start" : record.kind === "notification" && record.method === "turn/completed");
+        records = records.filter((record) => record !== selected);
+        if (mutation === "late-turn-request") records.push(selected); else records.unshift(selected);
+        records = records.map((record, index) => ({ ...record, sequence: index + 1 }));
+      }
       if (mutation === "server-version") records.find((record) => record.channel === "server-info").payload.version = "0.0.0";
       if (mutation === "missing-server-info") records = records.filter((record) => record.channel !== "server-info").map((record, index) => ({ ...record, sequence: index + 1 }));
       if (mutation === "duplicate-server-info") records = [records.find((record) => record.channel === "server-info"), ...records].map((record, index) => ({ ...record, sequence: index + 1 }));
@@ -126,6 +146,10 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
       if (mutation === "missing-final") records = records.filter((record) => record.channel !== "conversation-final").map((record, index) => ({ ...record, sequence: index + 1 }));
       if (mutation === "error-final" || mutation === "stuck-final") records.find((record) => record.channel === "conversation-final").payload.execution_status = mutation === "error-final" ? "error" : "stuck";
       if (mutation === "client-version") records.find((record) => record.kind === "composition").payload.runtime.clientVersion = "0.0.0";
+      if (mutation === "early-reap" || mutation === "early-and-late-reap") {
+        const close = records.find((record) => record.kind === "response" && record.method === "client.close");
+        records = [close, ...records.filter((record) => mutation === "early-and-late-reap" || record !== close)].map((record, index) => ({ ...record, sequence: index + 1 }));
+      }
       const bytes = Buffer.from(`${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
       const changed = structuredClone(manifest);
       const descriptor = changed.evidence.find((entry: { id: string }) => entry.id === session.id);
@@ -144,7 +168,7 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
         }
         writeFileSync(path, bytes);
         writeFileSync(join(bundleRoot, "manifest.json"), JSON.stringify(changed));
-        await assert.rejects(createRetainedBehaviorEvidence(bundleRoot), /native envelope|protocol observation|protocol method|owned identity|native server version|server-info record|conversation identity|finished conversation|native client version/u, mutation);
+        await assert.rejects(createRetainedBehaviorEvidence(bundleRoot), /native envelope|protocol observation|protocol method|owned identity|request\/response pair|owned terminal evidence|native server version|server-info record|conversation identity|finished conversation|native client version|runtime-reap evidence/u, mutation);
       } finally {
         writeFileSync(path, original);
         writeFileSync(reportPath, reportBefore);

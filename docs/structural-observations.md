@@ -8,12 +8,14 @@ report completion; duplicate owned terminals reject. Qualified failed/partial
 evidence remains separate.
 Native envelopes and physical JSONL sequences are checked before dispatch;
 Codex notifications from a foreign or client-only source cannot become events.
-Codex start ownership comes only from server-authored responses. OpenHands
+Codex start ownership requires unique ordered client-request/server-response
+pairs with the same JSON-RPC ID; turn requests must name the owned thread and
+completion must follow acceptance. OpenHands
 capture requires exactly one server-info record, and its version and
 conversation records must agree with the manifest; completed
 runs require one owned final conversation with `execution_status: finished`.
 DeepSeek requires the root prompt receipt and native parent/child links for
-related sessions. A coarse related-session list alone cannot authorize foreign
+related sessions, and runtime reap must follow root idle. A coarse related-session list alone cannot authorize foreign
 records, and the retained composition must match the pinned client version.
 Verifier task failures also require normal native completion; infrastructure
 failures and interruptions can retain qualified partial evidence instead.
