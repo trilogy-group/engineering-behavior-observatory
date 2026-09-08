@@ -3,12 +3,14 @@
 Retained native loading accepts the implemented source versions: OpenHands
 1.44.1, DeepSeek SDK 0.1.1-rc.2, and Codex 0.150.1/0.153.4. Unsupported versions
 fail explicitly rather than receiving a different adapter's provenance.
-Completed Codex bundles require the first matching owned native terminal to
-report completion; qualified failed/partial evidence remains separate.
+Completed Codex bundles require exactly one matching owned native terminal to
+report completion; duplicate owned terminals reject. Qualified failed/partial
+evidence remains separate.
 Native envelopes and physical JSONL sequences are checked before dispatch;
 Codex notifications from a foreign or client-only source cannot become events.
 Codex start ownership comes only from server-authored responses. OpenHands
-server-info and conversation records must agree with the manifest; completed
+capture requires exactly one server-info record, and its version and
+conversation records must agree with the manifest; completed
 runs require one owned final conversation with `execution_status: finished`.
 DeepSeek requires the root prompt receipt and native parent/child links for
 related sessions. A coarse related-session list alone cannot authorize foreign
