@@ -466,18 +466,46 @@ export function qualifyRetainedDeepSeekCapture(
 ): QualifiedNativeCapture<DeepSeekNativeObservation> {
   const rootSessionId = required(sessionId ?? "", "Retained DeepSeek root session ID");
   const records = input.records.map(({ record }) => record);
+  const children = new Map<string, string[]>();
+  for (const observation of records) {
+    const payload = record(observation.payload) ?? {};
+    if (observation.kind === "composition" && record(payload.runtime)?.clientVersion !== DEEPSEEK_SDK_VERSION) {
+      throw new Error("Retained DeepSeek capture is unqualified: native client version differs from the pinned runtime.");
+    }
+    if (observation.kind === "notification" && ["subagent.started", "subagent.finished"].includes(observation.method ?? "")
+      && typeof payload.parentSessionId === "string" && typeof payload.childSessionId === "string") {
+      children.set(payload.parentSessionId, [...(children.get(payload.parentSessionId) ?? []), payload.childSessionId]);
+    }
+  }
+  const allowed = new Set([rootSessionId]);
+  const pending = [rootSessionId];
+  for (const parent of pending) for (const child of children.get(parent) ?? []) {
+    if (!allowed.has(child)) { allowed.add(child); pending.push(child); }
+  }
+  for (const observation of records) {
+    const payload = record(observation.payload) ?? {};
+    if ([observation.sessionId, payload.sessionId, payload.parentSessionId, payload.childSessionId]
+      .some((id) => typeof id === "string" && !allowed.has(id))
+      || typeof payload.sessionId === "string" && observation.sessionId !== payload.sessionId) {
+      throw new Error("Retained DeepSeek capture is unqualified: unrelated or contradictory native session identity.");
+    }
+  }
   let messageId: string | undefined;
   let receiptSequence: number | undefined;
   let idleSequence: number | undefined;
   for (const observation of records) {
     const payload = record(observation.payload) ?? {};
     if (observation.kind === "response" && observation.method === "session/prompt" && observation.sessionId === rootSessionId) {
-      messageId = typeof payload.messageId === "string" ? payload.messageId : undefined;
+      messageId = typeof payload.messageId === "string" && payload.messageId.trim() !== "" ? payload.messageId : undefined;
     }
     if (observation.kind !== "notification") continue;
     const notification = { method: observation.method, params: payload } as HarnessNotification;
     if (receiptSequence === undefined && messageId !== undefined && isInboxReceipt(notification, rootSessionId, messageId)) receiptSequence = observation.sequence;
     if (receiptSequence !== undefined && isRootIdle(notification, rootSessionId)) idleSequence = observation.sequence;
+  }
+  if (messageId === undefined || !records.some((observation) => observation.kind === "notification" && observation.method === "session.event"
+    && allowed.has(nativeSessionId(observation) ?? ""))) {
+    throw new Error("Retained DeepSeek capture is unqualified: root prompt receipt or related durable session evidence is missing.");
   }
   const qualification = deepSeekCaptureQualification(records, completed, receiptSequence, idleSequence);
   return { ...input, qualification: input.qualification === "qualified-with-gaps" ? input.qualification : qualification };

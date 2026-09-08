@@ -7,6 +7,14 @@ Completed Codex bundles require the first matching owned native terminal to
 report completion; qualified failed/partial evidence remains separate.
 Native envelopes and physical JSONL sequences are checked before dispatch;
 Codex notifications from a foreign or client-only source cannot become events.
+Codex start ownership comes only from server-authored responses. OpenHands
+server-info and conversation records must agree with the manifest; completed
+runs require one owned final conversation with `execution_status: finished`.
+DeepSeek requires the root prompt receipt and native parent/child links for
+related sessions. A coarse related-session list alone cannot authorize foreign
+records, and the retained composition must match the pinned client version.
+Verifier task failures also require normal native completion; infrastructure
+failures and interruptions can retain qualified partial evidence instead.
 
 `ebo observations` derives versioned, deterministic facts from a
 capture-qualified retained Claude Agent SDK, Codex, OpenHands, or DeepSeek run bundle. It runs qualification,
