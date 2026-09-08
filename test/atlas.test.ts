@@ -8,7 +8,7 @@ import { aggregateEvaluation } from "../src/aggregation.js";
 import { atlasBehaviorRows, loadAtlas, queryAtlas, serveAtlas, shareAtlas, writeAtlas, type AtlasRequest } from "../src/atlas.js";
 import { renderAtlas } from "../src/atlas-html.js";
 import { atlasDashboards } from "../src/atlas-grafana.js";
-import { createPortableRunBundleExport } from "../src/exports.js";
+import { createPortableRunBundleExport, sanitizeDerivedExport } from "../src/exports.js";
 import { digestMetadata } from "../src/artifacts.js";
 import { importReviewDecision, type ReviewHistory } from "../src/human-calibration.js";
 import { main } from "../src/cli.js";
@@ -132,6 +132,9 @@ test("shareable Atlas requires source export readback and fails closed on unsupp
     const source = await loadAtlas(requestPath);
     const view = await queryAtlas(source, { review: "confirmed", model: "synthetic-model-a" });
     const policy = { sharingClass: "public" as const, maxArtifactBytes: 16 * 1024 * 1024, maxStringBytes: 8192 };
+    const nativeDisplay = sanitizeDerivedExport({ method: "item/reasoning/textDelta", payload: { delta: "synthetic-hidden-content" }, raw: JSON.stringify({ method: "item/reasoning/textDelta", params: { delta: "synthetic-hidden-content" } }) }, policy);
+    assert.doesNotMatch(JSON.stringify(nativeDisplay), /synthetic-hidden-content/u, "derived displays reuse native reasoning omission before the final scan");
+    assert.equal((nativeDisplay as { method: string }).method, "item/reasoning/textDelta");
     const approvedRoot = join(root, "approved");
     await createPortableRunBundleExport({ sourceRoot: source.input.assertions[0]!.bundleRoot, destinationRoot: approvedRoot, policy });
     source.request.sharing = { policy, approvedExports: [approvedRoot], fields: ["cohort", "aggregate-metrics", "source-digests"] };

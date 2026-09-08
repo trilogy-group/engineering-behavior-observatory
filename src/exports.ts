@@ -85,8 +85,9 @@ export function sanitizeDerivedExport(value: unknown, policy: PortableExportPoli
   validatePolicy(policy);
   const sensitive = effectiveSensitiveValues(policy);
   const replacements = new Map(correlations.map((source) => [source, `ref-${createHash("sha256").update(source).digest("hex").slice(0, 20)}`]));
+  // Derived views may embed cited session envelopes; apply native reasoning omission too.
   const bytes = sanitizeArtifact(Buffer.from(canonicalizeMetadata(value)), "application/json", policy, replacements,
-    sensitive, [homedir(), userInfo().username], new Map());
+    sensitive, [homedir(), userInfo().username], new Map(), "session");
   scanPortableTree([{ bytes, mediaType: "application/json" }], sensitive, correlations);
   return JSON.parse(bytes.toString("utf8"));
 }
