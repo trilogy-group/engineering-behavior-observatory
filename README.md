@@ -20,8 +20,8 @@ reachable native source. Human review remains a separate record.
 
 The [semantic judge runner](docs/semantic-judge.md) packages caller-selected,
 bounded evidence for one dimension and retains proposed assertions,
-abstentions, and failed judgments through one isolated Claude Agent SDK
-backend.
+abstentions, and failed judgments through an explicitly selected isolated
+Claude Agent SDK or native Codex backend, independently of the evaluated harness.
 
 The [OpenHands Agent Server adapter](docs/openhands-agent-server.md) implements
 the pinned `1.44.1` REST/WebSocket boundary with native-first reconciliation,
@@ -32,7 +32,7 @@ out-of-process TypeScript client, retains native session evidence and explicit
 receipt-to-idle completion boundaries, and normalizes only qualified records.
 
 The optional [Codex app-server adapter](docs/codex-harness.md) owns one pinned
-`0.150.1` stdio child per attempt, retains native thread/turn/item evidence and
+`0.153.4` stdio child per attempt, retains native thread/turn/item evidence and
 independently verified OTLP receipts, and runs one frozen observational queue
 entry through `ebo codex run`.
 
@@ -217,7 +217,7 @@ terminal, capture, workspace, and mode-appropriate verifier outcomes, then
 compute exact native-evidence facts. Logical tool operations use native IDs,
 resource snapshots are not added repeatedly, unrelated order domains stay
 separate, and missing capability is unavailable rather than zero. The CLI reads
-qualified retained Agent SDK bundles or an exact corpus selection and always
+qualified retained Claude Agent SDK, Codex, OpenHands, or DeepSeek bundles or an exact corpus selection and always
 writes derived records outside immutable source evidence.
 
 Portable archives accept only `ready` or `exported` partner/public trees that

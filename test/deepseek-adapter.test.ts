@@ -10,6 +10,7 @@ import {
   createDeepSeekHarnessAdapter,
   createDeepSeekRuntimeComposition,
   createRunBundleAssembler,
+  createRetainedBehaviorEvidence,
   deepSeekCapabilities,
   deepSeekCompositionDigest,
   DeepSeekNativeCapture,
@@ -193,6 +194,97 @@ test("packages a verified smoke bundle and qualifies session evidence without in
     };
     assert.deepEqual(captureReport.semanticEvidenceKinds, ["session"]);
     assert.equal(captureReport.capabilities.timingResource.status, "unsupported");
+    await checkRetainedEvaluation(bundleRoot, root);
+    const originalEvidenceQualification = (await createRetainedBehaviorEvidence(bundleRoot)).capture.qualification;
+    assert.equal(qualifiedDeepSeekCapture(definition.run.id, definition.attempt.id,
+      { ...execution.evidence as DeepSeekCaptureReport, status: "failed" }).qualification, "qualified",
+    "Complete native boundaries remain qualified independently of task outcome.");
+    const sessionDescriptor = manifest.evidence.find(({ id }) => id === "deepseek-session")!;
+    const sessionPath = join(bundleRoot, sessionDescriptor.relativePath);
+    const records = readFileSync(sessionPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const missingBoundaries = [
+      (record: any) => record.kind === "composition",
+      (record: any) => record.kind === "capability",
+      (record: any) => record.kind === "response" && record.method === "initialize",
+      (record: any) => record.kind === "response" && record.method === "session/prompt",
+      (record: any) => record.method === "session.event",
+      (record: any) => record.payload?.event?.type === "agent/inbox/spliced",
+      (record: any) => record.method === "session.status" && record.payload?.status === "idle",
+      (record: any) => record.kind === "response" && record.method === "client.close",
+    ];
+    for (const [index, missing] of missingBoundaries.entries()) {
+      const bytes = Buffer.from(`${records.filter((record) => !missing(record)).map((record, index) => JSON.stringify({ ...record, sequence: index + 1 })).join("\n")}\n`);
+      const changedManifest = structuredClone(manifest);
+      const descriptor = changedManifest.evidence.find(({ id }) => id === "deepseek-session")!;
+      descriptor.digest = `sha256:${digestBytes(bytes).value}`;
+      descriptor.sizeBytes = bytes.length;
+      writeFileSync(sessionPath, bytes);
+      writeFileSync(join(bundleRoot, "manifest.json"), JSON.stringify(changedManifest));
+      if (index === 0) assert.equal((await qualifyRunBundle(bundleRoot)).semanticAnalysisUsable, true, "Generic qualification alone misses source lifecycle loss.");
+      await assert.rejects(createRetainedBehaviorEvidence(bundleRoot), /DeepSeek capture|capture-qualified/u);
+    }
+    const failedManifest = structuredClone(manifest);
+    failedManifest.terminal = { ...failedManifest.terminal, state: "failed", failureClass: "task" };
+    const verifierDescriptor = failedManifest.evidence.find(({ id }) => id === "verifier")!;
+    const verifierPath = join(bundleRoot, verifierDescriptor.relativePath);
+    const originalVerifier = readFileSync(verifierPath);
+    const failedVerifier = Buffer.from(JSON.stringify({ ...JSON.parse(originalVerifier.toString()), status: "failed", exitCode: 1,
+      assertions: [{ id: "deepseek-smoke", status: "failed" }] }));
+    verifierDescriptor.digest = `sha256:${digestBytes(failedVerifier).value}`;
+    verifierDescriptor.sizeBytes = failedVerifier.length;
+    writeFileSync(verifierPath, failedVerifier);
+    writeFileSync(sessionPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+    writeFileSync(join(bundleRoot, "manifest.json"), JSON.stringify(failedManifest));
+    const failedEvidence = await createRetainedBehaviorEvidence(bundleRoot);
+    assert.equal(failedEvidence.capture.qualification, originalEvidenceQualification, "Task failure does not weaken complete native evidence or remove pre-existing gaps.");
+    const incompleteTaskFailure = Buffer.from(`${records.filter((record) => !(record.kind === "response" && record.method === "client.close"))
+      .map((record, index) => JSON.stringify({ ...record, sequence: index + 1 })).join("\n")}\n`);
+    const failedSession = failedManifest.evidence.find(({ id }) => id === "deepseek-session")!;
+    failedSession.digest = `sha256:${digestBytes(incompleteTaskFailure).value}`;
+    failedSession.sizeBytes = incompleteTaskFailure.length;
+    writeFileSync(sessionPath, incompleteTaskFailure);
+    writeFileSync(join(bundleRoot, "manifest.json"), JSON.stringify(failedManifest));
+    await assert.rejects(createRetainedBehaviorEvidence(bundleRoot), /Completed DeepSeek capture lacks/u,
+      "A task failure cannot relabel an incomplete native run as normal completion.");
+    writeFileSync(verifierPath, originalVerifier);
+    const partialBytes = Buffer.from(`${records.filter((record) => !(record.kind === "response" && record.method === "client.close")).map((record) => JSON.stringify(record)).join("\n")}\n`);
+    const partialManifest = structuredClone(manifest);
+    partialManifest.terminal = { ...partialManifest.terminal, state: "failed", failureClass: "infrastructure" };
+    const partialDescriptor = partialManifest.evidence.find(({ id }) => id === "deepseek-session")!;
+    partialDescriptor.digest = `sha256:${digestBytes(partialBytes).value}`;
+    partialDescriptor.sizeBytes = partialBytes.length;
+    writeFileSync(sessionPath, partialBytes);
+    writeFileSync(join(bundleRoot, "manifest.json"), JSON.stringify(partialManifest));
+    const partialEvidence = await createRetainedBehaviorEvidence(bundleRoot);
+    assert.equal(partialEvidence.capture.qualification, "qualified-with-gaps");
+    assert.equal(partialEvidence.outcomeCapture.qualification, "qualified-with-gaps");
+    const reportPath = join(bundleRoot, reportDescriptor.relativePath);
+    const reportBefore = readFileSync(reportPath);
+    for (const mutation of ["foreign-prompt", "foreign-event", "unrelated-child", "contradictory-envelope"]) {
+      const changed = JSON.parse(JSON.stringify(records.filter((record) => !(record.kind === "response" && record.method === "client.close"))));
+      if (mutation === "foreign-prompt") changed.find((record: any) => record.kind === "response" && record.method === "session/prompt").sessionId = "foreign-session";
+      if (mutation === "foreign-event" || mutation === "contradictory-envelope") {
+        const event = changed.find((record: any) => record.method === "session.event");
+        event.payload.sessionId = "foreign-session";
+        if (mutation === "foreign-event") event.sessionId = "foreign-session";
+      }
+      const retained = mutation === "unrelated-child" ? changed.filter((record: any) => !["subagent.started", "subagent.finished"].includes(record.method)) : changed;
+      const bytes = Buffer.from(`${retained.map((record: any, index: number) => JSON.stringify({ ...record, sequence: index + 1 })).join("\n")}\n`);
+      const altered = structuredClone(partialManifest);
+      const descriptor = altered.evidence.find(({ id }) => id === "deepseek-session")!;
+      descriptor.digest = `sha256:${digestBytes(bytes).value}`;
+      descriptor.sizeBytes = bytes.length;
+      const report = JSON.parse(reportBefore.toString());
+      const reportBytes = Buffer.from(JSON.stringify({ ...report, relatedSessionIds: [...(report.relatedSessionIds ?? []), "foreign-session"] }));
+      const alteredReport = altered.evidence.find(({ id }) => id === reportDescriptor.id)!;
+      alteredReport.digest = `sha256:${digestBytes(reportBytes).value}`;
+      alteredReport.sizeBytes = reportBytes.length;
+      writeFileSync(sessionPath, bytes);
+      writeFileSync(reportPath, reportBytes);
+      writeFileSync(join(bundleRoot, "manifest.json"), JSON.stringify(altered));
+      assert.equal((await qualifyRunBundle(bundleRoot)).semanticAnalysisUsable, true, "A coarse related-session list is not native parentage evidence.");
+      await assert.rejects(createRetainedBehaviorEvidence(bundleRoot), /DeepSeek capture is unqualified/u, mutation);
+    }
   } finally {
     await capture.close().catch(() => undefined);
     rmSync(root, { recursive: true, force: true });
@@ -590,3 +682,4 @@ class FailingNotificationCapture extends DeepSeekNativeCapture {
     return super.record(input);
   }
 }
+import { checkRetainedEvaluation } from "./retained-evaluation-helper.js";

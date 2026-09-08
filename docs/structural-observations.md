@@ -1,7 +1,27 @@
 # Outcome ingestion and structural observations
 
+Retained native loading accepts the implemented source versions: OpenHands
+1.44.1, DeepSeek SDK 0.1.1-rc.2, and Codex 0.150.1/0.153.4. Unsupported versions
+fail explicitly rather than receiving a different adapter's provenance.
+Completed Codex bundles require exactly one matching owned native terminal to
+report completion; duplicate owned terminals reject. Qualified failed/partial
+evidence remains separate.
+Native envelopes and physical JSONL sequences are checked before dispatch;
+Codex notifications from a foreign or client-only source cannot become events.
+Codex start ownership requires unique ordered client-request/server-response
+pairs with the same JSON-RPC ID; turn requests must name the owned thread and
+completion must follow acceptance. OpenHands
+capture requires exactly one server-info record, and its version and
+conversation records must agree with the manifest; completed
+runs require one owned final conversation with `execution_status: finished`.
+DeepSeek requires the root prompt receipt and native parent/child links for
+related sessions, and runtime reap must follow root idle. A coarse related-session list alone cannot authorize foreign
+records, and the retained composition must match the pinned client version.
+Verifier task failures also require normal native completion; infrastructure
+failures and interruptions can retain qualified partial evidence instead.
+
 `ebo observations` derives versioned, deterministic facts from a
-capture-qualified retained Agent SDK run bundle. It runs qualification,
+capture-qualified retained Claude Agent SDK, Codex, OpenHands, or DeepSeek run bundle. It runs qualification,
 normalization, native-reference integrity validation, and the registered
 extractors in that order. Source bundles are read-only; the command rejects an
 output path inside the source bundle or corpus.
@@ -16,9 +36,20 @@ node dist/src/cli.js observations corpus <corpus-root> <index.jsonl> <output-roo
 The corpus command first validates the supplied deterministic index, selects
 run manifests with the same exact-match filters as `ebo corpus query`, and
 writes one bounded `sha256-<run-attempt-tuple>.json` file per selection. It fails rather than skipping
-an invalid or unsupported selected bundle. The retained-bundle loader currently
-supports Agent SDK bundles; the extractor library accepts any validated
-`ebo.normalized-dataset/v1` produced by another harness adapter.
+an invalid or unsupported selected bundle. `createRetainedBehaviorEvidence`
+dispatches verified native session records to each existing M4 normalizer and
+resolver. `createRetainedStructuralObservationSet` is the corresponding public
+library call; the older Agent SDK-specific calls remain available. The same
+loader supplies judge input, assertion validation, calibration, and aggregation.
+Unsupported source fields remain unavailable; native schemas and identities
+are preserved. Supplemental bundle metadata is retained separately as
+`outcomeCapture`, so it cannot replace source-native session records.
+OpenHands datasets retain the existing pinned adapter version `1.44.1`.
+DeepSeek reapplies its native composition, capability, initialization, prompt,
+and completed receipt-to-idle/runtime-reap gate before normalization; qualified
+partial captures remain qualified-with-gaps. Physical JSONL locators stay
+unchanged, and normalization qualification cannot exceed either the structural
+bundle gate or the source-specific gate.
 
 Each `ebo.structural-observation/v1` states its extractor/version, exact
 definition, one-attempt denominator, unit, uniform event IDs, native-record

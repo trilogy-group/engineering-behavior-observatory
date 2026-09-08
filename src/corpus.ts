@@ -375,7 +375,14 @@ function projectEvidence(
     } else if (descriptor.kind === "capture-report") {
       entry.captureArtifactIds.push(descriptor.id);
       const document = readDescriptorJson(root, candidate, entry.issues);
-      if (isRecord(document)) assignString(entry, "captureQualification", document.qualification);
+      if (isRecord(document)) {
+        const structural = document.structuralQualification;
+        // Structural qualification supersedes the legacy coarse capture summary.
+        const status = isRecord(structural) ? structural.status : structural === undefined ? document.qualification : undefined;
+        if (["qualified", "qualified-with-gaps", "incomplete", "unqualified", "unavailable"].includes(String(status))) {
+          assignString(entry, "captureQualification", status);
+        } else entry.captureQualification = "unavailable";
+      }
     } else if (descriptor.kind === "export-manifest") entry.exportArtifactIds.push(descriptor.id);
   }
   entry.verifierArtifactIds.sort();

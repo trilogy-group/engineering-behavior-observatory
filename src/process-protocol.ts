@@ -1230,13 +1230,19 @@ function parseRecoveredObservation(line: string, lineNumber: number): Record<str
   } catch (error) {
     throw new Error(`Existing JSONL evidence line ${lineNumber} is malformed: ${errorMessage(error)}`);
   }
+  assertProtocolObservation(value, lineNumber);
+  return value as ProtocolObservation & Record<string, unknown>;
+}
+
+/** Validate a retained protocol envelope against its physical JSONL line. */
+export function assertProtocolObservation(value: unknown, lineNumber: number): asserts value is ProtocolObservation {
   const candidate = isRecord(value) ? value.sequence : undefined;
   if (!isRecord(value) || value.schemaVersion !== "ebo.protocol-observation/v1"
-      || typeof candidate !== "number" || !Number.isSafeInteger(candidate)) {
+      || !Number.isSafeInteger(lineNumber) || lineNumber < 1
+      || typeof candidate !== "number" || !Number.isSafeInteger(candidate) || candidate !== lineNumber) {
     throw new Error(`Existing JSONL evidence line ${lineNumber} is not a contiguous protocol observation.`);
   }
   assertRecoveredObservation(value, lineNumber);
-  return value as Record<string, unknown> & { sequence: number };
 }
 
 function assertRecoveredObservation(value: Record<string, unknown>, line: number): void {

@@ -1,7 +1,8 @@
 # Evidence-grounded semantic judge
 
 `ebo judge run` evaluates one declared behavior dimension against a bounded,
-caller-selected projection of a qualified Claude Agent SDK run bundle and an
+caller-selected projection of a qualified Claude Agent SDK, Codex, OpenHands,
+or DeepSeek retained run bundle and an
 `ebo.structural-observation-set/v1` file:
 
 ```sh
@@ -74,7 +75,7 @@ omitted instead of being shown to the judge as uncitable support.
 
 ## Backend and trust boundary
 
-The only backend is the installed TypeScript Claude Agent SDK. The caller
+The default backend is the installed TypeScript Claude Agent SDK. The caller
 supplies model, effort, wall-clock, turn, output, citation, and optional cost
 limits. The runner passes no tools, settings sources, skills, plugins, MCP
 servers, additional directories, or persistent session. It uses an empty
@@ -89,6 +90,51 @@ metadata records that policy without retaining secret values.
 Ambient OpenTelemetry and Claude telemetry/tracing controls are also removed;
 restricted rubric and trajectory content is never sent to a parent-configured
 collector, and a console exporter cannot corrupt the SDK protocol channel.
+
+For the native Codex backend, set `evaluator.backend` to `codex-app-server`,
+`provider` to `openai`, and supply `model` and `effort`. The optional
+`executable` selects the installed `codex` executable (default: PATH). Relative
+paths resolve against the caller's working directory before isolation; its version
+must be `0.153.4`. Set `maxTurns` to `1` and omit `maxBudgetUsd`: this backend
+does not support USD budget enforcement. No automatic provider fallback occurs.
+Backend selection is independent of the evaluated harness.
+Both request and retained judgment validation enforce backend-specific provider,
+effort, limits and environment-policy combinations. A qualified partial Codex
+capture can be evaluated without a turn identity when no turn was accepted;
+missing turn events stay unavailable and the judge can abstain.
+The selected model must exist in the pinned executable's bundled catalog.
+EBO copies that exact entry into a temporary catalog with apply-patch and
+experimental tool declarations removed; its digest is retained with the raw
+runtime response. Unknown catalog models fail before a turn starts.
+
+Codex owns a fresh stdio app-server child with an empty working directory and
+temporary HOME/CODEX_HOME. Only an existing `auth.json` login is copied into it;
+personal settings, plugins, MCP, hooks, memories, shell, browser, image,
+delegation, plan, sleep, and interactive tools are disabled. Thread and turn
+environment selections are explicitly empty, and host skill discovery is
+disabled. The child environment
+allows only PATH, locale, and temporary-directory variables. Analytics and
+telemetry exporters are disabled. The thread is ephemeral with no instruction
+sources, read-only sandbox and no sandbox network access; supplied evidence
+enters only through the prompt. Unexpected tool requests fail the judgment.
+Timeouts interrupt the owned turn and reap the process group before deleting
+the temporary home. Missing cost/API timing remains unavailable.
+`runRetainedSemanticJudge` also accepts an optional `signal`; CLI SIGINT and
+SIGTERM propagate through it to either backend. Interrupted calls retain a
+failed record and bounded received output. Timeout and interruption take
+precedence over a late successful terminal message; native startup probes
+consume the same wall-clock budget as the turn.
+
+The native structured response uses `turn/start.outputSchema` and completion
+must match both owned thread and turn IDs. See the
+[official app-server contract](https://developers.openai.com/codex/app-server/).
+New assertions carry optional `evaluator.configurationDigest`, binding the
+prompt version, rubric instructions, evaluator parameters, limits and blinding.
+Evaluator defaults are made explicit before hashing: omitted and explicit
+Claude backend defaults match, as do omitted/explicit native `codex`
+executables and equivalent relative/absolute executable paths. Model or effort
+changes still produce distinct configuration digests.
+Existing v1 requests and assertions remain readable without rewriting them.
 
 The response can contain only an assessed proposal or an abstention. Assessed
 responses require confidence, rationale, an alternative explanation, and at
@@ -108,6 +154,12 @@ timeouts instead write `failure.json` beside any bounded raw output. No failed
 record enters review, no retry occurs, and native evidence is never changed.
 Timing, cost, and usage are recorded only when the backend reports them;
 otherwise the record says they are unavailable.
+Native Codex records name the replacement environment policy and its exact
+allowlist. Model output, including partial deltas and malformed final text,
+is retained separately in restricted `raw-model-response.json` and referenced
+by optional `rawModelResponse`. It and control-frame `raw-response.json` each
+have their own `maxOutputChars` bound; startup or user-echo frames cannot
+consume the model-output retention budget.
 
 `ebo.semantic-judge-request/v1`, `ebo.semantic-judge-input/v1`, and
 `ebo.semantic-judgment/v1` are registered artifacts and can be independently
@@ -124,4 +176,13 @@ EBO_LIVE_SEMANTIC_JUDGE_SMOKE=1 \
 EBO_LIVE_SEMANTIC_JUDGE_MODEL='<existing-route>' \
 node --test --test-name-pattern='approved live semantic judge smoke' \
   dist/test/semantic-judge.test.js
+```
+
+The optional installed-runtime contract test intercepts a synthetic local
+model request, uses a dummy credential, and verifies an empty tool list:
+
+```sh
+EBO_NATIVE_CODEX_CONTRACT=1 node --test dist/test/codex-judge.test.js
+EBO_LIVE_CODEX_JUDGE_SMOKE=1 EBO_LIVE_CODEX_JUDGE_MODEL='<existing-route>' \
+  node --test --test-name-pattern='approved existing-auth' dist/test/codex-judge.test.js
 ```

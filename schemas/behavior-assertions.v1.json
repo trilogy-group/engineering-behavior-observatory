@@ -27,6 +27,16 @@
         "version": { "$ref": "#/$defs/identifier" }
       }
     },
+    "evaluatorIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "version": { "$ref": "#/$defs/identifier" },
+        "configurationDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      }
+    },
     "dimension": {
       "type": "object",
       "additionalProperties": false,
@@ -150,7 +160,7 @@
           }
         },
         "rubric": { "$ref": "#/$defs/versionedIdentity" },
-        "evaluator": { "$ref": "#/$defs/versionedIdentity" },
+        "evaluator": { "$ref": "#/$defs/evaluatorIdentity" },
         "judgment": {
           "oneOf": [
             { "$ref": "#/$defs/assessedJudgment" },

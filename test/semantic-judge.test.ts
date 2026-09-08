@@ -1,17 +1,23 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { setTimeout as delay } from "node:timers/promises";
+import { chmodSync } from "node:fs";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import type { HookInput, Options, SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import {
   captureClaudeAgentSdkRun,
+  CODEX_APP_SERVER_VERSION,
   createAgentSdkBehaviorEvidence,
   createAgentSdkStructuralObservationSet,
   main,
   packageSemanticJudgeInput,
+  parseSemanticJudgeResponse,
   probeClaudeAgentSdkCapabilities,
   runAgentSdkSemanticJudge,
   runClaudeAgentSdkSemanticJudge,
@@ -22,10 +28,100 @@ import {
   type SemanticJudgeRequest,
 } from "../src/index.js";
 
+test("request schema admits exactly the supported backend combinations", () => {
+  const legacy = judgeRequest("event", "observation");
+  assert.deepEqual(validateArtifact("request", legacy), []);
+  assert.deepEqual(validateArtifact("request", { ...legacy, evaluator: { ...legacy.evaluator, backend: "claude-agent-sdk" } }), []);
+  const native: SemanticJudgeRequest = { ...legacy, evaluator: { backend: "codex-app-server", provider: "openai", model: "fixture", effort: "low" } };
+  assert.deepEqual(validateArtifact("request", native), []);
+  for (const invalid of [
+    { ...legacy, evaluator: { ...legacy.evaluator, provider: "openai" } },
+    { ...legacy, evaluator: { ...legacy.evaluator, executable: "codex" } },
+    { ...legacy, evaluator: { ...legacy.evaluator, effort: "none" } },
+    { ...native, evaluator: { ...native.evaluator, provider: "anthropic" } },
+    { ...native, evaluator: { ...native.evaluator, executable: "   " } },
+    { ...native, limits: { ...native.limits, maxTurns: 2 } },
+    { ...native, limits: { ...native.limits, maxBudgetUsd: 1 } },
+  ]) assert.ok(validateArtifact("request", invalid).length > 0, JSON.stringify(invalid));
+});
+
+test("judge CLI SIGINT retains interruption and reaps its owned native child", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-judge-cli-interrupt-"));
+  let cli: ReturnType<typeof spawn> | undefined;
+  try {
+    const bundleRoot = await qualifiedBundle(root);
+    const observations = await createAgentSdkStructuralObservationSet(bundleRoot);
+    const evidence = await createAgentSdkBehaviorEvidence(bundleRoot);
+    const request = judgeRequest(evidence.dataset.events[0]!.id, observations.observations[0]!.id);
+    const executable = join(root, "native-judge.mjs");
+    cpSync(join(process.cwd(), "test/fixtures/codex/fake-judge.mjs"), executable);
+    chmodSync(executable, 0o700);
+    request.evaluator = { backend: "codex-app-server", executable, provider: "openai", model: "fixture", effort: "low" };
+    request.rubric.instructions = "CLI_INTERRUPT_FIXTURE";
+    request.limits.maxWallClockMs = 10000;
+    const output = join(root, "judge-output");
+    writeFileSync(join(root, "observations.json"), JSON.stringify(observations));
+    writeFileSync(join(root, "request.json"), JSON.stringify(request));
+    cli = spawn(process.execPath, ["dist/src/cli.js", "judge", "run", bundleRoot, join(root, "observations.json"), join(root, "request.json"), output], { stdio: "ignore" });
+    const exit = once(cli, "exit");
+    const deadline = Date.now() + 10000;
+    while (!existsSync(`${executable}.ready`) && cli.exitCode === null && Date.now() < deadline) await delay(20);
+    assert.ok(existsSync(`${executable}.ready`), "Native judge must be running before interruption.");
+    const pid = Number(readFileSync(`${executable}.ready`, "utf8"));
+    cli.kill("SIGINT");
+    const [code] = await exit;
+    assert.equal(code, 1);
+    const failure = JSON.parse(readFileSync(join(output, "failure.json"), "utf8"));
+    assert.equal(failure.parse.kind, "interrupted");
+    assert.ok(failure.rawResponse);
+    assert.equal(existsSync(join(output, "assertion.json")), false);
+    assert.throws(() => process.kill(pid, 0), /ESRCH/u);
+    request.rubric.instructions = "MALFORMED_OUTPUT_FIXTURE";
+    request.limits.maxOutputChars = 256;
+    const malformedRoot = join(root, "malformed-output");
+    const malformed = await runAgentSdkSemanticJudge({ bundleRoot, observations, request, outputRoot: malformedRoot });
+    assert.equal(malformed.status, "failed");
+    assert.ok(malformed.rawModelResponse);
+    const rawModelPath = join(malformedRoot, malformed.rawModelResponse.path);
+    assert.match(readFileSync(rawModelPath, "utf8"), /invalid JSON/u);
+    assert.equal(statSync(rawModelPath).mode & 0o777, 0o600);
+    assert.equal(malformed.evaluator.environment.parentPreserved, false);
+    assert.equal(malformed.evaluator.environment.mode, "replace");
+    assert.deepEqual(malformed.evaluator.environment.allowedKeys, ["HOME", "CODEX_HOME", "PATH", "LANG", "LC_ALL", "TMPDIR"]);
+    assert.equal(malformed.evaluator.environment.authentication, "existing-auth-json-only");
+    assert.deepEqual(validateArtifact("retained native failure", malformed), []);
+  } finally {
+    cli?.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Claude judge propagates library cancellation and refuses pre-aborted execution", async () => {
+  const request = judgeRequest("fixture-event", "fixture-observation");
+  const controller = new AbortController();
+  let closed = false;
+  const query = (({ options }: { options: Options }) => ({
+    close: () => { closed = true; },
+    async *[Symbol.asyncIterator]() {
+      setTimeout(() => controller.abort(), 10);
+      await new Promise<void>((resolve) => options.abortController!.signal.addEventListener("abort", () => resolve(), { once: true }));
+    },
+  })) as unknown as Parameters<typeof runClaudeAgentSdkSemanticJudge>[2];
+  const result = await runClaudeAgentSdkSemanticJudge("Synthetic fixture.", request, query, controller.signal);
+  assert.equal(result.status, "failed");
+  if (result.status === "failed") assert.equal(result.kind, "interrupted");
+  assert.equal(closed, true);
+  const preAborted = await runClaudeAgentSdkSemanticJudge("Synthetic fixture.", request,
+    (() => { throw new Error("Must not start."); }) as Parameters<typeof runClaudeAgentSdkSemanticJudge>[2], AbortSignal.abort());
+  assert.equal(preAborted.status, "failed");
+  if (preAborted.status === "failed") assert.equal(preAborted.kind, "interrupted");
+});
+
 test("packages bounded blinded untrusted evidence and retains deterministic proposals, abstentions, and failures", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-semantic-judge-"));
   try {
     const bundleRoot = await qualifiedBundle(root);
+    await checkRetainedEvaluation(bundleRoot, root);
     const manifest = JSON.parse(readFileSync(join(bundleRoot, "manifest.json"), "utf8")) as { evidence: Array<{ kind: string; relativePath: string }> };
     const captureReportPath = manifest.evidence.find(({ kind }) => kind === "capture-report")!.relativePath;
     const captureReport = JSON.parse(readFileSync(join(bundleRoot, captureReportPath), "utf8")) as { structuralQualification?: { status?: string } };
@@ -49,6 +145,18 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
     assert.doesNotMatch(JSON.stringify(packaged), /claude-test/u);
     assert.equal(packaged.blinding.sourceIdentityPreserved, true);
     assert.ok(packaged.blinding.residualClues.length > 0);
+    const abstention = { judgment: { disposition: "abstained", assessment: null, confidence: null,
+      reason: "Synthetic fixture.", missingEvidenceCapability: null, rationale: "Synthetic fixture.", alternativeExplanation: "No claim.", citations: [] } };
+    const evaluatorDigest = (evaluator: SemanticJudgeRequest["evaluator"]) => parseSemanticJudgeResponse(
+      abstention, { ...request, evaluator }, packaged, "fixture-runtime").evaluator.configurationDigest;
+    assert.equal(evaluatorDigest(request.evaluator), evaluatorDigest({ ...request.evaluator, backend: "claude-agent-sdk" }));
+    const codexEvaluator = { backend: "codex-app-server", provider: "openai", model: "fixture", effort: "low" } as const;
+    assert.equal(parseSemanticJudgeResponse(abstention, { ...request, evaluator: codexEvaluator }, packaged).evaluator.version, CODEX_APP_SERVER_VERSION);
+    assert.equal(evaluatorDigest(codexEvaluator), evaluatorDigest({ ...codexEvaluator, executable: "codex" }));
+    assert.equal(evaluatorDigest({ ...codexEvaluator, executable: "./fixture-codex" }),
+      evaluatorDigest({ ...codexEvaluator, executable: resolve("fixture-codex") }));
+    assert.notEqual(evaluatorDigest(request.evaluator), evaluatorDigest({ ...request.evaluator, effort: "high" }));
+    assert.notEqual(evaluatorDigest(request.evaluator), evaluatorDigest({ ...request.evaluator, model: "another-model" }));
     const instructionCapture = structuredClone(evidence.capture);
     const selectedNative = instructionCapture.records.find(({ reference }) =>
       reference.artifactId === event.source.nativeReference.artifactId
@@ -153,6 +261,20 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
     assert.equal(retainedAssertion.evaluator.version, first.evaluator.backend.version);
     assert.deepEqual(validateArtifact("semantic input", retainedInput), []);
     assert.deepEqual(validateArtifact("semantic judgment", retainedJudgment), []);
+    const nativeJudgment = structuredClone(retainedJudgment);
+    nativeJudgment.evaluator.provider = "openai";
+    nativeJudgment.evaluator.backend = { id: "codex-app-server", version: CODEX_APP_SERVER_VERSION };
+    nativeJudgment.evaluator.environment = { parentPreserved: false, mode: "replace", modelEffortOverrides: "removed", ambientTelemetry: "removed",
+      removedKeys: ["*"], allowedKeys: ["HOME", "CODEX_HOME", "PATH", "LANG", "LC_ALL", "TMPDIR"], authentication: "existing-auth-json-only" };
+    assert.deepEqual(validateArtifact("native judgment", nativeJudgment), []);
+    for (const [base, changes] of [
+      [retainedJudgment, { provider: "openai" }], [retainedJudgment, { effort: "ultra" }],
+      [retainedJudgment, { environment: nativeJudgment.evaluator.environment }],
+      [nativeJudgment, { provider: "anthropic" }], [nativeJudgment, { environment: retainedJudgment.evaluator.environment }],
+      [nativeJudgment, { environment: { ...nativeJudgment.evaluator.environment, allowedKeys: ["OPENAI_API_KEY"] } }],
+      [nativeJudgment, { limits: { ...nativeJudgment.evaluator.limits, maxTurns: 2 } }],
+      [nativeJudgment, { limits: { ...nativeJudgment.evaluator.limits, maxBudgetUsd: 1 } }],
+    ]) assert.ok(validateArtifact("contradictory judgment", { ...base, evaluator: { ...base.evaluator, ...changes } }).length > 0);
     let validationOutput = "";
     assert.equal(main(["validate", join(root, "proposal-a", "input.json"), join(root, "proposal-a", "judgment.json")],
       (message) => (validationOutput += message)), 0);
@@ -355,11 +477,11 @@ test("configures the Claude Agent SDK backend with no tools, settings, plugins, 
   assert.equal(schema?.type, "object");
   assert.deepEqual(schema?.required, ["judgment"]);
   const judgmentSchema = (schema?.properties as {
-    judgment: { oneOf: Array<{ properties: Record<string, { enum?: unknown[]; minItems?: number }> }> };
+    judgment: { anyOf: Array<{ properties: Record<string, { enum?: unknown[]; minItems?: number }> }> };
   }).judgment;
-  assert.equal(judgmentSchema.oneOf[0]!.properties.citations?.minItems, 1);
-  assert.equal(judgmentSchema.oneOf[1]!.properties.missingEvidenceCapability?.enum?.includes("family:validation"), true);
-  assert.equal(judgmentSchema.oneOf[1]!.properties.missingEvidenceCapability?.enum?.includes("test logs"), false);
+  assert.equal(judgmentSchema.anyOf[0]!.properties.citations?.minItems, 1);
+  assert.equal(judgmentSchema.anyOf[1]!.properties.missingEvidenceCapability?.enum?.includes("family:validation"), true);
+  assert.equal(judgmentSchema.anyOf[1]!.properties.missingEvidenceCapability?.enum?.includes("test logs"), false);
   assert.equal(existsSync(observedCwd), false, "ephemeral empty cwd is removed after execution");
 });
 
@@ -556,3 +678,4 @@ function sdkResult(structured_output?: unknown, session_id = "session-backend", 
 function sha(value: string): `sha256:${string}` {
   return `sha256:${value.repeat(64).slice(0, 64)}`;
 }
+import { checkRetainedEvaluation } from "./retained-evaluation-helper.js";

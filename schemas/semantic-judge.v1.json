@@ -57,6 +57,17 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["schemaVersion", "id", "behavior", "rubric", "evaluator", "selection", "limits", "blinding"],
+      "allOf": [{
+        "if": { "properties": { "evaluator": { "required": ["backend"], "properties": { "backend": { "const": "codex-app-server" } } } } },
+        "then": { "properties": {
+          "evaluator": { "properties": { "provider": { "const": "openai" } } },
+          "limits": { "properties": { "maxTurns": { "const": 1 } }, "not": { "required": ["maxBudgetUsd"] } }
+        } },
+        "else": { "properties": { "evaluator": {
+          "properties": { "provider": { "const": "anthropic" }, "backend": { "const": "claude-agent-sdk" }, "effort": { "enum": ["low", "medium", "high", "xhigh", "max"] } },
+          "not": { "required": ["executable"] }
+        } } }
+      }],
       "properties": {
         "schemaVersion": { "const": "ebo.semantic-judge-request/v1" },
         "id": { "type": "string", "minLength": 1, "maxLength": 220, "pattern": ".*\\S.*" },
@@ -67,9 +78,11 @@
           "additionalProperties": false,
           "required": ["provider", "model", "effort"],
           "properties": {
-            "provider": { "const": "anthropic" },
+            "backend": { "enum": ["claude-agent-sdk", "codex-app-server"] },
+            "executable": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": ".*\\S.*" },
+            "provider": { "enum": ["anthropic", "openai"] },
             "model": { "type": "string", "minLength": 1, "maxLength": 220, "pattern": ".*\\S.*" },
-            "effort": { "enum": ["low", "medium", "high", "xhigh", "max"] }
+            "effort": { "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] }
           }
         },
         "selection": {
@@ -262,22 +275,43 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["provider", "model", "effort", "backend", "environment", "limits"],
+          "allOf": [{
+            "if": { "properties": { "backend": { "properties": { "id": { "const": "codex-app-server" } } } } },
+            "then": { "properties": {
+              "provider": { "const": "openai" },
+              "limits": { "properties": { "maxTurns": { "const": 1 } }, "not": { "required": ["maxBudgetUsd"] } },
+              "environment": {
+                "required": ["mode", "allowedKeys", "authentication"],
+                "properties": { "parentPreserved": { "const": false }, "removedKeys": { "const": ["*"] },
+                  "allowedKeys": { "const": ["HOME", "CODEX_HOME", "PATH", "LANG", "LC_ALL", "TMPDIR"] } }
+              }
+            } },
+            "else": { "properties": {
+              "provider": { "const": "anthropic" },
+              "effort": { "enum": ["low", "medium", "high", "xhigh", "max"] },
+              "environment": { "properties": { "parentPreserved": { "const": true } },
+                "not": { "anyOf": [{ "required": ["mode"] }, { "required": ["allowedKeys"] }, { "required": ["authentication"] }] } }
+            } }
+          }],
           "properties": {
-            "provider": { "const": "anthropic" },
+            "provider": { "enum": ["anthropic", "openai"] },
             "model": { "$ref": "#/$defs/identifier" },
-            "effort": { "enum": ["low", "medium", "high", "xhigh", "max"] },
+            "effort": { "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] },
             "backend": {
               "type": "object",
               "additionalProperties": false,
               "required": ["id", "version"],
-              "properties": { "id": { "const": "claude-agent-sdk" }, "version": { "$ref": "#/$defs/identifier" } }
+              "properties": { "id": { "enum": ["claude-agent-sdk", "codex-app-server"] }, "version": { "$ref": "#/$defs/identifier" } }
             },
             "environment": {
               "type": "object",
               "additionalProperties": false,
               "required": ["parentPreserved", "modelEffortOverrides", "ambientTelemetry", "removedKeys"],
               "properties": {
-                "parentPreserved": { "const": true },
+                "parentPreserved": { "type": "boolean" },
+                "mode": { "const": "replace" },
+                "allowedKeys": { "$ref": "#/$defs/stringList" },
+                "authentication": { "const": "existing-auth-json-only" },
                 "modelEffortOverrides": { "const": "removed" },
                 "ambientTelemetry": { "const": "removed" },
                 "removedKeys": { "$ref": "#/$defs/stringList" }
@@ -287,6 +321,7 @@
           }
         },
         "rawResponse": { "$ref": "#/$defs/reference" },
+        "rawModelResponse": { "$ref": "#/$defs/reference" },
         "parse": {
           "oneOf": [
             {

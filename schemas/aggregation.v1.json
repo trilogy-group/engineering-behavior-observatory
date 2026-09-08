@@ -148,6 +148,77 @@
         }
       }
     },
+    "behaviorAggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["behavior","rubric","evaluator","population","assessments","assertions"],
+      "properties": {
+        "behavior": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["vocabularyVersion","categoryId","dimensionId"],
+          "properties": {
+            "vocabularyVersion": {"$ref":"#/$defs/identifier"},
+            "categoryId": {"$ref":"#/$defs/identifier"},
+            "dimensionId": {"$ref":"#/$defs/identifier"}
+          }
+        },
+        "rubric": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id","version"],
+          "properties": {"id":{"$ref":"#/$defs/identifier"},"version":{"$ref":"#/$defs/identifier"}}
+        },
+        "evaluator": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id","version"],
+          "properties": {
+            "id": {"$ref":"#/$defs/identifier"},
+            "version": {"$ref":"#/$defs/identifier"},
+            "configurationDigest": {"type":"string","pattern":"^sha256:[a-f0-9]{64}$"}
+          }
+        },
+        "population": {"const":"confirmed-attempt-dimension"},
+        "assessments": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "allOf": [
+            {"contains":{"properties":{"assessment":{"const":"constructive"}},"required":["assessment"]},"minContains":1,"maxContains":1},
+            {"contains":{"properties":{"assessment":{"const":"adverse"}},"required":["assessment"]},"minContains":1,"maxContains":1},
+            {"contains":{"properties":{"assessment":{"const":"mixed"}},"required":["assessment"]},"minContains":1,"maxContains":1},
+            {"contains":{"properties":{"assessment":{"const":"context-dependent"}},"required":["assessment"]},"minContains":1,"maxContains":1}
+          ],
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["assessment","measurement"],
+            "properties": {
+              "assessment": {"enum":["constructive","adverse","mixed","context-dependent"]},
+              "measurement": {"$ref":"#/$defs/measurement"}
+            }
+          }
+        },
+        "assertions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["runId","attemptId","id","digest","reviewOutcome","disputed","included"],
+            "properties": {
+              "runId": {"$ref":"#/$defs/identifier"},
+              "attemptId": {"$ref":"#/$defs/identifier"},
+              "id": {"$ref":"#/$defs/identifier"},
+              "digest": {"$ref":"urn:ebo:schema:normalization-integrity:v1#/$defs/digest"},
+              "reviewOutcome": {"enum":["confirmed","rejected","unresolved","unreviewed","judge-abstained"]},
+              "disputed": {"type":"boolean"},
+              "included": {"type":"boolean"}
+            }
+          }
+        }
+      }
+    },
     "report": {
       "type": "object",
       "additionalProperties": false,
@@ -183,6 +254,7 @@
             "type": "object", "additionalProperties": false, "required": ["dimensions", "metrics", "variations"],
             "properties": {
               "dimensions": { "$ref": "#/$defs/filters" },
+              "behaviors": { "type": "array", "items": { "$ref": "#/$defs/behaviorAggregate" } },
               "metrics": { "type": "array", "maxItems": 100000, "items": { "$ref": "#/$defs/metric" } },
               "variations": {
                 "type": "array", "maxItems": 2,
