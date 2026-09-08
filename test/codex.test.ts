@@ -26,17 +26,21 @@ import {
   compileRunQueue,
   createPortableRunBundleExport,
   createRetainedBehaviorEvidence,
+  createRetainedStructuralObservationSet,
   digestBytes,
   digestMetadata,
   freezeTaskPacket,
+  main,
   packPortableExport,
   readPortableRunBundleExport,
+  runRetainedSemanticJudge,
   unpackPortableExport,
   validateCorpusIndex,
   writeRunQueue,
   type ExperimentConfiguration,
   type PortableExportPolicy,
   type TaskPacket,
+  type SemanticJudgeRequest,
 } from "../src/index.js";
 
 const fixture = resolve("test/fixtures/codex/fake-app-server.mjs");
@@ -655,6 +659,43 @@ test("composes a qualified observational run bundle with workspace, protocol, di
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("retained auth failure without an owned turn supports observations and abstaining judgment", async () => {
+  const root = await temporaryRoot();
+  try {
+    const start = join(root, "start");
+    const workspace = join(root, "workspace");
+    await mkdir(start);
+    await mkdir(workspace);
+    const definition = codexDefinition(join(root, "bundle"), "auth-failure");
+    const result = await captureCodexAppServerRun({ definition, startingWorkspacePath: start,
+      workspace: { setup: () => ({ status: "ready", path: workspace, artifactId: "workspace", retained: true }) },
+      configuration: fakeConfiguration("auth-failure"), prompt: "Synthetic failure before turn acceptance." });
+    assert.equal(result.attempt.terminal.state, "failed");
+    assert.equal(result.capture?.turnId, undefined);
+    const before = await readFile(join(definition.bundleRoot, "manifest.json"));
+    const evidence = await createRetainedBehaviorEvidence(definition.bundleRoot);
+    assert.equal(evidence.capture.qualification, "qualified-with-gaps");
+    assert.equal(evidence.dataset.events.length, 0, "No invented events without an owned turn.");
+    const observations = await createRetainedStructuralObservationSet(definition.bundleRoot);
+    assert.equal(await main(["observations", "create", definition.bundleRoot, join(root, "observations.json")], () => undefined), 0);
+    const request: SemanticJudgeRequest = { schemaVersion: "ebo.semantic-judge-request/v1", id: "partial-fixture",
+      behavior: { vocabularyVersion: "1.0.0", categoryId: "verification-completion", dimensionId: "verification-completion" },
+      rubric: { id: "synthetic", version: "1.0.0", instructions: "Synthetic partial evidence only." },
+      evaluator: { backend: "codex-app-server", provider: "openai", model: "fixture", effort: "low" },
+      selection: { eventIds: [], structuralObservationIds: [], includeOutcomeObservations: true },
+      limits: { maxEvidenceItems: 20, maxRecordChars: 4096, maxInputChars: 40000, maxOutputChars: 16000, maxCitations: 2, maxWallClockMs: 1000, maxTurns: 1 },
+      blinding: { evaluatedModelIdentity: "redact" } };
+    const outputRoot = join(root, "judgment");
+    const judgment = await runRetainedSemanticJudge({ bundleRoot: definition.bundleRoot, observations, request, outputRoot,
+      backend: { id: "codex-app-server", version: CODEX_APP_SERVER_VERSION, run: async () => ({ status: "completed", raw: { synthetic: true }, response: { judgment: {
+        disposition: "abstained", assessment: null, confidence: null, reason: "No completed turn.", missingEvidenceCapability: null,
+        rationale: "Synthetic fixture.", alternativeExplanation: "No behavioral claim.", citations: [] } } }) } });
+    assert.equal(judgment.status, "proposed");
+    assert.equal(await main(["assertions", "validate", definition.bundleRoot, join(outputRoot, "assertion.json")], () => undefined), 0);
+    assert.deepEqual(await readFile(join(definition.bundleRoot, "manifest.json")), before);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("shares the omitted shutdown grace across lifecycle and Codex capture finalization", async () => {

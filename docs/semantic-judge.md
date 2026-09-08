@@ -98,6 +98,10 @@ paths resolve against the caller's working directory before isolation; its versi
 must be `0.153.4`. Set `maxTurns` to `1` and omit `maxBudgetUsd`: this backend
 does not support USD budget enforcement. No automatic provider fallback occurs.
 Backend selection is independent of the evaluated harness.
+Both request and retained judgment validation enforce backend-specific provider,
+effort, limits and environment-policy combinations. A qualified partial Codex
+capture can be evaluated without a turn identity when no turn was accepted;
+missing turn events stay unavailable and the judge can abstain.
 The selected model must exist in the pinned executable's bundled catalog.
 EBO copies that exact entry into a temporary catalog with apply-patch and
 experimental tool declarations removed; its digest is retained with the raw
