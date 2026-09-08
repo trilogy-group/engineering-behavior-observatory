@@ -33,19 +33,29 @@ test("native judge isolates ambient state, retains failures, matches owned turns
   process.env.EBO_JUDGE_SECRET_SENTINEL = "synthetic-secret";
   try {
     const request = { evaluator: { backend: "codex-app-server", executable, provider: "openai", model: "fixture", effort: "low" },
-      limits: { maxOutputChars: 16000, maxWallClockMs: 200, maxCitations: 2 } } as SemanticJudgeRequest;
+      limits: { maxOutputChars: 16000, maxWallClockMs: 1000, maxCitations: 2 } } as SemanticJudgeRequest;
     const success = await runCodexSemanticJudge("success", request);
     assert.equal(success.status, "completed", JSON.stringify(success));
     assert.equal(success.usage, undefined);
     const raw = success.raw as { frames: string[] };
     const start = raw.frames.map((frame) => JSON.parse(frame)).find((frame) => frame.result?.thread);
     assert.equal(start.result.thread.ephemeral, true);
-    for (const prompt of ["timeout", "exit", "foreign", "tool", "malformed"]) {
+    for (const prompt of ["timeout", "exit", "foreign", "tool", "malformed", "late"]) {
       const result = await runCodexSemanticJudge(prompt, request);
       assert.equal(result.status, "failed", prompt);
       assert.ok(result.raw);
-      if (result.status === "failed" && ["timeout", "foreign"].includes(prompt)) assert.equal(result.kind, "timeout");
+      if (result.status === "failed" && ["timeout", "foreign", "late"].includes(prompt)) assert.equal(result.kind, "timeout");
+      if (prompt === "late") assert.ok(JSON.stringify(result.raw).includes("turn/completed"), "Late terminal must actually arrive during shutdown grace.");
     }
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), 300);
+    const interrupted = await runCodexSemanticJudge("timeout", request, controller.signal);
+    clearTimeout(abortTimer);
+    assert.equal(interrupted.status, "failed");
+    if (interrupted.status === "failed") assert.equal(interrupted.kind, "interrupted");
+    const beforeStart = await runCodexSemanticJudge("success", request, AbortSignal.abort());
+    assert.equal(beforeStart.status, "failed");
+    if (beforeStart.status === "failed") assert.equal(beforeStart.kind, "interrupted");
     assert.equal(process.env.EBO_JUDGE_SECRET_SENTINEL, "synthetic-secret");
     assert.equal(existsSync(executable), true);
   } finally {

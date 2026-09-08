@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { createInterface } from "node:readline";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 if (process.argv.includes("--version")) { console.log("codex-cli 0.150.1"); process.exit(0); }
 if (process.argv.includes("--bundled")) { console.log(JSON.stringify({ models: [{ slug: "fixture", apply_patch_tool_type: "freeform" }] })); process.exit(0); }
@@ -28,6 +28,17 @@ for await (const line of createInterface({ input: process.stdin })) {
   if (method === "turn/start") {
     emit({ id, result: { turn: { id: "judge-turn" } } });
     const prompt = params.input[0].text;
+    if (prompt.includes("CLI_INTERRUPT_FIXTURE")) {
+      writeFileSync(`${process.argv[1]}.ready`, String(process.pid));
+      continue;
+    }
+    if (prompt === "late") {
+      process.on("SIGINT", () => setTimeout(() => {
+        emit({ method: "item/completed", params: { threadId: "judge-thread", turnId: "judge-turn", item: { type: "agentMessage", id: "late", text: "{}" } } });
+        emit({ method: "turn/completed", params: { threadId: "judge-thread", turn: { id: "judge-turn", status: "completed" } } });
+      }, 10));
+      continue;
+    }
     if (prompt === "timeout") continue;
     if (prompt === "exit") process.exit(2);
     setTimeout(() => {

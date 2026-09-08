@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { setTimeout as delay } from "node:timers/promises";
+import { chmodSync } from "node:fs";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +25,64 @@ import {
   type SemanticJudgeBackend,
   type SemanticJudgeRequest,
 } from "../src/index.js";
+
+test("judge CLI SIGINT retains interruption and reaps its owned native child", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-judge-cli-interrupt-"));
+  let cli: ReturnType<typeof spawn> | undefined;
+  try {
+    const bundleRoot = await qualifiedBundle(root);
+    const observations = await createAgentSdkStructuralObservationSet(bundleRoot);
+    const evidence = await createAgentSdkBehaviorEvidence(bundleRoot);
+    const request = judgeRequest(evidence.dataset.events[0]!.id, observations.observations[0]!.id);
+    const executable = join(root, "native-judge.mjs");
+    cpSync(join(process.cwd(), "test/fixtures/codex/fake-judge.mjs"), executable);
+    chmodSync(executable, 0o700);
+    request.evaluator = { backend: "codex-app-server", executable, provider: "openai", model: "fixture", effort: "low" };
+    request.rubric.instructions = "CLI_INTERRUPT_FIXTURE";
+    request.limits.maxWallClockMs = 10000;
+    const output = join(root, "judge-output");
+    writeFileSync(join(root, "observations.json"), JSON.stringify(observations));
+    writeFileSync(join(root, "request.json"), JSON.stringify(request));
+    cli = spawn(process.execPath, ["dist/src/cli.js", "judge", "run", bundleRoot, join(root, "observations.json"), join(root, "request.json"), output], { stdio: "ignore" });
+    const exit = once(cli, "exit");
+    const deadline = Date.now() + 10000;
+    while (!existsSync(`${executable}.ready`) && cli.exitCode === null && Date.now() < deadline) await delay(20);
+    assert.ok(existsSync(`${executable}.ready`), "Native judge must be running before interruption.");
+    const pid = Number(readFileSync(`${executable}.ready`, "utf8"));
+    cli.kill("SIGINT");
+    const [code] = await exit;
+    assert.equal(code, 1);
+    const failure = JSON.parse(readFileSync(join(output, "failure.json"), "utf8"));
+    assert.equal(failure.parse.kind, "interrupted");
+    assert.ok(failure.rawResponse);
+    assert.equal(existsSync(join(output, "assertion.json")), false);
+    assert.throws(() => process.kill(pid, 0), /ESRCH/u);
+  } finally {
+    cli?.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Claude judge propagates library cancellation and refuses pre-aborted execution", async () => {
+  const request = judgeRequest("fixture-event", "fixture-observation");
+  const controller = new AbortController();
+  let closed = false;
+  const query = (({ options }: { options: Options }) => ({
+    close: () => { closed = true; },
+    async *[Symbol.asyncIterator]() {
+      setTimeout(() => controller.abort(), 10);
+      await new Promise<void>((resolve) => options.abortController!.signal.addEventListener("abort", () => resolve(), { once: true }));
+    },
+  })) as unknown as Parameters<typeof runClaudeAgentSdkSemanticJudge>[2];
+  const result = await runClaudeAgentSdkSemanticJudge("Synthetic fixture.", request, query, controller.signal);
+  assert.equal(result.status, "failed");
+  if (result.status === "failed") assert.equal(result.kind, "interrupted");
+  assert.equal(closed, true);
+  const preAborted = await runClaudeAgentSdkSemanticJudge("Synthetic fixture.", request,
+    (() => { throw new Error("Must not start."); }) as Parameters<typeof runClaudeAgentSdkSemanticJudge>[2], AbortSignal.abort());
+  assert.equal(preAborted.status, "failed");
+  if (preAborted.status === "failed") assert.equal(preAborted.kind, "interrupted");
+});
 
 test("packages bounded blinded untrusted evidence and retains deterministic proposals, abstentions, and failures", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-semantic-judge-"));
