@@ -73,6 +73,17 @@ test("Atlas mixed fixture preserves exact cohort populations, decisions and nati
     try {
       const address = server.address(); assert.ok(address && typeof address === "object");
       const base = `http://127.0.0.1:${address.port}`;
+      const originalRequest = readFileSync(requestPath, "utf8");
+      writeFileSync(requestPath, JSON.stringify({ ...JSON.parse(originalRequest), atlasUrl: `${base}/` }));
+      const normalizedView = await queryAtlas(await loadAtlas(requestPath));
+      assert.equal(normalizedView.atlasUrl, base, "configured origins normalize before Grafana URLs are assembled");
+      const targets = atlasDashboards(normalizedView).flatMap(({ panels }) => panels.flatMap(({ targets }) => targets ?? []));
+      for (const target of targets) {
+        const url = new URL(target.url); url.search = "";
+        assert.match(url.pathname, /^\/api\//u);
+        assert.equal((await fetch(url)).status, 200, "generated Grafana targets resolve to live Atlas routes");
+      }
+      writeFileSync(requestPath, originalRequest);
       const response = await fetch(`${base}/api/view?assessment=adverse`);
       assert.equal(response.status, 200);
       assert.equal((await response.json() as typeof view).report.sourcePopulation.selectedAttempts, 1);
