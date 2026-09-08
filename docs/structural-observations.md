@@ -1,5 +1,11 @@
 # Outcome ingestion and structural observations
 
+Retained native loading accepts the implemented source versions: OpenHands
+1.44.1, DeepSeek SDK 0.1.1-rc.2, and Codex 0.150.1/0.153.4. Unsupported versions
+fail explicitly rather than receiving a different adapter's provenance.
+Completed Codex bundles require the first matching owned native terminal to
+report completion; qualified failed/partial evidence remains separate.
+
 `ebo observations` derives versioned, deterministic facts from a
 capture-qualified retained Claude Agent SDK, Codex, OpenHands, or DeepSeek run bundle. It runs qualification,
 normalization, native-reference integrity validation, and the registered

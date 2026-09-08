@@ -33,6 +33,7 @@ import {
   main,
   packPortableExport,
   readPortableRunBundleExport,
+  qualifyRunBundle,
   runRetainedSemanticJudge,
   unpackPortableExport,
   validateCorpusIndex,
@@ -656,6 +657,33 @@ test("composes a qualified observational run bundle with workspace, protocol, di
     assert.ok((result.normalized?.events.length ?? 0) > 0);
     assert.equal(result.coverage?.records.total, result.capture?.records.length);
     await checkRetainedEvaluation(definition.bundleRoot, root);
+    const manifest = result.manifest;
+    const session = manifest.evidence.find(({ kind }) => kind === "session")!;
+    const sessionPath = join(definition.bundleRoot, session.relativePath);
+    const originalBytes = await readFile(sessionPath);
+    const records = originalBytes.toString().trim().split("\n").map((line) => JSON.parse(line));
+    for (const mutation of ["missing", "foreign-thread", "foreign-turn", "failed-status", "failed-before-completed"]) {
+      const changedRecords = structuredClone(records).flatMap((record) => {
+        if (record.kind !== "notification" || record.method !== "turn/completed") return [record];
+        if (mutation === "missing") return [];
+        if (mutation === "failed-before-completed") return [
+          { ...record, payload: { ...record.payload, turn: { ...record.payload.turn, status: "failed" } } }, record,
+        ];
+        if (mutation === "foreign-thread") record.payload.threadId = "foreign-thread";
+        if (mutation === "foreign-turn") record.payload.turn.id = "foreign-turn";
+        if (mutation === "failed-status") record.payload.turn.status = "failed";
+        return [record];
+      });
+      const bytes = Buffer.from(`${changedRecords.map((record, index) => JSON.stringify({ ...record, sequence: index + 1 })).join("\n")}\n`);
+      const changedManifest = structuredClone(manifest);
+      const descriptor = changedManifest.evidence.find(({ id }) => id === session.id)!;
+      descriptor.digest = `sha256:${digestBytes(bytes).value}`;
+      descriptor.sizeBytes = bytes.length;
+      await writeFile(sessionPath, bytes);
+      await writeFile(join(definition.bundleRoot, "manifest.json"), JSON.stringify(changedManifest));
+      assert.equal((await qualifyRunBundle(definition.bundleRoot)).semanticAnalysisUsable, true, "Generic qualification does not enforce owned Codex completion.");
+      await assert.rejects(createRetainedBehaviorEvidence(definition.bundleRoot), /matching owned terminal evidence/u, mutation);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

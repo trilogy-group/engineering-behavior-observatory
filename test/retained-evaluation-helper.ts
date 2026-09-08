@@ -108,4 +108,13 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
     if (conflict) assert.equal(original.assessments[0]!.measurement.exclusions[0]!.reason, "conflicting-confirmed-reruns");
   }
   assert.deepEqual(readFileSync(join(bundleRoot, "manifest.json")), before);
+  if (["openhands-agent-server", "deepseek-harness"].includes(evidence.dataset.adapter.harness)) {
+    const changed = JSON.parse(before.toString());
+    changed.run.harness.version = "unsupported-fixture-version";
+    try {
+      writeFileSync(join(bundleRoot, "manifest.json"), JSON.stringify(changed));
+      await assert.rejects(createRetainedBehaviorEvidence(bundleRoot), /Unsupported retained (OpenHands|DeepSeek) runtime/u);
+    } finally { writeFileSync(join(bundleRoot, "manifest.json"), before); }
+    assert.deepEqual(readFileSync(join(bundleRoot, "manifest.json")), before);
+  }
 }

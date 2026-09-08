@@ -26,6 +26,12 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
     const evidence = await createAgentSdkBehaviorEvidence(bundleRoot);
     return { ...evidence, outcomeCapture: evidence.capture };
   }
+  if (harness === "openhands-agent-server" && manifest.run.harness.version !== OPENHANDS_AGENT_SERVER_VERSION) {
+    throw new Error(`Unsupported retained OpenHands runtime ${manifest.run.harness.version}.`);
+  }
+  if (harness === DEEPSEEK_HARNESS_ID && manifest.run.harness.version !== DEEPSEEK_SDK_VERSION) {
+    throw new Error(`Unsupported retained DeepSeek runtime ${manifest.run.harness.version}.`);
+  }
   const outcomeCapture = await readQualifiedRunCapture(bundleRoot);
   const capture = {
     ...outcomeCapture,
@@ -50,6 +56,14 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
     native.threadId = identities("thread/start", "thread");
     native.turnId = identities("turn/start", "turn");
     if (native.threadId !== manifest.run.native?.sessionId) throw new Error("Retained Codex thread identity differs from the run manifest.");
+    const terminal = native.records.find(({ record }) => {
+      const payload = record.payload as Record<string, any> | undefined;
+      return record.kind === "notification" && record.source === CODEX_HARNESS && record.method === "turn/completed"
+        && payload?.threadId === native.threadId && payload?.turn?.id === native.turnId;
+    });
+    if (manifest.terminal.state === "completed" && (terminal?.record.payload as Record<string, any> | undefined)?.turn?.status !== "completed") {
+      throw new Error("Completed retained Codex capture lacks matching owned terminal evidence.");
+    }
     dataset = (await describeAndValidateCodexDataset(native, manifest.run.harness.version)).dataset;
   } else if (harness === "openhands-agent-server") {
     const native = capture as NormalizationInput<OpenHandsNativeRecord>;
