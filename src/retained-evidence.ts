@@ -43,7 +43,8 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
         const payload = record.payload as Record<string, any> | undefined;
         return record.kind === "response" && record.method === method && typeof payload?.[key]?.id === "string" ? [payload[key].id as string] : [];
       }));
-      if (ids.size !== 1) throw new Error(`Retained Codex ${method} requires one owned identity.`);
+      const optionalPartialTurn = key === "turn" && manifest.terminal.state !== "completed";
+      if (ids.size > 1 || ids.size === 0 && !optionalPartialTurn) throw new Error(`Retained Codex ${method} requires one owned identity.`);
       return [...ids][0];
     };
     native.threadId = identities("thread/start", "thread");

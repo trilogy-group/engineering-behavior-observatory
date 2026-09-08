@@ -275,6 +275,24 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["provider", "model", "effort", "backend", "environment", "limits"],
+          "allOf": [{
+            "if": { "properties": { "backend": { "properties": { "id": { "const": "codex-app-server" } } } } },
+            "then": { "properties": {
+              "provider": { "const": "openai" },
+              "limits": { "properties": { "maxTurns": { "const": 1 } }, "not": { "required": ["maxBudgetUsd"] } },
+              "environment": {
+                "required": ["mode", "allowedKeys", "authentication"],
+                "properties": { "parentPreserved": { "const": false }, "removedKeys": { "const": ["*"] },
+                  "allowedKeys": { "const": ["HOME", "CODEX_HOME", "PATH", "LANG", "LC_ALL", "TMPDIR"] } }
+              }
+            } },
+            "else": { "properties": {
+              "provider": { "const": "anthropic" },
+              "effort": { "enum": ["low", "medium", "high", "xhigh", "max"] },
+              "environment": { "properties": { "parentPreserved": { "const": true } },
+                "not": { "anyOf": [{ "required": ["mode"] }, { "required": ["allowedKeys"] }, { "required": ["authentication"] }] } }
+            } }
+          }],
           "properties": {
             "provider": { "enum": ["anthropic", "openai"] },
             "model": { "$ref": "#/$defs/identifier" },

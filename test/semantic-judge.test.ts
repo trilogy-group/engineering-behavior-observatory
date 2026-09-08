@@ -261,6 +261,20 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
     assert.equal(retainedAssertion.evaluator.version, first.evaluator.backend.version);
     assert.deepEqual(validateArtifact("semantic input", retainedInput), []);
     assert.deepEqual(validateArtifact("semantic judgment", retainedJudgment), []);
+    const nativeJudgment = structuredClone(retainedJudgment);
+    nativeJudgment.evaluator.provider = "openai";
+    nativeJudgment.evaluator.backend = { id: "codex-app-server", version: CODEX_APP_SERVER_VERSION };
+    nativeJudgment.evaluator.environment = { parentPreserved: false, mode: "replace", modelEffortOverrides: "removed", ambientTelemetry: "removed",
+      removedKeys: ["*"], allowedKeys: ["HOME", "CODEX_HOME", "PATH", "LANG", "LC_ALL", "TMPDIR"], authentication: "existing-auth-json-only" };
+    assert.deepEqual(validateArtifact("native judgment", nativeJudgment), []);
+    for (const [base, changes] of [
+      [retainedJudgment, { provider: "openai" }], [retainedJudgment, { effort: "ultra" }],
+      [retainedJudgment, { environment: nativeJudgment.evaluator.environment }],
+      [nativeJudgment, { provider: "anthropic" }], [nativeJudgment, { environment: retainedJudgment.evaluator.environment }],
+      [nativeJudgment, { environment: { ...nativeJudgment.evaluator.environment, allowedKeys: ["OPENAI_API_KEY"] } }],
+      [nativeJudgment, { limits: { ...nativeJudgment.evaluator.limits, maxTurns: 2 } }],
+      [nativeJudgment, { limits: { ...nativeJudgment.evaluator.limits, maxBudgetUsd: 1 } }],
+    ]) assert.ok(validateArtifact("contradictory judgment", { ...base, evaluator: { ...base.evaluator, ...changes } }).length > 0);
     let validationOutput = "";
     assert.equal(main(["validate", join(root, "proposal-a", "input.json"), join(root, "proposal-a", "judgment.json")],
       (message) => (validationOutput += message)), 0);
