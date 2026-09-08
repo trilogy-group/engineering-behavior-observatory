@@ -57,6 +57,20 @@ test("judge CLI SIGINT retains interruption and reaps its owned native child", a
     assert.ok(failure.rawResponse);
     assert.equal(existsSync(join(output, "assertion.json")), false);
     assert.throws(() => process.kill(pid, 0), /ESRCH/u);
+    request.rubric.instructions = "MALFORMED_OUTPUT_FIXTURE";
+    request.limits.maxOutputChars = 256;
+    const malformedRoot = join(root, "malformed-output");
+    const malformed = await runAgentSdkSemanticJudge({ bundleRoot, observations, request, outputRoot: malformedRoot });
+    assert.equal(malformed.status, "failed");
+    assert.ok(malformed.rawModelResponse);
+    const rawModelPath = join(malformedRoot, malformed.rawModelResponse.path);
+    assert.match(readFileSync(rawModelPath, "utf8"), /invalid JSON/u);
+    assert.equal(statSync(rawModelPath).mode & 0o777, 0o600);
+    assert.equal(malformed.evaluator.environment.parentPreserved, false);
+    assert.equal(malformed.evaluator.environment.mode, "replace");
+    assert.deepEqual(malformed.evaluator.environment.allowedKeys, ["HOME", "CODEX_HOME", "PATH", "LANG", "LC_ALL", "TMPDIR"]);
+    assert.equal(malformed.evaluator.environment.authentication, "existing-auth-json-only");
+    assert.deepEqual(validateArtifact("retained native failure", malformed), []);
   } finally {
     cli?.kill("SIGKILL");
     rmSync(root, { recursive: true, force: true });

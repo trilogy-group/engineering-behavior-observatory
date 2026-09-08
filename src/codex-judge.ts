@@ -17,6 +17,7 @@ export const CODEX_JUDGE_CONFIG = {
   mcp_servers: {}, plugins: {}, hooks: {}, project_doc_max_bytes: 0,
   analytics: { enabled: false }, otel: { exporter: "none", trace_exporter: "none", log_user_prompt: false },
 };
+export const CODEX_JUDGE_INHERITED_KEYS = ["PATH", "LANG", "LC_ALL", "TMPDIR"] as const;
 
 /** One owned, ephemeral app-server turn. Native evidence never enters the child filesystem. */
 export async function runCodexSemanticJudge(prompt: string, request: SemanticJudgeRequest, signal?: AbortSignal): Promise<SemanticJudgeBackendResult> {
@@ -26,7 +27,7 @@ export async function runCodexSemanticJudge(prompt: string, request: SemanticJud
   const cwd = join(isolatedRoot, "empty");
   mkdirSync(cwd, { mode: 0o700 });
   const env: NodeJS.ProcessEnv = { HOME: isolatedRoot, CODEX_HOME: isolatedRoot };
-  for (const key of ["PATH", "LANG", "LC_ALL", "TMPDIR"] as const) if (process.env[key] !== undefined) env[key] = process.env[key];
+  for (const key of CODEX_JUDGE_INHERITED_KEYS) if (process.env[key] !== undefined) env[key] = process.env[key];
   let child: ProtocolProcess | undefined;
   let timedOut = false;
   let interrupted = signal?.aborted ?? false;
@@ -36,6 +37,10 @@ export async function runCodexSemanticJudge(prompt: string, request: SemanticJud
   const frames: unknown[] = [];
   let chars = 0;
   let responseChars = 0;
+  let modelOutput = "";
+  let modelItemId: string | undefined;
+  let modelOutputTruncated = false;
+  const modelEvidence = (): unknown => modelOutput === "" ? undefined : { content: modelOutput, ...(modelItemId === undefined ? {} : { itemId: modelItemId }), truncated: modelOutputTruncated };
   const pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   let nextId = 1;
   let resolveTerminal!: (value: any) => void;
@@ -98,6 +103,10 @@ export async function runCodexSemanticJudge(prompt: string, request: SemanticJud
         const params = value.params ?? {};
         if (params.threadId !== threadId) return;
         if (value.method === "item/agentMessage/delta" && params.turnId === turnId && typeof params.delta === "string") {
+          if (params.itemId !== modelItemId) { modelItemId = params.itemId; modelOutput = ""; modelOutputTruncated = false; }
+          const combined = modelOutput + params.delta;
+          modelOutput = combined.slice(0, request.limits.maxOutputChars);
+          modelOutputTruncated ||= combined.length > modelOutput.length;
           responseChars += params.delta.length;
           if (responseChars > request.limits.maxOutputChars) {
             rejectTerminal(new Error("Codex judge output exceeds maxOutputChars."));
@@ -108,6 +117,9 @@ export async function runCodexSemanticJudge(prompt: string, request: SemanticJud
           const item = params.item;
           if (item?.type === "agentMessage") {
             if (value.method === "item/completed" && typeof item.text === "string") {
+              modelItemId = item.id;
+              modelOutput = item.text.slice(0, request.limits.maxOutputChars);
+              modelOutputTruncated = modelOutput.length < item.text.length;
               messages.set(item.id, item.text);
               if ([...messages.values()].reduce((sum, text) => sum + text.length, 0) > request.limits.maxOutputChars) {
                 rejectTerminal(new Error("Codex judge output exceeds maxOutputChars."));
@@ -154,13 +166,13 @@ export async function runCodexSemanticJudge(prompt: string, request: SemanticJud
     const response = [...messages.values()].at(-1);
     if (response === undefined || response.length > request.limits.maxOutputChars) throw new Error("Codex judge response is missing or exceeds maxOutputChars.");
     assertNoDuplicateJsonKeys(response);
-    return { status: "completed", response: JSON.parse(response), raw: { frames, runtimeVersion: version,
+    return { status: "completed", response: JSON.parse(response), rawModelResponse: modelEvidence(), raw: { frames, runtimeVersion: version,
       modelCatalogDigest: `sha256:${digestMetadata(toolDisabledModel).value}`,
       unsupported: ["cost", "API-duration", "USD-budget", "models-absent-from-pinned-catalog"], threadId, turnId } };
   } catch (error) {
     timedOut ||= performance.now() >= deadline;
     return { status: "failed", kind: timedOut ? "timeout" : interrupted ? "interrupted" : "provider",
-      message: timedOut ? "Codex judge exceeded maxWallClockMs." : interrupted ? "Codex judge was interrupted." : String(error), raw: { frames, threadId, turnId } };
+      message: timedOut ? "Codex judge exceeded maxWallClockMs." : interrupted ? "Codex judge was interrupted." : String(error), rawModelResponse: modelEvidence(), raw: { frames, threadId, turnId } };
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", abort);
