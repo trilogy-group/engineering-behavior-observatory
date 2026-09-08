@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 
 import { assertNoDuplicateJsonKeys, canonicalizeMetadata, digestMetadata, validateArtifact, validateExportManifest, validateRunManifestEvidence, writeMetadataAtomically } from "./artifacts.js";
 import { aggregateEvaluation, type AggregationRequest } from "./aggregation.js";
+import { serveAtlas, writeAtlas, type AtlasFilters } from "./atlas.js";
 import {
   buildCorpusIndex,
   packPortableExport,
@@ -73,6 +74,8 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo corpus unpack <archive.tar.gz> <destination-root>
        ebo comparison check <request.json>
        ebo aggregate build <request.json> <output.json>
+       ebo atlas build <request.json> <output-root> [--share] [--filter <name=value>]
+       ebo atlas serve <request.json> [--port <port>]
        ebo observations create <run-bundle-root> <output.json>
        ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
        ebo assertions validate <run-bundle-root> <assertion.json> [review.json]
@@ -164,6 +167,31 @@ export function main(
 
   if (args[0] === "aggregate" && args[1] === "build") {
     return runAggregationCommand(args.slice(2), write);
+  }
+
+  if (args[0] === "atlas") {
+    return (async () => {
+    try {
+      if (args[1] === "serve" && args[2] && (args.length === 3 || (args.length === 5 && args[3] === "--port"))) {
+        const server = await serveAtlas(args[2], args[4] === undefined ? 13011 : Number(args[4]));
+        const address = server.address();
+        write(`Atlas listening at http://127.0.0.1:${typeof address === "object" && address ? address.port : 13011}\n`);
+        return 0;
+      }
+      if (args[1] !== "build" || !args[2] || !args[3]) throw new Error("Usage: ebo atlas build <request.json> <output-root> [--share] [--filter <name=value>] | atlas serve <request.json> [--port <port>]");
+      const filters: AtlasFilters = {};
+      let share = false;
+      for (let i = 4; i < args.length; i++) {
+        if (args[i] === "--share") { share = true; continue; }
+        if (args[i] !== "--filter" || !args[i + 1]?.includes("=")) throw new Error("Unknown Atlas argument.");
+        const pair = args[++i]!; const offset = pair.indexOf("=");
+        filters[pair.slice(0, offset) as keyof AtlasFilters] = pair.slice(offset + 1);
+      }
+      const view = await writeAtlas(args[2], args[3], filters, share);
+      write(`Built Atlas: ${view.report.sourcePopulation.selectedAttempts} selected attempts; ${view.mode}; ${view.cohortDigest}\n`);
+      return 0;
+    } catch (error) { write(`${errorMessage(error)}\n`); return 1; }
+    })();
   }
 
   if (args[0] === "observations") {

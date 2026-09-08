@@ -215,6 +215,8 @@ export {
   runProtocolProcess,
   spawnProtocolProcess,
 } from "./process-protocol.js";
+export { loadAtlas, queryAtlas, serveAtlas, shareAtlas, writeAtlas } from "./atlas.js";
+export type { AtlasCase, AtlasFilters, AtlasRequest, AtlasSource, AtlasView } from "./atlas.js";
 export {
   captureCodexAppServer,
   CODEX_ADAPTER_VERSION,

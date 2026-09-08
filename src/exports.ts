@@ -80,6 +80,17 @@ export type CreatePortableRunBundleExportOptions = {
   policy: PortableExportPolicy;
 };
 
+/** Sanitize a caller-allowlisted derived document; this does not grant sharing approval. */
+export function sanitizeDerivedExport(value: unknown, policy: PortableExportPolicy, correlations: readonly string[] = []): unknown {
+  validatePolicy(policy);
+  const sensitive = effectiveSensitiveValues(policy);
+  const replacements = new Map(correlations.map((source) => [source, `ref-${createHash("sha256").update(source).digest("hex").slice(0, 20)}`]));
+  const bytes = sanitizeArtifact(Buffer.from(canonicalizeMetadata(value)), "application/json", policy, replacements,
+    sensitive, [homedir(), userInfo().username], new Map());
+  scanPortableTree([{ bytes, mediaType: "application/json" }], sensitive, correlations);
+  return JSON.parse(bytes.toString("utf8"));
+}
+
 type SourceDiagnostic = {
   stream: "stdout" | "stderr";
   locator: string;

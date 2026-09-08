@@ -212,6 +212,12 @@ adjudication decisions, and reports agreement with explicit populations and
 denominators. It does not host review, assign people, confirm assertions on an
 agent's behalf, or produce comparison aggregates.
 
+The [Behavior Atlas](docs/atlas.md) adds reproducible cohort queries, native
+Grafana dashboards, evidence/review drilldown and standalone HTML/print reports.
+`ebo atlas build <request.json> <new-output-root>` freezes a report;
+`ebo atlas serve <request.json>` opens the local query surface. Restricted
+inspection and policy-validated shareable summaries remain separate.
+
 Versioned [structural observations](docs/structural-observations.md) ingest
 terminal, capture, workspace, and mode-appropriate verifier outcomes, then
 compute exact native-evidence facts. Logical tool operations use native IDs,
