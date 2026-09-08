@@ -32,21 +32,36 @@ areas:
       - area:agent-sdk
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
+      - area:data-contracts
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:json-rpc
       - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
+      - area:quality
+      - area:reporting
       - area:review
+      - area:runner
+      - area:scheduler
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   agent-sdk:
     title: Agent Sdk
     docs_target: docs/agent-sdk.md
@@ -62,12 +77,15 @@ areas:
       - area:agent-sdk
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
       - area:capture
       - area:corpus
+      - area:data-contracts
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:export
       - area:hooks
       - area:json-rpc
@@ -77,17 +95,27 @@ areas:
       - area:openhands-runtime
       - area:opentelemetry
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
       - area:quality
+      - area:reporting
       - area:review
       - area:runner
+      - area:scheduler
       - area:security
       - area:sessions
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   aggregation:
     title: Aggregation
     docs_target: docs/aggregation.md
@@ -100,9 +128,26 @@ areas:
       linear_labels:
       - area:aggregation
       - area:analysis
+      - area:atlas
+      - area:data-contracts
       - area:evaluation
+      - area:evidence
+      - area:experiments
+      - area:outcomes
+      - area:process-protocol
+      - area:provenance
+      - area:quality
+      - area:reporting
+      - area:runner
+      - area:scheduler
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   analysis:
     title: Analysis
     docs_target: docs/analysis.md
@@ -114,9 +159,41 @@ areas:
     source_refs:
       linear_labels:
       - area:analysis
+      - area:atlas
+      - area:data-contracts
       - area:evaluation
+      - area:evidence
+      - area:experiments
+      - area:outcomes
+      - area:process-protocol
+      - area:provenance
+      - area:quality
+      - area:reporting
+      - area:runner
+      - area:scheduler
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
+  atlas:
+    title: Atlas
+    docs_target: docs/atlas.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - atlas
+    source_refs:
+      linear_labels:
+      - area:atlas
+      - area:evidence
+      - area:reporting
+      linear_milestones:
+      - 'M6: Atlas And Release'
   calibration:
     title: Calibration
     docs_target: docs/calibration.md
@@ -129,11 +206,28 @@ areas:
       linear_labels:
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
+      - area:data-contracts
       - area:evaluation
+      - area:evidence
+      - area:experiments
+      - area:outcomes
+      - area:process-protocol
+      - area:provenance
+      - area:quality
+      - area:reporting
       - area:review
+      - area:runner
+      - area:scheduler
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   capture:
     title: Capture
     docs_target: docs/capture.md
@@ -148,12 +242,15 @@ areas:
       - area:agent-sdk
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
       - area:capture
       - area:corpus
+      - area:data-contracts
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:export
       - area:hooks
       - area:json-rpc
@@ -163,17 +260,27 @@ areas:
       - area:openhands-runtime
       - area:opentelemetry
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
       - area:quality
+      - area:reporting
       - area:review
       - area:runner
+      - area:scheduler
       - area:security
       - area:sessions
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   corpus:
     title: Corpus
     docs_target: docs/corpus.md
@@ -188,11 +295,14 @@ areas:
       - area:agent-sdk
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
       - area:corpus
+      - area:data-contracts
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:export
       - area:json-rpc
       - area:llm-judge
@@ -200,13 +310,41 @@ areas:
       - area:ontology
       - area:openhands-runtime
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
       - area:quality
+      - area:reporting
       - area:review
+      - area:runner
+      - area:scheduler
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
+  data-contracts:
+    title: Data Contracts
+    docs_target: docs/data-contracts.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - data contracts
+    - data-contracts
+    source_refs:
+      linear_labels:
+      - area:data-contracts
+      - area:evidence
+      - area:quality
+      - area:task-packets
+      linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
   deepseek-runtime:
     title: Deepseek Runtime
     docs_target: docs/deepseek-runtime.md
@@ -220,20 +358,35 @@ areas:
       linear_labels:
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
+      - area:data-contracts
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:json-rpc
       - area:llm-judge
       - area:normalization
       - area:ontology
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
+      - area:quality
+      - area:reporting
       - area:review
+      - area:runner
+      - area:scheduler
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   evaluation:
     title: Evaluation
     docs_target: docs/evaluation.md
@@ -246,16 +399,31 @@ areas:
       linear_labels:
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
+      - area:data-contracts
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:llm-judge
       - area:ontology
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
+      - area:quality
+      - area:reporting
       - area:review
+      - area:runner
+      - area:scheduler
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   evidence:
     title: Evidence
     docs_target: docs/evidence.md
@@ -270,12 +438,15 @@ areas:
       - area:agent-sdk
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
       - area:capture
       - area:corpus
+      - area:data-contracts
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:export
       - area:json-rpc
       - area:llm-judge
@@ -283,16 +454,40 @@ areas:
       - area:ontology
       - area:openhands-runtime
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
       - area:quality
+      - area:reporting
       - area:review
       - area:runner
+      - area:scheduler
       - area:security
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
+  experiments:
+    title: Experiments
+    docs_target: docs/experiments.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - experiments
+    source_refs:
+      linear_labels:
+      - area:experiments
+      - area:scheduler
+      linear_milestones:
+      - 'M1: Task And Run Orchestration'
   export:
     title: Export
     docs_target: docs/export.md
@@ -307,11 +502,14 @@ areas:
       - area:agent-sdk
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
       - area:corpus
+      - area:data-contracts
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:export
       - area:json-rpc
       - area:llm-judge
@@ -319,14 +517,25 @@ areas:
       - area:ontology
       - area:openhands-runtime
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
       - area:quality
+      - area:reporting
       - area:review
+      - area:runner
+      - area:scheduler
       - area:security
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   hooks:
     title: Hooks
     docs_target: docs/hooks.md
@@ -341,12 +550,15 @@ areas:
       - area:agent-sdk
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
       - area:capture
       - area:corpus
+      - area:data-contracts
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:export
       - area:hooks
       - area:json-rpc
@@ -355,16 +567,26 @@ areas:
       - area:ontology
       - area:openhands-runtime
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
       - area:quality
+      - area:reporting
       - area:review
       - area:runner
+      - area:scheduler
       - area:security
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   json-rpc:
     title: Json Rpc
     docs_target: docs/json-rpc.md
@@ -378,19 +600,34 @@ areas:
       linear_labels:
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
+      - area:data-contracts
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:json-rpc
       - area:llm-judge
       - area:normalization
       - area:ontology
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
+      - area:quality
+      - area:reporting
       - area:review
+      - area:runner
+      - area:scheduler
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   llm-judge:
     title: Llm Judge
     docs_target: docs/llm-judge.md
@@ -404,12 +641,29 @@ areas:
       linear_labels:
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
+      - area:data-contracts
       - area:evaluation
+      - area:evidence
+      - area:experiments
       - area:llm-judge
+      - area:outcomes
+      - area:process-protocol
+      - area:provenance
+      - area:quality
+      - area:reporting
       - area:review
+      - area:runner
+      - area:scheduler
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   m2-native-agent-sdk-capture:
     title: M2 Native Agent Sdk Capture
     docs_target: docs/m2-native-agent-sdk-capture.md
@@ -435,22 +689,36 @@ areas:
       - area:adapters
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
+      - area:data-contracts
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:json-rpc
       - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
       - area:quality
+      - area:reporting
       - area:review
+      - area:runner
+      - area:scheduler
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   ontology:
     title: Ontology
     docs_target: docs/ontology.md
@@ -463,17 +731,32 @@ areas:
       linear_labels:
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
+      - area:data-contracts
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:llm-judge
       - area:ontology
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
+      - area:quality
+      - area:reporting
       - area:review
+      - area:runner
+      - area:scheduler
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   openhands-runtime:
     title: Openhands Runtime
     docs_target: docs/openhands-runtime.md
@@ -487,18 +770,33 @@ areas:
       linear_labels:
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
+      - area:data-contracts
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:llm-judge
       - area:ontology
       - area:openhands-runtime
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
+      - area:quality
+      - area:reporting
       - area:review
+      - area:runner
+      - area:scheduler
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   opentelemetry:
     title: Opentelemetry
     docs_target: docs/opentelemetry.md
@@ -513,12 +811,15 @@ areas:
       - area:agent-sdk
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
       - area:capture
       - area:corpus
+      - area:data-contracts
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:export
       - area:json-rpc
       - area:llm-judge
@@ -527,16 +828,26 @@ areas:
       - area:openhands-runtime
       - area:opentelemetry
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
       - area:quality
+      - area:reporting
       - area:review
       - area:runner
+      - area:scheduler
       - area:security
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   outcomes:
     title: Outcomes
     docs_target: docs/outcomes.md
@@ -551,12 +862,15 @@ areas:
       - area:agent-sdk
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
       - area:capture
       - area:corpus
+      - area:data-contracts
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:export
       - area:json-rpc
       - area:llm-judge
@@ -564,16 +878,55 @@ areas:
       - area:ontology
       - area:openhands-runtime
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
       - area:quality
+      - area:reporting
       - area:review
       - area:runner
+      - area:scheduler
       - area:security
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
+  process-protocol:
+    title: Process Protocol
+    docs_target: docs/process-protocol.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - process protocol
+    - process-protocol
+    source_refs:
+      linear_labels:
+      - area:process-protocol
+      - area:runner
+      linear_milestones:
+      - 'M1: Task And Run Orchestration'
+  provenance:
+    title: Provenance
+    docs_target: docs/provenance.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - provenance
+    source_refs:
+      linear_labels:
+      - area:provenance
+      - area:task-packets
+      linear_milestones:
+      - 'M1: Task And Run Orchestration'
   quality:
     title: Quality
     docs_target: docs/quality.md
@@ -588,12 +941,15 @@ areas:
       - area:agent-sdk
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
       - area:capture
       - area:corpus
+      - area:data-contracts
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:export
       - area:hooks
       - area:json-rpc
@@ -603,19 +959,41 @@ areas:
       - area:openhands-runtime
       - area:opentelemetry
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
       - area:quality
+      - area:reporting
       - area:repository
       - area:review
       - area:runner
+      - area:scheduler
       - area:security
       - area:sessions
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
       - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
+  reporting:
+    title: Reporting
+    docs_target: docs/reporting.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - reporting
+    source_refs:
+      linear_labels:
+      - area:reporting
+      linear_milestones:
+      - 'M6: Atlas And Release'
   repository:
     title: Repository
     docs_target: docs/repository.md
@@ -630,12 +1008,15 @@ areas:
       - area:agent-sdk
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
       - area:capture
       - area:corpus
+      - area:data-contracts
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:export
       - area:hooks
       - area:json-rpc
@@ -645,19 +1026,28 @@ areas:
       - area:openhands-runtime
       - area:opentelemetry
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
       - area:quality
+      - area:reporting
       - area:repository
       - area:review
       - area:runner
+      - area:scheduler
       - area:security
       - area:sessions
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
       - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   review:
     title: Review
     docs_target: docs/review.md
@@ -670,10 +1060,27 @@ areas:
       linear_labels:
       - area:aggregation
       - area:analysis
+      - area:atlas
+      - area:data-contracts
       - area:evaluation
+      - area:evidence
+      - area:experiments
+      - area:outcomes
+      - area:process-protocol
+      - area:provenance
+      - area:quality
+      - area:reporting
       - area:review
+      - area:runner
+      - area:scheduler
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   runner:
     title: Runner
     docs_target: docs/runner.md
@@ -688,12 +1095,15 @@ areas:
       - area:agent-sdk
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
       - area:capture
       - area:corpus
+      - area:data-contracts
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:export
       - area:json-rpc
       - area:llm-judge
@@ -701,16 +1111,39 @@ areas:
       - area:ontology
       - area:openhands-runtime
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
       - area:quality
+      - area:reporting
       - area:review
       - area:runner
+      - area:scheduler
       - area:security
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
+  scheduler:
+    title: Scheduler
+    docs_target: docs/scheduler.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - scheduler
+    source_refs:
+      linear_labels:
+      - area:scheduler
+      linear_milestones:
+      - 'M1: Task And Run Orchestration'
   security:
     title: Security
     docs_target: docs/security.md
@@ -725,24 +1158,38 @@ areas:
       - area:agent-sdk
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
+      - area:data-contracts
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:json-rpc
       - area:llm-judge
       - area:normalization
       - area:ontology
       - area:openhands-runtime
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
       - area:quality
+      - area:reporting
       - area:review
+      - area:runner
+      - area:scheduler
       - area:security
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   sessions:
     title: Sessions
     docs_target: docs/sessions.md
@@ -757,12 +1204,15 @@ areas:
       - area:agent-sdk
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
       - area:capture
       - area:corpus
+      - area:data-contracts
       - area:deepseek-runtime
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:export
       - area:json-rpc
       - area:llm-judge
@@ -770,17 +1220,27 @@ areas:
       - area:ontology
       - area:openhands-runtime
       - area:outcomes
+      - area:process-protocol
+      - area:provenance
       - area:quality
+      - area:reporting
       - area:review
       - area:runner
+      - area:scheduler
       - area:security
       - area:sessions
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M2: Native Agent SDK Capture'
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
   structural-analysis:
     title: Structural Analysis
     docs_target: docs/structural-analysis.md
@@ -794,14 +1254,73 @@ areas:
       linear_labels:
       - area:aggregation
       - area:analysis
+      - area:atlas
       - area:calibration
+      - area:data-contracts
       - area:evaluation
       - area:evidence
+      - area:experiments
       - area:llm-judge
       - area:ontology
+      - area:outcomes
+      - area:process-protocol
+      - area:provenance
+      - area:quality
+      - area:reporting
       - area:review
+      - area:runner
+      - area:scheduler
       - area:structural-analysis
+      - area:task-packets
+      - area:verifiers
+      - area:workspace
       linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
+  task-packets:
+    title: Task Packets
+    docs_target: docs/task-packets.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - task packets
+    - task-packets
+    source_refs:
+      linear_labels:
+      - area:provenance
+      - area:task-packets
+      - area:workspace
+      linear_milestones:
+      - 'M0: Foundation And Evidence Contracts'
+      - 'M1: Task And Run Orchestration'
+  verifiers:
+    title: Verifiers
+    docs_target: docs/verifiers.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - verifiers
+    source_refs:
+      linear_labels:
+      - area:verifiers
+      linear_milestones:
+      - 'M1: Task And Run Orchestration'
+  workspace:
+    title: Workspace
+    docs_target: docs/workspace.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - workspace
+    source_refs:
+      linear_labels:
+      - area:workspace
+      linear_milestones:
+      - 'M1: Task And Run Orchestration'
 redaction:
   deny_patterns: []

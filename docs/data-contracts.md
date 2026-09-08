@@ -1,11 +1,11 @@
 ---
 type: topic-doc
-area: review
+area: data-contracts
 visibility: public
-last_memory_sync: 2026-09-07T19:25:15.090048+00:00
+last_memory_sync: 2026-09-08T12:05:11.093717+00:00
 ---
 
-# Review
+# Data Contracts
 
 <!-- BEGIN OPENSYMPHONY MANAGED MEMORY SYNC -->
 
@@ -14,9 +14,6 @@ last_memory_sync: 2026-09-07T19:25:15.090048+00:00
 - COE-560 contributed: PR #3: Define task-packet and experiment contracts (merge `d2bb345`)
 - COE-561 contributed: PR #4: Define run-bundle evidence contracts (merge `ef36a82`)
 - COE-562 contributed: PR #5: Add artifact validation and integrity primitives (merge `adbb1b9`)
-- COE-563 contributed: PR #7: Implement task-packet admission and freeze tooling (merge `eb26151`)
-- COE-564 contributed: PR #6: Implement verifier execution and outcome records (merge `39f04d7`)
-- COE-565 contributed: PR #8: Implement isolated workspace materialization (merge `454f042`)
 
 ## Important invariants
 
@@ -36,29 +33,11 @@ last_memory_sync: 2026-09-07T19:25:15.090048+00:00
 - COE-560: Define task-packet and experiment contracts
 - COE-561: Define run-bundle and evidence contracts
 - COE-562: Implement artifact validation and digest primitives
-- COE-563: Implement task-packet admission and freeze tooling
-- COE-564: Implement verifier execution and outcome records
-- COE-565: Implement isolated workspace materialization
-- COE-566: Implement configurable run matrices and scheduling
-- COE-567: Implement run lifecycle and process-protocol primitives
-- COE-584: Implement human calibration and adjudication workflow
-- COE-585: Implement comparison and aggregation
-- COE-586: Build the interactive Behavior Atlas with Grafana and report export
-- COE-597: Complete cross-harness behavioral evaluation and configurable Codex judging
 
 ## Source refs
 
 - COE-560
 - COE-561
 - COE-562
-- COE-563
-- COE-564
-- COE-565
-- COE-566
-- COE-567
-- COE-584
-- COE-585
-- COE-586
-- COE-597
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

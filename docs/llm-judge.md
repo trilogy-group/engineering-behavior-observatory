@@ -11,9 +11,12 @@ last_memory_sync: 2026-09-07T15:26:22.741472+00:00
 
 ## Current model
 
-- COE-583 contributed: PR #37: COE-583: Add evidence-grounded semantic judge runner (merge `ea0e703`)
-- COE-584 contributed: PR #38: COE-584: Add human calibration and adjudication workflow (merge `02a9333`)
-- COE-585 contributed: PR #39: feat: add evidence-bound comparison aggregation (merge `ecdf703`)
+- COE-560 contributed: PR #3: Define task-packet and experiment contracts (merge `d2bb345`)
+- COE-561 contributed: PR #4: Define run-bundle evidence contracts (merge `ef36a82`)
+- COE-562 contributed: PR #5: Add artifact validation and integrity primitives (merge `adbb1b9`)
+- COE-563 contributed: PR #7: Implement task-packet admission and freeze tooling (merge `eb26151`)
+- COE-564 contributed: PR #6: Implement verifier execution and outcome records (merge `39f04d7`)
+- COE-565 contributed: PR #8: Implement isolated workspace materialization (merge `454f042`)
 
 ## Important invariants
 
@@ -30,14 +33,34 @@ last_memory_sync: 2026-09-07T15:26:22.741472+00:00
 
 ## Recent changes
 
+- COE-560: Define task-packet and experiment contracts
+- COE-561: Define run-bundle and evidence contracts
+- COE-562: Implement artifact validation and digest primitives
+- COE-563: Implement task-packet admission and freeze tooling
+- COE-564: Implement verifier execution and outcome records
+- COE-565: Implement isolated workspace materialization
+- COE-566: Implement configurable run matrices and scheduling
+- COE-567: Implement run lifecycle and process-protocol primitives
 - COE-583: Implement the evidence-grounded semantic judge runner
 - COE-584: Implement human calibration and adjudication workflow
 - COE-585: Implement comparison and aggregation
+- COE-586: Build the interactive Behavior Atlas with Grafana and report export
+- COE-597: Complete cross-harness behavioral evaluation and configurable Codex judging
 
 ## Source refs
 
+- COE-560
+- COE-561
+- COE-562
+- COE-563
+- COE-564
+- COE-565
+- COE-566
+- COE-567
 - COE-583
 - COE-584
 - COE-585
+- COE-586
+- COE-597
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

@@ -11,12 +11,12 @@ last_memory_sync: 2026-09-07T07:19:40.803748+00:00
 
 ## Current model
 
-- COE-577 contributed: PR #28: feat: normalize Agent SDK capture into uniform events (merge `4050f9e`)
-- COE-578 contributed: PR #30: COE-578: Add pinned OpenHands Agent Server adapter (merge `07bf452`)
-- COE-579 contributed: PR #29: COE-579: Add the DeepSeek Harness runtime adapter (merge `49a5721`)
-- COE-580 contributed: PR #31: COE-580: Gate normalization integrity and comparisons (merge `035bdab`)
-- COE-581 contributed: PR #35: COE-581: Add outcome and structural observations (merge `447db73`)
-- COE-582 contributed: PR #36: COE-582: Add evidence-bound behavior assertions (merge `70f2776`)
+- COE-560 contributed: PR #3: Define task-packet and experiment contracts (merge `d2bb345`)
+- COE-561 contributed: PR #4: Define run-bundle evidence contracts (merge `ef36a82`)
+- COE-562 contributed: PR #5: Add artifact validation and integrity primitives (merge `adbb1b9`)
+- COE-563 contributed: PR #7: Implement task-packet admission and freeze tooling (merge `eb26151`)
+- COE-564 contributed: PR #6: Implement verifier execution and outcome records (merge `39f04d7`)
+- COE-565 contributed: PR #8: Implement isolated workspace materialization (merge `454f042`)
 
 ## Important invariants
 
@@ -33,6 +33,14 @@ last_memory_sync: 2026-09-07T07:19:40.803748+00:00
 
 ## Recent changes
 
+- COE-560: Define task-packet and experiment contracts
+- COE-561: Define run-bundle and evidence contracts
+- COE-562: Implement artifact validation and digest primitives
+- COE-563: Implement task-packet admission and freeze tooling
+- COE-564: Implement verifier execution and outcome records
+- COE-565: Implement isolated workspace materialization
+- COE-566: Implement configurable run matrices and scheduling
+- COE-567: Implement run lifecycle and process-protocol primitives
 - COE-577: Implement the Agent SDK normalization adapter
 - COE-578: Implement the OpenHands harness adapter
 - COE-579: Implement the DeepSeek Harness adapter
@@ -42,9 +50,19 @@ last_memory_sync: 2026-09-07T07:19:40.803748+00:00
 - COE-583: Implement the evidence-grounded semantic judge runner
 - COE-584: Implement human calibration and adjudication workflow
 - COE-585: Implement comparison and aggregation
+- COE-586: Build the interactive Behavior Atlas with Grafana and report export
+- COE-597: Complete cross-harness behavioral evaluation and configurable Codex judging
 
 ## Source refs
 
+- COE-560
+- COE-561
+- COE-562
+- COE-563
+- COE-564
+- COE-565
+- COE-566
+- COE-567
 - COE-577
 - COE-578
 - COE-579
@@ -54,5 +72,7 @@ last_memory_sync: 2026-09-07T07:19:40.803748+00:00
 - COE-583
 - COE-584
 - COE-585
+- COE-586
+- COE-597
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

@@ -12,11 +12,11 @@ last_memory_sync: 2026-08-26T03:34:35.394130+00:00
 ## Current model
 
 - COE-559 contributed: PR #1: Bootstrap the EBO TypeScript command surface (merge `dbeb33e`)
-- COE-568 contributed: PR #15: COE-570: capture TypeScript Agent SDK lifecycle hooks (merge `8ca6c62`)
-- COE-569 contributed: PR #15: COE-570: capture TypeScript Agent SDK lifecycle hooks (merge `8ca6c62`)
-- COE-570 contributed: PR #15: COE-570: capture TypeScript Agent SDK lifecycle hooks (merge `8ca6c62`)
-- COE-571 contributed: PR #13: COE-571: configure correlated Agent SDK OTLP receipt checks (merge `113490f`)
-- COE-572 contributed: PR #17: COE-572: assemble complete and partial run bundles (merge `affd9de`)
+- COE-560 contributed: PR #3: Define task-packet and experiment contracts (merge `d2bb345`)
+- COE-561 contributed: PR #4: Define run-bundle evidence contracts (merge `ef36a82`)
+- COE-562 contributed: PR #5: Add artifact validation and integrity primitives (merge `adbb1b9`)
+- COE-563 contributed: PR #7: Implement task-packet admission and freeze tooling (merge `eb26151`)
+- COE-564 contributed: PR #6: Implement verifier execution and outcome records (merge `39f04d7`)
 
 ## Important invariants
 
@@ -34,6 +34,14 @@ last_memory_sync: 2026-08-26T03:34:35.394130+00:00
 ## Recent changes
 
 - COE-559: Bootstrap the EBO implementation repository
+- COE-560: Define task-packet and experiment contracts
+- COE-561: Define run-bundle and evidence contracts
+- COE-562: Implement artifact validation and digest primitives
+- COE-563: Implement task-packet admission and freeze tooling
+- COE-564: Implement verifier execution and outcome records
+- COE-565: Implement isolated workspace materialization
+- COE-566: Implement configurable run matrices and scheduling
+- COE-567: Implement run lifecycle and process-protocol primitives
 - COE-568: Implement the Claude Agent SDK executor
 - COE-569: Capture Agent SDK streams and session identity
 - COE-570: Capture the supported TypeScript Agent SDK lifecycle hooks
@@ -52,15 +60,25 @@ last_memory_sync: 2026-08-26T03:34:35.394130+00:00
 - COE-583: Implement the evidence-grounded semantic judge runner
 - COE-584: Implement human calibration and adjudication workflow
 - COE-585: Implement comparison and aggregation
+- COE-586: Build the interactive Behavior Atlas with Grafana and report export
 - COE-590: Complete the production Agent SDK capture path
 - COE-591: Operationalize one Agent SDK run from a frozen queue entry
 - COE-592: Support observational Agent SDK tasks without verifiers
 - COE-593: Admit common framework filenames in observational fixtures
 - COE-594: Qualify real package-manager workspaces and trajectory exports
+- COE-597: Complete cross-harness behavioral evaluation and configurable Codex judging
 
 ## Source refs
 
 - COE-559
+- COE-560
+- COE-561
+- COE-562
+- COE-563
+- COE-564
+- COE-565
+- COE-566
+- COE-567
 - COE-568
 - COE-569
 - COE-570
@@ -79,10 +97,12 @@ last_memory_sync: 2026-08-26T03:34:35.394130+00:00
 - COE-583
 - COE-584
 - COE-585
+- COE-586
 - COE-590
 - COE-591
 - COE-592
 - COE-593
 - COE-594
+- COE-597
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->
