@@ -18,7 +18,7 @@ import {
   type CorpusIndexQuery,
 } from "./corpus.js";
 import { runAgentSdkQueueEntry } from "./agent-sdk-runner.js";
-import { validateAgentSdkBehaviorAssertion, type BehaviorAssertion, type BehaviorReview } from "./behavior-assertions.js";
+import { validateRetainedBehaviorAssertion, type BehaviorAssertion, type BehaviorReview } from "./behavior-assertions.js";
 import { runCodexQueueEntry } from "./codex-run.js";
 import { createPortableRunBundleExport, type PortableExportPolicy } from "./exports.js";
 import {
@@ -41,7 +41,7 @@ import {
   type SemanticJudgeBackend,
   type SemanticJudgeRequest,
 } from "./semantic-judge.js";
-import { createAgentSdkStructuralObservationSet } from "./structural-observations.js";
+import { createRetainedStructuralObservationSet } from "./structural-observations.js";
 import type { StructuralObservationSet } from "./structural-observations.js";
 import {
   admitTaskPacket,
@@ -181,7 +181,7 @@ export function main(
     try {
       const assertion = readJson(assertionPath) as BehaviorAssertion;
       const review = reviewPath === undefined ? undefined : readJson(reviewPath) as BehaviorReview;
-      return validateAgentSdkBehaviorAssertion(bundleRoot, assertion, review).then((citations) => {
+      return validateRetainedBehaviorAssertion(bundleRoot, assertion, review).then((citations) => {
         write(`Validated behavior assertion "${assertion.id}" (${citations.length} citation(s); review=${review?.state ?? "unreviewed"}).\n`);
         return 0;
       }, (error: unknown) => {
@@ -501,7 +501,7 @@ async function runObservationsCommand(args: string[], write: (message: string) =
   try {
     if (command === "create" && first !== undefined && second !== undefined && args.length === 3) {
       assertDerivedDestination(first, second);
-      const report = await createAgentSdkStructuralObservationSet(first);
+      const report = await createRetainedStructuralObservationSet(first);
       await writeObservationReport(second, report, first);
       write(`Created ${report.observations.length} structural observations for attempt ${report.attemptId}.\n`);
       return 0;
@@ -522,7 +522,7 @@ async function runObservationsCommand(args: string[], write: (message: string) =
         for (const entry of selected) {
           if (entry.runId === undefined || entry.attemptId === undefined || entry.issues.length > 0) throw new Error(`Corpus entry ${entry.manifestPath} is not observation-ready.`);
           const bundleRoot = dirname(join(resolve(first), ...entry.manifestPath.split("/")));
-          const report = await createAgentSdkStructuralObservationSet(bundleRoot);
+          const report = await createRetainedStructuralObservationSet(bundleRoot);
           await writeObservationReport(join(stagingRoot, observationFileName(entry.runId, entry.attemptId)), report, first);
         }
         renameSync(stagingRoot, outputRoot);

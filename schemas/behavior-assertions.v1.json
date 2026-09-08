@@ -24,7 +24,8 @@
       "required": ["id", "version"],
       "properties": {
         "id": { "$ref": "#/$defs/identifier" },
-        "version": { "$ref": "#/$defs/identifier" }
+        "version": { "$ref": "#/$defs/identifier" },
+        "configurationDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
       }
     },
     "dimension": {

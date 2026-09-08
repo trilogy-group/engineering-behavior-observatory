@@ -5,13 +5,13 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import lockfile from "proper-lockfile";
 
 import {
-  createAgentSdkBehaviorEvidence,
   validateBehaviorAssertion,
   validateBehaviorReview,
   type BehaviorAssertion,
   type BehaviorReview,
   type AgentSdkBehaviorEvidence,
 } from "./behavior-assertions.js";
+import { createRetainedBehaviorEvidence, type RetainedBehaviorEvidence } from "./retained-evidence.js";
 import {
   assertNoDuplicateJsonKeys,
   canonicalizeMetadata,
@@ -129,7 +129,7 @@ type CalibrationCounts = {
 type LoadedCandidate = ReviewCandidate & {
   assertionDocument: BehaviorAssertion;
   manifest: RunManifest;
-  capture?: AgentSdkBehaviorEvidence["capture"];
+  capture?: RetainedBehaviorEvidence["capture"];
 };
 
 type DecisionValidationIndex = {
@@ -420,7 +420,7 @@ async function loadCandidates(sources: ReviewSourceSet["sources"]): Promise<Load
   }
   const loaded: LoadedCandidate[] = [];
   for (const [bundleRoot, group] of grouped) {
-    const evidence = await createAgentSdkBehaviorEvidence(bundleRoot);
+    const evidence = await createRetainedBehaviorEvidence(bundleRoot);
     const manifest = readManifest(bundleRoot);
     for (const source of group) loaded.push(await loadCandidate(source, evidence, manifest));
   }
@@ -429,20 +429,20 @@ async function loadCandidates(sources: ReviewSourceSet["sources"]): Promise<Load
 
 async function loadCandidate(
   source: ReviewSourceSet["sources"][number],
-  evidence?: AgentSdkBehaviorEvidence,
+  evidence?: RetainedBehaviorEvidence,
   manifest?: RunManifest,
   retainCapture = false,
 ): Promise<LoadedCandidate> {
   const bundleRoot = resolve(source.bundleRoot);
   const assertionPath = resolve(source.assertionPath);
   const assertionDocument = readJson(assertionPath) as BehaviorAssertion;
-  const resolvedEvidence = evidence ?? await createAgentSdkBehaviorEvidence(bundleRoot);
+  const resolvedEvidence = evidence ?? await createRetainedBehaviorEvidence(bundleRoot);
   const resolvedManifest = manifest ?? readManifest(bundleRoot);
   await validateBehaviorAssertion(assertionDocument, resolvedEvidence.dataset, resolvedEvidence.resolver);
   if (resolvedManifest.run.id !== assertionDocument.runId || resolvedManifest.attempt.id !== assertionDocument.attemptId) {
     throw new Error(`Review assertion "${assertionDocument.id}" belongs to another run bundle.`);
   }
-  const outcome = terminalVerifierOutcome(resolvedEvidence.capture, resolvedManifest);
+  const outcome = terminalVerifierOutcome(resolvedEvidence.outcomeCapture, resolvedManifest);
   return {
     assertion: { id: assertionDocument.id, schemaVersion: assertionDocument.schemaVersion, digest: digest(assertionDocument) },
     source: { bundleRoot, assertionPath },
@@ -539,7 +539,9 @@ function resolveCitationContent(candidate: LoadedCandidate, reference: { artifac
   const captured = candidate.capture?.records.find(({ reference: current }) => current.artifactId === reference.artifactId
     && current.recordLocator === reference.recordLocator);
   if (captured === undefined) throw new Error(`Assertion "${candidate.assertion.id}" cites a native record that cannot be rendered.`);
-  return structuredClone(captured.record.document);
+  const record = captured.record;
+  const nativeSession = ["codex-app-server", "openhands-agent-server", "deepseek-harness"].includes(candidate.manifest.run.harness.id);
+  return structuredClone(nativeSession ? record : (record as { document: unknown }).document);
 }
 
 export function terminalVerifierOutcome(capture: AgentSdkBehaviorEvidence["capture"], manifest: RunManifest): Outcome {

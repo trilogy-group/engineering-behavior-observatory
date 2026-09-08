@@ -1043,6 +1043,7 @@ test("packages one verified smoke attempt with native, workspace, verifier, and 
 
     assert.equal(result.attempt.classification.kind, "completed");
     assert.equal(result.capture!.conversationId, "conversation-1");
+    await checkRetainedEvaluation(definition.bundleRoot, root);
     assert.equal(result.manifest.run.native?.sessionId, "conversation-1");
     assert.deepEqual(result.manifest.evidence.filter(({ kind }) => ["session", "hook", "workspace", "verifier"].includes(kind)).map(({ kind }) => kind), [
       "workspace", "verifier", "session", "hook",
@@ -1767,3 +1768,4 @@ class FakeWebSocket implements OpenHandsWebSocket {
     for (const listener of this.#listeners.get(type) ?? []) listener(event);
   }
 }
+import { checkRetainedEvaluation } from "./retained-evaluation-helper.js";

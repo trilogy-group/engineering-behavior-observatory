@@ -588,6 +588,7 @@ test("composes a qualified observational run bundle with workspace, protocol, di
     assert.ok(result.manifest.evidence.some(({ kind }) => kind === "telemetry"));
     assert.ok((result.normalized?.events.length ?? 0) > 0);
     assert.equal(result.coverage?.records.total, result.capture?.records.length);
+    await checkRetainedEvaluation(definition.bundleRoot, root);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1015,3 +1016,4 @@ async function waitForRecord(path: string, predicate: (record: Record<string, un
   }
   throw new Error("Timed out waiting for the fake Codex protocol record.");
 }
+import { checkRetainedEvaluation } from "./retained-evaluation-helper.js";

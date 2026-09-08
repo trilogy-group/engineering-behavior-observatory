@@ -855,7 +855,7 @@ function historyMatches(history: Record<string, unknown>, threadId: string, turn
   return thread.turns.some((candidate) => isRecord(candidate) && text(candidate.id) === turnId);
 }
 
-async function writeProtocolLine(stream: NodeJS.WritableStream, message: unknown): Promise<void> {
+export async function writeProtocolLine(stream: NodeJS.WritableStream, message: unknown): Promise<void> {
   const line = `${JSON.stringify(message)}\n`;
   await new Promise<void>((resolvePromise, reject) => {
     const writable = stream as NodeJS.WritableStream & { write(chunk: string, callback: (error?: Error | null) => void): boolean };

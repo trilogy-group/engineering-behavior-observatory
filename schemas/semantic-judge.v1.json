@@ -67,9 +67,11 @@
           "additionalProperties": false,
           "required": ["provider", "model", "effort"],
           "properties": {
-            "provider": { "const": "anthropic" },
+            "backend": { "enum": ["claude-agent-sdk", "codex-app-server"] },
+            "executable": { "type": "string", "minLength": 1, "maxLength": 4096 },
+            "provider": { "enum": ["anthropic", "openai"] },
             "model": { "type": "string", "minLength": 1, "maxLength": 220, "pattern": ".*\\S.*" },
-            "effort": { "enum": ["low", "medium", "high", "xhigh", "max"] }
+            "effort": { "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] }
           }
         },
         "selection": {
@@ -263,14 +265,14 @@
           "additionalProperties": false,
           "required": ["provider", "model", "effort", "backend", "environment", "limits"],
           "properties": {
-            "provider": { "const": "anthropic" },
+            "provider": { "enum": ["anthropic", "openai"] },
             "model": { "$ref": "#/$defs/identifier" },
-            "effort": { "enum": ["low", "medium", "high", "xhigh", "max"] },
+            "effort": { "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] },
             "backend": {
               "type": "object",
               "additionalProperties": false,
               "required": ["id", "version"],
-              "properties": { "id": { "const": "claude-agent-sdk" }, "version": { "$ref": "#/$defs/identifier" } }
+              "properties": { "id": { "enum": ["claude-agent-sdk", "codex-app-server"] }, "version": { "$ref": "#/$defs/identifier" } }
             },
             "environment": {
               "type": "object",

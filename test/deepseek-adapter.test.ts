@@ -193,6 +193,7 @@ test("packages a verified smoke bundle and qualifies session evidence without in
     };
     assert.deepEqual(captureReport.semanticEvidenceKinds, ["session"]);
     assert.equal(captureReport.capabilities.timingResource.status, "unsupported");
+    await checkRetainedEvaluation(bundleRoot, root);
   } finally {
     await capture.close().catch(() => undefined);
     rmSync(root, { recursive: true, force: true });
@@ -590,3 +591,4 @@ class FailingNotificationCapture extends DeepSeekNativeCapture {
     return super.record(input);
   }
 }
+import { checkRetainedEvaluation } from "./retained-evaluation-helper.js";
