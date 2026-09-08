@@ -56,6 +56,8 @@ test("Atlas mixed fixture preserves exact cohort populations, decisions and nati
     assert.match(html, /No human decision supplied/u);
     assert.match(html, /Operator-authored narrative/u);
     assert.deepEqual(atlasDashboards(view).map(({ uid }) => uid), ["ebo-atlas-overview", "ebo-atlas-behavior"]);
+    const chart = atlasDashboards(view)[1]!.panels.find(({ id }) => id === 4)!;
+    assert.equal(chart.targets?.[0]?.columns.find(({ selector }) => selector === "count")?.type, "number");
     assert.match(JSON.stringify(atlasDashboards(view)), /\$\{model:percentencode\}/u);
     const report = await writeAtlas(requestPath, join(root, "report"), { review: "confirmed" });
     assert.equal(report.matchingCases, 2);
@@ -78,6 +80,8 @@ test("Atlas mixed fixture preserves exact cohort populations, decisions and nati
       assert.equal((await fetch(`${base}/report.html?share=true`)).status, 400);
       const rows = await (await fetch(`${base}/api/cases?review=disputed`)).json() as Array<{ review: string; href: string }>;
       assert.equal(rows.length, 1); assert.equal(rows[0]!.review, "disputed"); assert.match(rows[0]!.href, /#case-[a-f0-9]{64}$/u);
+      const comparisons = await (await fetch(`${base}/api/comparisons`)).json() as Array<{ status: string; numerator: number | null }>;
+      assert.equal(comparisons[0]!.status, "unavailable"); assert.equal(comparisons[0]!.numerator, null);
     } finally { await new Promise<void>((accept, reject) => server.close((error) => error ? reject(error) : accept())); }
 
     const request = JSON.parse(readFileSync(requestPath, "utf8")) as AtlasRequest;

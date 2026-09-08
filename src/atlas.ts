@@ -181,7 +181,7 @@ export async function serveAtlas(requestPath: string, port = 13011): Promise<Ser
       if (!req.headers.host || !["127.0.0.1", "localhost", "[::1]"].includes(new URL(`http://${req.headers.host}`).hostname)) { res.writeHead(403).end(); return; }
       if (req.headers.origin && !["127.0.0.1", "localhost", "[::1]"].includes(new URL(req.headers.origin).hostname)) { res.writeHead(403).end(); return; }
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
-      if (!["/", "/api/view", "/api/metrics", "/api/behaviors", "/api/behavior-chart", "/api/cases", "/report.html", "/report.json"].includes(url.pathname)) { res.writeHead(404).end(); return; }
+      if (!["/", "/api/view", "/api/metrics", "/api/behaviors", "/api/behavior-chart", "/api/comparisons", "/api/cases", "/report.html", "/report.json"].includes(url.pathname)) { res.writeHead(404).end(); return; }
       const filters: AtlasFilters = {};
       for (const [key, value] of url.searchParams) {
         if (key === "share") continue;
@@ -195,6 +195,10 @@ export async function serveAtlas(requestPath: string, port = 13011): Promise<Ser
         res.setHeader("Content-Type", "text/html; charset=utf-8"); res.end(renderAtlas(view, url.pathname === "/"));
       } else {
         res.setHeader("Content-Type", "application/json; charset=utf-8");
+        if (url.pathname === "/api/comparisons") {
+          res.end(JSON.stringify(view.report.comparisons.map(({ id, measure, matchedDifference, claimStatus, limitations }) => ({ comparison: id, measure, status: claimStatus, numerator: matchedDifference.status === "available" ? matchedDifference.numerator.value : null, denominator: matchedDifference.denominator.value, unit: matchedDifference.denominator.unit, exclusions: matchedDifference.exclusions.map(({ reason, count }) => `${reason}: ${count}`).join("; "), limitations: limitations.join(" ") }))));
+          return;
+        }
         const rows = url.pathname === "/api/metrics" ? view.report.groups.flatMap((group) => group.metrics.map((metric) => ({ group: Object.values(group.dimensions).join(" · "), metric: metric.id, status: metric.measurement.status, numerator: metric.measurement.numerator.value, denominator: metric.measurement.denominator.value, unit: metric.measurement.denominator.unit, exclusions: metric.measurement.exclusions.map(({ reason, count }) => `${reason}: ${count}`).join("; "), cohortDigest: view.cohortDigest }))) : view;
         res.end(JSON.stringify(url.pathname === "/api/behavior-chart" ? atlasBehaviorRows(view).map(({ label, numerator }) => ({ label, count: numerator })) : url.pathname === "/api/behaviors" ? atlasBehaviorRows(view) : url.pathname === "/api/cases" ? view.cases.map(({ runId, attemptId, model, harness, task, trial, category, assessment, review, key }) => ({ runId, attemptId, model, harness, task, trial, category, assessment, review, href: `http://${req.headers.host}/?${new URLSearchParams(filters)}#case-${key}` })) : rows));
       }
