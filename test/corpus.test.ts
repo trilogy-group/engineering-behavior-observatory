@@ -22,6 +22,29 @@ import { main } from "../src/cli.js";
 import { readBoundedFile } from "../src/scheduler.js";
 
 const fixtures = resolve("test/fixtures/run-bundles");
+
+test("structural qualification supersedes legacy capture summaries without rewriting evidence", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-qualification-index-"));
+  try {
+    cpSync(join(fixtures, "complete"), root, { recursive: true });
+    const path = join(root, "manifest.json");
+    const manifest = JSON.parse(readFileSync(path, "utf8"));
+    const descriptor = manifest.evidence.find((item: any) => item.kind === "capture-report");
+    const reportPath = join(root, descriptor.relativePath);
+    const report = JSON.parse(readFileSync(reportPath, "utf8"));
+    for (const status of ["qualified", "qualified-with-gaps", "unqualified", "incomplete", "unavailable", "invalid", undefined]) {
+      const document = { ...report, qualification: "qualified", ...(status === undefined ? {} : { structuralQualification: { status } }) };
+      if (status === undefined) delete document.structuralQualification;
+      const bytes = Buffer.from(JSON.stringify(document));
+      descriptor.digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+      descriptor.sizeBytes = bytes.length;
+      writeFileSync(reportPath, bytes);
+      writeFileSync(path, JSON.stringify(manifest));
+      assert.equal(buildCorpusIndex(root).find(({ manifestKind }) => manifestKind === "run")!.captureQualification, status === undefined ? "qualified" : status === "invalid" ? "unavailable" : status);
+      assert.deepEqual(readFileSync(reportPath), bytes);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 const policy: PortableExportPolicy = {
   sharingClass: "partner",
   maxArtifactBytes: 16 * 1024,

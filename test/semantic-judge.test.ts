@@ -26,6 +26,7 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
   const root = mkdtempSync(join(tmpdir(), "ebo-semantic-judge-"));
   try {
     const bundleRoot = await qualifiedBundle(root);
+    await checkRetainedEvaluation(bundleRoot, root);
     const manifest = JSON.parse(readFileSync(join(bundleRoot, "manifest.json"), "utf8")) as { evidence: Array<{ kind: string; relativePath: string }> };
     const captureReportPath = manifest.evidence.find(({ kind }) => kind === "capture-report")!.relativePath;
     const captureReport = JSON.parse(readFileSync(join(bundleRoot, captureReportPath), "utf8")) as { structuralQualification?: { status?: string } };
@@ -355,11 +356,11 @@ test("configures the Claude Agent SDK backend with no tools, settings, plugins, 
   assert.equal(schema?.type, "object");
   assert.deepEqual(schema?.required, ["judgment"]);
   const judgmentSchema = (schema?.properties as {
-    judgment: { oneOf: Array<{ properties: Record<string, { enum?: unknown[]; minItems?: number }> }> };
+    judgment: { anyOf: Array<{ properties: Record<string, { enum?: unknown[]; minItems?: number }> }> };
   }).judgment;
-  assert.equal(judgmentSchema.oneOf[0]!.properties.citations?.minItems, 1);
-  assert.equal(judgmentSchema.oneOf[1]!.properties.missingEvidenceCapability?.enum?.includes("family:validation"), true);
-  assert.equal(judgmentSchema.oneOf[1]!.properties.missingEvidenceCapability?.enum?.includes("test logs"), false);
+  assert.equal(judgmentSchema.anyOf[0]!.properties.citations?.minItems, 1);
+  assert.equal(judgmentSchema.anyOf[1]!.properties.missingEvidenceCapability?.enum?.includes("family:validation"), true);
+  assert.equal(judgmentSchema.anyOf[1]!.properties.missingEvidenceCapability?.enum?.includes("test logs"), false);
   assert.equal(existsSync(observedCwd), false, "ephemeral empty cwd is removed after execution");
 });
 
@@ -556,3 +557,4 @@ function sdkResult(structured_output?: unknown, session_id = "session-backend", 
 function sha(value: string): `sha256:${string}` {
   return `sha256:${value.repeat(64).slice(0, 64)}`;
 }
+import { checkRetainedEvaluation } from "./retained-evaluation-helper.js";

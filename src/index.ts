@@ -516,3 +516,11 @@ export type {
   ProtocolProcessOptions,
   ProtocolProcessResult,
 } from "./process-protocol.js";
+export { createRetainedBehaviorEvidence } from "./retained-evidence.js";
+export type { RetainedBehaviorEvidence } from "./retained-evidence.js";
+export { createRetainedStructuralObservationSet } from "./structural-observations.js";
+export { validateRetainedBehaviorAssertion } from "./behavior-assertions.js";
+export { runAgentSdkSemanticJudge as runRetainedSemanticJudge } from "./semantic-judge.js";
+export { runCodexSemanticJudge } from "./codex-judge.js";
+export type { BehaviorAggregate } from "./aggregation.js";
+export { selectAggregationAttempts } from "./aggregation.js";

@@ -1,7 +1,7 @@
 # Outcome ingestion and structural observations
 
 `ebo observations` derives versioned, deterministic facts from a
-capture-qualified retained Agent SDK run bundle. It runs qualification,
+capture-qualified retained Claude Agent SDK, Codex, OpenHands, or DeepSeek run bundle. It runs qualification,
 normalization, native-reference integrity validation, and the registered
 extractors in that order. Source bundles are read-only; the command rejects an
 output path inside the source bundle or corpus.
@@ -16,9 +16,14 @@ node dist/src/cli.js observations corpus <corpus-root> <index.jsonl> <output-roo
 The corpus command first validates the supplied deterministic index, selects
 run manifests with the same exact-match filters as `ebo corpus query`, and
 writes one bounded `sha256-<run-attempt-tuple>.json` file per selection. It fails rather than skipping
-an invalid or unsupported selected bundle. The retained-bundle loader currently
-supports Agent SDK bundles; the extractor library accepts any validated
-`ebo.normalized-dataset/v1` produced by another harness adapter.
+an invalid or unsupported selected bundle. `createRetainedBehaviorEvidence`
+dispatches verified native session records to each existing M4 normalizer and
+resolver. `createRetainedStructuralObservationSet` is the corresponding public
+library call; the older Agent SDK-specific calls remain available. The same
+loader supplies judge input, assertion validation, calibration, and aggregation.
+Unsupported source fields remain unavailable; native schemas and identities
+are preserved. Supplemental bundle metadata is retained separately as
+`outcomeCapture`, so it cannot replace source-native session records.
 
 Each `ebo.structural-observation/v1` states its extractor/version, exact
 definition, one-attempt denominator, unit, uniform event IDs, native-record

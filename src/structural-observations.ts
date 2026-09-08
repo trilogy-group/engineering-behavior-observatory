@@ -1,16 +1,12 @@
 import { createHash } from "node:crypto";
+import { createAgentSdkBehaviorEvidence } from "./behavior-assertions.js";
+import { createRetainedBehaviorEvidence } from "./retained-evidence.js";
 
 import {
-  claudeAgentSdkNormalizationAdapter,
-  CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_VERSION,
-  createAgentSdkNativeEvidenceResolver,
-  readQualifiedClaudeAgentSdkCapture,
   type AgentSdkNativeRecord,
 } from "./agent-sdk-normalizer.js";
 import { canonicalizeMetadata, digestMetadata, validateArtifact } from "./artifacts.js";
 import {
-  describeNormalizedDataset,
-  validateNormalizedDataset,
   type AdapterCoverageReport,
   type NormalizedDataset,
 } from "./normalization-integrity.js";
@@ -93,19 +89,15 @@ type ToolOperation = {
 };
 
 export async function createAgentSdkStructuralObservationSet(bundleRoot: string): Promise<StructuralObservationSet> {
-  const capture = await readQualifiedClaudeAgentSdkCapture(bundleRoot);
-  const normalization = await claudeAgentSdkNormalizationAdapter.normalize(capture);
-  const dataset = describeNormalizedDataset({
-    capture,
-    normalization,
-    capabilityProfile: normalization.capabilityProfile,
-    adapterVersion: CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_VERSION,
-    nativeType: agentSdkNativeType,
-    contentDigest: (reference) => agentSdkContentDigest(capture, reference),
-  });
-  const resolver = createAgentSdkNativeEvidenceResolver(capture);
-  const coverage = await validateNormalizedDataset(dataset, resolver);
+  const { capture, dataset, resolver, coverage } = await createAgentSdkBehaviorEvidence(bundleRoot);
   const result = createStructuralObservationSet(dataset, coverage, capture);
+  await validateStructuralObservationSet(result, resolver);
+  return result;
+}
+
+export async function createRetainedStructuralObservationSet(bundleRoot: string): Promise<StructuralObservationSet> {
+  const { outcomeCapture, dataset, resolver, coverage } = await createRetainedBehaviorEvidence(bundleRoot);
+  const result = createStructuralObservationSet(dataset, coverage, outcomeCapture);
   await validateStructuralObservationSet(result, resolver);
   return result;
 }
@@ -217,6 +209,10 @@ function importOutcomes(
   assessmentMode: "observational" | "verified" | "unknown",
 ): StructuralObservation[] {
   const terminal = dataset.events.find((event) => event.family === "outcome" && event.source.nativeType === "terminal-record");
+  const retainedTerminal = capture?.records.find(({ record }) => record.kind === "manifest");
+  const retainedState = asRecord(retainedTerminal?.record.document);
+  const retainedWorkspace = capture?.records.find(({ record }) => record.kind === "workspace"
+    && asRecord(record.document)?.id === retainedState?.workspaceArtifactId);
   const terminalWorkspaceIds = new Set(terminal?.content.status === "known"
     ? terminal.content.value.flatMap(({ nativeReference, role }) => role === "final-workspace" ? [nativeReference.artifactId] : [])
     : []);
@@ -229,20 +225,25 @@ function importOutcomes(
     ? captureReports.map(({ reference }) => reference)
     : capture?.records.map(({ reference }) => reference) ?? [];
   const assessmentEvents = dataset.events.filter((event) => event.source.nativeType === "assessment-mode");
+  const assessmentReferences = capture?.records.filter(({ record }) => record.kind === "assessment-mode").map(({ reference }) => reference) ?? [];
   const verifierReferences = capture?.records.filter(({ record }) => record.kind === "verifier").map(({ reference }) => reference) ?? [];
   const base = [
     assessmentMode === "unknown"
       ? unavailable(dataset, outcomeRegistry("assessment-mode", "Assessment mode retained by the run manifest."), "Assessment mode evidence is missing.", [])
       : directObservation(dataset, "assessment-mode", "Assessment mode retained by the run manifest.", assessmentMode, "mode",
-        assessmentEvents, assessmentEvents.length === 0 ? verifierReferences : []),
+        assessmentEvents, assessmentEvents.length === 0 ? assessmentReferences.length > 0 ? assessmentReferences : verifierReferences : []),
     terminal === undefined || typeof terminal.attributes.state !== "string"
-      ? unavailable(dataset, outcomeRegistry("terminal-state", "Terminal state retained by the run manifest."), "Terminal outcome evidence is missing.", [])
+      ? retainedTerminal !== undefined && typeof retainedState?.state === "string"
+        ? directObservation(dataset, "terminal-state", "Terminal state retained by the run manifest.", retainedState.state, "state", [], [retainedTerminal.reference])
+        : unavailable(dataset, outcomeRegistry("terminal-state", "Terminal state retained by the run manifest."), "Terminal outcome evidence is missing.", [])
       : directObservation(dataset, "terminal-state", "Terminal state retained by the run manifest.", String(terminal.attributes.state), "state", [terminal]),
     capture === undefined
       ? unavailable(dataset, outcomeRegistry("capture-qualification", "Structural capture qualification used to admit normalization."), "Capture qualification evidence was not supplied.", [])
       : directObservation(dataset, "capture-qualification", "Structural capture qualification used to admit normalization.",
         capture.qualification, "qualification", [], captureReferences),
-    workspace.length === 0
+    workspace.length === 0 && retainedWorkspace !== undefined && retainedTerminal !== undefined
+      ? directObservation(dataset, "workspace-outcome-count", "Retained final workspace outcomes referenced by the attempt.", 1, "workspace-outcomes", [], [retainedWorkspace.reference, retainedTerminal.reference])
+      : workspace.length === 0
       ? unavailable(dataset, outcomeRegistry("workspace-outcome-count", "Retained final workspace outcomes referenced by the attempt."),
         terminalWorkspaceIds.size === 0 ? "Terminal outcome does not reference a final workspace artifact." : "Terminal-referenced workspace outcome evidence is missing.",
         terminal === undefined ? [] : citations([terminal]), terminal === undefined ? [] : [terminal])
@@ -766,32 +767,6 @@ function importAssessmentMode(
   if (capture?.records.some(({ record }) => record.kind === "verifier") === true) return "verified";
   const value = dataset.events.find((event) => event.source.nativeType === "assessment-mode")?.attributes.assessmentMode;
   return value === "observational" || value === "verified" ? value : "unknown";
-}
-
-function agentSdkNativeType(record: AgentSdkNativeRecord): string {
-  const document = asRecord(record.document);
-  if (record.kind === "session") return scalarString(document?.nativeType) ?? "session";
-  if (record.kind === "hook") return scalarString(document?.hook) ?? "hook";
-  return ({
-    telemetry: "agent-sdk-telemetry",
-    workspace: "workspace-outcome",
-    verifier: "verifier-result",
-    "assessment-mode": "assessment-mode",
-    manifest: "terminal-record",
-  } as Partial<Record<AgentSdkNativeRecord["kind"], string>>)[record.kind] ?? record.kind;
-}
-
-function agentSdkContentDigest(
-  capture: NormalizationInput<AgentSdkNativeRecord>,
-  reference: NativeEvidenceReference,
-): `sha256:${string}` | undefined {
-  for (const { record } of capture.records) {
-    if (record.kind !== "workspace") continue;
-    const descriptor = asRecord(record.document);
-    if (descriptor?.id === reference.artifactId && typeof descriptor.digest === "string"
-        && /^sha256:[a-f0-9]{64}$/u.test(descriptor.digest)) return descriptor.digest as `sha256:${string}`;
-  }
-  return undefined;
 }
 
 function unavailableCapability(dataset: NormalizedDataset, extractor: ExtractorRegistration, zero: boolean): string | undefined {

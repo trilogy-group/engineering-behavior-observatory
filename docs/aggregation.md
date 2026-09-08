@@ -57,6 +57,23 @@ a terminal-state measure; task-success rates come only from available verified
 attempt outcomes. Duplicate identical inputs are counted once, while conflicting
 records with the same identity fail the build.
 
+Each group's additive `behaviors` array retains constructive, adverse, mixed,
+and context-dependent distributions separately from review agreement. A
+partition names the exact vocabulary/category/dimension, rubric id/version,
+and evaluator identity/version/configuration digest. Missing legacy evaluator
+configuration stays a separate partition. Its denominator is distinct
+confirmed attempt-dimensions, not judge calls: agreeing confirmed reruns count
+once and conflicting confirmed reruns exclude that attempt. Disputed,
+unreviewed, rejected, and abstained assertions cannot contribute; assertion
+references expose review outcome and inclusion alongside run/attempt/digest.
+An empty denominator is unavailable. These distributions remain descriptive.
+
+Corpus indexing prefers `structuralQualification.status` over legacy
+`qualification`. Legacy-only known states remain readable; missing or invalid
+structural status is unavailable. Qualified-with-gaps, incomplete, unqualified,
+and unavailable remain distinct. Rebuild older corpus indexes before using
+them; source manifests and native artifacts are never rewritten.
+
 Every report retains the logical request and corpus-index digests plus the
 exact admitted manifest, observation-set, assertion, calibration, and
 comparison-gate digests. Moving the report therefore does not detach its

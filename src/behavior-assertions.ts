@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createRetainedBehaviorEvidence } from "./retained-evidence.js";
 
 import {
   CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_VERSION,
@@ -65,7 +66,7 @@ export type BehaviorAssertion = {
   dataset: { schemaVersion: "ebo.normalized-dataset/v1"; digest: DigestString };
   behavior: { vocabularyVersion: string; categoryId: string; dimensionId: string };
   rubric: VersionedIdentity;
-  evaluator: VersionedIdentity;
+  evaluator: VersionedIdentity & { configurationDigest?: DigestString };
   judgment: AssessedJudgment | AbstainedJudgment;
 };
 
@@ -189,6 +190,13 @@ export async function createAgentSdkBehaviorEvidence(bundleRoot: string): Promis
   const resolver = createAgentSdkNativeEvidenceResolver(capture);
   const coverage = await validateNormalizedDataset(dataset, resolver);
   return { capture, dataset, resolver, coverage };
+}
+
+export async function validateRetainedBehaviorAssertion(bundleRoot: string, assertion: BehaviorAssertion, review?: BehaviorReview): Promise<readonly ResolvedBehaviorCitation[]> {
+  const { dataset, resolver } = await createRetainedBehaviorEvidence(bundleRoot);
+  const citations = await validateBehaviorAssertion(assertion, dataset, resolver);
+  if (review !== undefined) validateBehaviorReview(assertion, review);
+  return citations;
 }
 
 function assertVocabulary(vocabulary: BehaviorVocabulary): void {

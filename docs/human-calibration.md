@@ -6,7 +6,8 @@ review service, or treat synthetic fixture decisions as research labels.
 
 ## Select a reproducible sample
 
-Create a source file that points to capture-qualified Agent SDK bundles and
+Create a source file that points to capture-qualified Claude Agent SDK, Codex,
+OpenHands, or DeepSeek bundles and
 their judge-produced assertions. Paths are local operator inputs; native
 evidence is revalidated through the existing assertion resolver before a
 candidate can enter a sample.

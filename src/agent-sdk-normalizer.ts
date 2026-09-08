@@ -169,6 +169,17 @@ export async function normalizeClaudeAgentSdkRunBundle(bundleRoot: string): Prom
 export async function readQualifiedClaudeAgentSdkCapture(
   bundleRoot: string,
 ): Promise<NormalizationInput<AgentSdkNativeRecord>> {
+  const manifest = readManifest(resolve(bundleRoot));
+  if (!manifest.run.runtime.some(({ source, name }) => source === "anthropic" && ["agent-sdk", CLAUDE_AGENT_SDK_HARNESS].includes(name))) {
+    throw new Error("Run bundle is not an Agent SDK capture.");
+  }
+  const capture = await readQualifiedRunCapture(bundleRoot);
+  assertQualifiedInput(capture);
+  return capture;
+}
+
+/** Verified retained artifact envelopes; native session documents remain source-specific. */
+export async function readQualifiedRunCapture(bundleRoot: string): Promise<NormalizationInput<AgentSdkNativeRecord>> {
   const root = resolve(bundleRoot);
   const manifest = readManifest(root);
   await assertPersistedStructuralQualification(root, manifest);
@@ -177,10 +188,6 @@ export async function readQualifiedClaudeAgentSdkCapture(
       || !["qualified", "qualified-with-gaps"].includes(qualification.status)) {
     const reasons = qualification.reasons.map(({ code }) => code).join(", ") || "unknown qualification failure";
     throw new Error(`Agent SDK normalization requires capture-qualified evidence: ${reasons}.`);
-  }
-
-  if (!manifest.run.runtime.some(({ source, name }) => source === "anthropic" && ["agent-sdk", CLAUDE_AGENT_SDK_HARNESS].includes(name))) {
-    throw new Error("Run bundle is not an Agent SDK capture.");
   }
 
   const records: Array<CapturedNativeRecord<AgentSdkNativeRecord>> = [];
@@ -235,7 +242,6 @@ export async function readQualifiedClaudeAgentSdkCapture(
     qualification: qualification.status === "qualified" ? "qualified" : "qualified-with-gaps",
     records,
   };
-  assertQualifiedInput(input);
   return input;
 }
 

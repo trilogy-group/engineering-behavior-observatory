@@ -1,7 +1,7 @@
 import { join, resolve } from "node:path";
 
 import { canonicalizeMetadata, digestBytes, digestMetadata, validateArtifact } from "./artifacts.js";
-import { validateAgentSdkBehaviorAssertion, type BehaviorAssertion } from "./behavior-assertions.js";
+import { validateRetainedBehaviorAssertion, type BehaviorAssertion } from "./behavior-assertions.js";
 import type { CorpusIndexEntry } from "./corpus.js";
 import {
   effectiveReviewOutcome,
@@ -13,7 +13,7 @@ import {
 } from "./human-calibration.js";
 import { assessComparisonEligibility, type ComparisonCapability, type ComparisonReport, type ComparisonRequest } from "./normalization-integrity.js";
 import { readBoundedFile } from "./scheduler.js";
-import { createAgentSdkStructuralObservationSet, type StructuralObservationSet } from "./structural-observations.js";
+import { createRetainedStructuralObservationSet, type StructuralObservationSet } from "./structural-observations.js";
 
 export type AggregationDimension = "task" | "model" | "harness" | "trial" | "capture-qualification";
 export type AttemptSelectionPolicy = "all-attempts" | "latest-attempt-per-run";
@@ -72,6 +72,22 @@ export type AggregateMetric = {
   measurement: AggregateMeasurement;
 };
 
+export type BehaviorAggregate = {
+  behavior: BehaviorAssertion["behavior"];
+  rubric: BehaviorAssertion["rubric"];
+  evaluator: BehaviorAssertion["evaluator"];
+  population: "confirmed-attempt-dimension";
+  assessments: ReadonlyArray<{
+    assessment: "constructive" | "adverse" | "mixed" | "context-dependent";
+    measurement: AggregateMeasurement;
+  }>;
+  assertions: ReadonlyArray<{
+    runId: string; attemptId: string; id: string; digest: `sha256:${string}`;
+    reviewOutcome: ReturnType<typeof effectiveReviewOutcome>; disputed: boolean;
+    included: boolean;
+  }>;
+};
+
 export type AggregationReport = {
   schemaVersion: "ebo.aggregation-report/v1";
   policy: {
@@ -97,6 +113,7 @@ export type AggregationReport = {
   groups: ReadonlyArray<{
     dimensions: Partial<Record<AggregationDimension, string>>;
     metrics: readonly AggregateMetric[];
+    behaviors?: readonly BehaviorAggregate[];
     variations: ReadonlyArray<{
       measure: "terminal-state" | "verifier-status";
       distribution: readonly AggregateMetric[];
@@ -125,6 +142,11 @@ export function aggregateEvaluation(
   return aggregateValidatedEvaluation(input, policy);
 }
 
+export function selectAggregationAttempts(entries: readonly CorpusIndexEntry[], policy: AttemptSelectionPolicy): CorpusIndexEntry[] {
+  if (!["all-attempts", "latest-attempt-per-run"].includes(policy)) throw new Error("Invalid attempt selection policy.");
+  return selectAttempts(uniqueAttempts(entries).attempts, policy);
+}
+
 async function aggregateValidatedEvaluation(
   input: AggregationInput,
   policy: Pick<AggregationRequest, "groupBy" | "selectedAttemptPolicy" | "recurrence">,
@@ -136,7 +158,7 @@ async function aggregateValidatedEvaluation(
   const observations = new Map<string, StructuralObservationSet>();
   for (const { bundleRoot, document } of observationSources.values()) {
     assertIndexedBundle(bundleRoot, document.runId, document.attemptId, attempts);
-    const rebuilt = await createAgentSdkStructuralObservationSet(bundleRoot);
+    const rebuilt = await createRetainedStructuralObservationSet(bundleRoot);
     const { capabilityProfile: _capabilityProfile, ...legacyNormalization } = rebuilt.normalization;
     const comparable = document.normalization.capabilityProfile === undefined
       ? { ...rebuilt, normalization: legacyNormalization }
@@ -148,7 +170,7 @@ async function aggregateValidatedEvaluation(
   const assertions = new Map<string, BehaviorAssertion>();
   for (const { bundleRoot, document } of assertionSources.values()) {
     assertIndexedBundle(bundleRoot, document.runId, document.attemptId, attempts);
-    await validateAgentSdkBehaviorAssertion(bundleRoot, document);
+    await validateRetainedBehaviorAssertion(bundleRoot, document);
     assertions.set(assertionKey(document), document);
   }
   for (const { selection } of input.calibrations) await revalidateReviewSample(selection);
@@ -159,6 +181,7 @@ async function aggregateValidatedEvaluation(
     return {
       dimensions,
       metrics: groupMetrics(members, attempts, observations, assertions, reviewOutcomes, dimensions),
+      behaviors: behaviorAggregates(members, assertions, reviewOutcomes),
       variations: [
         variation("terminal-state", members, policy.recurrence.minimumOccurrences),
         variation("verifier-status", members, policy.recurrence.minimumOccurrences),
@@ -212,6 +235,49 @@ async function aggregateValidatedEvaluation(
   return report;
 }
 
+function behaviorAggregates(selected: readonly Attempt[], assertions: ReadonlyMap<string, BehaviorAssertion>, reviews: ReadonlyMap<string, ReviewOutcome>): BehaviorAggregate[] {
+  const selectedIds = new Set(selected.map(attemptKey));
+  const partitions = new Map<string, BehaviorAssertion[]>();
+  for (const assertion of assertions.values()) {
+    if (!selectedIds.has(attemptKey(assertion))) continue;
+    const key = canonicalizeMetadata({ behavior: assertion.behavior, rubric: assertion.rubric, evaluator: assertion.evaluator });
+    const values = partitions.get(key) ?? [];
+    values.push(assertion);
+    partitions.set(key, values);
+  }
+  return [...partitions.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, values]) => {
+    const first = values[0]!;
+    const included = new Set<string>();
+    const assessments: string[] = [];
+    const exclusions: string[] = [];
+    const outcome = (assertion: BehaviorAssertion): ReviewOutcome => reviews.get(assertionBindingKey(assertion)) ?? {
+      outcome: assertion.judgment.disposition === "abstained" ? "judge-abstained" : "unreviewed", disputed: false,
+    };
+    for (const attempt of selected) {
+      const candidates = values.filter((assertion) => attemptKey(assertion) === attemptKey(attempt));
+      const confirmed = candidates.filter((assertion) => assertion.judgment.disposition === "assessed"
+        && outcome(assertion).outcome === "confirmed" && !outcome(assertion).disputed);
+      const judgments = new Set(confirmed.flatMap(({ judgment }) => judgment.disposition === "assessed" ? [judgment.assessment] : []));
+      if (judgments.size === 1) {
+        assessments.push([...judgments][0]!);
+        for (const assertion of confirmed) included.add(assertionKey(assertion));
+      } else exclusions.push(judgments.size > 1 ? "conflicting-confirmed-reruns" : candidates.length === 0 ? "dimension-assertion-missing" : "no-confirmed-assessment");
+    }
+    return {
+      behavior: structuredClone(first.behavior), rubric: structuredClone(first.rubric), evaluator: structuredClone(first.evaluator),
+      population: "confirmed-attempt-dimension" as const,
+      assessments: (["constructive", "adverse", "mixed", "context-dependent"] as const).map((assessment) => ({
+        assessment,
+        measurement: rateMetric(assessment, "attempt", assessments.filter((value) => value === assessment).length,
+          assessments.length, "confirmed-attempt-dimension", exclusionCounts(exclusions, "attempt-dimension")).measurement,
+      })),
+      assertions: values.map((assertion) => ({ runId: assertion.runId, attemptId: assertion.attemptId, id: assertion.id,
+        digest: metadataDigest(assertion), reviewOutcome: outcome(assertion).outcome, disputed: outcome(assertion).disputed,
+        included: included.has(assertionKey(assertion)) })),
+    };
+  });
+}
+
 function groupMetrics(
   selected: readonly Attempt[],
   all: readonly Attempt[],
@@ -228,8 +294,8 @@ function groupMetrics(
     rateMetric("infrastructure-failure-rate", "attempt", selected.filter(({ failureClass }) => failureClass === "infrastructure").length, selected.length, "attempt", []),
     rateMetric("capture-qualified-rate", "attempt",
       selected.filter(({ captureQualification }) => captureQualification === "qualified" || captureQualification === "qualified-with-gaps").length,
-      selected.filter(({ captureQualification }) => captureQualification !== undefined).length,
-      "attempt", exclusionCounts(selected.flatMap(({ captureQualification }) => captureQualification === undefined ? ["capture-qualification-unavailable"] : []), "attempt")),
+      selected.filter(({ captureQualification }) => captureQualification !== undefined && captureQualification !== "unavailable").length,
+      "attempt", exclusionCounts(selected.flatMap(({ captureQualification }) => captureQualification === undefined || captureQualification === "unavailable" ? ["capture-qualification-unavailable"] : []), "attempt")),
     rateMetric("terminal-completed-rate", "attempt", selected.filter(({ terminalState }) => terminalState === "completed").length, selected.length, "attempt", []),
   ];
   const verified = selected.filter(({ assessmentMode, verifierStatuses }) => assessmentMode === "verified"
