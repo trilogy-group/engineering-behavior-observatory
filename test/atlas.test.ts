@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { get } from "node:http";
 import test from "node:test";
 import { aggregateEvaluation } from "../src/aggregation.js";
-import { loadAtlas, queryAtlas, serveAtlas, shareAtlas, writeAtlas, type AtlasRequest } from "../src/atlas.js";
+import { atlasBehaviorRows, loadAtlas, queryAtlas, serveAtlas, shareAtlas, writeAtlas, type AtlasRequest } from "../src/atlas.js";
 import { renderAtlas } from "../src/atlas-html.js";
 import { atlasDashboards } from "../src/atlas-grafana.js";
 import { createPortableRunBundleExport } from "../src/exports.js";
@@ -23,6 +23,8 @@ test("Atlas mixed fixture preserves exact cohort populations, decisions and nati
     assert.deepEqual(new Set(view.cases.map(({ review }) => review)), new Set(["confirmed", "disputed", "rejected", "proposed", "abstained", "unavailable"]));
     assert.equal(view.report.comparisons[0]!.claimStatus, "unavailable");
     assert.equal(view.cases.filter(({ review }) => review === "confirmed").length, 2);
+    assert.ok(atlasBehaviorRows(view).some(({ assessment, numerator, denominator }) => assessment === "constructive" && numerator === 1 && denominator === 1));
+    assert.ok(atlasBehaviorRows(view).some(({ assessment, numerator, denominator }) => assessment === "adverse" && numerator === 1 && denominator === 1));
     for (const item of view.cases) {
       for (const citation of item.citations) {
         assert.equal((citation.normalizedEvent as { id: string }).id, citation.eventId);
@@ -40,6 +42,11 @@ test("Atlas mixed fixture preserves exact cohort populations, decisions and nati
     assert.equal((await queryAtlas(source, { q: "not in fixture" })).report.sourcePopulation.selectedAttempts, 0);
     assert.equal((await queryAtlas(source, { review: "proposed" })).cases[0]!.decisions.length, 0);
     assert.equal((await queryAtlas(source, { trial: "3" })).report.sourcePopulation.selectedAttempts, 2);
+    source.aggregation.selectedAttemptPolicy = "latest-attempt-per-run";
+    const latest = await queryAtlas(source, { review: "abstained" });
+    assert.equal(latest.policyExcludedAttempts, 1);
+    assert.equal(latest.report.sourcePopulation.selectedAttempts, 0, "an older matching assertion must not substitute for the latest retry");
+    source.aggregation.selectedAttemptPolicy = "all-attempts";
     await assert.rejects(queryAtlas(source, { surprise: "value" } as never), /Unknown/u);
     const html = renderAtlas(view, false);
     assert.match(html, /&lt;script&gt;window.fixtureXss=1&lt;\/script&gt;/u);
@@ -74,6 +81,8 @@ test("Atlas mixed fixture preserves exact cohort populations, decisions and nati
     } finally { await new Promise<void>((accept, reject) => server.close((error) => error ? reject(error) : accept())); }
 
     const request = JSON.parse(readFileSync(requestPath, "utf8")) as AtlasRequest;
+    writeFileSync(requestPath, JSON.stringify({ ...request, reviewPackets: ["missing.html"] }));
+    await assert.rejects(loadAtlas(requestPath), /review packet is unavailable/u);
     writeFileSync(requestPath, JSON.stringify({ ...request, grafanaUrl: "javascript:alert(1)" }));
     await assert.rejects(loadAtlas(requestPath), /local HTTP origin/u);
     writeFileSync(requestPath, JSON.stringify({ ...request, schemaVersion: "ebo.atlas-request/v2" }));

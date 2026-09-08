@@ -1,11 +1,14 @@
 import { createServer, type Server } from "node:http";
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { statSync } from "node:fs";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { aggregateEvaluation, type AggregateMeasurement, type AggregationInput, type AggregationReport, type AggregationRequest } from "./aggregation.js";
+import { aggregateEvaluation, selectAggregationAttempts, type BehaviorAggregate, type AggregationInput, type AggregationReport, type AggregationRequest } from "./aggregation.js";
 import { assertNoDuplicateJsonKeys, canonicalizeMetadata, digestMetadata, validateArtifact } from "./artifacts.js";
-import { createAgentSdkBehaviorEvidence, type BehaviorAssertion } from "./behavior-assertions.js";
+import type { BehaviorAssertion } from "./behavior-assertions.js";
+import type { AgentSdkNativeRecord } from "./agent-sdk-normalizer.js";
+import { createRetainedBehaviorEvidence } from "./retained-evidence.js";
 import { readCorpusIndex, validateCorpusIndex } from "./corpus.js";
 import { readPortableRunBundleExport, sanitizeDerivedExport, type PortableExportPolicy } from "./exports.js";
 import { assertCalibrationDestination, effectiveReviewOutcome, isDisputedReviewOutcome, type ReviewDecision } from "./human-calibration.js";
@@ -40,13 +43,12 @@ export type AtlasView = {
   schemaVersion: "ebo.atlas-view/v1"; title: string; mode: "restricted-local-only" | "partner" | "public";
   generatedAt: string; sourceDigest: Digest; cohortDigest: Digest; filters: AtlasFilters;
   filterOptions: Record<string, string[]>; report: AggregationReport; cases: readonly AtlasCase[];
-  sourceAttempts: number; filteredOutAttempts: number; matchingCases: number;
+  sourceAttempts: number; policyExcludedAttempts: number; filteredOutAttempts: number; matchingCases: number;
   operatorNarrative?: string; reviewPackets: readonly string[]; grafanaUrl?: string; atlasUrl?: string;
 };
 export type AtlasSource = { request: AtlasRequest; aggregation: AggregationRequest; input: AggregationInput; corpusRoot: string; requestPath: string; cases: AtlasCase[]; sourceDigest: Digest };
-export type AtlasBehaviorPartition = { behavior: BehaviorAssertion["behavior"]; rubric: BehaviorAssertion["rubric"]; evaluator: BehaviorAssertion["evaluator"]; population: string; assessments: ReadonlyArray<{ assessment: string; measurement: AggregateMeasurement }>; assertions: ReadonlyArray<{ digest: string; included: boolean }> };
-export function atlasBehaviorPartitions(view: AtlasView): Array<{ group: string; partition: AtlasBehaviorPartition }> {
-  return view.report.groups.flatMap((group) => ((group as typeof group & { behaviors?: readonly AtlasBehaviorPartition[] }).behaviors ?? []).map((partition) => ({ group: Object.values(group.dimensions).join(" · ") || "Selected cohort", partition })));
+export function atlasBehaviorPartitions(view: AtlasView): Array<{ group: string; partition: BehaviorAggregate }> {
+  return view.report.groups.flatMap((group) => (group.behaviors ?? []).map((partition) => ({ group: Object.values(group.dimensions).join(" · ") || "Selected cohort", partition })));
 }
 
 export function atlasBehaviorRows(view: AtlasView) {
@@ -64,6 +66,9 @@ export async function loadAtlas(requestPath: string): Promise<AtlasSource> {
   if (request.grafanaUrl !== undefined) localUrl(request.grafanaUrl);
   if (request.atlasUrl !== undefined) localUrl(request.atlasUrl);
   const base = dirname(resolve(requestPath));
+  for (const path of request.reviewPackets ?? []) {
+    if (typeof path !== "string" || !statSync(resolve(base, path), { throwIfNoEntry: false })?.isFile()) throw new Error("Configured human review packet is unavailable.");
+  }
   const aggregationPath = resolve(base, request.aggregationRequest);
   const aggregation = readArtifact<AggregationRequest>(aggregationPath);
   const aggregateBase = dirname(aggregationPath);
@@ -101,12 +106,12 @@ export async function loadAtlas(requestPath: string): Promise<AtlasSource> {
       const latest = reviews[0];
       const outcome = latest ? effectiveReviewOutcome(latest.candidate, latest.history.decisions) : assertion.judgment.disposition === "abstained" ? "judge-abstained" : "unreviewed";
       const review = latest && isDisputedReviewOutcome(latest.candidate, latest.history.decisions) ? "disputed" : ({ "judge-abstained": "abstained", unreviewed: "proposed", unresolved: "insufficient-evidence", confirmed: "confirmed", rejected: "rejected" } as const)[outcome];
-      const evidence = await createAgentSdkBehaviorEvidence(bundleRoot);
+      const evidence = await createRetainedBehaviorEvidence(bundleRoot);
       const citations = assertion.judgment.citations.map((citation) => {
         const normalizedEvent = evidence.dataset.events.find(({ id }) => id === citation.eventId);
         const native = evidence.capture.records.find(({ reference }) => canonicalizeMetadata(reference) === canonicalizeMetadata(citation.nativeReference));
         if (!normalizedEvent || !native) throw new Error("Atlas citation cannot resolve to normalized and native evidence.");
-        return { ...citation, normalizedEvent: displaySafe(normalizedEvent), nativeRecord: displaySafe(native.record.document) };
+        return { ...citation, normalizedEvent: displaySafe(normalizedEvent), nativeRecord: displaySafe(evidence.dataset.adapter.harness === "claude-agent-sdk" ? (native.record as AgentSdkNativeRecord).document : native.record) };
       });
       const decisions = latest?.history.decisions.filter(({ assertion: binding }) => binding.id === assertion.id && binding.digest === assertionDigest) ?? [];
       cases.push({ ...context, key: assertionDigest.slice(7), assertion: displaySafe(assertion) as BehaviorAssertion, assertionDigest, category: assertion.behavior.categoryId, assessment: assertion.judgment.disposition === "assessed" ? assertion.judgment.assessment : "abstained", review, decisions: displaySafe(decisions) as ReviewDecision[], citations, ...(trace ? { trace } : {}) });
@@ -118,15 +123,18 @@ export async function loadAtlas(requestPath: string): Promise<AtlasSource> {
 export async function queryAtlas(source: AtlasSource, filters: AtlasFilters = {}): Promise<AtlasView> {
   exactKeys(filters, [...ATLAS_FILTERS]);
   for (const value of Object.values(filters)) if (typeof value !== "string" || value.length > 500) throw new Error("Invalid Atlas filter.");
-  const matches = source.cases.filter((item) => Object.entries(filters).every(([key, value]) => !value || (key === "q" ? [item.runId, item.attemptId, item.model, item.task, item.assertion?.judgment.rationale ?? "", item.category].join(" ").toLocaleLowerCase().includes(value.toLocaleLowerCase()) : item[key as keyof AtlasCase] === value)));
+  const eligible = selectAggregationAttempts(source.input.corpusEntries, source.aggregation.selectedAttemptPolicy);
+  const eligibleIds = new Set(eligible.map(attemptKey));
+  const eligibleCases = source.cases.filter((item) => eligibleIds.has(attemptKey(item)));
+  const matches = eligibleCases.filter((item) => Object.entries(filters).every(([key, value]) => !value || (key === "q" ? [item.runId, item.attemptId, item.model, item.task, item.assertion?.judgment.rationale ?? "", item.category].join(" ").toLocaleLowerCase().includes(value.toLocaleLowerCase()) : item[key as keyof AtlasCase] === value)));
   // Filters select attempts through matching cases; all judgments on those attempts
   // remain in aggregation so a constructive filter cannot erase an adverse rerun.
   const ids = new Set(matches.map(attemptKey));
   const corpusEntries = source.input.corpusEntries.filter((entry) => ids.has(attemptKey(entry)));
   const report = await aggregateEvaluation({ ...source.input, lineage: { ...source.input.lineage, corpusIndexDigest: digest(corpusEntries) }, corpusEntries, observationSets: source.input.observationSets.filter(({ document }) => ids.has(attemptKey(document))), assertions: source.input.assertions.filter(({ document }) => ids.has(attemptKey(document))) }, source.aggregation);
-  const filterOptions = Object.fromEntries(ATLAS_FILTERS.filter((key) => key !== "q").map((key) => [key, [...new Set(source.cases.map((item) => String(item[key])))].sort()]));
+  const filterOptions = Object.fromEntries(ATLAS_FILTERS.filter((key) => key !== "q").map((key) => [key, [...new Set(eligibleCases.map((item) => String(item[key])))].sort()]));
   const sourceAttempts = new Set(source.input.corpusEntries.filter(({ manifestKind }) => manifestKind === "run").map(attemptKey)).size;
-  return { schemaVersion: "ebo.atlas-view/v1", title: source.request.title, atlasUrl: source.request.atlasUrl ?? "http://127.0.0.1:13011", mode: "restricted-local-only", generatedAt: new Date().toISOString(), sourceDigest: source.sourceDigest, cohortDigest: digest({ source: source.sourceDigest, filters, lineage: report.sourceLineage }), filters, filterOptions, report, cases: matches, matchingCases: matches.length, sourceAttempts, filteredOutAttempts: sourceAttempts - ids.size, ...(source.request.operatorNarrative ? { operatorNarrative: (displaySafe({ text: source.request.operatorNarrative }) as { text: string }).text } : {}), reviewPackets: (source.request.reviewPackets ?? []).map((path) => pathToFileURL(resolve(dirname(source.requestPath), path)).href), ...(source.request.grafanaUrl ? { grafanaUrl: localUrl(source.request.grafanaUrl) } : {}) };
+  return { schemaVersion: "ebo.atlas-view/v1", title: source.request.title, atlasUrl: source.request.atlasUrl ?? "http://127.0.0.1:13011", mode: "restricted-local-only", generatedAt: new Date().toISOString(), sourceDigest: source.sourceDigest, cohortDigest: digest({ source: source.sourceDigest, filters, lineage: report.sourceLineage }), filters, filterOptions, report, cases: matches, matchingCases: matches.length, sourceAttempts, policyExcludedAttempts: sourceAttempts - eligible.length, filteredOutAttempts: eligible.length - ids.size, ...(source.request.operatorNarrative ? { operatorNarrative: (displaySafe({ text: source.request.operatorNarrative }) as { text: string }).text } : {}), reviewPackets: (source.request.reviewPackets ?? []).map((path) => pathToFileURL(resolve(dirname(source.requestPath), path)).href), ...(source.request.grafanaUrl ? { grafanaUrl: localUrl(source.request.grafanaUrl) } : {}) };
 }
 
 export async function shareAtlas(source: AtlasSource, view: AtlasView): Promise<AtlasView> {
@@ -150,10 +158,15 @@ export async function writeAtlas(requestPath: string, outputRoot: string, filter
   const view = await queryAtlas(source, filters);
   const result = share ? await shareAtlas(source, view) : view;
   assertCalibrationDestination([source.corpusRoot, ...source.input.assertions.map(({ bundleRoot }) => bundleRoot)], outputRoot);
-  await mkdir(outputRoot, { recursive: false, mode: 0o700 });
-  await writeFile(resolve(outputRoot, "index.html"), renderAtlas(result, false), { mode: 0o600, flag: "wx" });
-  await writeFile(resolve(outputRoot, "report.json"), `${canonicalizeMetadata(result)}\n`, { mode: 0o600, flag: "wx" });
-  if (!share) await writeAtlasGrafana(outputRoot, result);
+  if (statSync(outputRoot, { throwIfNoEntry: false })) throw new Error("Atlas output destination already exists.");
+  await mkdir(dirname(resolve(outputRoot)), { recursive: true, mode: 0o700 });
+  const staging = await mkdtemp(join(dirname(resolve(outputRoot)), ".ebo-atlas-"));
+  try {
+    await writeFile(join(staging, "index.html"), renderAtlas(result, false), { mode: 0o600, flag: "wx" });
+    await writeFile(join(staging, "report.json"), `${canonicalizeMetadata(result)}\n`, { mode: 0o600, flag: "wx" });
+    if (!share) await writeAtlasGrafana(staging, result);
+    await rename(staging, outputRoot);
+  } finally { await rm(staging, { recursive: true, force: true }); }
   return result;
 }
 
@@ -168,7 +181,7 @@ export async function serveAtlas(requestPath: string, port = 13011): Promise<Ser
       if (!req.headers.host || !["127.0.0.1", "localhost", "[::1]"].includes(new URL(`http://${req.headers.host}`).hostname)) { res.writeHead(403).end(); return; }
       if (req.headers.origin && !["127.0.0.1", "localhost", "[::1]"].includes(new URL(req.headers.origin).hostname)) { res.writeHead(403).end(); return; }
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
-      if (!["/", "/api/view", "/api/metrics", "/api/behaviors", "/api/cases", "/report.html", "/report.json"].includes(url.pathname)) { res.writeHead(404).end(); return; }
+      if (!["/", "/api/view", "/api/metrics", "/api/behaviors", "/api/behavior-chart", "/api/cases", "/report.html", "/report.json"].includes(url.pathname)) { res.writeHead(404).end(); return; }
       const filters: AtlasFilters = {};
       for (const [key, value] of url.searchParams) {
         if (key === "share") continue;
@@ -183,7 +196,7 @@ export async function serveAtlas(requestPath: string, port = 13011): Promise<Ser
       } else {
         res.setHeader("Content-Type", "application/json; charset=utf-8");
         const rows = url.pathname === "/api/metrics" ? view.report.groups.flatMap((group) => group.metrics.map((metric) => ({ group: Object.values(group.dimensions).join(" · "), metric: metric.id, status: metric.measurement.status, numerator: metric.measurement.numerator.value, denominator: metric.measurement.denominator.value, unit: metric.measurement.denominator.unit, exclusions: metric.measurement.exclusions.map(({ reason, count }) => `${reason}: ${count}`).join("; "), cohortDigest: view.cohortDigest }))) : view;
-        res.end(JSON.stringify(url.pathname === "/api/behaviors" ? atlasBehaviorRows(view) : url.pathname === "/api/cases" ? view.cases.map(({ runId, attemptId, model, harness, task, trial, category, assessment, review, key }) => ({ runId, attemptId, model, harness, task, trial, category, assessment, review, href: `http://${req.headers.host}/?${new URLSearchParams(filters)}#case-${key}` })) : rows));
+        res.end(JSON.stringify(url.pathname === "/api/behavior-chart" ? atlasBehaviorRows(view).map(({ label, numerator }) => ({ label, count: numerator })) : url.pathname === "/api/behaviors" ? atlasBehaviorRows(view) : url.pathname === "/api/cases" ? view.cases.map(({ runId, attemptId, model, harness, task, trial, category, assessment, review, key }) => ({ runId, attemptId, model, harness, task, trial, category, assessment, review, href: `http://${req.headers.host}/?${new URLSearchParams(filters)}#case-${key}` })) : rows));
       }
     } catch (error) { res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" }); res.end(error instanceof Error ? error.message : "Atlas query failed."); }
   });
