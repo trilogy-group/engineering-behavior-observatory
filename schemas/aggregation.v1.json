@@ -184,6 +184,12 @@
           "type": "array",
           "minItems": 4,
           "maxItems": 4,
+          "allOf": [
+            {"contains":{"properties":{"assessment":{"const":"constructive"}},"required":["assessment"]},"minContains":1,"maxContains":1},
+            {"contains":{"properties":{"assessment":{"const":"adverse"}},"required":["assessment"]},"minContains":1,"maxContains":1},
+            {"contains":{"properties":{"assessment":{"const":"mixed"}},"required":["assessment"]},"minContains":1,"maxContains":1},
+            {"contains":{"properties":{"assessment":{"const":"context-dependent"}},"required":["assessment"]},"minContains":1,"maxContains":1}
+          ],
           "items": {
             "type": "object",
             "additionalProperties": false,

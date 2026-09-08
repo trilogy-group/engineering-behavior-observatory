@@ -684,6 +684,25 @@ test("composes a qualified observational run bundle with workspace, protocol, di
       assert.equal((await qualifyRunBundle(definition.bundleRoot)).semanticAnalysisUsable, true, "Generic qualification does not enforce owned Codex completion.");
       await assert.rejects(createRetainedBehaviorEvidence(definition.bundleRoot), /matching owned terminal evidence/u, mutation);
     }
+    const telemetry = manifest.evidence.find(({ relativePath }) => relativePath === "telemetry/codex.json")!;
+    const telemetryPath = join(definition.bundleRoot, telemetry.relativePath);
+    const originalTelemetry = await readFile(telemetryPath);
+    for (const mutation of ["initialize", "telemetry"]) {
+      await writeFile(sessionPath, originalBytes);
+      await writeFile(telemetryPath, originalTelemetry);
+      const changedManifest = structuredClone(manifest);
+      const changed = mutation === "initialize"
+        ? Buffer.from(`${records.map((record) => JSON.stringify(record.kind === "response" && record.method === "initialize"
+          ? { ...record, payload: { ...record.payload, userAgent: "ebo/0.150.1 (synthetic fixture)" } } : record)).join("\n")}\n`)
+        : Buffer.from(JSON.stringify({ ...JSON.parse(originalTelemetry.toString()), runtime: { ...JSON.parse(originalTelemetry.toString()).runtime, version: "0.150.1" } }));
+      const descriptor = changedManifest.evidence.find(({ id }) => id === (mutation === "initialize" ? session.id : telemetry.id))!;
+      descriptor.digest = `sha256:${digestBytes(changed).value}`;
+      descriptor.sizeBytes = changed.length;
+      await writeFile(mutation === "initialize" ? sessionPath : telemetryPath, changed);
+      await writeFile(join(definition.bundleRoot, "manifest.json"), JSON.stringify(changedManifest));
+      assert.equal((await qualifyRunBundle(definition.bundleRoot)).semanticAnalysisUsable, true);
+      await assert.rejects(createRetainedBehaviorEvidence(definition.bundleRoot), /native runtime version differs/u, mutation);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

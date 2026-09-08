@@ -5,6 +5,8 @@ Retained native loading accepts the implemented source versions: OpenHands
 fail explicitly rather than receiving a different adapter's provenance.
 Completed Codex bundles require the first matching owned native terminal to
 report completion; qualified failed/partial evidence remains separate.
+Native envelopes and physical JSONL sequences are checked before dispatch;
+Codex notifications from a foreign or client-only source cannot become events.
 
 `ebo observations` derives versioned, deterministic facts from a
 capture-qualified retained Claude Agent SDK, Codex, OpenHands, or DeepSeek run bundle. It runs qualification,
