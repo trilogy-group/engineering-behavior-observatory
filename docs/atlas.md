@@ -124,6 +124,11 @@ links and operator narrative lack portable field classifications and are
 excluded. Local review access never grants sharing approval. Nothing uploads,
 emails or publishes the report.
 
+Shared summaries accept model, harness, task, trial, capture and outcome
+filters. Review, category, assessment and free-text evidence filters are
+rejected: even without case details, their selected-cohort counts would disclose
+semantic or human-review findings that have no export approval.
+
 ## Synthetic verification
 
 ```sh

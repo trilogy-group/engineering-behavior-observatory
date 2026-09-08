@@ -76,6 +76,7 @@ test("Atlas mixed fixture preserves exact cohort populations, decisions and nati
       const response = await fetch(`${base}/api/view?assessment=adverse`);
       assert.equal(response.status, 200);
       assert.equal((await response.json() as typeof view).report.sourcePopulation.selectedAttempts, 1);
+      assert.equal((await (await fetch(`${base}/api/view?q=%24__all`)).json() as typeof view).report.sourcePopulation.selectedAttempts, 0, "text search does not interpret the Grafana all-variable sentinel");
       assert.equal((await fetch(`${base}/api/view`, { headers: { Origin: "https://foreign.example" } })).status, 403);
       assert.equal(await new Promise<number | undefined>((accept) => { get(`${base}/api/view`, { headers: { Host: "foreign.example" } }, (response) => { response.resume(); accept(response.statusCode); }); }), 403);
       assert.equal((await fetch(`${base}/api/view?path=/etc/passwd`)).status, 400);
@@ -130,7 +131,7 @@ test("shareable Atlas requires source export readback and fails closed on unsupp
   try {
     const requestPath = await createAtlasFixture(root);
     const source = await loadAtlas(requestPath);
-    const view = await queryAtlas(source, { review: "confirmed", model: "synthetic-model-a" });
+    const view = await queryAtlas(source, { task: "synthetic-validation-task", trial: "1", model: "synthetic-model-a" });
     const policy = { sharingClass: "public" as const, maxArtifactBytes: 16 * 1024 * 1024, maxStringBytes: 8192 };
     const nativeDisplay = sanitizeDerivedExport({ method: "item/reasoning/textDelta", payload: { delta: "synthetic-hidden-content" }, raw: JSON.stringify({ method: "item/reasoning/textDelta", params: { delta: "synthetic-hidden-content" } }) }, policy);
     assert.doesNotMatch(JSON.stringify(nativeDisplay), /synthetic-hidden-content/u, "derived displays reuse native reasoning omission before the final scan");
@@ -138,8 +139,12 @@ test("shareable Atlas requires source export readback and fails closed on unsupp
     const approvedRoot = join(root, "approved");
     await createPortableRunBundleExport({ sourceRoot: source.input.assertions[0]!.bundleRoot, destinationRoot: approvedRoot, policy });
     source.request.sharing = { policy, approvedExports: [approvedRoot], fields: ["cohort", "aggregate-metrics", "source-digests"] };
+    for (const filters of [{ review: "confirmed" }, { category: "verification-completion" }, { assessment: "adverse" }, { q: "Synthetic" }]) {
+      await assert.rejects(shareAtlas(source, await queryAtlas(source, filters)), /cannot use semantic, human-review, or free-text/u);
+    }
     const shared = await shareAtlas(source, view);
     assert.equal(shared.mode, "public"); assert.equal(shared.cases.length, 0); assert.equal(shared.reviewPackets.length, 0);
+    assert.equal(shared.matchingCases, null, "omitted case populations are unavailable, not an observed zero");
     assert.equal(shared.operatorNarrative, undefined);
     const output = JSON.stringify(shared);
     assert.doesNotMatch(output, /window.fixtureXss|ghp_|SYNTHETIC_HIDDEN_REASONING|file:\/\/|\/Users\/|\/private\/|synthetic-fixture-reviewer/u);

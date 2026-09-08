@@ -44,7 +44,7 @@ export type AtlasView = {
   schemaVersion: "ebo.atlas-view/v1"; title: string; mode: "restricted-local-only" | "partner" | "public";
   generatedAt: string; sourceDigest: Digest; cohortDigest: Digest; filters: AtlasFilters;
   filterOptions: Record<string, string[]>; report: AggregationReport; cases: readonly AtlasCase[];
-  sourceAttempts: number; policyExcludedAttempts: number; filteredOutAttempts: number; matchingCases: number;
+  sourceAttempts: number; policyExcludedAttempts: number; filteredOutAttempts: number; matchingCases: number | null;
   operatorNarrative?: string; reviewPackets: readonly string[]; grafanaUrl?: string; atlasUrl?: string;
 };
 export type AtlasSource = { request: AtlasRequest; aggregation: AggregationRequest; input: AggregationInput; corpusRoot: string; requestPath: string; cases: AtlasCase[]; sourceDigest: Digest };
@@ -152,6 +152,7 @@ export async function queryAtlas(source: AtlasSource, filters: AtlasFilters = {}
 export async function shareAtlas(source: AtlasSource, view: AtlasView): Promise<AtlasView> {
   const sharing = source.request.sharing;
   if (!sharing) throw new Error("Sharing unavailable: configure approved exports and explicit report fields first.");
+  if (["review", "category", "assessment", "q"].some((key) => view.filters[key as keyof AtlasFilters])) throw new Error("Shareable summaries cannot use semantic, human-review, or free-text evidence filters; their cohort counts would disclose unapproved findings.");
   exactKeys(sharing, ["policy", "approvedExports", "fields"]);
   const supported = ["cohort", "aggregate-metrics", "source-digests"];
   if (sharing.fields.length !== supported.length || !supported.every((field) => sharing.fields.includes(field))) throw new Error("Unsupported report-field sharing; only cohort, aggregate-metrics and source-digests are supported.");
@@ -161,7 +162,7 @@ export async function shareAtlas(source: AtlasSource, view: AtlasView): Promise<
   // no portable sharing classification yet. The shareable surface excludes them.
   const { operatorNarrative: _narrative, grafanaUrl: _grafana, atlasUrl: _atlas, ...metadata } = view;
   const correlations = source.input.corpusEntries.flatMap(({ runId, attemptId, bundleId }) => [runId, attemptId, bundleId].filter((value): value is string => value !== undefined));
-  const sanitized = sanitizeDerivedExport({ ...metadata, title: "Approved cohort summary", mode: sharing.policy.sharingClass, cases: [], matchingCases: 0, reviewPackets: [], filterOptions: {}, filters: Object.fromEntries(Object.entries(view.filters).map(([key, value]) => [key, key === "q" ? digest(value) : value])), report: { ...view.report, groups: view.report.groups.map(({ dimensions, metrics, variations }) => ({ dimensions, metrics: metrics.filter(({ population }) => population !== "assertion" && population !== "reviewed-assertion"), variations })), comparisons: [], sourceLineage: { ...view.report.sourceLineage, assertions: [], calibrations: [], comparisonGates: [] }, limitations: [...view.report.limitations, "Sharing excludes semantic findings, human decisions, native content, local links and operator narrative: those fields lack export approval."] } }, sharing.policy, correlations);
+  const sanitized = sanitizeDerivedExport({ ...metadata, title: "Approved cohort summary", mode: sharing.policy.sharingClass, cases: [], matchingCases: null, reviewPackets: [], filterOptions: {}, filters: view.filters, report: { ...view.report, groups: view.report.groups.map(({ dimensions, metrics, variations }) => ({ dimensions, metrics: metrics.filter(({ population }) => population !== "assertion" && population !== "reviewed-assertion"), variations })), comparisons: [], sourceLineage: { ...view.report.sourceLineage, assertions: [], calibrations: [], comparisonGates: [] }, limitations: [...view.report.limitations, "Sharing excludes semantic findings, human decisions, native content, local links and operator narrative: those fields lack export approval."] } }, sharing.policy, correlations);
   return sanitized as AtlasView;
 }
 
@@ -198,7 +199,7 @@ export async function serveAtlas(requestPath: string, port = 13011): Promise<Ser
       for (const [key, value] of url.searchParams) {
         if (key === "share") continue;
         if (!ATLAS_FILTERS.includes(key as typeof ATLAS_FILTERS[number])) throw new Error("Unknown Atlas query parameter.");
-        if (value && value !== "$__all") filters[key as keyof AtlasFilters] = value;
+        if (value && (key === "q" || value !== "$__all")) filters[key as keyof AtlasFilters] = value;
       }
       const source = await loadAtlas(requestPath);
       let view = await queryAtlas(source, filters);
