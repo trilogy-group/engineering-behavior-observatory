@@ -106,24 +106,46 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
     const session = manifest.evidence.find((entry: { kind: string }) => entry.kind === "session");
     const path = join(bundleRoot, session.relativePath);
     const original = readFileSync(path);
-    for (const mutation of ["schema", "sequence", ...(evidence.dataset.adapter.harness === "codex-app-server" ? ["source", "client-source", "method"] : [])]) {
-      const records = original.toString().trim().split("\n").map((line) => JSON.parse(line));
+    const sourceMutations = evidence.dataset.adapter.harness === "codex-app-server" ? ["source", "client-source", "method", "client-thread", "client-turn"]
+      : evidence.dataset.adapter.harness === "openhands-agent-server" ? ["server-version", "foreign-conversation", "foreign-final", "missing-final", "error-final", "stuck-final"]
+        : ["client-version"];
+    for (const mutation of ["schema", "sequence", ...sourceMutations]) {
+      let records = original.toString().trim().split("\n").map((line) => JSON.parse(line));
       if (mutation === "schema") records[0].schemaVersion = "not-native";
       if (mutation === "sequence") records[0].sequence = 2;
       if (mutation === "source") records.find((record) => record.kind === "notification" && record.method === "item/completed").source = "foreign-runtime";
       if (mutation === "client-source") records.find((record) => record.kind === "notification" && record.method === "item/completed").source = "ebo-codex-client";
       if (mutation === "method") delete records[0].method;
+      if (mutation === "client-thread" || mutation === "client-turn") records.find((record) => record.kind === "response"
+        && record.method === (mutation === "client-thread" ? "thread/start" : "turn/start")).source = "ebo-codex-client";
+      if (mutation === "server-version") records.find((record) => record.channel === "server-info").payload.version = "0.0.0";
+      if (mutation === "foreign-conversation") records.find((record) => record.channel === "rest-event").session_id = "foreign-conversation";
+      if (mutation === "foreign-final") records.find((record) => record.channel === "conversation-final").payload.id = "foreign-conversation";
+      if (mutation === "missing-final") records = records.filter((record) => record.channel !== "conversation-final").map((record, index) => ({ ...record, sequence: index + 1 }));
+      if (mutation === "error-final" || mutation === "stuck-final") records.find((record) => record.channel === "conversation-final").payload.execution_status = mutation === "error-final" ? "error" : "stuck";
+      if (mutation === "client-version") records.find((record) => record.kind === "composition").payload.runtime.clientVersion = "0.0.0";
       const bytes = Buffer.from(`${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
       const changed = structuredClone(manifest);
       const descriptor = changed.evidence.find((entry: { id: string }) => entry.id === session.id);
       descriptor.digest = `sha256:${digestBytes(bytes).value}`;
       descriptor.sizeBytes = bytes.length;
+      const report = changed.evidence.find((entry: { kind: string }) => entry.kind === "capture-report");
+      const reportPath = join(bundleRoot, report.relativePath);
+      const reportBefore = readFileSync(reportPath);
       try {
+        if (mutation === "foreign-conversation") {
+          const document = JSON.parse(reportBefore.toString());
+          const reportBytes = Buffer.from(JSON.stringify({ ...document, relatedSessionIds: [...(document.relatedSessionIds ?? []), "foreign-conversation"] }));
+          report.digest = `sha256:${digestBytes(reportBytes).value}`;
+          report.sizeBytes = reportBytes.length;
+          writeFileSync(reportPath, reportBytes);
+        }
         writeFileSync(path, bytes);
         writeFileSync(join(bundleRoot, "manifest.json"), JSON.stringify(changed));
-        await assert.rejects(createRetainedBehaviorEvidence(bundleRoot), /native envelope|protocol observation|protocol method/u, mutation);
+        await assert.rejects(createRetainedBehaviorEvidence(bundleRoot), /native envelope|protocol observation|protocol method|owned identity|native server version|conversation identity|finished conversation|native client version/u, mutation);
       } finally {
         writeFileSync(path, original);
+        writeFileSync(reportPath, reportBefore);
         writeFileSync(join(bundleRoot, "manifest.json"), before);
       }
     }

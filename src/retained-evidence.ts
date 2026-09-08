@@ -33,6 +33,8 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
     throw new Error(`Unsupported retained DeepSeek runtime ${manifest.run.harness.version}.`);
   }
   const outcomeCapture = await readQualifiedRunCapture(bundleRoot);
+  // A verifier task failure also presupposes a normally completed native run.
+  const expectsCompletion = manifest.terminal.state === "completed" || manifest.terminal.failureClass === "task";
   const capture = {
     ...outcomeCapture,
     records: outcomeCapture.records.filter(({ record }) => record.kind === "session")
@@ -61,9 +63,9 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
     const identities = (method: string, key: "thread" | "turn"): string | undefined => {
       const ids = new Set(native.records.flatMap(({ record }) => {
         const payload = record.payload as Record<string, any> | undefined;
-        return record.kind === "response" && record.method === method && typeof payload?.[key]?.id === "string" ? [payload[key].id as string] : [];
+        return record.kind === "response" && record.source === CODEX_HARNESS && record.method === method && typeof payload?.[key]?.id === "string" ? [payload[key].id as string] : [];
       }));
-      const optionalPartialTurn = key === "turn" && manifest.terminal.state !== "completed";
+      const optionalPartialTurn = key === "turn" && !expectsCompletion;
       if (ids.size > 1 || ids.size === 0 && !optionalPartialTurn) throw new Error(`Retained Codex ${method} requires one owned identity.`);
       return [...ids][0];
     };
@@ -75,18 +77,34 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
       return record.kind === "notification" && record.source === CODEX_HARNESS && record.method === "turn/completed"
         && payload?.threadId === native.threadId && payload?.turn?.id === native.turnId;
     });
-    if (manifest.terminal.state === "completed" && (terminal?.record.payload as Record<string, any> | undefined)?.turn?.status !== "completed") {
+    if (expectsCompletion && (terminal?.record.payload as Record<string, any> | undefined)?.turn?.status !== "completed") {
       throw new Error("Completed retained Codex capture lacks matching owned terminal evidence.");
     }
     dataset = (await describeAndValidateCodexDataset(native, manifest.run.harness.version)).dataset;
   } else if (harness === "openhands-agent-server") {
     const native = capture as NormalizationInput<OpenHandsNativeRecord>;
+    const sessionId = manifest.run.native?.sessionId;
+    for (const { record } of native.records) {
+      if (record.channel === "server-info" && record.payload.version !== manifest.run.harness.version) {
+        throw new Error("Retained OpenHands native server version differs from the run manifest.");
+      }
+      if (record.session_id !== undefined && record.session_id !== sessionId
+        || ["conversation-created", "websocket-status", "websocket-event", "rest-event", "conversation-final"].includes(record.channel)
+          && (sessionId === undefined || record.session_id !== sessionId)
+        || ["conversation-created", "conversation-final"].includes(record.channel) && record.payload.id !== sessionId) {
+        throw new Error("Retained OpenHands conversation identity differs from the run manifest.");
+      }
+    }
+    const finals = native.records.filter(({ record }) => record.channel === "conversation-final");
+    if (expectsCompletion && (finals.length !== 1 || finals[0]!.record.payload.execution_status !== "finished")) {
+      throw new Error("Completed retained OpenHands capture lacks owned finished conversation evidence.");
+    }
     dataset = describeNormalizedDataset({ capture: native, normalization: await normalizeOpenHandsCapture(native),
       capabilityProfile: OPENHANDS_AGENT_SERVER_CAPABILITIES, adapterVersion: OPENHANDS_AGENT_SERVER_VERSION,
       nativeType: (record) => typeof record.payload.kind === "string" ? record.payload.kind : record.channel });
   } else {
     const native = qualifyRetainedDeepSeekCapture(capture as NormalizationInput<DeepSeekNativeObservation>,
-      manifest.run.native?.sessionId, manifest.terminal.state === "completed");
+      manifest.run.native?.sessionId, expectsCompletion);
     capture.qualification = native.qualification;
     outcomeCapture.qualification = native.qualification;
     dataset = describeNormalizedDataset({ capture: native, normalization: normalizeDeepSeekCapture(native),
