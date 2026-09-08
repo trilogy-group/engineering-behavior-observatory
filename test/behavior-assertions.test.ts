@@ -34,6 +34,15 @@ import { main } from "../src/cli.js";
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const fixtureRoot = join(repositoryRoot, "test/fixtures/behavior-assertions");
 
+test("configuration digests belong only to evaluator identities", async () => {
+  const dataset = fixture<NormalizedDataset>("dataset.json");
+  const assertion = fixture<BehaviorAssertion>("positive.json");
+  assertion.evaluator.configurationDigest = `sha256:${"a".repeat(64)}`;
+  assert.equal((await validateBehaviorAssertion(assertion, dataset, resolver(dataset))).length, 1);
+  const invalid = { ...assertion, rubric: { ...assertion.rubric, configurationDigest: assertion.evaluator.configurationDigest } };
+  await assert.rejects(validateBehaviorAssertion(invalid, dataset, resolver(dataset)), /rubric.*additional properties/u);
+});
+
 test("validates positive, disputed, abstained, and invalid-reference fixtures", async () => {
   const dataset = fixture<NormalizedDataset>("dataset.json");
   const positive = fixture<BehaviorAssertion>("positive.json");
