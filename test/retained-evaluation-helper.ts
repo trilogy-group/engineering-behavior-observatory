@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { loadAtlas, queryAtlas } from "../src/atlas.js";
+import { writeCorpusIndex } from "../src/corpus.js";
 import { aggregateEvaluation, buildCorpusIndex, createRetainedBehaviorEvidence, createRetainedStructuralObservationSet,
   digestBytes, digestMetadata, main, probeClaudeAgentSdkCapabilities, runRetainedSemanticJudge, selectReviewSample, writeReviewPacket, validateArtifact, CODEX_APP_SERVER_VERSION,
   type BehaviorAssertion, type ReviewHistory, type SemanticJudgeRequest } from "../src/index.js";
@@ -53,6 +55,17 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
     const input = { corpusEntries: buildCorpusIndex(bundleRoot), observationSets: [{ bundleRoot, document: observations }], assertions: [{ bundleRoot, document: assertion }], calibrations: [{ selection, history }], comparisons: [] };
     const policy = { groupBy: ["task" as const], selectedAttemptPolicy: "all-attempts" as const, recurrence: { minimumOccurrences: 2 } };
     const report = await aggregateEvaluation(input, policy);
+    const atlasPrefix = join(outputRoot, `atlas-${assessment}`);
+    writeCorpusIndex(`${atlasPrefix}.index.jsonl`, input.corpusEntries);
+    writeFileSync(`${atlasPrefix}.selection.json`, JSON.stringify(selection));
+    writeFileSync(`${atlasPrefix}.history.json`, JSON.stringify(history));
+    writeFileSync(`${atlasPrefix}.aggregation.json`, JSON.stringify({ schemaVersion: "ebo.aggregation-request/v1", ...policy,
+      sources: { corpusRoot: bundleRoot, corpusIndex: `${atlasPrefix}.index.jsonl`, observationSets: [{ bundleRoot, path: join(outputRoot, "observations.json") }], assertions: [{ bundleRoot, path: assertPath }], calibrations: [{ selection: `${atlasPrefix}.selection.json`, history: `${atlasPrefix}.history.json` }] }, comparisons: [] }));
+    writeFileSync(`${atlasPrefix}.request.json`, JSON.stringify({ schemaVersion: "ebo.atlas-request/v1", aggregationRequest: `${atlasPrefix}.aggregation.json`, title: "Synthetic retained-harness Atlas" }));
+    const atlas = await queryAtlas(await loadAtlas(`${atlasPrefix}.request.json`));
+    assert.deepEqual(atlas.report.groups, report.groups);
+    assert.equal(atlas.cases[0]!.assessment, assessment);
+    assert.ok(atlas.cases[0]!.citations[0]!.nativeRecord, "each harness exposes its real cited native record to Atlas");
     const behavior = report.groups[0]!.behaviors![0]!;
     const permuted = structuredClone(report);
     permuted.groups[0]!.behaviors![0]!.assessments = [...behavior.assessments].reverse();
