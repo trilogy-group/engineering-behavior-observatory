@@ -112,6 +112,11 @@ sources, read-only sandbox and no sandbox network access; supplied evidence
 enters only through the prompt. Unexpected tool requests fail the judgment.
 Timeouts interrupt the owned turn and reap the process group before deleting
 the temporary home. Missing cost/API timing remains unavailable.
+`runRetainedSemanticJudge` also accepts an optional `signal`; CLI SIGINT and
+SIGTERM propagate through it to either backend. Interrupted calls retain a
+failed record and bounded received output. Timeout and interruption take
+precedence over a late successful terminal message; native startup probes
+consume the same wall-clock budget as the turn.
 
 The native structured response uses `turn/start.outputSchema` and completion
 must match both owned thread and turn IDs. See the

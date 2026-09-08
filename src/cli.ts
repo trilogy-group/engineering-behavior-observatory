@@ -232,12 +232,21 @@ export function main(
       write("Usage: ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root>\n");
       return 1;
     }
+    const controller = new AbortController();
+    const abort = (): void => controller.abort();
+    const cleanup = (): void => {
+      process.off("SIGINT", abort);
+      process.off("SIGTERM", abort);
+    };
+    process.on("SIGINT", abort);
+    process.on("SIGTERM", abort);
     try {
       return runAgentSdkSemanticJudge({
         bundleRoot,
         observations: readJson(observationsPath) as StructuralObservationSet,
         request: readJson(requestPath) as SemanticJudgeRequest,
         outputRoot,
+        signal: controller.signal,
         ...(dependencies.semanticJudgeBackend === undefined ? {} : { backend: dependencies.semanticJudgeBackend }),
       }).then((record) => {
         write(`${canonicalizeMetadata(record)}\n`);
@@ -245,8 +254,9 @@ export function main(
       }, (error: unknown) => {
         write(`${errorMessage(error)}\n`);
         return 1;
-      });
+      }).finally(cleanup);
     } catch (error) {
+      cleanup();
       write(`${errorMessage(error)}\n`);
       return 1;
     }

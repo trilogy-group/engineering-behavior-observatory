@@ -143,7 +143,7 @@ export type SemanticJudgeBackendResult =
   }
   | {
     status: "failed";
-    kind: "provider" | "timeout";
+    kind: "provider" | "timeout" | "interrupted";
     message: string;
     raw?: unknown;
     timing?: { durationMs: number; durationApiMs: number };
@@ -153,7 +153,7 @@ export type SemanticJudgeBackendResult =
 export type SemanticJudgeBackend = {
   id: "claude-agent-sdk" | "codex-app-server";
   version: string;
-  run: (prompt: string, request: SemanticJudgeRequest) => Promise<SemanticJudgeBackendResult>;
+  run: (prompt: string, request: SemanticJudgeRequest, signal?: AbortSignal) => Promise<SemanticJudgeBackendResult>;
 };
 
 type RecordReference = {
@@ -200,6 +200,7 @@ export type RunAgentSdkSemanticJudgeOptions = {
   outputRoot: string;
   backend?: SemanticJudgeBackend;
   now?: () => string;
+  signal?: AbortSignal;
 };
 
 export async function runAgentSdkSemanticJudge(
@@ -247,7 +248,7 @@ export async function runAgentSdkSemanticJudge(
   } : {
     id: CLAUDE_SEMANTIC_JUDGE_BACKEND_ID,
     version: installedSdkVersion,
-    run: runClaudeAgentSdkSemanticJudge,
+    run: (prompt, request, signal) => runClaudeAgentSdkSemanticJudge(prompt, request, claudeQuery, signal),
   });
   if (backend.id !== selectedBackend || backend.version !== (selectedBackend === "codex-app-server" ? CODEX_APP_SERVER_VERSION : installedSdkVersion)
       || typeof backend.run !== "function") {
@@ -281,7 +282,7 @@ export async function runAgentSdkSemanticJudge(
   };
   let backendResult: SemanticJudgeBackendResult;
   try {
-    backendResult = await backend.run(prompt, options.request);
+    backendResult = await backend.run(prompt, options.request, options.signal);
   } catch (error) {
     backendResult = { status: "failed", kind: "provider", message: errorMessage(error) };
   }
@@ -369,6 +370,7 @@ export async function runClaudeAgentSdkSemanticJudge(
   prompt: string,
   request: SemanticJudgeRequest,
   queryFunction: typeof claudeQuery = claudeQuery,
+  signal?: AbortSignal,
 ): Promise<SemanticJudgeBackendResult> {
   const controller = new AbortController();
   const isolatedCwd = mkdtempSync(join(tmpdir(), "ebo-semantic-judge-"));
@@ -377,6 +379,11 @@ export async function runClaudeAgentSdkSemanticJudge(
   const received: Array<{ sequence: number; content: string; truncated: boolean }> = [];
   let receivedChars = 0;
   let timedOut = false;
+  const abort = (): void => {
+    controller.abort();
+    try { handle?.close(); } catch { /* Preserve the interruption result. */ }
+  };
+  signal?.addEventListener("abort", abort, { once: true });
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
@@ -387,6 +394,7 @@ export async function runClaudeAgentSdkSemanticJudge(
     }
   }, request.limits.maxWallClockMs);
   try {
+    if (signal?.aborted) return failure("interrupted", "Claude Agent SDK judge was interrupted.");
     const env = { ...process.env };
     for (const key of JUDGE_ENVIRONMENT_OVERRIDE_KEYS) delete env[key];
     for (const key of JUDGE_TELEMETRY_ENVIRONMENT_KEYS) delete env[key];
@@ -418,6 +426,7 @@ export async function runClaudeAgentSdkSemanticJudge(
       if (message.type === "result") result = message;
     }
     if (timedOut) return failure("timeout", "Claude Agent SDK judge exceeded maxWallClockMs.");
+    if (signal?.aborted) return failure("interrupted", "Claude Agent SDK judge was interrupted.");
     if (result === undefined) return failure("provider", "Claude Agent SDK judge ended without a result.");
     const metadata = sdkMetadata(result);
     if (result.subtype !== "success" || result.is_error) {
@@ -432,11 +441,12 @@ export async function runClaudeAgentSdkSemanticJudge(
     return { status: "completed", response: result.structured_output, raw: { messages: received }, ...metadata };
   } catch (error) {
     return failure(
-      timedOut ? "timeout" : "provider",
-      timedOut ? "Claude Agent SDK judge exceeded maxWallClockMs." : errorMessage(error),
+      timedOut ? "timeout" : signal?.aborted ? "interrupted" : "provider",
+      timedOut ? "Claude Agent SDK judge exceeded maxWallClockMs." : signal?.aborted ? "Claude Agent SDK judge was interrupted." : errorMessage(error),
     );
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
     try {
       handle?.close();
     } catch {
@@ -459,7 +469,7 @@ export async function runClaudeAgentSdkSemanticJudge(
     receivedChars += content.length;
   }
 
-  function failure(kind: "provider" | "timeout", message: string): SemanticJudgeBackendResult {
+  function failure(kind: "provider" | "timeout" | "interrupted", message: string): SemanticJudgeBackendResult {
     return {
       status: "failed",
       kind,

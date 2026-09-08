@@ -19,7 +19,8 @@ export const CODEX_JUDGE_CONFIG = {
 };
 
 /** One owned, ephemeral app-server turn. Native evidence never enters the child filesystem. */
-export async function runCodexSemanticJudge(prompt: string, request: SemanticJudgeRequest): Promise<SemanticJudgeBackendResult> {
+export async function runCodexSemanticJudge(prompt: string, request: SemanticJudgeRequest, signal?: AbortSignal): Promise<SemanticJudgeBackendResult> {
+  const deadline = performance.now() + request.limits.maxWallClockMs;
   const executable = request.evaluator.executable ?? "codex";
   const isolatedRoot = mkdtempSync(join(tmpdir(), "ebo-codex-judge-"));
   const cwd = join(isolatedRoot, "empty");
@@ -28,6 +29,7 @@ export async function runCodexSemanticJudge(prompt: string, request: SemanticJud
   for (const key of ["PATH", "LANG", "LC_ALL", "TMPDIR"] as const) if (process.env[key] !== undefined) env[key] = process.env[key];
   let child: ProtocolProcess | undefined;
   let timedOut = false;
+  let interrupted = signal?.aborted ?? false;
   let timer: NodeJS.Timeout | undefined;
   let threadId: string | undefined;
   let turnId: string | undefined;
@@ -41,10 +43,22 @@ export async function runCodexSemanticJudge(prompt: string, request: SemanticJud
   const terminal = new Promise<any>((resolve, reject) => { resolveTerminal = resolve; rejectTerminal = reject; });
   void terminal.catch(() => undefined);
   const messages = new Map<string, string>();
+  const stop = (): void => {
+    if (threadId !== undefined && turnId !== undefined && child !== undefined) void writeProtocolLine(child.stdin,
+      { id: nextId++, method: "turn/interrupt", params: { threadId, turnId } }).catch(() => undefined);
+    void child?.interrupt(100, 100);
+  };
+  const abort = (): void => { interrupted = true; stop(); };
+  const remaining = (): number => {
+    if (performance.now() >= deadline) timedOut = true;
+    if (timedOut || interrupted) throw new Error(timedOut ? "Codex judge exceeded maxWallClockMs." : "Codex judge was interrupted.");
+    return Math.max(1, Math.floor(deadline - performance.now()));
+  };
+  signal?.addEventListener("abort", abort, { once: true });
   try {
-    const version = execFileSync(executable, ["--version"], { env, cwd, timeout: 5000, encoding: "utf8", maxBuffer: 4096 }).trim();
+    const version = execFileSync(executable, ["--version"], { env, cwd, timeout: Math.min(5000, remaining()), encoding: "utf8", maxBuffer: 4096 }).trim();
     if (version !== `codex-cli ${CODEX_APP_SERVER_VERSION}`) throw new Error(`Codex judge requires codex-cli ${CODEX_APP_SERVER_VERSION}.`);
-    const catalog = JSON.parse(execFileSync(executable, ["debug", "models", "--bundled"], { env, cwd, timeout: 5000, encoding: "utf8", maxBuffer: 4 * 1024 * 1024 }));
+    const catalog = JSON.parse(execFileSync(executable, ["debug", "models", "--bundled"], { env, cwd, timeout: Math.min(5000, remaining()), encoding: "utf8", maxBuffer: 4 * 1024 * 1024 }));
     const model = catalog.models?.find((entry: { slug: string }) => entry.slug === request.evaluator.model);
     if (model === undefined) throw new Error("Codex judge model is not present in the pinned native catalog; its tool isolation is unsupported.");
     const toolDisabledModel = { ...model, apply_patch_tool_type: null, experimental_supported_tools: [] };
@@ -119,10 +133,8 @@ export async function runCodexSemanticJudge(prompt: string, request: SemanticJud
     };
     timer = setTimeout(() => {
       timedOut = true;
-      if (threadId !== undefined && turnId !== undefined) void writeProtocolLine(child!.stdin,
-        { id: nextId++, method: "turn/interrupt", params: { threadId, turnId } }).catch(() => undefined);
-      void child!.interrupt(100, 100);
-    }, request.limits.maxWallClockMs);
+      stop();
+    }, remaining());
     await send("initialize", { clientInfo: { name: "ebo-semantic-judge", version: "1.0.0" }, capabilities: null });
     await writeProtocolLine(child.stdin, { method: "initialized", params: {} });
     const start = await send("thread/start", { model: request.evaluator.model, modelProvider: "openai", cwd,
@@ -137,6 +149,7 @@ export async function runCodexSemanticJudge(prompt: string, request: SemanticJud
     turnId = turn.turn?.id;
     if (typeof turnId !== "string") throw new Error("Codex judge returned no turn identity.");
     const result = await Promise.race([terminal, exited]);
+    remaining();
     if (result.status !== "completed") throw new Error(`Codex judge terminal status: ${String(result.status)}.`);
     const response = [...messages.values()].at(-1);
     if (response === undefined || response.length > request.limits.maxOutputChars) throw new Error("Codex judge response is missing or exceeds maxOutputChars.");
@@ -145,9 +158,12 @@ export async function runCodexSemanticJudge(prompt: string, request: SemanticJud
       modelCatalogDigest: `sha256:${digestMetadata(toolDisabledModel).value}`,
       unsupported: ["cost", "API-duration", "USD-budget", "models-absent-from-pinned-catalog"], threadId, turnId } };
   } catch (error) {
-    return { status: "failed", kind: timedOut ? "timeout" : "provider", message: timedOut ? "Codex judge exceeded maxWallClockMs." : String(error), raw: { frames, threadId, turnId } };
+    timedOut ||= performance.now() >= deadline;
+    return { status: "failed", kind: timedOut ? "timeout" : interrupted ? "interrupted" : "provider",
+      message: timedOut ? "Codex judge exceeded maxWallClockMs." : interrupted ? "Codex judge was interrupted." : String(error), raw: { frames, threadId, turnId } };
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
     await child?.shutdown();
     rmSync(isolatedRoot, { recursive: true, force: true });
   }
