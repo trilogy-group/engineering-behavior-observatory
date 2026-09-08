@@ -753,7 +753,7 @@ function toPosix(path: string): string {
   return sep === "/" ? path : path.split(sep).join("/");
 }
 
-function escapeHtml(value: unknown): string {
+export function escapeHtml(value: unknown): string {
   const entities: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
   return String(value).replace(/[&<>"']/gu, (character) => entities[character]!);
 }

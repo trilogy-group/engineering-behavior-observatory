@@ -9,6 +9,8 @@ import { atlasBehaviorRows, loadAtlas, queryAtlas, serveAtlas, shareAtlas, write
 import { renderAtlas } from "../src/atlas-html.js";
 import { atlasDashboards } from "../src/atlas-grafana.js";
 import { createPortableRunBundleExport } from "../src/exports.js";
+import { digestMetadata } from "../src/artifacts.js";
+import { importReviewDecision, type ReviewHistory } from "../src/human-calibration.js";
 import { main } from "../src/cli.js";
 import { createAtlasFixture } from "./atlas-fixture.js";
 
@@ -85,6 +87,27 @@ test("Atlas mixed fixture preserves exact cohort populations, decisions and nati
     } finally { await new Promise<void>((accept, reject) => server.close((error) => error ? reject(error) : accept())); }
 
     const request = JSON.parse(readFileSync(requestPath, "utf8")) as AtlasRequest;
+    const aggregationPath = join(root, "aggregation.json");
+    const aggregation = JSON.parse(readFileSync(aggregationPath, "utf8"));
+    const secondHistoryPath = join(root, "second-history.json");
+    let secondHistory: ReviewHistory | undefined;
+    for (const decision of source.input.calibrations[0]!.history.decisions) {
+      secondHistory = (await importReviewDecision(source.input.calibrations[0]!.selection, secondHistoryPath, { ...decision, id: `${decision.id}-second`, reviewer: { ...decision.reviewer, id: "synthetic-second-reviewer" }, previousHistory: secondHistory ? { schemaVersion: secondHistory.schemaVersion, digest: `sha256:${digestMetadata(secondHistory).value}` } : null })).history;
+    }
+    writeFileSync(aggregationPath, JSON.stringify({ ...aggregation, sources: { ...aggregation.sources, assertions: [...aggregation.sources.assertions, aggregation.sources.assertions[0]], calibrations: [...aggregation.sources.calibrations, { selection: join(root, "selection.json"), history: secondHistoryPath }] } }));
+    const repeated = await queryAtlas(await loadAtlas(requestPath));
+    assert.equal(repeated.cases.length, view.cases.length, "identical repeated assertion sources count once and produce unique anchors");
+    assert.equal(repeated.cases[0]!.decisions.length, 2, "independent compatible review histories remain inspectable");
+    writeFileSync(aggregationPath, JSON.stringify(aggregation));
+    const traced = { ...request, tempoDatasourceUid: "synthetic-tempo", traces: [{ runId: "synthetic-run-0", attemptId: "synthetic-attempt-0", traceId: "a".repeat(32), originalStart: "2026-09-07T12:00:00Z", replayStart: "2026-09-08T01:00:00Z" }] };
+    writeFileSync(requestPath, JSON.stringify(traced));
+    const traceView = await queryAtlas(await loadAtlas(requestPath), { review: "confirmed" });
+    assert.equal(traceView.cases[0]!.trace?.originalStart, traced.traces[0]!.originalStart);
+    assert.equal(traceView.cases[0]!.trace?.replayStart, traced.traces[0]!.replayStart);
+    assert.match(traceView.cases[0]!.trace!.href, /^http:\/\/127\.0\.0\.1:13010\/explore\?/u);
+    assert.match(renderAtlas(traceView, false), /Replay-shifted: 2026-09-08T01:00:00Z/u);
+    writeFileSync(requestPath, JSON.stringify({ ...traced, traces: [{ ...traced.traces[0], traceId: "not-a-trace" }] }));
+    await assert.rejects(loadAtlas(requestPath), /Invalid trace identity/u);
     writeFileSync(requestPath, JSON.stringify({ ...request, reviewPackets: ["missing.html"] }));
     await assert.rejects(loadAtlas(requestPath), /review packet is unavailable/u);
     writeFileSync(requestPath, JSON.stringify({ ...request, grafanaUrl: "javascript:alert(1)" }));

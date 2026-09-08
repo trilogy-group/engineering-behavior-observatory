@@ -87,6 +87,7 @@ export async function loadAtlas(requestPath: string): Promise<AtlasSource> {
   // Validate the complete source before any case or review state is exposed.
   const validated = await aggregateEvaluation(input, aggregation);
   const cases: AtlasCase[] = [];
+  const seenAssertions = new Set<string>();
   for (const entry of corpusEntries.filter(({ manifestKind }) => manifestKind === "run")) {
     const ownAssertions = input.assertions.filter(({ document }) => attemptKey(document) === attemptKey(entry));
     const context = { runId: entry.runId!, attemptId: entry.attemptId!, model: entry.modelId ?? "unavailable", harness: entry.harnessId ?? "unavailable", task: entry.taskId ?? "unavailable", trial: entry.trialId ?? "unavailable", capture: entry.captureQualification ?? "unavailable", outcome: entry.terminalState ?? "unavailable", ...(entry.retryOf ? { retryOf: entry.retryOf } : {}) };
@@ -102,6 +103,8 @@ export async function loadAtlas(requestPath: string): Promise<AtlasSource> {
     if (!ownAssertions.length) cases.push({ ...context, key: digest(context).slice(7), category: "unavailable", assessment: "unavailable", review: "unavailable", decisions: [], citations: [], ...(trace ? { trace } : {}) });
     for (const { document: assertion, bundleRoot } of ownAssertions) {
       const assertionDigest = digest(assertion);
+      if (seenAssertions.has(assertionDigest)) continue;
+      seenAssertions.add(assertionDigest);
       const reviews = input.calibrations.flatMap(({ selection, history }) => selection.candidates.filter(({ assertion: binding }) => binding.id === assertion.id && binding.digest === assertionDigest).map((candidate) => ({ candidate, history })));
       const latest = reviews[0];
       const outcome = latest ? effectiveReviewOutcome(latest.candidate, latest.history.decisions) : assertion.judgment.disposition === "abstained" ? "judge-abstained" : "unreviewed";
@@ -113,7 +116,7 @@ export async function loadAtlas(requestPath: string): Promise<AtlasSource> {
         if (!normalizedEvent || !native) throw new Error("Atlas citation cannot resolve to normalized and native evidence.");
         return { ...citation, normalizedEvent: displaySafe(normalizedEvent), nativeRecord: displaySafe(evidence.dataset.adapter.harness === "claude-agent-sdk" ? (native.record as AgentSdkNativeRecord).document : native.record) };
       });
-      const decisions = latest?.history.decisions.filter(({ assertion: binding }) => binding.id === assertion.id && binding.digest === assertionDigest) ?? [];
+      const decisions = [...new Map(reviews.flatMap(({ history }) => history.decisions.filter(({ assertion: binding }) => binding.id === assertion.id && binding.digest === assertionDigest)).map((decision) => [digest(decision), decision])).values()];
       cases.push({ ...context, key: assertionDigest.slice(7), assertion: displaySafe(assertion) as BehaviorAssertion, assertionDigest, category: assertion.behavior.categoryId, assessment: assertion.judgment.disposition === "assessed" ? assertion.judgment.assessment : "abstained", review, decisions: displaySafe(decisions) as ReviewDecision[], citations, ...(trace ? { trace } : {}) });
     }
   }

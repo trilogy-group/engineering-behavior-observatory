@@ -1,7 +1,8 @@
 import type { AggregateMeasurement } from "./aggregation.js";
 import { ATLAS_FILTERS, atlasBehaviorPartitions, type AtlasCase, type AtlasView } from "./atlas.js";
+import { escapeHtml } from "./human-calibration.js";
 
-const h = (value: unknown): string => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+const h = (value: unknown): string => escapeHtml(value ?? "");
 const title = (value: string) => value.replaceAll("-", " ");
 const pretty = (value: unknown) => h(JSON.stringify(value, null, 2));
 const badge = (value: string) => `<span class="badge ${["constructive", "adverse", "mixed", "context-dependent", "confirmed", "disputed", "rejected", "abstained", "proposed", "unavailable", "insufficient-evidence"].includes(value) ? value : ""}">${h(title(value))}</span>`;
