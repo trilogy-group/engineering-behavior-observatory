@@ -5,7 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { chmodSync } from "node:fs";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import type { HookInput, Options, SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -16,6 +16,7 @@ import {
   createAgentSdkStructuralObservationSet,
   main,
   packageSemanticJudgeInput,
+  parseSemanticJudgeResponse,
   probeClaudeAgentSdkCapabilities,
   runAgentSdkSemanticJudge,
   runClaudeAgentSdkSemanticJudge,
@@ -126,6 +127,17 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
     assert.doesNotMatch(JSON.stringify(packaged), /claude-test/u);
     assert.equal(packaged.blinding.sourceIdentityPreserved, true);
     assert.ok(packaged.blinding.residualClues.length > 0);
+    const abstention = { judgment: { disposition: "abstained", assessment: null, confidence: null,
+      reason: "Synthetic fixture.", missingEvidenceCapability: null, rationale: "Synthetic fixture.", alternativeExplanation: "No claim.", citations: [] } };
+    const evaluatorDigest = (evaluator: SemanticJudgeRequest["evaluator"]) => parseSemanticJudgeResponse(
+      abstention, { ...request, evaluator }, packaged, "fixture-runtime").evaluator.configurationDigest;
+    assert.equal(evaluatorDigest(request.evaluator), evaluatorDigest({ ...request.evaluator, backend: "claude-agent-sdk" }));
+    const codexEvaluator = { backend: "codex-app-server", provider: "openai", model: "fixture", effort: "low" } as const;
+    assert.equal(evaluatorDigest(codexEvaluator), evaluatorDigest({ ...codexEvaluator, executable: "codex" }));
+    assert.equal(evaluatorDigest({ ...codexEvaluator, executable: "./fixture-codex" }),
+      evaluatorDigest({ ...codexEvaluator, executable: resolve("fixture-codex") }));
+    assert.notEqual(evaluatorDigest(request.evaluator), evaluatorDigest({ ...request.evaluator, effort: "high" }));
+    assert.notEqual(evaluatorDigest(request.evaluator), evaluatorDigest({ ...request.evaluator, model: "another-model" }));
     const instructionCapture = structuredClone(evidence.capture);
     const selectedNative = instructionCapture.records.find(({ reference }) =>
       reference.artifactId === event.source.nativeReference.artifactId

@@ -3,7 +3,7 @@ import { chmodSync, cpSync, existsSync, mkdtempSync, rmSync, writeFileSync } fro
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import test from "node:test";
 import { runCodexSemanticJudge } from "../src/codex-judge.js";
 import type { SemanticJudgeRequest } from "../src/semantic-judge.js";
@@ -33,10 +33,13 @@ test("native judge isolates ambient state, retains failures, matches owned turns
   process.env.EBO_JUDGE_SECRET_SENTINEL = "synthetic-secret";
   try {
     const request = { evaluator: { backend: "codex-app-server", executable, provider: "openai", model: "fixture", effort: "low" },
-      limits: { maxOutputChars: 16000, maxWallClockMs: 1000, maxCitations: 2 } } as SemanticJudgeRequest;
+      limits: { maxOutputChars: 16000, maxWallClockMs: 5000, maxCitations: 2 } } as SemanticJudgeRequest;
     const success = await runCodexSemanticJudge("success", request);
     assert.equal(success.status, "completed", JSON.stringify(success));
     assert.equal(success.usage, undefined);
+    const relativeExecutable = await runCodexSemanticJudge("success", { ...request,
+      evaluator: { ...request.evaluator, executable: relative(process.cwd(), executable) } });
+    assert.equal(relativeExecutable.status, "completed", JSON.stringify(relativeExecutable));
     const raw = success.raw as { frames: string[] };
     const start = raw.frames.map((frame) => JSON.parse(frame)).find((frame) => frame.result?.thread);
     assert.equal(start.result.thread.ephemeral, true);

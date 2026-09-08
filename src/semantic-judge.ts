@@ -16,7 +16,7 @@ import {
 } from "./behavior-assertions.js";
 import { createRetainedBehaviorEvidence } from "./retained-evidence.js";
 import { CODEX_APP_SERVER_VERSION, type CodexReasoningEffort } from "./codex.js";
-import { runCodexSemanticJudge, CODEX_JUDGE_INHERITED_KEYS } from "./codex-judge.js";
+import { runCodexSemanticJudge, resolveCodexJudgeExecutable, CODEX_JUDGE_INHERITED_KEYS } from "./codex-judge.js";
 import {
   assertNoDuplicateJsonKeys,
   canonicalizeMetadata,
@@ -701,7 +701,10 @@ export function parseSemanticJudgeResponse(
     behavior: structuredClone(request.behavior),
     rubric: { id: request.rubric.id, version: request.rubric.version },
     evaluator: { id: `${request.evaluator.provider}/${request.evaluator.model}`, version: evaluatorVersion,
-      configurationDigest: digest({ promptVersion: SEMANTIC_JUDGE_PROMPT_VERSION, evaluator: request.evaluator,
+      configurationDigest: digest({ promptVersion: SEMANTIC_JUDGE_PROMPT_VERSION, evaluator: {
+        ...request.evaluator, backend: request.evaluator.backend ?? CLAUDE_SEMANTIC_JUDGE_BACKEND_ID,
+        ...(request.evaluator.backend === "codex-app-server" ? { executable: resolveCodexJudgeExecutable(request.evaluator.executable) } : {}),
+      },
         rubric: request.rubric, limits: request.limits, blinding: request.blinding }) },
     judgment,
   };

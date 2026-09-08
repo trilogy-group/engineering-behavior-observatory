@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse, resolve } from "node:path";
 import { CODEX_APP_SERVER_VERSION, writeProtocolLine } from "./codex.js";
 import { canonicalizeMetadata, assertNoDuplicateJsonKeys, digestMetadata } from "./artifacts.js";
 import { spawnProtocolProcess, type ProtocolProcess } from "./process-protocol.js";
@@ -19,10 +19,14 @@ export const CODEX_JUDGE_CONFIG = {
 };
 export const CODEX_JUDGE_INHERITED_KEYS = ["PATH", "LANG", "LC_ALL", "TMPDIR"] as const;
 
+export function resolveCodexJudgeExecutable(executable = "codex"): string {
+  return parse(executable).dir === "" ? executable : resolve(executable);
+}
+
 /** One owned, ephemeral app-server turn. Native evidence never enters the child filesystem. */
 export async function runCodexSemanticJudge(prompt: string, request: SemanticJudgeRequest, signal?: AbortSignal): Promise<SemanticJudgeBackendResult> {
   const deadline = performance.now() + request.limits.maxWallClockMs;
-  const executable = request.evaluator.executable ?? "codex";
+  const executable = resolveCodexJudgeExecutable(request.evaluator.executable);
   const isolatedRoot = mkdtempSync(join(tmpdir(), "ebo-codex-judge-"));
   const cwd = join(isolatedRoot, "empty");
   mkdirSync(cwd, { mode: 0o700 });
