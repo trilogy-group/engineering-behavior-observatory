@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { aggregateEvaluation, buildCorpusIndex, createRetainedBehaviorEvidence, createRetainedStructuralObservationSet,
-  digestMetadata, main, probeClaudeAgentSdkCapabilities, runRetainedSemanticJudge, selectReviewSample, writeReviewPacket, validateArtifact, CODEX_APP_SERVER_VERSION,
+  digestBytes, digestMetadata, main, probeClaudeAgentSdkCapabilities, runRetainedSemanticJudge, selectReviewSample, writeReviewPacket, validateArtifact, CODEX_APP_SERVER_VERSION,
   type BehaviorAssertion, type ReviewHistory, type SemanticJudgeRequest } from "../src/index.js";
 
 const digest = (value: unknown): `sha256:${string}` => `sha256:${digestMetadata(value).value}`;
@@ -101,6 +101,33 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
     if (conflict) assert.equal(original.assessments[0]!.measurement.exclusions[0]!.reason, "conflicting-confirmed-reruns");
   }
   assert.deepEqual(readFileSync(join(bundleRoot, "manifest.json")), before);
+  if (["codex-app-server", "openhands-agent-server", "deepseek-harness"].includes(evidence.dataset.adapter.harness)) {
+    const manifest = JSON.parse(before.toString());
+    const session = manifest.evidence.find((entry: { kind: string }) => entry.kind === "session");
+    const path = join(bundleRoot, session.relativePath);
+    const original = readFileSync(path);
+    for (const mutation of ["schema", "sequence", ...(evidence.dataset.adapter.harness === "codex-app-server" ? ["source", "client-source", "method"] : [])]) {
+      const records = original.toString().trim().split("\n").map((line) => JSON.parse(line));
+      if (mutation === "schema") records[0].schemaVersion = "not-native";
+      if (mutation === "sequence") records[0].sequence = 2;
+      if (mutation === "source") records.find((record) => record.kind === "notification" && record.method === "item/completed").source = "foreign-runtime";
+      if (mutation === "client-source") records.find((record) => record.kind === "notification" && record.method === "item/completed").source = "ebo-codex-client";
+      if (mutation === "method") delete records[0].method;
+      const bytes = Buffer.from(`${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+      const changed = structuredClone(manifest);
+      const descriptor = changed.evidence.find((entry: { id: string }) => entry.id === session.id);
+      descriptor.digest = `sha256:${digestBytes(bytes).value}`;
+      descriptor.sizeBytes = bytes.length;
+      try {
+        writeFileSync(path, bytes);
+        writeFileSync(join(bundleRoot, "manifest.json"), JSON.stringify(changed));
+        await assert.rejects(createRetainedBehaviorEvidence(bundleRoot), /native envelope|protocol observation|protocol method/u, mutation);
+      } finally {
+        writeFileSync(path, original);
+        writeFileSync(join(bundleRoot, "manifest.json"), before);
+      }
+    }
+  }
   if (["openhands-agent-server", "deepseek-harness"].includes(evidence.dataset.adapter.harness)) {
     const changed = JSON.parse(before.toString());
     changed.run.harness.version = "unsupported-fixture-version";

@@ -6,7 +6,7 @@ import { normalizeOpenHandsCapture, OPENHANDS_AGENT_SERVER_CAPABILITIES, OPENHAN
 import { createDeepSeekHarnessAdapter, DEEPSEEK_HARNESS_ID, DEEPSEEK_SDK_VERSION, normalizeDeepSeekCapture, qualifyRetainedDeepSeekCapture, type DeepSeekNativeObservation } from "./deepseek-adapter.js";
 import { createCapturedNativeEvidenceResolver, describeNormalizedDataset, validateNormalizedDataset, type AdapterCoverageReport, type NormalizedDataset } from "./normalization-integrity.js";
 import { readBoundedFile } from "./scheduler.js";
-import type { ProtocolObservation } from "./process-protocol.js";
+import { assertProtocolObservation, type ProtocolObservation } from "./process-protocol.js";
 import type { NormalizationInput, NativeEvidenceResolver } from "./uniform-events.js";
 import type { RunManifest } from "./run-bundles.js";
 
@@ -36,7 +36,10 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
   const capture = {
     ...outcomeCapture,
     records: outcomeCapture.records.filter(({ record }) => record.kind === "session")
-      .map(({ reference, record }) => ({ reference, record: record.document })),
+      .map(({ reference, record }) => {
+        assertNativeEnvelope(harness, record.document, Number(reference.recordLocator.match(/^line:(\d+)$/u)?.[1]));
+        return { reference, record: record.document };
+      }),
   };
   const resolver = createCapturedNativeEvidenceResolver(capture, createAgentSdkNativeEvidenceResolver({ ...outcomeCapture,
     records: outcomeCapture.records.filter(({ record }) => record.kind !== "session" && record.kind !== "hook"),
@@ -92,4 +95,33 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
   }
   const coverage = await validateNormalizedDataset(dataset, resolver);
   return { capture, outcomeCapture, dataset, resolver, coverage };
+}
+
+function assertNativeEnvelope(harness: string, value: unknown, line: number): void {
+  const fail = (): never => { throw new Error(`Invalid retained ${harness} native envelope at line ${line}.`); };
+  if (value === null || typeof value !== "object" || Array.isArray(value)) fail();
+  const record = value as Record<string, unknown>;
+  if (!Number.isSafeInteger(line) || line < 1 || record.sequence !== line) fail();
+  if (harness === CODEX_HARNESS) {
+    assertProtocolObservation(value, line);
+    if (value.source !== CODEX_HARNESS && value.source !== "ebo-codex-client") fail();
+    if (value.source === "ebo-codex-client" && (!["request", "response", "notification"].includes(value.kind)
+      || value.kind === "notification" && value.method !== "initialized")) fail();
+    return;
+  }
+  const optionalText = (fields: string[]) => fields.every((field) => record[field] === undefined
+    || typeof record[field] === "string" && (record[field] as string).trim() !== "");
+  if (harness === "openhands-agent-server") {
+    if (record.schemaVersion !== "ebo.openhands-native-record/v1"
+      || !["server-info", "conversation-create-response", "conversation-created", "websocket-status", "websocket-event", "conversation-final", "rest-event", "capture-error", "cleanup"].includes(String(record.channel))
+      || record.payload === null || typeof record.payload !== "object" || Array.isArray(record.payload)
+      || !optionalText(["session_id"]) || record.channelSequence !== undefined
+        && (typeof record.channelSequence !== "number" || !Number.isSafeInteger(record.channelSequence) || record.channelSequence < 0)) fail();
+    return;
+  }
+  if (record.schemaVersion !== "ebo.deepseek-native-observation/v1"
+    || !["composition", "capability", "request", "response", "notification", "diagnostic", "error"].includes(String(record.kind))
+    || typeof record.observedAt !== "string" || record.observedAt.trim() === ""
+    || !optionalText(["method", "sessionId", "sourceIdentity"]) || record.stream !== undefined && record.stream !== "stderr"
+    || ["request", "response", "notification"].includes(String(record.kind)) && typeof record.method !== "string") fail();
 }

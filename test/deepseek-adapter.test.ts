@@ -213,7 +213,7 @@ test("packages a verified smoke bundle and qualifies session evidence without in
       (record: any) => record.kind === "response" && record.method === "client.close",
     ];
     for (const [index, missing] of missingBoundaries.entries()) {
-      const bytes = Buffer.from(`${records.filter((record) => !missing(record)).map((record) => JSON.stringify(record)).join("\n")}\n`);
+      const bytes = Buffer.from(`${records.filter((record) => !missing(record)).map((record, index) => JSON.stringify({ ...record, sequence: index + 1 })).join("\n")}\n`);
       const changedManifest = structuredClone(manifest);
       const descriptor = changedManifest.evidence.find(({ id }) => id === "deepseek-session")!;
       descriptor.digest = `sha256:${digestBytes(bytes).value}`;

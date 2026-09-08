@@ -651,7 +651,7 @@ function mapCodexRecord(
     actor = "harness";
     phase = "before";
     scope = scopedTurn(payload);
-  } else if (record.kind !== "notification") return undefined;
+  } else if (record.kind !== "notification" || record.source !== CODEX_HARNESS) return undefined;
   else if (method === "item/completed") {
     if (!matchesOwnedScope(capture, payload)) return undefined;
     const item = isRecord(payload.item) ? payload.item : {};
