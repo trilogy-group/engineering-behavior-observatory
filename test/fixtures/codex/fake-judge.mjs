@@ -28,6 +28,10 @@ for await (const line of createInterface({ input: process.stdin })) {
   if (method === "turn/start") {
     emit({ id, result: { turn: { id: "judge-turn" } } });
     const prompt = params.input[0].text;
+    if (prompt === "partial-timeout") {
+      emit({ method: "item/agentMessage/delta", params: { threadId: "judge-thread", turnId: "judge-turn", itemId: "partial", delta: "PARTIAL_MODEL_OUTPUT" } });
+      continue;
+    }
     if (prompt.includes("CLI_INTERRUPT_FIXTURE")) {
       writeFileSync(`${process.argv[1]}.ready`, String(process.pid));
       continue;
@@ -46,7 +50,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       if (prompt === "tool") { emit({ id: 999, method: "item/tool/call", params: {} }); return; }
       const response = { judgment: { disposition: "abstained", assessment: null, confidence: null, reason: "Synthetic evidence absent.", missingEvidenceCapability: null,
         rationale: "Synthetic test.", alternativeExplanation: "No conclusion is supported.", citations: [] } };
-      emit({ method: "item/completed", params: { threadId: "judge-thread", turnId: "judge-turn", item: { type: "agentMessage", id: "answer", text: prompt === "malformed" ? "invalid JSON" : JSON.stringify(response) } } });
+      emit({ method: "item/completed", params: { threadId: "judge-thread", turnId: "judge-turn", item: { type: "agentMessage", id: "answer", text: prompt === "malformed" || prompt.includes("MALFORMED_OUTPUT_FIXTURE") ? "invalid JSON" : JSON.stringify(response) } } });
       emit({ method: "turn/completed", params: { threadId: "judge-thread", turn: { id: "judge-turn", status: "completed" } } });
     }, 5);
   }

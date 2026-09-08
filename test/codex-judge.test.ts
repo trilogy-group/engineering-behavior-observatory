@@ -56,6 +56,11 @@ test("native judge isolates ambient state, retains failures, matches owned turns
     const beforeStart = await runCodexSemanticJudge("success", request, AbortSignal.abort());
     assert.equal(beforeStart.status, "failed");
     if (beforeStart.status === "failed") assert.equal(beforeStart.kind, "interrupted");
+    for (const prompt of ["malformed", "partial-timeout"]) {
+      const result = await runCodexSemanticJudge(prompt, { ...request, limits: { ...request.limits, maxOutputChars: 256 } });
+      assert.equal(result.status, "failed");
+      assert.match(JSON.stringify(result.rawModelResponse), prompt === "malformed" ? /invalid JSON/u : /PARTIAL_MODEL_OUTPUT/u);
+    }
     assert.equal(process.env.EBO_JUDGE_SECRET_SENTINEL, "synthetic-secret");
     assert.equal(existsSync(executable), true);
   } finally {

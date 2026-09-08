@@ -143,6 +143,12 @@ timeouts instead write `failure.json` beside any bounded raw output. No failed
 record enters review, no retry occurs, and native evidence is never changed.
 Timing, cost, and usage are recorded only when the backend reports them;
 otherwise the record says they are unavailable.
+Native Codex records name the replacement environment policy and its exact
+allowlist. Model output, including partial deltas and malformed final text,
+is retained separately in restricted `raw-model-response.json` and referenced
+by optional `rawModelResponse`. It and control-frame `raw-response.json` each
+have their own `maxOutputChars` bound; startup or user-echo frames cannot
+consume the model-output retention budget.
 
 `ebo.semantic-judge-request/v1`, `ebo.semantic-judge-input/v1`, and
 `ebo.semantic-judgment/v1` are registered artifacts and can be independently

@@ -16,7 +16,7 @@ import {
 } from "./behavior-assertions.js";
 import { createRetainedBehaviorEvidence } from "./retained-evidence.js";
 import { CODEX_APP_SERVER_VERSION, type CodexReasoningEffort } from "./codex.js";
-import { runCodexSemanticJudge } from "./codex-judge.js";
+import { runCodexSemanticJudge, CODEX_JUDGE_INHERITED_KEYS } from "./codex-judge.js";
 import {
   assertNoDuplicateJsonKeys,
   canonicalizeMetadata,
@@ -138,6 +138,7 @@ export type SemanticJudgeBackendResult =
     status: "completed";
     response: unknown;
     raw: unknown;
+    rawModelResponse?: unknown;
     timing?: { durationMs: number; durationApiMs: number };
     usage?: SemanticJudgeUsage;
   }
@@ -146,6 +147,7 @@ export type SemanticJudgeBackendResult =
     kind: "provider" | "timeout" | "interrupted";
     message: string;
     raw?: unknown;
+    rawModelResponse?: unknown;
     timing?: { durationMs: number; durationApiMs: number };
     usage?: SemanticJudgeUsage;
   };
@@ -179,14 +181,18 @@ export type SemanticJudgmentRecord = {
     effort: EffortLevel | CodexReasoningEffort;
     backend: { id: "claude-agent-sdk" | "codex-app-server"; version: string };
     environment: {
-      parentPreserved: true;
+      parentPreserved: boolean;
       modelEffortOverrides: "removed";
       ambientTelemetry: "removed";
       removedKeys: readonly string[];
+      mode?: "replace";
+      allowedKeys?: readonly string[];
+      authentication?: "existing-auth-json-only";
     };
     limits: SemanticJudgeRequest["limits"];
   };
   rawResponse?: RecordReference;
+  rawModelResponse?: RecordReference;
   parse: { status: "valid" } | { status: "failed"; kind: string; message: string };
   timing: Availability<{ durationMs: number; durationApiMs: number }>;
   usage: Availability<SemanticJudgeUsage>;
@@ -271,7 +277,12 @@ export async function runAgentSdkSemanticJudge(
         id: backend.id,
         version: backend.version,
       },
-      environment: {
+      environment: selectedBackend === "codex-app-server" ? {
+        parentPreserved: false as const, mode: "replace" as const,
+        modelEffortOverrides: "removed" as const, ambientTelemetry: "removed" as const,
+        removedKeys: ["*"], allowedKeys: ["HOME", "CODEX_HOME", ...CODEX_JUDGE_INHERITED_KEYS],
+        authentication: "existing-auth-json-only" as const,
+      } : {
         parentPreserved: true as const,
         modelEffortOverrides: "removed" as const,
         ambientTelemetry: "removed" as const,
@@ -295,12 +306,15 @@ export async function runAgentSdkSemanticJudge(
   const rawResponse = backendResult.raw === undefined
     ? undefined
     : writeBoundedRawResponse(outputRoot, backendResult.raw, options.request.limits.maxOutputChars);
+  const rawModelResponse = backendResult.rawModelResponse === undefined ? undefined
+    : writeBoundedRawResponse(outputRoot, backendResult.rawModelResponse, options.request.limits.maxOutputChars, "raw-model-response.json");
+  const responseReferences = { ...(rawResponse === undefined ? {} : { rawResponse }), ...(rawModelResponse === undefined ? {} : { rawModelResponse }) };
 
   if (backendResult.status === "failed") {
     const record: SemanticJudgmentRecord = {
       ...base,
       status: "failed",
-      ...(rawResponse === undefined ? {} : { rawResponse }),
+      ...responseReferences,
       parse: { status: "failed", kind: backendResult.kind, message: boundedMessage(backendResult.message) },
       timing,
       usage,
@@ -316,7 +330,7 @@ export async function runAgentSdkSemanticJudge(
     const record: SemanticJudgmentRecord = {
       ...base,
       status: "failed",
-      ...(rawResponse === undefined ? {} : { rawResponse }),
+      ...responseReferences,
       parse: { status: "failed", kind: "malformed-response", message: boundedMessage(errorMessage(error)) },
       timing,
       usage,
@@ -328,7 +342,7 @@ export async function runAgentSdkSemanticJudge(
     const record: SemanticJudgmentRecord = {
       ...base,
       status: "failed",
-      ...(rawResponse === undefined ? {} : { rawResponse }),
+      ...responseReferences,
       parse: { status: "failed", kind: "output-limit", message: "Judge response exceeds maxOutputChars." },
       timing,
       usage,
@@ -344,7 +358,7 @@ export async function runAgentSdkSemanticJudge(
     const record: SemanticJudgmentRecord = {
       ...base,
       status: "proposed",
-      ...(rawResponse === undefined ? {} : { rawResponse }),
+      ...responseReferences,
       parse: { status: "valid" },
       timing,
       usage,
@@ -356,7 +370,7 @@ export async function runAgentSdkSemanticJudge(
     const record: SemanticJudgmentRecord = {
       ...base,
       status: "failed",
-      ...(rawResponse === undefined ? {} : { rawResponse }),
+      ...responseReferences,
       parse: { status: "failed", kind: "invalid-response", message: boundedMessage(errorMessage(error)) },
       timing,
       usage,
@@ -922,18 +936,18 @@ function redactJson(value: unknown, needle: string, onRedaction: () => void): un
   return value;
 }
 
-function writeBoundedRawResponse(root: string, value: unknown, maxChars: number): RecordReference {
+function writeBoundedRawResponse(root: string, value: unknown, maxChars: number, name = "raw-response.json"): RecordReference {
   let serialized: string;
   try {
     serialized = canonicalizeMetadata(value);
   } catch (error) {
-    return writeRestrictedJson(root, "raw-response.json", {
+    return writeRestrictedJson(root, name, {
       unavailable: true,
       reason: boundedMessage(errorMessage(error)),
     });
   }
   const truncated = serialized.length > maxChars;
-  return writeRestrictedJson(root, "raw-response.json", {
+  return writeRestrictedJson(root, name, {
     truncated,
     content: truncated ? `${serialized.slice(0, maxChars)}...[TRUNCATED:${serialized.length}]` : serialized,
   }, truncated);

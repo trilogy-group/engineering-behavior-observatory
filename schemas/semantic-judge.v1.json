@@ -279,7 +279,10 @@
               "additionalProperties": false,
               "required": ["parentPreserved", "modelEffortOverrides", "ambientTelemetry", "removedKeys"],
               "properties": {
-                "parentPreserved": { "const": true },
+                "parentPreserved": { "type": "boolean" },
+                "mode": { "const": "replace" },
+                "allowedKeys": { "$ref": "#/$defs/stringList" },
+                "authentication": { "const": "existing-auth-json-only" },
                 "modelEffortOverrides": { "const": "removed" },
                 "ambientTelemetry": { "const": "removed" },
                 "removedKeys": { "$ref": "#/$defs/stringList" }
@@ -289,6 +292,7 @@
           }
         },
         "rawResponse": { "$ref": "#/$defs/reference" },
+        "rawModelResponse": { "$ref": "#/$defs/reference" },
         "parse": {
           "oneOf": [
             {
