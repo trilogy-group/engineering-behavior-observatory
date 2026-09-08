@@ -4,12 +4,12 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 
-import type { ClientNotification } from "../contracts/codex-app-server-0.150.1/types/ClientNotification.js";
-import type { AskForApproval } from "../contracts/codex-app-server-0.150.1/types/AskForApproval.js";
-import type { SandboxMode } from "../contracts/codex-app-server-0.150.1/types/SandboxMode.js";
-import type { ThreadReadParams } from "../contracts/codex-app-server-0.150.1/types/ThreadReadParams.js";
-import type { TokenUsageBreakdown } from "../contracts/codex-app-server-0.150.1/types/TokenUsageBreakdown.js";
-import type { TurnInterruptParams } from "../contracts/codex-app-server-0.150.1/types/TurnInterruptParams.js";
+import type { ClientNotification } from "../contracts/codex-app-server-0.153.4/types/ClientNotification.js";
+import type { AskForApproval } from "../contracts/codex-app-server-0.153.4/types/AskForApproval.js";
+import type { SandboxMode } from "../contracts/codex-app-server-0.153.4/types/SandboxMode.js";
+import type { ThreadReadParams } from "../contracts/codex-app-server-0.153.4/types/ThreadReadParams.js";
+import type { TokenUsageBreakdown } from "../contracts/codex-app-server-0.153.4/types/TokenUsageBreakdown.js";
+import type { TurnInterruptParams } from "../contracts/codex-app-server-0.153.4/types/TurnInterruptParams.js";
 
 import {
   spawnProtocolProcess,
@@ -36,7 +36,7 @@ import {
   type UniformEvent,
 } from "./uniform-events.js";
 
-export const CODEX_APP_SERVER_VERSION = "0.150.1";
+export const CODEX_APP_SERVER_VERSION = "0.153.4";
 export const CODEX_ADAPTER_VERSION = "0.1.0";
 export const CODEX_HARNESS = "codex-app-server";
 export const CODEX_DEFAULT_SHUTDOWN_GRACE_MS = 2_000;
@@ -148,7 +148,7 @@ export type CodexAppServerCapture = QualifiedNativeCapture<ProtocolObservation> 
   telemetry: CodexTelemetryEvidence;
 };
 
-export const CODEX_APP_SERVER_CAPABILITIES = {
+const CODEX_0_150_1_CAPABILITIES = {
   schemaVersion: "ebo.adapter-capability-profile/v1",
   adapterId: "ebo-codex-app-server-v0.150.1",
   harness: CODEX_HARNESS,
@@ -182,6 +182,11 @@ export const CODEX_APP_SERVER_CAPABILITIES = {
   },
 } as const satisfies AdapterCapabilityProfile;
 
+export const CODEX_APP_SERVER_CAPABILITIES = {
+  ...CODEX_0_150_1_CAPABILITIES,
+  adapterId: "ebo-codex-app-server-v0.153.4",
+} as const satisfies AdapterCapabilityProfile;
+
 export function createCodexHarnessAdapter(): HarnessAdapter<CodexAppServerCaptureRequest, ProtocolObservation> {
   return {
     capture: {
@@ -205,6 +210,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
   requireText(request.workspacePath, "Codex workspace path");
   requireText(request.prompt, "Codex prompt");
   requireText(request.configuration.executable, "Codex executable");
+  if (request.configuration.version !== CODEX_APP_SERVER_VERSION) throw new Error(`Codex capture requires pinned runtime ${CODEX_APP_SERVER_VERSION}.`);
   const shutdownGraceMs = request.shutdownGraceMs ?? CODEX_DEFAULT_SHUTDOWN_GRACE_MS;
   let abortRequested = request.signal?.aborted ?? false;
   let abortDeadline = abortRequested ? performance.now() + shutdownGraceMs : undefined;
@@ -444,7 +450,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
   try {
     await sendRequest("initialize", {
       clientInfo: { name: "ebo", title: "Engineering Behavior Observatory", version: CODEX_ADAPTER_VERSION },
-      capabilities: null,
+      capabilities: { experimentalApi: true },
     });
     await sendNotification("initialized" satisfies ClientNotification["method"]);
     threadStart = await sendRequest("thread/start", {
@@ -454,11 +460,20 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
       sandbox: request.configuration.sandbox,
       serviceName: "ebo",
       ephemeral: false,
-      config: { model_instructions_file: instructionsPath, mcp_servers: {}, hooks: {}, plugins: {} },
+      historyMode: "legacy",
+      config: { model_instructions_file: instructionsPath, model_reasoning_effort: request.configuration.effort,
+        mcp_servers: {}, hooks: {}, plugins: {},
+        ...(request.configuration.sandbox === "workspace-write" ? { sandbox_workspace_write: {
+          writable_roots: [request.workspacePath], network_access: false, exclude_tmpdir_env_var: true, exclude_slash_tmp: true,
+        } } : {}),
+      },
       developerInstructions: "Work only in the supplied workspace. Do not request interactive input or broaden permissions.",
     });
     threadId = text(isRecord(threadStart.thread) ? threadStart.thread.id : undefined);
     if (threadId === undefined) throw new Error("Codex thread/start did not return a thread identity.");
+    if (!isRecord(threadStart.thread) || threadStart.thread.historyMode !== "legacy") {
+      addGap({ kind: "history-mode-mismatch", detail: "Codex did not apply the requested legacy history mode." });
+    }
     if (text(threadStart.model) !== request.configuration.model) {
       addGap({ kind: "model-mismatch", detail: `Requested ${request.configuration.model}; launched ${String(threadStart.model)}.` });
     }
@@ -471,7 +486,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     if (threadStart.approvalPolicy !== request.configuration.approvalPolicy) {
       addGap({ kind: "approval-policy-mismatch", detail: `Requested ${request.configuration.approvalPolicy}; applied ${JSON.stringify(threadStart.approvalPolicy)}.` });
     }
-    if (!sandboxMatches(request.configuration.sandbox, threadStart.sandbox, request.workspacePath)) {
+    if (!sandboxMatches(request.configuration.sandbox, threadStart.sandbox, request.workspacePath, threadStart.cwd)) {
       addGap({ kind: "sandbox-mismatch", detail: `Requested ${request.configuration.sandbox}; applied ${JSON.stringify(threadStart.sandbox)}.` });
     }
     const started = await sendRequest("turn/start", {
@@ -511,7 +526,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
         },
       );
       if (!historyMatches(history, threadId, turnId)) {
-        addGap({ kind: "history-mismatch", detail: "thread/read history did not contain the owned terminal turn." });
+        addGap({ kind: "history-mismatch", detail: "thread/read did not return full legacy history for the owned terminal turn." });
       }
     } catch (error) {
       addGap({ kind: "history-readback", detail: errorMessage(error) });
@@ -602,12 +617,14 @@ export async function normalizeCodexCapture(
 
 export async function describeAndValidateCodexDataset(
   capture: QualifiedNativeCapture<ProtocolObservation>,
+  runtimeVersion = (capture as Partial<CodexAppServerCapture>).telemetry?.runtime?.version ?? CODEX_APP_SERVER_VERSION,
 ): Promise<{ dataset: NormalizedDataset; coverage: AdapterCoverageReport }> {
+  if (runtimeVersion !== CODEX_APP_SERVER_VERSION && runtimeVersion !== "0.150.1") throw new Error(`Unsupported retained Codex runtime ${runtimeVersion}.`);
   const normalization = await normalizeCodexCapture(capture);
   const dataset = describeNormalizedDataset({
     capture,
     normalization,
-    capabilityProfile: CODEX_APP_SERVER_CAPABILITIES,
+    capabilityProfile: runtimeVersion === "0.150.1" ? CODEX_0_150_1_CAPABILITIES : CODEX_APP_SERVER_CAPABILITIES,
     adapterVersion: CODEX_ADAPTER_VERSION,
     nativeType: codexNativeType,
   });
@@ -803,15 +820,16 @@ function turnSandboxPolicy(sandbox: CodexSandbox, workspace: string): Record<str
   };
 }
 
-function sandboxMatches(requested: CodexSandbox, applied: unknown, workspace: string): boolean {
-  if (!isRecord(applied)) return false;
+function sandboxMatches(requested: CodexSandbox, applied: unknown, workspace: string, appliedCwd: unknown): boolean {
+  if (!isRecord(applied) || appliedCwd !== workspace) return false;
   if (requested === "danger-full-access") return applied.type === "dangerFullAccess";
   if (requested === "read-only") return applied.type === "readOnly" && applied.networkAccess === false;
   return applied.type === "workspaceWrite"
     && applied.networkAccess === false
     && Array.isArray(applied.writableRoots)
-    && applied.writableRoots.length === 1
-    && applied.writableRoots[0] === workspace
+    // Codex 0.153.4 roots are additional to cwd; it removes redundant cwd entries.
+    && applied.writableRoots.length <= 1
+    && applied.writableRoots.every((root) => root === workspace)
     && applied.excludeTmpdirEnvVar === true
     && applied.excludeSlashTmp === true;
 }
@@ -851,8 +869,9 @@ function unattendedServerResponse(method: string): {
 
 function historyMatches(history: Record<string, unknown>, threadId: string, turnId: string): boolean {
   const thread = isRecord(history.thread) ? history.thread : undefined;
-  if (text(thread?.id) !== threadId || !Array.isArray(thread?.turns)) return false;
-  return thread.turns.some((candidate) => isRecord(candidate) && text(candidate.id) === turnId);
+  if (text(thread?.id) !== threadId || thread?.historyMode !== "legacy" || !Array.isArray(thread.turns)) return false;
+  return thread.turns.some((candidate) => isRecord(candidate) && text(candidate.id) === turnId
+    && candidate.itemsView === "full" && Array.isArray(candidate.items));
 }
 
 export async function writeProtocolLine(stream: NodeJS.WritableStream, message: unknown): Promise<void> {

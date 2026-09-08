@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createInterface } from "node:readline";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-if (process.argv.includes("--version")) { console.log("codex-cli 0.150.1"); process.exit(0); }
+if (process.argv.includes("--version")) { console.log("codex-cli 0.153.4"); process.exit(0); }
 if (process.argv.includes("--bundled")) { console.log(JSON.stringify({ models: [{ slug: "fixture", apply_patch_tool_type: "freeform" }] })); process.exit(0); }
 assert.equal(process.env.OTEL_EXPORTER_OTLP_ENDPOINT, undefined);
 assert.equal(process.env.ANTHROPIC_API_KEY, undefined);
@@ -19,6 +19,12 @@ for await (const line of createInterface({ input: process.stdin })) {
     assert.equal(params.config.features.shell_tool, false);
     assert.equal(params.config.features.plugins, false);
     assert.deepEqual(params.config.mcp_servers, {});
+    assert.equal(params.config.features.sleep_tool, false);
+    assert.equal(params.config.features.skip_host_skill_discovery, true);
+    assert.equal(params.config.orchestrator.skills.enabled, false);
+    assert.equal(params.config.skills.bundled.enabled, false);
+    assert.equal(params.config.skills.include_instructions, false);
+    assert.deepEqual(params.environments, []);
     const model = JSON.parse(readFileSync(params.config.model_catalog_json, "utf8")).models[0];
     assert.equal(model.apply_patch_tool_type, null);
     assert.deepEqual(model.experimental_supported_tools, []);
@@ -26,6 +32,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       approvalPolicy: "never", reasoningEffort: params.config.model_reasoning_effort, sandbox: { type: "readOnly", networkAccess: false }, instructionSources: [] } });
   }
   if (method === "turn/start") {
+    assert.deepEqual(params.environments, []);
     emit({ id, result: { turn: { id: "judge-turn" } } });
     const prompt = params.input[0].text;
     if (prompt === "partial-timeout") {

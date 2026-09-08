@@ -6,7 +6,7 @@ Agent SDK remains EBO's primary Anthropic capture path. Codex native protocol
 records remain authoritative, OTLP is separately retained timing/resource
 evidence, and uniform events are a digest-checked projection after capture.
 
-The baseline is `codex-cli 0.150.1`. EBO rejects a different executable
+The baseline is `codex-cli 0.153.4`. EBO rejects a different executable
 version, starts a new child for each attempt, and never connects to the desktop
 daemon or changes `~/.codex/config.toml`.
 
@@ -23,7 +23,7 @@ names, never their values.
 
 ## Generated contract
 
-[`contracts/codex-app-server-0.150.1/manifest.json`](../contracts/codex-app-server-0.150.1/manifest.json)
+[`contracts/codex-app-server-0.153.4/manifest.json`](../contracts/codex-app-server-0.153.4/manifest.json)
 pins the generated root digests and the small schema/type subset used by the
 adapter and its fixtures. Regenerate the source contracts with the pinned CLI:
 
@@ -36,6 +36,24 @@ The adapter uses the stable initialize/thread/turn lifecycle, plus generated
 leaf contracts for initialized, `thread/read`, `turn/interrupt`, and token usage.
 Unknown notifications are retained unchanged and listed as unmapped.
 
+The 0.153.4 refresh preserves the unchanged RPC, approval, sandbox, interruption
+and usage contracts. Initialization moved into the generated `v1` schema
+directory. The retained subset also includes thread/turn start parameters.
+New captures explicitly select legacy history; paginated or summary-only
+readback is retained with a gap instead of being claimed as complete history.
+The pinned runtime treats `writableRoots` as additional to the effective `cwd`
+and removes a redundant cwd entry. EBO verifies that cwd matches the requested
+workspace, rejects additional roots, and requires the requested network and
+temporary-directory restrictions. Initial thread effort and sandbox overrides
+match the explicit turn policy.
+
+Existing 0.150.1 bundles remain readable through their original normalization
+profile and dataset identity. The legacy contract snapshot stays checked in;
+a captured synthetic 0.150.1 bundle and its pre-upgrade normalized dataset test
+exact readback. New captures use the 0.153.4 profile. Frozen run configurations
+for the older executable are not rewritten: new execution requires fresh
+configuration references carrying the new runtime version and contract digest.
+
 ## Queue configuration
 
 The queue keeps condition IDs path-safe; the digest-pinned model record carries
@@ -43,7 +61,7 @@ the actual provider model and effort. A minimal observational configuration is:
 
 ```json
 { "schemaVersion": "ebo.codex-config/v1", "kind": "model", "provider": "openai", "model": "gpt-5.6-sol", "effort": "high" }
-{ "schemaVersion": "ebo.codex-config/v1", "kind": "harness", "adapter": "codex-app-server", "executable": "/opt/homebrew/bin/codex", "version": "0.150.1", "contractDigest": "sha256:844b52d4a5a8cda58794e28b3b119c3a3d20a588b7db83209c298bec62704092" }
+{ "schemaVersion": "ebo.codex-config/v1", "kind": "harness", "adapter": "codex-app-server", "executable": "/opt/homebrew/bin/codex", "version": "0.153.4", "contractDigest": "sha256:e5f798fd1343c539f01fedea0e8a84a43c080fcca4615c80eb04a5edab4f7d0a" }
 { "schemaVersion": "ebo.codex-config/v1", "kind": "native-limits", "shutdownGraceMs": 2000 }
 { "schemaVersion": "ebo.codex-config/v1", "kind": "native-tool-policy", "approvalPolicy": "never", "sandbox": "workspace-write" }
 { "schemaVersion": "ebo.codex-config/v1", "kind": "capture-profile", "telemetrySignals": ["logs", "traces", "metrics"], "workspaceOutcome": { "excludeDirectoryNames": ["node_modules"] } }
@@ -67,8 +85,21 @@ The client sends `initialize`, `initialized`, `thread/start`, and `turn/start`.
 Only `turn/completed` for the returned thread and turn ends the native attempt.
 After completion or interruption, `thread/read` with `includeTurns: true`
 retains persisted history separately from streamed item records. A request
+is considered full readback only when the thread reports `historyMode: legacy`
+and the owned turn reports `itemsView: full` with an items array. A request
 acknowledgement, final-looking message, idle state, or process exit is not
 completion.
+
+An approved synthetic smoke uses an already authenticated route:
+
+```sh
+EBO_LIVE_CODEX_CAPTURE_SMOKE=1 EBO_LIVE_CODEX_CAPTURE_MODEL='<existing-route>' \
+  node --test --test-name-pattern='approved existing-auth' dist/test/codex.test.js
+```
+
+The 0.153.4 validation created the exact synthetic file, retained full legacy
+history, and reported no capture gaps. Logs and traces arrived; metrics did not
+arrive within the bounded run and remained `missing`, not a fabricated receipt.
 
 On interruption EBO sends `turn/interrupt`, records its acknowledgement, waits
 briefly for matching terminal evidence, then tears down the owned child. There

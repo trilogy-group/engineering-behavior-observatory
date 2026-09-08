@@ -445,25 +445,60 @@ export function qualifiedDeepSeekCapture(
   report: DeepSeekCaptureReport,
   artifactId = "deepseek-session",
 ): QualifiedNativeCapture<DeepSeekNativeObservation> {
-  if (report.captureError !== undefined) throw new Error(`DeepSeek capture is unqualified: ${report.captureError}`);
-  const hasSessionEvent = report.records.some((record) => record.method === "session.event");
-  const has = (kind: DeepSeekNativeObservation["kind"], method?: string) => report.records.some((record) =>
-    record.kind === kind && (method === undefined || record.method === method));
-  const requiredBoundary = has("composition") && has("capability")
-    && has("response", "initialize") && has("response", "session/prompt") && hasSessionEvent;
-  if (!requiredBoundary) throw new Error("DeepSeek capture is unqualified: runtime, prompt receipt, or durable session evidence is missing.");
-  const complete = report.status === "completed" && report.receiptSequence !== undefined && report.idleSequence !== undefined
-    && has("response", "client.close");
-  if (report.status === "completed" && !complete) throw new Error("Completed DeepSeek capture lacks durable receipt-to-idle or clean runtime-reap evidence.");
+  const qualification = deepSeekCaptureQualification(report.records, report.status === "completed",
+    report.receiptSequence, report.idleSequence, report.captureError);
   return {
     runId,
     attemptId,
-    qualification: complete ? "qualified" : "qualified-with-gaps",
+    qualification,
     records: report.records.map((record) => ({
       reference: { artifactId, recordLocator: `line:${record.sequence}` },
       record,
     })),
   };
+}
+
+/** Reapply the native lifecycle gate while preserving retained physical JSONL locators. */
+export function qualifyRetainedDeepSeekCapture(
+  input: QualifiedNativeCapture<DeepSeekNativeObservation>,
+  sessionId: string | undefined,
+  completed: boolean,
+): QualifiedNativeCapture<DeepSeekNativeObservation> {
+  const rootSessionId = required(sessionId ?? "", "Retained DeepSeek root session ID");
+  const records = input.records.map(({ record }) => record);
+  let messageId: string | undefined;
+  let receiptSequence: number | undefined;
+  let idleSequence: number | undefined;
+  for (const observation of records) {
+    const payload = record(observation.payload) ?? {};
+    if (observation.kind === "response" && observation.method === "session/prompt" && observation.sessionId === rootSessionId) {
+      messageId = typeof payload.messageId === "string" ? payload.messageId : undefined;
+    }
+    if (observation.kind !== "notification") continue;
+    const notification = { method: observation.method, params: payload } as HarnessNotification;
+    if (receiptSequence === undefined && messageId !== undefined && isInboxReceipt(notification, rootSessionId, messageId)) receiptSequence = observation.sequence;
+    if (receiptSequence !== undefined && isRootIdle(notification, rootSessionId)) idleSequence = observation.sequence;
+  }
+  const qualification = deepSeekCaptureQualification(records, completed, receiptSequence, idleSequence);
+  return { ...input, qualification: input.qualification === "qualified-with-gaps" ? input.qualification : qualification };
+}
+
+function deepSeekCaptureQualification(
+  records: readonly DeepSeekNativeObservation[], completed: boolean,
+  receiptSequence?: number, idleSequence?: number, captureError?: string,
+): QualifiedNativeCapture<DeepSeekNativeObservation>["qualification"] {
+  if (captureError !== undefined) throw new Error(`DeepSeek capture is unqualified: ${captureError}`);
+  const hasSessionEvent = records.some((record) => record.method === "session.event");
+  const has = (kind: DeepSeekNativeObservation["kind"], method?: string) => records.some((record) =>
+    record.kind === kind && (method === undefined || record.method === method));
+  const requiredBoundary = has("composition") && has("capability")
+    && has("response", "initialize") && has("response", "session/prompt") && hasSessionEvent;
+  if (!requiredBoundary) throw new Error("DeepSeek capture is unqualified: runtime, prompt receipt, or durable session evidence is missing.");
+  const complete = receiptSequence !== undefined && idleSequence !== undefined
+    && records.some((observation) => observation.kind === "response" && observation.method === "client.close"
+      && record(observation.payload)?.status === "runtime-reaped");
+  if (completed && !complete) throw new Error("Completed DeepSeek capture lacks durable receipt-to-idle or clean runtime-reap evidence.");
+  return complete ? "qualified" : "qualified-with-gaps";
 }
 
 export const DEEPSEEK_CAPABILITY_PROFILE: AdapterCapabilityProfile = {

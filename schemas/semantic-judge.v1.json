@@ -57,6 +57,17 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["schemaVersion", "id", "behavior", "rubric", "evaluator", "selection", "limits", "blinding"],
+      "allOf": [{
+        "if": { "properties": { "evaluator": { "required": ["backend"], "properties": { "backend": { "const": "codex-app-server" } } } } },
+        "then": { "properties": {
+          "evaluator": { "properties": { "provider": { "const": "openai" } } },
+          "limits": { "properties": { "maxTurns": { "const": 1 } }, "not": { "required": ["maxBudgetUsd"] } }
+        } },
+        "else": { "properties": { "evaluator": {
+          "properties": { "provider": { "const": "anthropic" }, "backend": { "const": "claude-agent-sdk" }, "effort": { "enum": ["low", "medium", "high", "xhigh", "max"] } },
+          "not": { "required": ["executable"] }
+        } } }
+      }],
       "properties": {
         "schemaVersion": { "const": "ebo.semantic-judge-request/v1" },
         "id": { "type": "string", "minLength": 1, "maxLength": 220, "pattern": ".*\\S.*" },
@@ -68,7 +79,7 @@
           "required": ["provider", "model", "effort"],
           "properties": {
             "backend": { "enum": ["claude-agent-sdk", "codex-app-server"] },
-            "executable": { "type": "string", "minLength": 1, "maxLength": 4096 },
+            "executable": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": ".*\\S.*" },
             "provider": { "enum": ["anthropic", "openai"] },
             "model": { "type": "string", "minLength": 1, "maxLength": 220, "pattern": ".*\\S.*" },
             "effort": { "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] }

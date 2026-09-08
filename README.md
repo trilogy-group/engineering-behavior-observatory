@@ -32,7 +32,7 @@ out-of-process TypeScript client, retains native session evidence and explicit
 receipt-to-idle completion boundaries, and normalizes only qualified records.
 
 The optional [Codex app-server adapter](docs/codex-harness.md) owns one pinned
-`0.150.1` stdio child per attempt, retains native thread/turn/item evidence and
+`0.153.4` stdio child per attempt, retains native thread/turn/item evidence and
 independently verified OTLP receipts, and runs one frozen observational queue
 entry through `ebo codex run`.
 

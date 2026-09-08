@@ -1,0 +1,14 @@
+diff --git a/codex-result.txt b/codex-result.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..19f86f493ab110b8dc8279a024880e44203968d8
+--- /dev/null
++++ b/codex-result.txt
+@@ -0,0 +1 @@
++done
+diff --git a/result.txt b/result.txt
+index 90be1f3056c4f471f977a28497b8d4b392c55a02..294186e497a23bf3fbfde12aacc7f720f668fe9a 100644
+--- a/result.txt
++++ b/result.txt
+@@ -1 +1 @@
+-before
++after

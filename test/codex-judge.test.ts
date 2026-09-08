@@ -126,7 +126,7 @@ test("installed pinned native judge exposes zero tools on the model wire", { ski
       limits: { maxOutputChars: 16000, maxWallClockMs: 10000, maxCitations: 1 } } as SemanticJudgeRequest));
     const generations = requests.filter((request) => request.generate !== false);
     assert.equal(new Set(generations.map((request) => request.model)).size, 2, `Both native tool modes must send a model request: ${JSON.stringify(results)}`);
-    for (const request of generations) assert.deepEqual(request.response?.tools ?? request.tools ?? [], [], JSON.stringify({ keys: Object.keys(request), responseKeys: Object.keys(request.response ?? {}), tools: request.response?.tools ?? request.tools }));
+    for (const request of generations) assert.deepEqual(request.response?.tools ?? request.tools ?? [], [], JSON.stringify({ model: request.model, keys: Object.keys(request), responseKeys: Object.keys(request.response ?? {}), tools: request.response?.tools ?? request.tools }));
   } finally {
     if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = originalCodexHome;

@@ -48,7 +48,7 @@ import { executeVerifier, type VerifierResult } from "./verifiers.js";
 import { cleanupWorkspace, materializeWorkspace } from "./workspaces.js";
 
 export const CODEX_CONFIG_SCHEMA_VERSION = "ebo.codex-config/v1";
-export const CODEX_CONTRACT_DIGEST = "sha256:844b52d4a5a8cda58794e28b3b119c3a3d20a588b7db83209c298bec62704092";
+export const CODEX_CONTRACT_DIGEST = "sha256:e5f798fd1343c539f01fedea0e8a84a43c080fcca4615c80eb04a5edab4f7d0a";
 const execFileAsync = promisify(execFile);
 const ATTEMPT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 

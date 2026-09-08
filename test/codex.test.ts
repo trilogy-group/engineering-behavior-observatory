@@ -19,12 +19,13 @@ import {
   type CodexAppServerCapture,
   type CodexAppServerConfiguration,
 } from "../src/codex.js";
-import { captureCodexAppServerRun, runCodexQueueEntry } from "../src/codex-run.js";
+import { captureCodexAppServerRun, runCodexQueueEntry, CODEX_CONTRACT_DIGEST } from "../src/codex-run.js";
 import { RunBundleAssembler, type RunBundleDefinition, type RunManifest } from "../src/run-bundles.js";
 import {
   buildCorpusIndex,
   compileRunQueue,
   createPortableRunBundleExport,
+  createRetainedBehaviorEvidence,
   digestBytes,
   digestMetadata,
   freezeTaskPacket,
@@ -39,8 +40,70 @@ import {
 } from "../src/index.js";
 
 const fixture = resolve("test/fixtures/codex/fake-app-server.mjs");
-const contractRoot = resolve("contracts/codex-app-server-0.150.1");
+const contractRoot = resolve("contracts/codex-app-server-0.153.4");
 const reasoningSentinel = "EBO_RAW_REASONING_SENTINEL";
+
+test("retained 0.150.1 evidence keeps its original normalized dataset", async () => {
+  const root = resolve("test/fixtures/codex/legacy-0.150.1");
+  const before = await readFile(join(root, "manifest.json"));
+  const evidence = await createRetainedBehaviorEvidence(root);
+  const expected = JSON.parse(await readFile(resolve("test/fixtures/codex/legacy-0.150.1.dataset.json"), "utf8"));
+  assert.deepEqual(evidence.dataset, expected);
+  assert.equal(evidence.dataset.adapter.id, "ebo-codex-app-server-v0.150.1");
+  assert.deepEqual(await readFile(join(root, "manifest.json")), before);
+});
+
+test("new capture rejects the older runtime declaration before launching", async () => {
+  await assert.rejects(captureCodexAppServer({ runId: "fixture", attemptId: "fixture", workspacePath: tmpdir(), evidencePath: tmpdir(), prompt: "fixture",
+    configuration: { ...fakeConfiguration("success"), version: "0.150.1" as typeof CODEX_APP_SERVER_VERSION },
+  }), /requires pinned runtime 0\.153\.4/u);
+});
+
+for (const mode of ["sandbox-implicit-cwd", "sandbox-cwd-mismatch"]) {
+  test(`checks the effective cwd with native ${mode} sandbox roots`, async () => {
+    const root = await temporaryRoot();
+    try {
+      const capture = await runFake(root, mode);
+      assert.equal(capture.gaps.some(({ kind }) => kind === "sandbox-mismatch"), mode === "sandbox-cwd-mismatch");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+}
+
+for (const mode of ["history-paginated", "history-summary", "history-not-loaded"]) {
+  test(`does not claim complete native history for ${mode}`, async () => {
+    const root = await temporaryRoot();
+    try {
+      const capture = await runFake(root, mode);
+      assert.equal(capture.terminalStatus, "completed");
+      assert.ok(capture.history);
+      assert.ok(capture.gaps.some(({ kind }) => kind === "history-mismatch"));
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+}
+
+test("approved existing-auth 0.153.4 native capture smoke", { skip: process.env.EBO_LIVE_CODEX_CAPTURE_SMOKE !== "1" }, async (context) => {
+  const model = process.env.EBO_LIVE_CODEX_CAPTURE_MODEL;
+  assert.ok(model, "Supply an existing authenticated model route.");
+  const root = await temporaryRoot();
+  try {
+    const capture = await captureCodexAppServer({ runId: "synthetic-live-capture", attemptId: "synthetic-live-capture-1", workspacePath: root,
+      prompt: "Synthetic test only. Create capture-proof.txt in the current workspace containing exactly EBO_SYNTHETIC_CAPTURE_OK followed by a newline, then reply done.", evidencePath: join(root, "session.jsonl"),
+      configuration: { executable: "codex", version: CODEX_APP_SERVER_VERSION, provider: "openai", model, effort: "low",
+        approvalPolicy: "never", sandbox: "workspace-write", telemetry: { signals: ["logs", "traces", "metrics"] } },
+      signal: AbortSignal.timeout(30000), shutdownGraceMs: 3000,
+    });
+    assert.equal(capture.terminalStatus, "completed", JSON.stringify(capture.gaps));
+    assert.equal(await readFile(join(root, "capture-proof.txt"), "utf8"), "EBO_SYNTHETIC_CAPTURE_OK\n");
+    assert.ok(capture.records.some(({ record }) => record.kind === "response" && record.method === "initialize"
+      && JSON.stringify(record.payload).includes(CODEX_APP_SERVER_VERSION)), "Native handshake must report the installed pinned version.");
+    assert.equal(capture.gaps.some(({ kind }) => kind === "history-mismatch" || kind === "history-mode-mismatch" || kind === "history-readback"), false, JSON.stringify(capture.gaps));
+    assert.equal(capture.gaps.some(({ kind }) => kind === "effort-mismatch" || kind === "sandbox-mismatch"), false, JSON.stringify(capture.gaps));
+    const { dataset } = await describeAndValidateCodexDataset(capture);
+    assert.equal(dataset.adapter.id, "ebo-codex-app-server-v0.153.4");
+    context.diagnostic(JSON.stringify({ runtime: capture.telemetry.runtime.version, terminal: capture.terminalStatus, events: dataset.events.length,
+      receipt: capture.telemetry.telemetry.receipt, gaps: capture.gaps }));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test("captures matching native lifecycle, interleaving, usage, history, and independent OTLP receipts", async () => {
   const root = await temporaryRoot();
@@ -667,7 +730,7 @@ test("keeps native evidence and the source workspace when post-start packaging f
   }
 });
 
-test("pins the generated contract subset and validates representative 0.150.1 fixtures", async () => {
+test("pins the generated contract subset and validates representative 0.153.4 fixtures", async () => {
   const manifest = JSON.parse(await readFile(join(contractRoot, "manifest.json"), "utf8")) as {
     codexCliVersion: string;
     files: Record<string, string>;
@@ -678,6 +741,7 @@ test("pins the generated contract subset and validates representative 0.150.1 fi
   }
   const ajv = new Ajv2020({ strict: false, validateSchema: false });
   ajv.addFormat("int64", true);
+  ajv.addFormat("uint", true);
   const rpc = ajv.compile(JSON.parse(await readFile(join(contractRoot, "schema/JSONRPCMessage.json"), "utf8")));
   assert.equal(rpc({ method: "thread/read", id: 4, params: { threadId: "thread-1", includeTurns: true } }), true);
   const usage = ajv.compile(JSON.parse(await readFile(join(contractRoot, "schema/v2/ThreadTokenUsageUpdatedNotification.json"), "utf8")));
@@ -690,6 +754,10 @@ test("pins the generated contract subset and validates representative 0.150.1 fi
       modelContextWindow: 128000,
     },
   }), true);
+  const start = ajv.compile(JSON.parse(await readFile(join(contractRoot, "schema/v2/ThreadStartParams.json"), "utf8")));
+  assert.equal(start({ model: "fixture", historyMode: "legacy", environments: [] }), true);
+  const turn = ajv.compile(JSON.parse(await readFile(join(contractRoot, "schema/v2/TurnStartParams.json"), "utf8")));
+  assert.equal(turn({ threadId: "thread-1", input: [{ type: "text", text: "fixture", text_elements: [] }], environments: [], outputSchema: { type: "object" } }), true);
 });
 
 test("runs one frozen observational queue entry and passes export, corpus, and archive readback", async () => {
@@ -944,7 +1012,7 @@ function createQueueFixture(parent: string, executable = process.execPath): { bu
 
   const configs = {
     model: { schemaVersion: "ebo.codex-config/v1", kind: "model", provider: "openai", model: "gpt-5.6-sol", effort: "high" },
-    harness: { schemaVersion: "ebo.codex-config/v1", kind: "harness", adapter: "codex-app-server", executable, version: "0.150.1", contractDigest: "sha256:844b52d4a5a8cda58794e28b3b119c3a3d20a588b7db83209c298bec62704092" },
+    harness: { schemaVersion: "ebo.codex-config/v1", kind: "harness", adapter: "codex-app-server", executable, version: CODEX_APP_SERVER_VERSION, contractDigest: CODEX_CONTRACT_DIGEST },
     limits: { schemaVersion: "ebo.codex-config/v1", kind: "native-limits", shutdownGraceMs: 1_000 },
     tools: { schemaVersion: "ebo.codex-config/v1", kind: "native-tool-policy", approvalPolicy: "never", sandbox: "workspace-write" },
     capture: { schemaVersion: "ebo.codex-config/v1", kind: "capture-profile", telemetrySignals: ["logs", "traces", "metrics"], workspaceOutcome: { excludeDirectoryNames: ["node_modules"] } },
