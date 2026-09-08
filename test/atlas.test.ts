@@ -25,6 +25,7 @@ test("Atlas mixed fixture preserves exact cohort populations, decisions and nati
     assert.deepEqual(new Set(view.cases.map(({ review }) => review)), new Set(["confirmed", "disputed", "rejected", "proposed", "abstained", "unavailable"]));
     assert.equal(view.report.comparisons[0]!.claimStatus, "unavailable");
     assert.equal(view.cases.filter(({ review }) => review === "confirmed").length, 2);
+    assert.equal(view.cases[0]!.harnessVersion, source.input.corpusEntries[0]!.harnessVersion);
     assert.ok(atlasBehaviorRows(view).some(({ assessment, numerator, denominator }) => assessment === "constructive" && numerator === 1 && denominator === 1));
     assert.ok(atlasBehaviorRows(view).some(({ assessment, numerator, denominator }) => assessment === "adverse" && numerator === 1 && denominator === 1));
     for (const item of view.cases) {
@@ -106,6 +107,8 @@ test("Atlas mixed fixture preserves exact cohort populations, decisions and nati
     assert.equal(traceView.cases[0]!.trace?.replayStart, traced.traces[0]!.replayStart);
     assert.match(traceView.cases[0]!.trace!.href, /^http:\/\/127\.0\.0\.1:13010\/explore\?/u);
     assert.match(renderAtlas(traceView, false), /Replay-shifted: 2026-09-08T01:00:00Z/u);
+    writeFileSync(requestPath, JSON.stringify({ ...traced, traces: [...traced.traces, { ...traced.traces[0], traceId: "b".repeat(32) }] }));
+    await assert.rejects(loadAtlas(requestPath), /trace attempt keys must be unique/u);
     writeFileSync(requestPath, JSON.stringify({ ...traced, traces: [{ ...traced.traces[0], traceId: "not-a-trace" }] }));
     await assert.rejects(loadAtlas(requestPath), /Invalid trace identity/u);
     writeFileSync(requestPath, JSON.stringify({ ...request, reviewPackets: ["missing.html"] }));

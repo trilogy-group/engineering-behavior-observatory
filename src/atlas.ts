@@ -34,6 +34,7 @@ export type AtlasRequest = {
 export type AtlasCase = {
   key: string; runId: string; attemptId: string; model: string; harness: string; task: string; trial: string;
   capture: string; outcome: string; review: string; category: string; assessment: string;
+  harnessVersion?: string;
   assertion?: BehaviorAssertion; assertionDigest?: Digest; decisions: readonly ReviewDecision[];
   citations: ReadonlyArray<{ eventId: string; nativeReference: unknown; normalizedEvent: unknown; nativeRecord: unknown }>;
   trace?: { href: string; originalStart: string; replayStart?: string };
@@ -65,6 +66,15 @@ export async function loadAtlas(requestPath: string): Promise<AtlasSource> {
   if (request.operatorNarrative !== undefined && typeof request.operatorNarrative !== "string") throw new Error("Operator narrative must be text.");
   if (request.grafanaUrl !== undefined) localUrl(request.grafanaUrl);
   if (request.atlasUrl !== undefined) localUrl(request.atlasUrl);
+  const traceKeys = new Set<string>();
+  for (const trace of request.traces ?? []) {
+    if (typeof trace.runId !== "string" || !trace.runId || typeof trace.attemptId !== "string" || !trace.attemptId
+      || !/^[a-f0-9]{32}$/u.test(trace.traceId) || !Number.isFinite(Date.parse(trace.originalStart))
+      || (trace.replayStart !== undefined && !Number.isFinite(Date.parse(trace.replayStart)))) throw new Error("Invalid trace identity or timestamp.");
+    const key = attemptKey(trace);
+    if (traceKeys.has(key)) throw new Error("Atlas trace attempt keys must be unique; conflicting trace bindings are not allowed.");
+    traceKeys.add(key);
+  }
   const base = dirname(resolve(requestPath));
   for (const path of request.reviewPackets ?? []) {
     if (typeof path !== "string" || !statSync(resolve(base, path), { throwIfNoEntry: false })?.isFile()) throw new Error("Configured human review packet is unavailable.");
@@ -90,11 +100,10 @@ export async function loadAtlas(requestPath: string): Promise<AtlasSource> {
   const seenAssertions = new Set<string>();
   for (const entry of corpusEntries.filter(({ manifestKind }) => manifestKind === "run")) {
     const ownAssertions = input.assertions.filter(({ document }) => attemptKey(document) === attemptKey(entry));
-    const context = { runId: entry.runId!, attemptId: entry.attemptId!, model: entry.modelId ?? "unavailable", harness: entry.harnessId ?? "unavailable", task: entry.taskId ?? "unavailable", trial: entry.trialId ?? "unavailable", capture: entry.captureQualification ?? "unavailable", outcome: entry.terminalState ?? "unavailable", ...(entry.retryOf ? { retryOf: entry.retryOf } : {}) };
+    const context = { runId: entry.runId!, attemptId: entry.attemptId!, model: entry.modelId ?? "unavailable", harness: entry.harnessId ?? "unavailable", harnessVersion: entry.harnessVersion ?? "unavailable", task: entry.taskId ?? "unavailable", trial: entry.trialId ?? "unavailable", capture: entry.captureQualification ?? "unavailable", outcome: entry.terminalState ?? "unavailable", ...(entry.retryOf ? { retryOf: entry.retryOf } : {}) };
     let trace: AtlasCase["trace"];
     const traceSource = request.traces?.find((item) => attemptKey(item) === attemptKey(entry));
     if (traceSource) {
-      if (!/^[a-f0-9]{32}$/u.test(traceSource.traceId) || !Number.isFinite(Date.parse(traceSource.originalStart)) || (traceSource.replayStart !== undefined && !Number.isFinite(Date.parse(traceSource.replayStart)))) throw new Error("Invalid trace identity or timestamp.");
       if (request.grafanaUrl && request.tempoDatasourceUid) {
         const panes = { atlas: { datasource: request.tempoDatasourceUid, queries: [{ refId: "A", queryType: "traceId", query: traceSource.traceId }], range: { from: "now-1h", to: "now" } } };
         trace = { href: `${localUrl(request.grafanaUrl)}/explore?schemaVersion=1&panes=${encodeURIComponent(JSON.stringify(panes))}`, originalStart: traceSource.originalStart, ...(traceSource.replayStart ? { replayStart: traceSource.replayStart } : {}) };
