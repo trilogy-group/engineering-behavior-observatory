@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "ebo.release-reproducibility/v1",
+  "release": {
+    "name": "engineering-behavior-observatory",
+    "version": "0.1.0"
+  },
+  "runtime": {
+    "node": "24.19.0",
+    "claudeAgentSdk": "0.3.258",
+    "openhandsAgentServer": "1.44.1",
+    "deepseekClient": "0.1.1-rc.2",
+    "deepseekProtocol": "0.1.1-rc.2",
+    "codexAppServer": "0.153.4",
+    "grafana": "13.2.0",
+    "grafanaInfinity": "4.0.0"
+  },
+  "commands": [
+    "npm ci",
+    "npm run acceptance"
+  ],
+  "fixtureCoverage": {
+    "agent-sdk": "frozen queue entry through qualified capture, approved export, normalization, configurable judging, review, aggregation, and Atlas",
+    "openhands-agent-server": "pinned REST/WebSocket stream-final reconciliation, workspace/outcome evidence, partial capture, and retained evaluation",
+    "deepseek-harness": "official-client JSON-RPC composition, receipt-to-idle completion, stderr, interruption, shutdown, swaps, and retained evaluation",
+    "codex-app-server": "owned stdio lifecycle, full history, OTLP, interruption/failure, export, and retained evaluation",
+    "acceptance-cases": "seeded ordering, secret scanning, partial attempts, native references, abstention, disputes, denominators, and unsupported comparisons"
+  },
+  "determinism": {
+    "stable": [
+      "task, run, attempt, event, assertion, aggregate, and Atlas case identities",
+      "fixture, native-reference, normalized-dataset, source/cohort, archive, and package digests",
+      "seeded queue and review-sample ordering"
+    ],
+    "excluded": [
+      "native and EBO observation timestamps",
+      "lifecycle start/finish timestamps",
+      "provider timing and usage",
+      "temporary workspace and output paths"
+    ]
+  },
+  "fixtures": {
+    "tests/fixtures/task-packet.valid.v1.json": "ac2ef1043c0cc16bf4c21d05c1dc880ca1b4b8cc2f9ea7653328e91f0b0e2681",
+    "test/fixtures/agent-sdk-normalizer/complete.input.json": "7285dee088517e5de38ceda84fc7c58d9303949c7448ab3b5e10a5a2d2ebdfe3",
+    "test/fixtures/agent-sdk-normalizer/complete.expected.jsonl": "d32fa3a013bc179f1673f7e1a89b8a721bb8ddaf63eba5bc8a3f14f1cc148ed8",
+    "contracts/openhands-agent-server-v1.44.1.json": "e7a07977688a0703b15751a8a1ab17f29be45f9fdf438017e0dbcbc49cca37b0",
+    "test/fixtures/openhands/v1.44.1/streamed-events.json": "d751083ba2ef94c9865117db481cc2f4933772bbbbb6b9fcf60571563715c1ea",
+    "test/fixtures/openhands/v1.44.1/final-events.json": "551db9904e860004d604c923692b5c5d3aaee966220492214c60003d2df415b6",
+    "test/fixtures/deepseek/golden-success.json": "f3867d38169bf0e28f64aba1dd60553f21cf07f41f81b4bad48261e49fa3ca88",
+    "test/fixtures/deepseek/golden-interrupted.json": "79e1f8404df1ee3b562d0bdbc0b2ee712ffc6d5774992b92970814ea815677b7",
+    "test/fixtures/deepseek/compositions/minimal/composition.json": "72fe4368e105f1bad82b7fdf8380e92c9fa689d8985f6ab91f534f0baf3eda02",
+    "contracts/codex-app-server-0.153.4/manifest.json": "e62281ff5e5d1cc71d07763b85e997ccc9ddbad9aa82a469da4181ee4b1890a8",
+    "test/fixtures/codex/legacy-0.150.1.dataset.json": "f71906b009e546afbf3b4e79396f223181382f3b3d8795e9cfcd032398a9d6bf",
+    "test/fixtures/behavior-assertions/abstained.json": "7f1962864f664c794925a67d93074e7b150af0f57c58041a81e062990d641197",
+    "test/fixtures/behavior-assertions/disputed.review.json": "450d3d9efe7feefaf7500b3ad20ab2803b412c7e53b91763125e15a83be87981",
+    "test/fixtures/comparison/exact.json": "cafa68e94b8d50dc308ddcfc2e73aa139c828b4ecd1e1c762bbc51bf1b44501e",
+    "test/fixtures/structural-observations/golden.json": "bad71a3a93524b76c0a2fdbb58e98e1e65be46cae14acf18ac89d9ba76e03e8a",
+    "test/atlas-fixture.ts": "9f03ce9cbcd0e5d3e3a5916866554ceb1c21f1c8712e58529499c1ea499f048d"
+  }
+}

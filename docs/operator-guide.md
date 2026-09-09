@@ -36,6 +36,24 @@ See [Agent SDK runner](agent-sdk-operational-runner.md),
 [Codex](codex-harness.md), [OpenHands](openhands-agent-server.md), and
 [DeepSeek](deepseek-harness.md) for their exact configuration and version pins.
 
+## Release acceptance
+
+Run the complete reusable-software gate from a clean checkout before preparing
+a tag or publication:
+
+```sh
+npm ci
+npm run acceptance
+```
+
+The gate uses deterministic fixtures only. It covers all four current harnesses,
+both configured judge backends, the current Atlas, security cases, local link
+integrity, fixture digests, and two byte-identical package builds. It writes the
+package, checksum, and current result to `.ebo/releases/0.1.0/` without
+publishing them. Review [the release audit](../release/0.1.0/README.md) and
+[known limitations](../release/0.1.0/KNOWN_LIMITATIONS.md) before interpreting
+fixture coverage as live support.
+
 ## Deterministic smoke workflow
 
 The supplied task-packet contract smoke and Atlas fixture are synthetic and

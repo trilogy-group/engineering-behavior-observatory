@@ -9,6 +9,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { RunBundleAssembler } from "../src/run-bundles.js";
+import { checkRetainedEvaluation } from "./retained-evaluation-helper.js";
 import type { HookEvent, HookInput, Options, SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import {
@@ -53,7 +54,7 @@ process.stdout.write(JSON.stringify({ assertions: [{ id: "result-file", status: 
 if (!passed) process.exitCode = 1;
 `;
 
-test("executes one frozen queue entry end to end and retains a qualified bundle", async () => {
+test("runs one frozen Agent SDK entry through capture, export, evaluation, review, aggregation, and Atlas", async () => {
   const fixture = createRunnerFixture();
   const query = fakeQuery({ resultContent: "done\n", extraFiles: { "node_modules/cache.txt": "generated\n" } });
   try {
@@ -133,6 +134,18 @@ test("executes one frozen queue entry end to end and retains a qualified bundle"
     assert.equal(verifier.status === "passed" ? verifier.workspace.fingerprint : undefined, workspaceEvidence.fingerprint);
     assert.ok(readFileSync(join(summary.bundlePath, "session.jsonl"), "utf8").trim().length > 0);
     assert.ok(readFileSync(join(summary.bundlePath, "hooks.jsonl"), "utf8").trim().length > 0);
+
+    const policyPath = join(fixture.parent, "release-export-policy.json");
+    const exportRoot = join(fixture.parent, "release-export");
+    writeFileSync(policyPath, JSON.stringify({
+      sharingClass: "partner",
+      maxArtifactBytes: 8 * 1024 * 1024,
+      maxStringBytes: 64 * 1024,
+    }));
+    const output: string[] = [];
+    assert.equal(await main(["export", "create", summary.bundlePath, policyPath, exportRoot], (message) => output.push(message)), 0, output.join(""));
+    assert.equal(JSON.parse(readFileSync(join(exportRoot, "manifest.json"), "utf8")).status, "ready");
+    await checkRetainedEvaluation(summary.bundlePath, join(fixture.parent, "release-evaluation"));
   } finally {
     rmSync(fixture.parent, { recursive: true, force: true });
   }
