@@ -132,8 +132,10 @@ const registration = {
 ```
 
 Add the registration and its extraction function in
-`src/structural-observations.ts`, then add one small golden fixture case. Do not
-use a semantic heuristic for a structural fact.
+`src/structural-observations.ts`, bump `STRUCTURAL_EXTRACTOR_VERSION`, then add
+one small golden fixture case. Every registry or extraction-behavior change
+requires a version bump so retained observation provenance stays unambiguous.
+Do not use a semantic heuristic for a structural fact.
 
 Evidence obligations:
 
