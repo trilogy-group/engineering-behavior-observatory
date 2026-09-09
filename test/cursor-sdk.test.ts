@@ -359,19 +359,21 @@ test("treats a completed tool envelope with an error result as failure, not muta
   }
 });
 
-test("foreign native store events and checkpoints make capture unqualified", async () => {
-  const fixture = createCursorFixture();
-  try {
-    const summary = await runCursorSdkQueueEntry({
-      ...fixture,
-      apiKey: "fixture-key",
-      modelLister: fakeModelLister,
-      agentFactory: fakeAgentFactory({ foreignStoreRecords: true }),
-    });
-    assert.equal(summary.captureQualification, "unqualified");
-    await assert.rejects(createRetainedBehaviorEvidence(summary.bundlePath), /unqualified structural capture report|capture-qualified evidence/u);
-  } finally {
-    rmSync(fixture.parent, { recursive: true, force: true });
+test("foreign or oversized native store records make capture unqualified", async () => {
+  for (const behavior of [{ foreignStoreRecords: true }, { oversizedStoreRecord: true }]) {
+    const fixture = createCursorFixture();
+    try {
+      const summary = await runCursorSdkQueueEntry({
+        ...fixture,
+        apiKey: "fixture-key",
+        modelLister: fakeModelLister,
+        agentFactory: fakeAgentFactory(behavior),
+      });
+      assert.equal(summary.captureQualification, "unqualified");
+      await assert.rejects(createRetainedBehaviorEvidence(summary.bundlePath), /unqualified structural capture report|capture-qualified evidence/u);
+    } finally {
+      rmSync(fixture.parent, { recursive: true, force: true });
+    }
   }
 });
 
@@ -507,6 +509,7 @@ function fakeAgentFactory(behavior: {
   oversizedStreamRecord?: boolean;
   nestedToolError?: boolean;
   foreignStoreRecords?: boolean;
+  oversizedStoreRecord?: boolean;
 } = {}): CursorSdkAgentFactory {
   return async (options: AgentOptions): Promise<SDKAgent> => {
     assert.equal(process.env.CURSOR_API_KEY, options.apiKey);
@@ -564,6 +567,9 @@ function fakeAgentFactory(behavior: {
               if (behavior.foreignStoreRecords) {
                 await store.runEvents.append({ runId: "foreign-run", eventType: "interaction", payload: { type: "text-delta", text: "foreign" } });
                 await store.checkpoints.create({ agentId: "foreign-agent", blobId: "foreign-checkpoint", data: new Uint8Array([5]) });
+              }
+              if (behavior.oversizedStoreRecord) {
+                await store.runEvents.append({ runId: NATIVE_RUN_ID, eventType: "interaction", payload: { text: "x".repeat(1_100_000) } });
               }
               await store.agents.update({ agent: { ...(await store.agents.get({ agentId: AGENT_ID }))!, status: "idle", activeRunId: null, updatedAt: 2,
                 latestCheckpoint: { schemaVersion: 1, rootBlobId: "checkpoint-1" } } });

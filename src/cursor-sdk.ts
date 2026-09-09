@@ -324,7 +324,12 @@ export async function captureCursorSdkRun(options: CaptureCursorSdkRunOptions): 
 
   if (workspace?.status === "ready") await captureWorkspace().catch(() => undefined);
   if (agentId !== undefined && nativeRunId !== undefined) {
-    await validateStoreFiles(storeRoot, agentId, nativeRunId).catch((error: unknown) => errors.push(`store: ${errorMessage(error)}`));
+    await validateStoreFiles(
+      storeRoot,
+      agentId,
+      nativeRunId,
+      options.configuration.maxNativeRecordBytes ?? MAX_NATIVE_RECORD_BYTES,
+    ).catch((error: unknown) => errors.push(`store: ${errorMessage(error)}`));
   }
   const sessionPath = join(assembler.bundleRoot, "native", "session.jsonl");
   if (await nonempty(sessionPath)) {
@@ -943,12 +948,15 @@ async function validateStoreIdentity(store: JsonlLocalAgentStore, agentId: strin
   }
 }
 
-async function validateStoreFiles(storeRoot: string, agentId: string, runId: string): Promise<void> {
+async function validateStoreFiles(storeRoot: string, agentId: string, runId: string, maxRecordBytes: number): Promise<void> {
   const documents = (name: keyof typeof JSONL_LOCAL_AGENT_STORE_FILES): CursorNativeRecord[] => {
     const path = join(storeRoot, JSONL_LOCAL_AGENT_STORE_FILES[name]);
     if (!existsSync(path)) return [];
     const source = readBoundedFile(path, `Cursor ${name} store`).toString("utf8");
     return source.split(/\r?\n/u).filter(Boolean).map((line, index) => {
+      if (Buffer.byteLength(`${line}\n`) > maxRecordBytes) {
+        throw new Error(`Cursor ${name} store line ${String(index + 1)} exceeds the configured native record byte limit.`);
+      }
       assertNoDuplicateJsonKeys(line);
       const value = JSON.parse(line) as unknown;
       if (!isRecord(value)) throw new Error(`Cursor ${name} store line ${String(index + 1)} is not an object.`);
