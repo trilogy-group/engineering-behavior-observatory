@@ -269,10 +269,14 @@ node dist/src/cli.js calibration packet \
 node dist/src/cli.js calibration inspect \
   study/reviews/packet/packet.json <assertion-id>
 node dist/src/cli.js calibration binding \
-  study/reviews/selection.json <assertion-id> study/reviews/history.json
+  study/reviews/selection.json <assertion-id>
 node dist/src/cli.js calibration import \
   study/reviews/selection.json study/reviews/history.json \
   study/reviews/decision.json
+
+# For a later decision, bind it to the existing history:
+node dist/src/cli.js calibration binding \
+  study/reviews/selection.json <assertion-id> study/reviews/history.json
 node dist/src/cli.js calibration summarize \
   study/reviews/selection.json study/reviews/history.json \
   study/reviews/summary.json

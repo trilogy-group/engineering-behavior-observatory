@@ -203,6 +203,7 @@ import { join } from "node:path";
 
 const workspace = process.argv[2];
 const passed = readFileSync(join(workspace, "result.txt"), "utf8") === "done\n";
+if (!passed) process.exitCode = 1;
 process.stdout.write(JSON.stringify({
   assertions: [{ id: "expected-result", status: passed ? "passed" : "failed" }],
 }));
