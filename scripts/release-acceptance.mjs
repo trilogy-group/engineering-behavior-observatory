@@ -169,7 +169,7 @@ function checkPackageLinks(files) {
 function markdownFiles(directory) {
   const files = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    if ([".git", ".ebo", "dist", "node_modules"].includes(entry.name)) continue;
+    if ([".git", ".ebo", ".opensymphony", "dist", "node_modules"].includes(entry.name)) continue;
     const path = join(directory, entry.name);
     if (entry.isDirectory()) files.push(...markdownFiles(path));
     else if (entry.name.endsWith(".md")) files.push(path);

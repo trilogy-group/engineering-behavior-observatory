@@ -13,6 +13,11 @@ event, run, and attempt identities; source harness and native type; native
 evidence reference; native order and time; actor; family; phase; scope;
 relations; bounded attributes; and content references.
 
+An event may retain up to 4,096 known relations. Native model-request and
+assembled-message events can reference many source chunks; the live DeepSeek
+smoke required 119 relations on one event. Relations are preserved rather than
+silently truncated, and larger sets fail validation explicitly.
+
 The initial families are `message`, `model-request`, `tool`, `context`,
 `permission`, `delegation`, `artifact`, `validation`, `runtime`, and `outcome`.
 They are observation categories, not a shared transport or lifecycle protocol.

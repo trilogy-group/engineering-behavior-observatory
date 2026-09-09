@@ -66,6 +66,20 @@ test("validates golden events for every initial family without inventing missing
   assert.equal(JSON.stringify(fixture).includes("JSON-RPC"), false);
 });
 
+test("preserves large native source relation sets while retaining a finite bound", async () => {
+  const events = Array.from({ length: 120 }, (_, index): UniformEvent => ({
+    ...structuredClone(fixture[0]!), id: `native-source-${index}`,
+    nativeOrder: { status: "unknown", reason: "synthetic relation fixture" },
+    relations: { parent: { status: "unknown", reason: "no parent" }, known: [] },
+  }));
+  const target = events.at(-1)!;
+  target.relations.known = events.slice(0, -1).map(({ id }) => ({ kind: "caused-by", eventId: id }));
+  await validateUniformEvents(events, { resolve: () => true });
+  assert.equal(target.relations.known.length, 119);
+  target.relations.known = Array.from({ length: 4097 }, () => ({ kind: "caused-by", eventId: events[0]!.id }));
+  await assert.rejects(validateUniformEvents(events, { resolve: () => true }), /4096/);
+});
+
 test("rejects unresolved native and content references", async () => {
   const event = structuredClone(fixture[0]!);
   const sourceOnly: NativeEvidenceResolver = {

@@ -45,8 +45,8 @@ comparison, aggregation, and the local Behavior Atlas.
 The [release notes](release/0.1.0/README.md) describe verification and packaging.
 The [support matrix](release/0.1.0/KNOWN_LIMITATIONS.md) distinguishes live-tested
 routes from deterministic contract coverage. Agent SDK and Codex capture, a
-Codex abstention judgment, and OpenHands with Z.ai were live-tested. DeepSeek
-remains verified against controlled official-client fixtures.
+Codex abstention judgment, and OpenHands and DeepSeek Harness with Z.ai were
+live-tested. Each route's telemetry and completeness limits remain explicit.
 
 Native Agent SDK capture is available through the public
 `captureClaudeAgentSdkRun` library entry point. It executes one caller-supplied

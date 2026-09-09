@@ -10,6 +10,7 @@
     "openhandsAgentServer": "1.46.0",
     "deepseekClient": "0.1.1-rc.2",
     "deepseekProtocol": "0.1.1-rc.2",
+    "deepseekRuntime": "0.1.1-rc.2",
     "codexAppServer": "0.153.4",
     "grafana": "13.2.0",
     "grafanaInfinity": "4.0.0"
