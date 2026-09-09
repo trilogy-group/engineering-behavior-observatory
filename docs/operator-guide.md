@@ -29,7 +29,7 @@ Harness prerequisites differ:
 |---|---|---|
 | Claude Agent SDK | direct pinned TypeScript SDK | an existing approved authenticated route; optional OTLP receiver |
 | Codex | owned pinned `codex app-server` child | Codex `0.153.4` and existing login; EBO creates an isolated temporary home |
-| OpenHands | Agent Server REST/WebSocket | pinned `1.44.1` server and workspace path visible to both processes |
+| OpenHands | Agent Server REST/WebSocket | pinned `1.46.0` server and workspace path visible to both processes |
 | DeepSeek Harness | official TypeScript client over JSON-RPC stdio | digest-pinned runtime composition; the official client owns framing and teardown |
 
 See [Agent SDK runner](agent-sdk-operational-runner.md),

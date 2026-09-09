@@ -4,6 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { openHandsCapabilityProfile } from "../src/openhands.js";
+
+test("retained OpenHands profiles preserve historical runtime identities", () => {
+  assert.equal(openHandsCapabilityProfile("1.44.1").adapterId, "openhands-agent-server-v1.44.1");
+  assert.deepEqual(openHandsCapabilityProfile("1.46.0"), OPENHANDS_AGENT_SERVER_CAPABILITIES);
+  assert.throws(() => openHandsCapabilityProfile("1.45.0"), /Unsupported retained/);
+});
 
 import {
   assertAdapterContract,
@@ -35,7 +42,7 @@ test("captures the pinned REST and WebSocket event then normalizes native source
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
     requests.push(`${init?.method ?? "GET"} ${new URL(url).pathname}`);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1", sdk_version: "1.44.1", tools_version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION, sdk_version: OPENHANDS_AGENT_SERVER_VERSION, tools_version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") {
       return json({ id: "conversation-1", execution_status: "running", workspace: { type: "local", working_dir: "/workspace" } }, 201);
     }
@@ -102,7 +109,7 @@ test("reconnects from the last native timestamp and reconciles duplicate streame
     if (url.endsWith("/api/conversations") && init?.method === "POST") {
       assert.equal(new Headers(init.headers).get("x-session-api-key"), "secret");
     }
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") {
       return json({ id: "conversation-1", execution_status: "running", workspace: {} }, 201);
     }
@@ -160,7 +167,7 @@ test("fences a pending reconnect when capture closes", async () => {
   const sockets: FakeWebSocket[] = [];
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
     if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
     if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
@@ -223,7 +230,7 @@ test("maps supported event facts, error scopes, and exposed relationships while 
     qualification: "qualified-with-gaps",
     records,
     conversationId: "conversation-1",
-    serverInfo: { version: "1.44.1" },
+    serverInfo: { version: OPENHANDS_AGENT_SERVER_VERSION },
     finalConversation: { id: "conversation-1", execution_status: "finished" },
     reconciliation: {
       status: "matched",
@@ -265,7 +272,7 @@ test("declares source-specific capabilities without behavioral comparison claims
     },
   };
 
-  assert.equal(adapter.capture.id, "openhands-agent-server-v1.44.1");
+  assert.equal(adapter.capture.id, "openhands-agent-server-v1.46.0");
   assert.equal(adapter.normalization.capabilityProfile, OPENHANDS_AGENT_SERVER_CAPABILITIES);
   assert.deepEqual(
     Object.keys(OPENHANDS_AGENT_SERVER_CAPABILITIES.families).filter((family) =>
@@ -279,7 +286,7 @@ test("retains streamed evidence and a capture gap when final REST reconciliation
   let deleted = false;
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") {
       return json({ id: "conversation-1", execution_status: "running", workspace: {} }, 201);
     }
@@ -334,7 +341,7 @@ test("retains successful final REST pages when a later page fails", async () => 
   let eventPages = 0;
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
     if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
     if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
@@ -376,7 +383,7 @@ test("retains and cleans up a partial attempt when message submission fails", as
   let deleted = false;
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
     if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ detail: "failed" }, 500);
     if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [], next_page_id: null });
@@ -413,7 +420,7 @@ test("aborts an in-flight conversation capture and retains the partial evidence"
   let deleted = false;
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
     if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
     if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
@@ -457,7 +464,7 @@ test("bounds untrusted Agent Server JSON responses before parsing", async () => 
     baseUrl: "http://127.0.0.1:8000",
     startConversation: {},
     message: {},
-    fetch: async () => json({ version: "1.44.1", padding: "x".repeat(256) }),
+    fetch: async () => json({ version: OPENHANDS_AGENT_SERVER_VERSION, padding: "x".repeat(256) }),
     webSocket: (url) => new FakeWebSocket(url),
     maxResponseBytes: 100,
   });
@@ -491,7 +498,7 @@ test("retains unprojectable conversation creation responses without adopting the
     startConversation: {},
     message: {},
     fetch: async (input) => String(input).endsWith("/server_info")
-      ? json({ version: "1.44.1" }) : json({ id: "x".repeat(256) }, 201),
+      ? json({ version: OPENHANDS_AGENT_SERVER_VERSION }) : json({ id: "x".repeat(256) }, 201),
   });
 
   assert.equal(result.conversationId, undefined);
@@ -510,7 +517,7 @@ test("applies the configured timeout to Agent Server REST requests", async () =>
     timeoutMs: 10,
     fetch: async (_input, init) => new Promise<Response>((resolvePromise, reject) => {
       assert.equal(init?.redirect, "manual");
-      const timer = setTimeout(() => resolvePromise(json({ version: "1.44.1" })), 30);
+      const timer = setTimeout(() => resolvePromise(json({ version: OPENHANDS_AGENT_SERVER_VERSION })), 30);
       init?.signal?.addEventListener("abort", () => {
         clearTimeout(timer);
         reject(init.signal?.reason);
@@ -526,7 +533,7 @@ test("closes and fences a WebSocket that misses its open deadline", async () => 
   let socket: FakeWebSocket | undefined;
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
     if (url.includes("/api/conversations/conversation-1/events/search")) return json({ items: [], next_page_id: null });
     if (url.endsWith("/api/conversations/conversation-1") && init?.method === "DELETE") return json({ success: true });
@@ -562,7 +569,7 @@ test("closes and fences a WebSocket that misses its open deadline", async () => 
 test("retains an explicit gap for an oversized WebSocket frame", async () => {
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
     if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
     if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
@@ -603,7 +610,7 @@ test("retains an explicit gap for an oversized WebSocket frame", async () => {
 test("marks identifier-less channel records as reconciliation gaps", async () => {
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
     if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
     if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
@@ -641,7 +648,7 @@ test("marks identifier-less channel records as reconciliation gaps", async () =>
 test("bounds cumulative accepted WebSocket event bytes", async () => {
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
     if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
     if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
@@ -680,7 +687,7 @@ test("bounds cumulative accepted WebSocket event bytes", async () => {
 test("bounds rejected WebSocket status records", async () => {
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
     if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
     if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
@@ -719,7 +726,7 @@ test("bounds rejected WebSocket status records", async () => {
 test("records an exhausted stream disconnect while final REST preserves the event", async () => {
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
     if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
     if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
@@ -778,7 +785,7 @@ test("satisfies the uniform adapter contract with resolvable retained native rec
       },
     })),
     conversationId: "conversation-1",
-    serverInfo: { version: "1.44.1" },
+    serverInfo: { version: OPENHANDS_AGENT_SERVER_VERSION },
     finalConversation: { id: "conversation-1", execution_status: "finished" },
     reconciliation: {
       status: "matched",
@@ -819,7 +826,7 @@ test("preserves timezone-naive native timestamps without inventing a uniform tim
       },
     }],
     conversationId: "conversation-1",
-    serverInfo: { version: "1.44.1" },
+    serverInfo: { version: OPENHANDS_AGENT_SERVER_VERSION },
     finalConversation: { execution_status: "finished" },
     reconciliation: {
       status: "matched",
@@ -855,7 +862,7 @@ test("marks missing native content unknown instead of emitting a nonexistent poi
       },
     }],
     conversationId: "conversation-1",
-    serverInfo: { version: "1.44.1" },
+    serverInfo: { version: OPENHANDS_AGENT_SERVER_VERSION },
     finalConversation: { execution_status: "finished" },
     reconciliation: {
       status: "matched",
@@ -920,7 +927,7 @@ test("keeps bounded condensation attributes and synthetic outcome IDs in separat
       },
     ],
     conversationId: "conversation-1",
-    serverInfo: { version: "1.44.1" },
+    serverInfo: { version: OPENHANDS_AGENT_SERVER_VERSION },
     finalConversation: { id: "conversation-1", execution_status: "finished" },
     reconciliation: {
       status: "matched",
@@ -972,7 +979,7 @@ test("packages one verified smoke attempt with native, workspace, verifier, and 
       task: { id: "task-openhands-smoke" },
       fixture: { id: "fixture-openhands-smoke", digest: SHA("a") },
       model: { provider: "test", id: "test/model" },
-      harness: { id: "openhands-agent-server", version: "1.44.1" },
+      harness: { id: "openhands-agent-server", version: OPENHANDS_AGENT_SERVER_VERSION },
       runtime: [],
     },
     attempt: { id: "attempt-openhands-smoke", number: 1 },
@@ -980,7 +987,7 @@ test("packages one verified smoke attempt with native, workspace, verifier, and 
   };
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1", sdk_version: "1.44.1", tools_version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION, sdk_version: OPENHANDS_AGENT_SERVER_VERSION, tools_version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") {
       const body = JSON.parse(String(init.body)) as { workspace: { working_dir: string } };
       assert.equal(body.workspace.working_dir, "/server/workspace");
@@ -1106,7 +1113,7 @@ test("preserves and reports the source workspace when workspace evidence capture
   let callerCleanupRan = false;
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
     if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
     if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
@@ -1204,7 +1211,7 @@ test("keeps retained workspace evidence distinct from a verifier failure", async
   let callerCleanupRan = false;
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
     if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
     if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
@@ -1300,7 +1307,7 @@ test("finalizes completed native capture before reporting projection failure", a
   };
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
     if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") return json({ success: true });
     if (url.endsWith("/api/conversations/conversation-1") && (init?.method ?? "GET") === "GET") {
@@ -1402,7 +1409,7 @@ test("rejects a run definition attributed to another harness", async () => {
       task: { id: "task-openhands-harness-mismatch" },
       fixture: { id: "fixture-openhands-harness-mismatch", digest: SHA("a") },
       model: { provider: "test", id: "test/model" },
-      harness: { id: "agent-sdk", version: "1.44.1" },
+      harness: { id: "agent-sdk", version: OPENHANDS_AGENT_SERVER_VERSION },
       runtime: [],
     },
     attempt: { id: "attempt-openhands-harness-mismatch", number: 1 },
@@ -1501,7 +1508,7 @@ test("retains pre-session evidence when conversation creation fails", async () =
         startConversation: { agent: { kind: "Agent", llm: { model: "test/model" } } },
         message: {},
         fetch: async (input) => String(input).endsWith("/server_info")
-          ? json({ version: "1.44.1" }) : json({ detail: "create failed" }, 503),
+          ? json({ version: OPENHANDS_AGENT_SERVER_VERSION }) : json({ detail: "create failed" }, 503),
       },
     });
     const session = result.manifest.evidence.find(({ kind }) => kind === "session")!;
@@ -1545,7 +1552,7 @@ test("retains progressively written native evidence when lifecycle cancellation 
   let cleanupRequests = 0;
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url.endsWith("/server_info")) return json({ version: "1.44.1" });
+    if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION });
     if (url.endsWith("/api/conversations") && init?.method === "POST") return json({ id: "conversation-1" }, 201);
     if (url.endsWith("/api/conversations/conversation-1/events") && init?.method === "POST") {
       setTimeout(() => controller.abort(), 1);
@@ -1598,7 +1605,7 @@ test("retains progressively written native evidence when lifecycle cancellation 
 
 test("pins the exact upstream OpenAPI and TypeScript-client comparison artifacts", () => {
   const contract = JSON.parse(readFileSync(
-    join(repositoryRoot, "contracts/openhands-agent-server-v1.44.1.json"),
+    join(repositoryRoot, "contracts/openhands-agent-server-v1.46.0.json"),
     "utf8",
   )) as {
     server: { version: string; openapiSha256: string };
@@ -1607,7 +1614,7 @@ test("pins the exact upstream OpenAPI and TypeScript-client comparison artifacts
   };
 
   assert.equal(contract.server.version, OPENHANDS_AGENT_SERVER_VERSION);
-  assert.equal(contract.server.openapiSha256, "718a6e6e658ead0aba4457ad5fc083df0436b3bfddfdac646cd8eb2f22c973f1");
+  assert.equal(contract.server.openapiSha256, "8eb95317fbbaa5022afdabb195a8f1638a536c788645469010c46b8aa8306472");
   assert.equal(contract.typescriptClient.version, OPENHANDS_TYPESCRIPT_CLIENT_VERSION);
   assert.equal(contract.typescriptClient.generatedForServer, "1.44.0");
   assert.equal(contract.typescriptClient.decision, "direct-rest-websocket");

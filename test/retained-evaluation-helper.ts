@@ -14,7 +14,11 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
   const before = readFileSync(join(bundleRoot, "manifest.json"));
   const evidence = await createRetainedBehaviorEvidence(bundleRoot);
   const observations = await createRetainedStructuralObservationSet(bundleRoot);
-  if (evidence.dataset.adapter.harness === "openhands-agent-server") assert.equal(evidence.dataset.adapter.version, "1.44.1");
+  if (evidence.dataset.adapter.harness === "openhands-agent-server") {
+    const version = (JSON.parse(before.toString("utf8")) as { run: { harness: { version: string } } }).run.harness.version;
+    assert.equal(evidence.dataset.adapter.version, version);
+    assert.equal(evidence.dataset.adapter.id, `openhands-agent-server-v${version}`);
+  }
   assert.ok(evidence.dataset.events.length > 0);
   assert.equal(await main(["observations", "create", bundleRoot, join(outputRoot, "observations.json")], () => undefined), 0);
   const event = evidence.dataset.events[0]!;

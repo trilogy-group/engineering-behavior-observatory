@@ -8,7 +8,7 @@ import type {
   UniformEvent,
 } from "./uniform-events.js";
 
-export const OPENHANDS_AGENT_SERVER_VERSION = "1.44.1";
+export const OPENHANDS_AGENT_SERVER_VERSION = "1.46.0";
 export const OPENHANDS_TYPESCRIPT_CLIENT_VERSION = "1.39.0";
 export const OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 export const OPENHANDS_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
@@ -16,7 +16,7 @@ export const OPENHANDS_DEFAULT_MAX_CAPTURE_BYTES = 256 * 1024 * 1024;
 export const OPENHANDS_MAX_CAPTURE_BYTES = 1024 * 1024 * 1024;
 export const OPENHANDS_AGENT_SERVER_CAPABILITIES = {
   schemaVersion: "ebo.adapter-capability-profile/v1",
-  adapterId: "openhands-agent-server-v1.44.1",
+  adapterId: "openhands-agent-server-v1.46.0",
   harness: "openhands-agent-server",
   nativeTypes: [
     "MessageEvent",
@@ -55,6 +55,14 @@ export const OPENHANDS_AGENT_SERVER_CAPABILITIES = {
     content: { status: "partial", detail: "Supported content stays in native records and is referenced rather than copied." },
   },
 } as const satisfies AdapterCapabilityProfile;
+
+/** Retained evidence keeps the identity of the runtime that produced it. */
+export function openHandsCapabilityProfile(version: string): AdapterCapabilityProfile {
+  if (version !== "1.44.1" && version !== OPENHANDS_AGENT_SERVER_VERSION) {
+    throw new Error(`Unsupported retained OpenHands runtime ${version}.`);
+  }
+  return { ...OPENHANDS_AGENT_SERVER_CAPABILITIES, adapterId: `openhands-agent-server-v${version}` };
+}
 
 export interface OpenHandsWebSocket {
   readonly readyState: number;

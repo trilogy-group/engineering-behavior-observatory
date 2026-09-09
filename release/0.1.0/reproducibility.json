@@ -7,7 +7,7 @@
   "runtime": {
     "node": "24.19.0",
     "claudeAgentSdk": "0.3.258",
-    "openhandsAgentServer": "1.44.1",
+    "openhandsAgentServer": "1.46.0",
     "deepseekClient": "0.1.1-rc.2",
     "deepseekProtocol": "0.1.1-rc.2",
     "codexAppServer": "0.153.4",
@@ -43,6 +43,7 @@
     "test/fixtures/agent-sdk-normalizer/complete.input.json": "7285dee088517e5de38ceda84fc7c58d9303949c7448ab3b5e10a5a2d2ebdfe3",
     "test/fixtures/agent-sdk-normalizer/complete.expected.jsonl": "d32fa3a013bc179f1673f7e1a89b8a721bb8ddaf63eba5bc8a3f14f1cc148ed8",
     "contracts/openhands-agent-server-v1.44.1.json": "e7a07977688a0703b15751a8a1ab17f29be45f9fdf438017e0dbcbc49cca37b0",
+    "contracts/openhands-agent-server-v1.46.0.json": "455cdddd2c206cb2f20245c2189b92e773657ec14d651236baa532b2dbadeb28",
     "test/fixtures/openhands/v1.44.1/streamed-events.json": "d751083ba2ef94c9865117db481cc2f4933772bbbbb6b9fcf60571563715c1ea",
     "test/fixtures/openhands/v1.44.1/final-events.json": "551db9904e860004d604c923692b5c5d3aaee966220492214c60003d2df415b6",
     "test/fixtures/deepseek/golden-success.json": "f3867d38169bf0e28f64aba1dd60553f21cf07f41f81b4bad48261e49fa3ca88",

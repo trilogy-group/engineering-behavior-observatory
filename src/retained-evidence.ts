@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { readQualifiedRunCapture, createAgentSdkNativeEvidenceResolver, type AgentSdkNativeRecord } from "./agent-sdk-normalizer.js";
 import { createAgentSdkBehaviorEvidence } from "./behavior-assertions.js";
 import { describeAndValidateCodexDataset, CODEX_HARNESS } from "./codex.js";
-import { normalizeOpenHandsCapture, OPENHANDS_AGENT_SERVER_CAPABILITIES, OPENHANDS_AGENT_SERVER_VERSION, type OpenHandsNativeRecord } from "./openhands.js";
+import { normalizeOpenHandsCapture, openHandsCapabilityProfile, type OpenHandsNativeRecord } from "./openhands.js";
 import { createDeepSeekHarnessAdapter, DEEPSEEK_HARNESS_ID, DEEPSEEK_SDK_VERSION, normalizeDeepSeekCapture, qualifyRetainedDeepSeekCapture, type DeepSeekNativeObservation } from "./deepseek-adapter.js";
 import { createCapturedNativeEvidenceResolver, describeNormalizedDataset, validateNormalizedDataset, type AdapterCoverageReport, type NormalizedDataset } from "./normalization-integrity.js";
 import { readBoundedFile } from "./scheduler.js";
@@ -26,9 +26,7 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
     const evidence = await createAgentSdkBehaviorEvidence(bundleRoot);
     return { ...evidence, outcomeCapture: evidence.capture };
   }
-  if (harness === "openhands-agent-server" && manifest.run.harness.version !== OPENHANDS_AGENT_SERVER_VERSION) {
-    throw new Error(`Unsupported retained OpenHands runtime ${manifest.run.harness.version}.`);
-  }
+  if (harness === "openhands-agent-server") openHandsCapabilityProfile(manifest.run.harness.version);
   if (harness === DEEPSEEK_HARNESS_ID && manifest.run.harness.version !== DEEPSEEK_SDK_VERSION) {
     throw new Error(`Unsupported retained DeepSeek runtime ${manifest.run.harness.version}.`);
   }
@@ -118,7 +116,7 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
       throw new Error("Completed retained OpenHands capture lacks owned finished conversation evidence.");
     }
     dataset = describeNormalizedDataset({ capture: native, normalization: await normalizeOpenHandsCapture(native),
-      capabilityProfile: OPENHANDS_AGENT_SERVER_CAPABILITIES, adapterVersion: OPENHANDS_AGENT_SERVER_VERSION,
+      capabilityProfile: openHandsCapabilityProfile(manifest.run.harness.version), adapterVersion: manifest.run.harness.version,
       nativeType: (record) => typeof record.payload.kind === "string" ? record.payload.kind : record.channel });
   } else {
     const native = qualifyRetainedDeepSeekCapture(capture as NormalizationInput<DeepSeekNativeObservation>,

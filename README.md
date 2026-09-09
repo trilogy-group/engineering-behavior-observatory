@@ -24,7 +24,7 @@ abstentions, and failed judgments through an explicitly selected isolated
 Claude Agent SDK or native Codex backend, independently of the evaluated harness.
 
 The [OpenHands Agent Server adapter](docs/openhands-agent-server.md) implements
-the pinned `1.44.1` REST/WebSocket boundary with native-first reconciliation,
+the pinned `1.46.0` REST/WebSocket boundary with native-first reconciliation,
 explicit completeness gaps, and verified run-bundle packaging.
 
 The [DeepSeek Harness adapter](docs/deepseek-harness.md) uses the official

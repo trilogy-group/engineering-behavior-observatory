@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "ebo.openhands-agent-server-contract/v1",
+  "server": {
+    "version": "1.46.0",
+    "gitCommit": "6a1e4d0f08dcdd02786526a51b7965e1877008bc",
+    "image": "ghcr.io/openhands/agent-server:1.46.0-python",
+    "openapiUrl": "https://github.com/OpenHands/software-agent-sdk/releases/download/v1.46.0/openapi.json",
+    "openapiSha256": "8eb95317fbbaa5022afdabb195a8f1638a536c788645469010c46b8aa8306472",
+    "macosArm64": {
+      "url": "https://github.com/OpenHands/software-agent-sdk/releases/download/v1.46.0/agent-server-1.46.0-macos-arm64",
+      "sha256": "f6131ad7c7e2cec49b68bf3c3101098bd9dba85237f07eac45f00b3cdd5f18ad"
+    }
+  },
+  "rest": {
+    "authenticationHeader": "X-Session-API-Key",
+    "serverIdentity": "GET /server_info",
+    "createConversation": "POST /api/conversations",
+    "sendMessage": "POST /api/conversations/{conversation_id}/events",
+    "readConversation": "GET /api/conversations/{conversation_id}",
+    "searchEvents": "GET /api/conversations/{conversation_id}/events/search",
+    "deleteConversation": "DELETE /api/conversations/{conversation_id}",
+    "eventSearchSortOrder": "TIMESTAMP",
+    "eventSearchPageLimit": 100
+  },
+  "websocket": {
+    "sourceUrl": "https://github.com/OpenHands/software-agent-sdk/blob/6a1e4d0f08dcdd02786526a51b7965e1877008bc/openhands-agent-server/openhands/agent_server/sockets.py",
+    "path": "/sockets/events/{conversation_id}",
+    "authentication": "first-message",
+    "initialResendMode": "all",
+    "reconnectResendMode": "since",
+    "reconnectCursor": "after_timestamp"
+  },
+  "typescriptClient": {
+    "version": "1.39.0",
+    "generatedForServer": "1.44.0",
+    "decision": "direct-rest-websocket",
+    "reason": "Historical client comparison from the 1.44.1 audit; EBO retains its direct transport to observe connection lifecycle."
+  },
+  "compatibility": {
+    "priorRuntime": "1.44.1",
+    "rest": "Existing conversation paths and consumed event schemas are unchanged.",
+    "changedSchemas": ["ACPAgent-Input", "ACPAgent-Output", "SkillsRequest"],
+    "legacyEvidence": "Retained 1.44.1 captures preserve their original adapter identity.",
+    "completeInProcessEventLogDelivery": "unknown"
+  }
+}
