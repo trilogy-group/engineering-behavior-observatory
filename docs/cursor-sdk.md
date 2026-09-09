@@ -48,7 +48,7 @@ rejected while that boundary is active.
 ## Configuration records
 
 The queue points to five digest-pinned `ebo.cursor-sdk-config/v1` records. The
-minimal examples under [`examples/cursor-sdk`](../examples/cursor-sdk) are
+minimal examples under [`examples/cursor-sdk`](../examples/cursor-sdk/README.md) are
 caller inputs, not defaults. Replace the model placeholder with one exact
 catalog ID before computing digests and compiling a queue. The experiment's
 model-set key remains a path-safe condition ID; it need not duplicate a
