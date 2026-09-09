@@ -79,7 +79,8 @@ validation commands from the [operator guide](operator-guide.md). Then run one
 persisted entry:
 
 ```sh
-CURSOR_API_KEY="<approved-secret>" node dist/src/cli.js cursor run \
+# After injecting CURSOR_API_KEY through the approved secret environment:
+node dist/src/cli.js cursor run \
   <bundle-root> <queue.json> <run-id> <output-root> \
   --workspace-root <workspace-parent>
 ```

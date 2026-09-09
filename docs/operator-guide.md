@@ -183,8 +183,9 @@ node dist/src/cli.js codex run \
   study/bundle study/queue.json <run-id> study/runs \
   --workspace-root study/workspaces
 
-# Or, for a queue compiled with the pinned Cursor SDK configuration:
-CURSOR_API_KEY="<approved-secret>" node dist/src/cli.js cursor run \
+# Or, after injecting CURSOR_API_KEY through the approved secret environment,
+# run a queue compiled with the pinned Cursor SDK configuration:
+node dist/src/cli.js cursor run \
   study/bundle study/queue.json <run-id> study/runs \
   --workspace-root study/workspaces
 ```
