@@ -132,10 +132,13 @@ const registration = {
 ```
 
 Add the registration and its extraction function in
-`src/structural-observations.ts`, bump `STRUCTURAL_EXTRACTOR_VERSION`, then add
-one small golden fixture case. Every registry or extraction-behavior change
-requires a version bump so retained observation provenance stays unambiguous.
-Do not use a semantic heuristic for a structural fact.
+`src/structural-observations.ts`, bump `STRUCTURAL_EXTRACTOR_VERSION`, update
+both extractor-version constraints in
+`schemas/structural-observations.v1.json`, then add one small golden fixture
+case. Schema/readback changes must continue accepting already retained
+extractor versions. Every registry or extraction-behavior change requires this
+coordinated version update so new observations validate and retained provenance
+stays unambiguous. Do not use a semantic heuristic for a structural fact.
 
 Evidence obligations:
 
