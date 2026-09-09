@@ -15,73 +15,81 @@ import { spawnSync } from "node:child_process";
 
 const root = process.cwd();
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-const manifestPath = join(root, "release", pkg.version, "reproducibility.json");
-const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-
-if (process.version !== `v${pkg.engines.node}`) {
-  throw new Error(`Release acceptance requires Node ${pkg.engines.node}; found ${process.version}.`);
-}
-if (manifest.release.name !== pkg.name || manifest.release.version !== pkg.version) {
-  throw new Error("Reproducibility manifest does not match package identity.");
-}
-
-for (const [path, expected] of Object.entries(manifest.fixtures)) {
-  const actual = sha256(readFileSync(join(root, path)));
-  if (actual !== expected) throw new Error(`Fixture digest mismatch for ${path}: ${actual}.`);
-}
-
-run("npm", ["run", "build"]);
-run("npm", ["run", "typecheck"]);
-const tests = readdirSync(join(root, "dist", "test"))
-  .filter((name) => name.endsWith(".test.js"))
-  .sort()
-  .map((name) => join("dist", "test", name));
-run(process.execPath, ["--test", "--test-concurrency=1", ...tests]);
-checkLinks();
-
-const temporary = mkdtempSync(join(tmpdir(), "ebo-release-acceptance-"));
 const outputRoot = join(root, ".ebo", "releases", pkg.version);
+rmSync(outputRoot, { recursive: true, force: true });
+mkdirSync(outputRoot, { recursive: true });
+let stage = "preflight";
+writeResult({ schemaVersion: "ebo.release-acceptance-result/v1", release: { name: pkg.name, version: pkg.version }, status: "running", stage });
+
 try {
-  const first = pack(join(temporary, "first"));
-  const second = pack(join(temporary, "second"));
-  const firstBytes = readFileSync(join(temporary, "first", first.filename));
-  const secondBytes = readFileSync(join(temporary, "second", second.filename));
-  const digest = sha256(firstBytes);
-  if (!firstBytes.equals(secondBytes)) throw new Error("Repeated npm packs were not byte-identical.");
-  if (first.files.some(({ path }) => forbiddenPackagePath(path))) {
-    throw new Error("Package contains restricted evidence, test fixtures, credentials, or orchestration state.");
+  const manifestPath = join(root, "release", pkg.version, "reproducibility.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  if (process.version !== `v${pkg.engines.node}`) {
+    throw new Error(`Release acceptance requires Node ${pkg.engines.node}; found ${process.version}.`);
   }
-  for (const { path } of first.files) {
-    const source = join(root, path);
-    if (!existsSync(source) || statSync(source).isDirectory()) continue;
-    const bytes = readFileSync(source);
-    if (/ghp_[A-Za-z0-9]{30,}|-----BEGIN (?:ENCRYPTED |PGP )?PRIVATE KEY-----/u.test(bytes.toString("utf8"))) {
-      throw new Error(`Package file ${path} contains a secret-like value.`);
-    }
+  if (manifest.release.name !== pkg.name || manifest.release.version !== pkg.version) {
+    throw new Error("Reproducibility manifest does not match package identity.");
+  }
+  for (const [path, expected] of Object.entries(manifest.fixtures)) {
+    const actual = sha256(readFileSync(join(root, path)));
+    if (actual !== expected) throw new Error(`Fixture digest mismatch for ${path}: ${actual}.`);
   }
 
-  rmSync(outputRoot, { recursive: true, force: true });
-  mkdirSync(outputRoot, { recursive: true });
-  writeFileSync(join(outputRoot, first.filename), firstBytes);
-  writeFileSync(join(outputRoot, "SHA256SUMS"), `${digest}  ${first.filename}\n`);
-  const result = {
-    schemaVersion: "ebo.release-acceptance-result/v1",
-    release: manifest.release,
-    status: "passed",
-    sourceCommit: output("git", ["rev-parse", "HEAD"]).trim(),
-    node: process.version.slice(1),
-    npm: output("npm", ["--version"]).trim(),
-    fixtureManifest: relative(root, manifestPath),
-    fixtureCount: Object.keys(manifest.fixtures).length,
-    documentationLinks: "passed",
-    tests: "passed",
-    deterministicPackage: true,
-    package: { filename: first.filename, sha256: digest, sizeBytes: firstBytes.length, files: first.files.length },
-  };
-  writeFileSync(join(outputRoot, "acceptance-result.json"), `${JSON.stringify(result, null, 2)}\n`);
-  process.stdout.write(`Release acceptance passed: ${relative(root, outputRoot)}/${first.filename}\nsha256:${digest}\n`);
-} finally {
-  rmSync(temporary, { recursive: true, force: true });
+  stage = "build-and-test";
+  run("npm", ["run", "build"]);
+  run("npm", ["run", "typecheck"]);
+  const tests = readdirSync(join(root, "dist", "test"))
+    .filter((name) => name.endsWith(".test.js"))
+    .sort()
+    .map((name) => join("dist", "test", name));
+  run(process.execPath, ["--test", "--test-concurrency=1", ...tests]);
+  checkLinks(root);
+
+  stage = "package";
+  const temporary = mkdtempSync(join(tmpdir(), "ebo-release-acceptance-"));
+  try {
+    const first = pack(join(temporary, "first"));
+    const second = pack(join(temporary, "second"));
+    const firstBytes = readFileSync(join(temporary, "first", first.filename));
+    const secondBytes = readFileSync(join(temporary, "second", second.filename));
+    const digest = sha256(firstBytes);
+    if (!firstBytes.equals(secondBytes)) throw new Error("Repeated npm packs were not byte-identical.");
+    if (first.files.some(({ path }) => forbiddenPackagePath(path))) {
+      throw new Error("Package contains restricted evidence, test fixtures, credentials, or orchestration state.");
+    }
+    checkPackageLinks(first.files);
+    for (const { path } of first.files) {
+      const source = join(root, path);
+      if (!existsSync(source) || statSync(source).isDirectory()) continue;
+      const text = readFileSync(source, "utf8");
+      if (/\/(?:Users|home)\/[^/\s"'`]+\/|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/u.test(text)) {
+        throw new Error(`Package file ${path} contains a local identifier or secret-like value.`);
+      }
+    }
+
+    writeFileSync(join(outputRoot, first.filename), firstBytes);
+    writeFileSync(join(outputRoot, "SHA256SUMS"), `${digest}  ${first.filename}\n`);
+    writeResult({
+      schemaVersion: "ebo.release-acceptance-result/v1",
+      release: manifest.release,
+      status: "passed",
+      sourceCommit: output("git", ["rev-parse", "HEAD"]).trim(),
+      node: process.version.slice(1),
+      npm: output("npm", ["--version"]).trim(),
+      fixtureManifest: relative(root, manifestPath),
+      fixtureCount: Object.keys(manifest.fixtures).length,
+      documentationLinks: "passed",
+      tests: "passed",
+      deterministicPackage: true,
+      package: { filename: first.filename, sha256: digest, sizeBytes: firstBytes.length, files: first.files.length },
+    });
+    process.stdout.write(`Release acceptance passed: ${relative(root, outputRoot)}/${first.filename}\nsha256:${digest}\n`);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+} catch (error) {
+  writeResult({ schemaVersion: "ebo.release-acceptance-result/v1", release: { name: pkg.name, version: pkg.version }, status: "failed", stage });
+  throw error;
 }
 
 function run(command, args) {
@@ -104,8 +112,8 @@ function pack(destination) {
   return packed;
 }
 
-function checkLinks() {
-  for (const file of markdownFiles(root)) {
+function checkLinks(directory) {
+  for (const file of markdownFiles(directory)) {
     let fenced = false;
     for (const [index, line] of readFileSync(file, "utf8").split("\n").entries()) {
       if (/^\s*```/u.test(line)) { fenced = !fenced; continue; }
@@ -115,6 +123,25 @@ function checkLinks() {
         if (!target || /^(?:https?:|mailto:)/u.test(target)) continue;
         const resolved = resolve(dirname(file), decodeURIComponent(target));
         if (!existsSync(resolved)) throw new Error(`Broken documentation link in ${relative(root, file)}:${index + 1}: ${match[1]}.`);
+      }
+    }
+  }
+}
+
+function checkPackageLinks(files) {
+  const included = new Set(files.map(({ path }) => path));
+  for (const path of included) {
+    if (!path.endsWith(".md")) continue;
+    const file = join(root, path);
+    let fenced = false;
+    for (const [index, line] of readFileSync(file, "utf8").split("\n").entries()) {
+      if (/^\s*```/u.test(line)) { fenced = !fenced; continue; }
+      if (fenced) continue;
+      for (const match of line.matchAll(/\[[^\]]*\]\(([^)]+)\)/gu)) {
+        const target = match[1].trim().replace(/^<|>$/gu, "").split("#", 1)[0];
+        if (!target || /^(?:https?:|mailto:)/u.test(target)) continue;
+        const packagedTarget = relative(root, resolve(dirname(file), decodeURIComponent(target)));
+        if (!included.has(packagedTarget)) throw new Error(`Broken packaged link in ${path}:${index + 1}: ${match[1]}.`);
       }
     }
   }
@@ -137,4 +164,8 @@ function forbiddenPackagePath(path) {
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function writeResult(result) {
+  writeFileSync(join(outputRoot, "acceptance-result.json"), `${JSON.stringify(result, null, 2)}\n`);
 }

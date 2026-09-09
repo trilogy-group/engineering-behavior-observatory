@@ -44,11 +44,8 @@ attempt and retains its native stream, hooks, telemetry receipt, workspace,
 assessment mode, capability profile, and structural qualification. Verified
 tasks additionally retain their verifier result. Queue-wide
 study execution remains an operational caller concern. The implementation
-backlog is maintained separately in:
-
-`/Users/magos/dev/trilogy/benchmarking/Anthropic-evals/plans`
-
-The published Linear project is the execution view of that task package. Study
+backlog is maintained in a separate planning package. The published Linear
+project is the execution view of that task package. Study
 operations—task curation, model selection, trial counts, human review, and
 partner delivery—are deliberately outside this software repository.
 
@@ -252,7 +249,8 @@ queue. Sequential, seeded-shuffle, and balanced/interleaved policies retain
 the seed and every frozen task, model, harness, configuration, and trial
 identity; they do not start execution or add distributed scheduling.
 
-Start with [AGENTS.md](AGENTS.md) and the assigned Linear issue. `WORKFLOW.md`
+Source contributors should start with the repository `AGENTS.md` and the
+assigned Linear issue. `WORKFLOW.md`
 contains OpenSymphony orchestration configuration and should not be treated as
 the EBO product specification.
 
