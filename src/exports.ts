@@ -775,7 +775,26 @@ export function containsPortableSecretPattern(text: string, mediaType: string): 
 }
 
 /** Detect user-identifying home paths without rejecting documented generic paths. */
-export function containsPortableLocalHomePath(text: string): boolean {
+export function containsPortableLocalHomePath(text: string, mediaType = "text/plain"): boolean {
+  if (mediaType === "application/json") {
+    return valueContainsLocalHomePath(parseJson(Buffer.from(text), "Portable JSON local-home scan"));
+  }
+  if (mediaType === "application/x-ndjson") {
+    return text.split(/\r?\n/gu).filter(Boolean).some((line) =>
+      valueContainsLocalHomePath(parseJson(Buffer.from(line), "Portable JSONL local-home scan")));
+  }
+  return stringContainsLocalHomePath(text);
+}
+
+function valueContainsLocalHomePath(value: unknown): boolean {
+  if (typeof value === "string") return stringContainsLocalHomePath(value);
+  if (Array.isArray(value)) return value.some(valueContainsLocalHomePath);
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(([key, entry]) =>
+    stringContainsLocalHomePath(key) || valueContainsLocalHomePath(entry));
+}
+
+function stringContainsLocalHomePath(text: string): boolean {
   const matched = LOCAL_HOME_PATH.test(text);
   LOCAL_HOME_PATH.lastIndex = 0;
   return matched;

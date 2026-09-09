@@ -56,6 +56,7 @@ test("release scanning reuses the complete export credential patterns", () => {
   }
   assert.equal(containsPortableLocalHomePath('{"home":"/Users/alice"}'), true);
   assert.equal(containsPortableLocalHomePath('{"home":"C:\\Users\\alice"}'), true);
+  assert.equal(containsPortableLocalHomePath(JSON.stringify({ home: "C:\\Users\\alice" }), "application/json"), true);
   assert.equal(containsPortableLocalHomePath("/tmp/example"), false);
 });
 

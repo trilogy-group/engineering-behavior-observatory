@@ -77,7 +77,7 @@ try {
         : path.endsWith(".json") ? "application/json"
           : "text/plain";
       const scannedText = sourceCode ? maskSourceIdentifierAssignments(text, path, typescript) : text;
-      if (containsPortableLocalHomePath(text) || containsPortableSecretPattern(scannedText, mediaType)) {
+      if (containsPortableLocalHomePath(text, mediaType) || containsPortableSecretPattern(scannedText, mediaType)) {
         throw new Error(`Package file ${path} contains a local identifier or secret-like value.`);
       }
     }
