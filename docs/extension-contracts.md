@@ -195,7 +195,8 @@ node --test dist/test/codex-judge.test.js
 A verifier is an admitted, digest-pinned CommonJS or ESM file, not an arbitrary
 command. It reads the private workspace snapshot path from `process.argv[2]`
 and writes one JSON object to stdout. Compile this TypeScript example to
-CommonJS or ESM before digesting and admitting it:
+CommonJS or ESM before digesting and admitting it. Admit compiled ESM with an
+`.mjs` locator; the operational runners treat every other locator as CommonJS:
 
 ```ts
 import { readFileSync } from "node:fs";

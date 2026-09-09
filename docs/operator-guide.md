@@ -232,14 +232,21 @@ node dist/src/cli.js observations create \
 # Or rebuild observations for a qualified corpus selection:
 node dist/src/cli.js observations corpus \
   study/runs study/index.jsonl study/observations \
-  --assessment-mode observational
+  --assessment-mode observational --capture qualified
 ```
 
 The single-run form writes the explicit `<run-id>-<attempt-id>.json` path used
 below. The corpus form writes `sha256-<digest>.json` files; locate a selected
 attempt before judging it, for example with
 `rg -l '"attemptId":"<attempt-id>"' study/observations/sha256-*.json`, and pass
-that exact path to `judge run`.
+that exact path to `judge run`. Process `qualified-with-gaps` captures only
+after reviewing their explicit gaps, and use a separate new output root:
+
+```sh
+node dist/src/cli.js observations corpus \
+  study/runs study/index.jsonl study/observations-with-gaps \
+  --assessment-mode observational --capture qualified-with-gaps
+```
 
 Unmapped native records and unsupported capabilities remain explicit. Native
 records remain authoritative and are referenced, not copied into a synthetic
