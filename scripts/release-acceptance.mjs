@@ -22,6 +22,9 @@ let stage = "preflight";
 writeResult({ schemaVersion: "ebo.release-acceptance-result/v1", release: { name: pkg.name, version: pkg.version }, status: "running", stage });
 
 try {
+  if (output("git", ["status", "--porcelain", "--untracked-files=all"]).trim() !== "") {
+    throw new Error("Release acceptance requires a clean source tree.");
+  }
   const manifestPath = join(root, "release", pkg.version, "reproducibility.json");
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   if (process.version !== `v${pkg.engines.node}`) {
@@ -38,6 +41,7 @@ try {
   stage = "build-and-test";
   run("npm", ["run", "build"]);
   run("npm", ["run", "typecheck"]);
+  const { containsPortableSecretPattern } = await import("../dist/src/exports.js");
   const tests = readdirSync(join(root, "dist", "test"))
     .filter((name) => name.endsWith(".test.js"))
     .sort()
@@ -62,7 +66,8 @@ try {
       const source = join(root, path);
       if (!existsSync(source) || statSync(source).isDirectory()) continue;
       const text = readFileSync(source, "utf8");
-      if (/\/(?:Users|home)\/[^/\s"'`]+\/|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/u.test(text)) {
+      const mediaType = /\.(?:[cm]?js|[cm]?ts)$/u.test(path) ? "application/javascript" : "text/plain";
+      if (/\/(?:Users|home)\/[^/\s"'`]+\//u.test(text) || containsPortableSecretPattern(text, mediaType)) {
         throw new Error(`Package file ${path} contains a local identifier or secret-like value.`);
       }
     }

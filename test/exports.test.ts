@@ -25,6 +25,7 @@ import {
   type PortableExportPolicy,
   type RunManifest,
 } from "../src/index.js";
+import { containsPortableSecretPattern } from "../src/exports.js";
 
 const fixtureRoot = resolve("test/fixtures/run-bundles/complete");
 const token = "ghp_abcdefghijklmnopqrstuvwxyz123456";
@@ -38,6 +39,17 @@ const genericToken = "generic-token-value-12345";
 const privateKeyBlock = "-----BEGIN PRIVATE KEY-----\ncHJpdmF0ZS1rZXktbWF0ZXJpYWw=\n-----END PRIVATE KEY-----";
 const encryptedPrivateKeyBlock = "-----BEGIN ENCRYPTED PRIVATE KEY-----\nZW5jcnlwdGVkLWtleS1tYXRlcmlhbA==\n-----END ENCRYPTED PRIVATE KEY-----";
 const pgpPrivateKeyBlock = "-----BEGIN PGP PRIVATE KEY BLOCK-----\ncGdwLWtleS1tYXRlcmlhbA==\n-----END PGP PRIVATE KEY BLOCK-----";
+
+test("release scanning reuses the complete export credential patterns", () => {
+  for (const value of [
+    "sk-ant-api03-syntheticvalue",
+    "AKIAIOSFODNN7EXAMPLE",
+    'api_key="synthetic-credential-value"',
+  ]) assert.equal(containsPortableSecretPattern(value, "text/plain"), true);
+  assert.equal(containsPortableSecretPattern("const config = { api_key: request.apiKey };", "application/javascript"), false);
+  assert.equal(containsPortableSecretPattern("const config = { session_api_key: request.sessionApiKey };", "application/javascript"), false);
+  assert.equal(containsPortableSecretPattern('const config = { api_key: "synthetic-credential-value" };', "application/javascript"), true);
+});
 
 test("exports a sanitized public M2 bundle without mutating its source", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-export-"));

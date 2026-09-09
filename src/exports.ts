@@ -712,7 +712,7 @@ function scanPortableTree(
     const text = decode(bytes, "portable export");
     const failure = [
       ["known sensitive value", sensitiveValues.some((value) => text.includes(value))],
-      ["secret pattern", containsSecretPattern(text, mediaType)],
+      ["secret pattern", containsPortableSecretPattern(text, mediaType)],
       ["absolute path", containsLocalPath(text, mediaType)],
       ["local identifier", LOCAL_IDENTIFIER_PATTERNS.some((pattern) => pattern.test(text))],
       ["source correlation", sourceCorrelations.filter((value) => value.length >= 8).some((value) => text.includes(value))],
@@ -761,7 +761,15 @@ function valueContainsCodexReasoningContent(value: unknown): boolean {
   return Object.values(value).some(valueContainsCodexReasoningContent);
 }
 
-function containsSecretPattern(text: string, mediaType: string): boolean {
+/** Use the export pipeline's fail-closed credential patterns on release material. */
+export function containsPortableSecretPattern(text: string, mediaType: string): boolean {
+  if (mediaType === "application/javascript") {
+    text = text.replace(/([A-Za-z_$][\w$]*)\s*([:=])\s*((?:[A-Za-z_$][\w$]*\.)*[A-Za-z_$][\w$]*)/gu,
+      (match, key: unknown, operator: unknown) => typeof key === "string"
+        && [...SECRET_FIELDS].some((secret) => normalizeFieldName(key).endsWith(secret))
+        ? `${key}${String(operator)}[REDACTED_SECRET]`
+        : match);
+  }
   if (mediaType === "application/json") {
     return valueContainsSecretPattern(parseJson(Buffer.from(text), "Portable JSON final scan"));
   }
