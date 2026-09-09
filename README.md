@@ -57,6 +57,12 @@ path is [docs/agent-sdk-operational-runner.md](docs/agent-sdk-operational-runner
 `ebo agent-sdk run` implements it as the single-entry operator command, and
 `ebo export create` wraps the existing portable-export library boundary.
 
+Start with the [local operator guide](docs/operator-guide.md) for the complete
+packet-to-Atlas workflow, artifact locations, and failure recovery. Use the
+[extension contracts guide](docs/extension-contracts.md) when adding a harness
+adapter, process/API boundary, structural extractor, rubric, verifier, or
+export policy.
+
 ## Integration shape
 
 ```text
