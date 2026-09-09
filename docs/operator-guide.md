@@ -191,15 +191,21 @@ workspace paths. Missing evidence remains missing; never convert it to zero,
 ### 5. Export an approved derivative
 
 Export is optional for local analysis. A policy is caller-owned and contains
-only the sharing class and bounds, for example:
+the sharing class, bounds, and optionally caller-known confidential values that
+the built-in secret checks or exporter environment cannot discover:
 
 ```json
 {
   "sharingClass": "partner",
   "maxArtifactBytes": 16777216,
-  "maxStringBytes": 8192
+  "maxStringBytes": 8192,
+  "sensitiveValues": ["<caller-known confidential value>"]
 }
 ```
+
+Keep a policy containing `sensitiveValues` with restricted study inputs and do
+not commit real values. They are scan inputs and are not copied into the
+portable export.
 
 ```sh
 node dist/src/cli.js export create \
@@ -228,6 +234,12 @@ node dist/src/cli.js observations corpus \
   study/runs study/index.jsonl study/observations \
   --assessment-mode observational
 ```
+
+The single-run form writes the explicit `<run-id>-<attempt-id>.json` path used
+below. The corpus form writes `sha256-<digest>.json` files; locate a selected
+attempt before judging it, for example with
+`rg -l '"attemptId":"<attempt-id>"' study/observations/sha256-*.json`, and pass
+that exact path to `judge run`.
 
 Unmapped native records and unsupported capabilities remain explicit. Native
 records remain authoritative and are referenced, not copied into a synthetic
@@ -293,12 +305,18 @@ sets, assertions, calibration history, grouping, attempt-selection policy,
 recurrence threshold, and any comparison gates.
 
 ```sh
-node dist/src/cli.js comparison check study/comparison-request.json
+node dist/src/cli.js comparison check study/comparison-request.json \
+  > study/comparison-report.json
 node dist/src/cli.js aggregate build \
   study/aggregation.json study/aggregate.json
 node dist/src/cli.js atlas build study/atlas.json study/atlas-output
 node dist/src/cli.js atlas serve study/atlas.json --port 13011
 ```
+
+The `report` field for each gate in `aggregation.json` must name the exact file
+written above. Inspect its supported, qualified-with-caveats, or unsupported
+status before aggregation; redirecting stdout persists the inspectable report
+even when an unsupported comparison returns nonzero.
 
 The Atlas consumes existing evidence and review state; it does not run a judge
 or edit decisions. Local restricted reports and sanitized shareable summaries
