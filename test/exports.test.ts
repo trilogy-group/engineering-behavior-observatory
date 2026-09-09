@@ -25,7 +25,7 @@ import {
   type PortableExportPolicy,
   type RunManifest,
 } from "../src/index.js";
-import { containsPortableSecretPattern } from "../src/exports.js";
+import { containsPortableLocalHomePath, containsPortableSecretPattern } from "../src/exports.js";
 
 const fixtureRoot = resolve("test/fixtures/run-bundles/complete");
 const token = "ghp_abcdefghijklmnopqrstuvwxyz123456";
@@ -50,8 +50,13 @@ test("release scanning reuses the complete export credential patterns", () => {
   assert.equal(containsPortableSecretPattern("const config = { session_api_key: request.sessionApiKey };", "application/javascript"), false);
   assert.equal(containsPortableSecretPattern('const config = { api_key: "synthetic-credential-value" };', "application/javascript"), true);
   assert.equal(containsPortableSecretPattern("// api_key=sk-ant-api03-syntheticvalue", "application/javascript"), true);
+  assert.equal(containsPortableSecretPattern("// authorization=Bearer syntheticcredentialvalue", "application/javascript"), true);
   assert.equal(containsPortableSecretPattern('{"api_key":"synthetic-credential-value"}', "application/json"), true);
   assert.equal(containsPortableSecretPattern('{"api_key":"[REDACTED_SECRET]"}', "application/json"), false);
+  for (const path of ["/Users/alice", "/Users/alice/repo", "/home/alice/repo", "/root/private", "C:\\Users\\alice\\repo"]) {
+    assert.equal(containsPortableLocalHomePath(path), true);
+  }
+  assert.equal(containsPortableLocalHomePath("/tmp/example"), false);
 });
 
 test("exports a sanitized public M2 bundle without mutating its source", async () => {

@@ -41,7 +41,7 @@ try {
   stage = "build-and-test";
   run("npm", ["run", "build"]);
   run("npm", ["run", "typecheck"]);
-  const { containsPortableSecretPattern } = await import("../dist/src/exports.js");
+  const { containsPortableLocalHomePath, containsPortableSecretPattern } = await import("../dist/src/exports.js");
   const tests = readdirSync(join(root, "dist", "test"))
     .filter((name) => name.endsWith(".test.js"))
     .sort()
@@ -72,7 +72,7 @@ try {
       const mediaType = path.endsWith(".jsonl") ? "application/x-ndjson"
         : path.endsWith(".json") ? "application/json"
           : /\.(?:[cm]?js|[cm]?ts)$/u.test(path) ? "application/javascript" : "text/plain";
-      if (/\/(?:Users|home)\/[^/\s"'`]+\//u.test(text) || containsPortableSecretPattern(text, mediaType)) {
+      if (containsPortableLocalHomePath(text) || containsPortableSecretPattern(text, mediaType)) {
         throw new Error(`Package file ${path} contains a local identifier or secret-like value.`);
       }
     }

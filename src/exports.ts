@@ -169,6 +169,7 @@ const LOCAL_IDENTIFIER_PATTERNS = [
   /((?:user(?:name)?|owner|login)\s*[:=])(?!(?:\s*)\[LOCAL_USER\])\s*[^\s,"'}\]]+()/giu,
 ];
 const LOCAL_PATH = /(^|[\s"'=:(+\-])(?:[A-Za-z]:\\(?:[^\\\s"']+\\)*[^\\\s"']*|\/(?!\/)[^\s"']+)/gu;
+const LOCAL_HOME_PATH = /(?:^|[\s"'=:(+\-])(?:[A-Za-z]:\\Users\\[^\\\s"']+(?:\\|$)|\/(?:Users|home)\/[^/\s"']+(?:\/|$)|\/root(?:\/|$))/giu;
 
 /** Create one separately rooted, sanitized derivative of an M2 run bundle. */
 export async function createPortableRunBundleExport(
@@ -767,7 +768,7 @@ export function containsPortableSecretPattern(text: string, mediaType: string): 
     const highConfidence = SECRET_PATTERNS.slice(0, 2).some((pattern) => pattern.test(text));
     resetPatterns();
     if (highConfidence) return true;
-    text = text.replace(/([A-Za-z_$][\w$]*)\s*([:=])\s*((?:[A-Za-z_$][\w$]*\.)*[A-Za-z_$][\w$]*)/gu,
+    text = text.replace(/([A-Za-z_$][\w$]*)\s*([:=])\s*((?:[A-Za-z_$][\w$]*\.)*[A-Za-z_$][\w$]*)(?=\s*[,;)}\]]|$)/gu,
       (match, key: unknown, operator: unknown) => typeof key === "string"
         && [...SECRET_FIELDS].some((secret) => normalizeFieldName(key).endsWith(secret))
         ? `${key}${String(operator)}[REDACTED_SECRET]`
@@ -781,6 +782,13 @@ export function containsPortableSecretPattern(text: string, mediaType: string): 
       valueContainsSecretPattern(parseJson(Buffer.from(line), "Portable JSONL final scan")));
   }
   return stringContainsSecretPattern(text);
+}
+
+/** Detect user-identifying home paths without rejecting documented generic paths. */
+export function containsPortableLocalHomePath(text: string): boolean {
+  const matched = LOCAL_HOME_PATH.test(text);
+  LOCAL_HOME_PATH.lastIndex = 0;
+  return matched;
 }
 
 function valueContainsSecretPattern(value: unknown): boolean {
