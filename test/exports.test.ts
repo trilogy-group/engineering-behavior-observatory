@@ -46,16 +46,16 @@ test("release scanning reuses the complete export credential patterns", () => {
     "AKIAIOSFODNN7EXAMPLE",
     'api_key="synthetic-credential-value"',
   ]) assert.equal(containsPortableSecretPattern(value, "text/plain"), true);
-  assert.equal(containsPortableSecretPattern("const config = { api_key: request.apiKey };", "application/javascript"), false);
-  assert.equal(containsPortableSecretPattern("const config = { session_api_key: request.sessionApiKey };", "application/javascript"), false);
-  assert.equal(containsPortableSecretPattern('const config = { api_key: "synthetic-credential-value" };', "application/javascript"), true);
-  assert.equal(containsPortableSecretPattern("// api_key=sk-ant-api03-syntheticvalue", "application/javascript"), true);
-  assert.equal(containsPortableSecretPattern("// authorization=Bearer syntheticcredentialvalue", "application/javascript"), true);
+  assert.equal(containsPortableSecretPattern('const fixture = "api_key=syntheticcredential;";', "text/plain"), true);
+  assert.equal(containsPortableSecretPattern("// api_key=sk-ant-api03-syntheticvalue", "text/plain"), true);
+  assert.equal(containsPortableSecretPattern("// authorization=Bearer syntheticcredentialvalue", "text/plain"), true);
   assert.equal(containsPortableSecretPattern('{"api_key":"synthetic-credential-value"}', "application/json"), true);
   assert.equal(containsPortableSecretPattern('{"api_key":"[REDACTED_SECRET]"}', "application/json"), false);
   for (const path of ["/Users/alice", "/Users/alice/repo", "/home/alice/repo", "/root/private", "C:\\Users\\alice\\repo"]) {
     assert.equal(containsPortableLocalHomePath(path), true);
   }
+  assert.equal(containsPortableLocalHomePath('{"home":"/Users/alice"}'), true);
+  assert.equal(containsPortableLocalHomePath('{"home":"C:\\Users\\alice"}'), true);
   assert.equal(containsPortableLocalHomePath("/tmp/example"), false);
 });
 

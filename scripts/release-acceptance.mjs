@@ -41,7 +41,10 @@ try {
   stage = "build-and-test";
   run("npm", ["run", "build"]);
   run("npm", ["run", "typecheck"]);
-  const { containsPortableLocalHomePath, containsPortableSecretPattern } = await import("../dist/src/exports.js");
+  const [{ containsPortableLocalHomePath, containsPortableSecretPattern }, typescript] = await Promise.all([
+    import("../dist/src/exports.js"),
+    import("typescript"),
+  ]);
   const tests = readdirSync(join(root, "dist", "test"))
     .filter((name) => name.endsWith(".test.js"))
     .sort()
@@ -69,10 +72,12 @@ try {
       const source = join(root, path);
       if (!existsSync(source) || statSync(source).isDirectory()) continue;
       const text = readFileSync(source, "utf8");
+      const sourceCode = /\.(?:[cm]?js|[cm]?ts)$/u.test(path);
       const mediaType = path.endsWith(".jsonl") ? "application/x-ndjson"
         : path.endsWith(".json") ? "application/json"
-          : /\.(?:[cm]?js|[cm]?ts)$/u.test(path) ? "application/javascript" : "text/plain";
-      if (containsPortableLocalHomePath(text) || containsPortableSecretPattern(text, mediaType)) {
+          : "text/plain";
+      const scannedText = sourceCode ? maskSourceIdentifierAssignments(text, path, typescript) : text;
+      if (containsPortableLocalHomePath(text) || containsPortableSecretPattern(scannedText, mediaType)) {
         throw new Error(`Package file ${path} contains a local identifier or secret-like value.`);
       }
     }
@@ -174,6 +179,31 @@ function forbiddenPackagePath(path) {
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function maskSourceIdentifierAssignments(source, path, ts) {
+  const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true,
+    path.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
+  const ranges = [];
+  const visit = (node) => {
+    const value = ts.isPropertyAssignment(node) ? node.initializer
+      : ts.isVariableDeclaration(node) ? node.initializer
+        : ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken ? node.right
+          : undefined;
+    if (value !== undefined && isSourceReference(value, ts)) ranges.push([value.getStart(file), value.end]);
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  for (const [start, end] of ranges.sort(([left], [right]) => right - left)) {
+    source = `${source.slice(0, start)}[REDACTED_SECRET]${source.slice(end)}`;
+  }
+  return source;
+}
+
+function isSourceReference(node, ts) {
+  if (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) return true;
+  if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isNonNullExpression(node)) return isSourceReference(node.expression, ts);
+  return false;
 }
 
 function writeResult(result) {

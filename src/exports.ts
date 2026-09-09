@@ -169,7 +169,7 @@ const LOCAL_IDENTIFIER_PATTERNS = [
   /((?:user(?:name)?|owner|login)\s*[:=])(?!(?:\s*)\[LOCAL_USER\])\s*[^\s,"'}\]]+()/giu,
 ];
 const LOCAL_PATH = /(^|[\s"'=:(+\-])(?:[A-Za-z]:\\(?:[^\\\s"']+\\)*[^\\\s"']*|\/(?!\/)[^\s"']+)/gu;
-const LOCAL_HOME_PATH = /(?:^|[\s"'=:(+\-])(?:[A-Za-z]:\\Users\\[^\\\s"']+(?:\\|$)|\/(?:Users|home)\/[^/\s"']+(?:\/|$)|\/root(?:\/|$))/giu;
+const LOCAL_HOME_PATH = /(?:^|[\s"'=:(+\-])(?:[A-Za-z]:\\Users\\[^\\\s"']+(?=[\\\s"',;:)}\]]|$)|\/(?:Users|home)\/[^/\s"']+(?=[/\s"',;:)}\]]|$)|\/root(?=[/\s"',;:)}\]]|$))/giu;
 
 /** Create one separately rooted, sanitized derivative of an M2 run bundle. */
 export async function createPortableRunBundleExport(
@@ -764,16 +764,6 @@ function valueContainsCodexReasoningContent(value: unknown): boolean {
 
 /** Use the export pipeline's fail-closed credential patterns on release material. */
 export function containsPortableSecretPattern(text: string, mediaType: string): boolean {
-  if (mediaType === "application/javascript") {
-    const highConfidence = SECRET_PATTERNS.slice(0, 2).some((pattern) => pattern.test(text));
-    resetPatterns();
-    if (highConfidence) return true;
-    text = text.replace(/([A-Za-z_$][\w$]*)\s*([:=])\s*((?:[A-Za-z_$][\w$]*\.)*[A-Za-z_$][\w$]*)(?=\s*[,;)}\]]|$)/gu,
-      (match, key: unknown, operator: unknown) => typeof key === "string"
-        && [...SECRET_FIELDS].some((secret) => normalizeFieldName(key).endsWith(secret))
-        ? `${key}${String(operator)}[REDACTED_SECRET]`
-        : match);
-  }
   if (mediaType === "application/json") {
     return valueContainsSecretPattern(parseJson(Buffer.from(text), "Portable JSON final scan"));
   }
