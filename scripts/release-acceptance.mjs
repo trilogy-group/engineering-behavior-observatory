@@ -61,12 +61,17 @@ try {
     if (first.files.some(({ path }) => forbiddenPackagePath(path))) {
       throw new Error("Package contains restricted evidence, test fixtures, credentials, or orchestration state.");
     }
+    const tracked = new Set(output("git", ["ls-files", "-z"]).split("\0").filter(Boolean));
+    const unbound = first.files.filter(({ path }) => !path.startsWith("dist/") && !tracked.has(path));
+    if (unbound.length > 0) throw new Error(`Package contains inputs not bound to the source commit: ${unbound.map(({ path }) => path).join(", ")}.`);
     checkPackageLinks(first.files);
     for (const { path } of first.files) {
       const source = join(root, path);
       if (!existsSync(source) || statSync(source).isDirectory()) continue;
       const text = readFileSync(source, "utf8");
-      const mediaType = /\.(?:[cm]?js|[cm]?ts)$/u.test(path) ? "application/javascript" : "text/plain";
+      const mediaType = path.endsWith(".jsonl") ? "application/x-ndjson"
+        : path.endsWith(".json") ? "application/json"
+          : /\.(?:[cm]?js|[cm]?ts)$/u.test(path) ? "application/javascript" : "text/plain";
       if (/\/(?:Users|home)\/[^/\s"'`]+\//u.test(text) || containsPortableSecretPattern(text, mediaType)) {
         throw new Error(`Package file ${path} contains a local identifier or secret-like value.`);
       }

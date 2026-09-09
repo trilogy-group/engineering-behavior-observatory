@@ -788,7 +788,9 @@ function valueContainsSecretPattern(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(valueContainsSecretPattern);
   if (!isRecord(value)) return false;
   return Object.entries(value).some(([key, entry]) =>
-    stringContainsSecretPattern(key) || valueContainsSecretPattern(entry));
+    SECRET_FIELDS.has(normalizeFieldName(key)) && entry !== "[REDACTED_SECRET]"
+      || stringContainsSecretPattern(key)
+      || valueContainsSecretPattern(entry));
 }
 
 function stringContainsSecretPattern(value: string): boolean {
