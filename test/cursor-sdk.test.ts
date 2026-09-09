@@ -179,6 +179,22 @@ test("retains provider creation and missing-terminal failures without fabricatin
   }
 });
 
+test("rejects effective model parameter drift under the requested configuration digest", async () => {
+  const fixture = createCursorFixture();
+  try {
+    const summary = await runCursorSdkQueueEntry({
+      ...fixture,
+      apiKey: "fixture-key",
+      modelLister: fakeModelLister,
+      agentFactory: fakeAgentFactory({ mismatchedModelParams: true }),
+    });
+    assert.equal(summary.classification, "infrastructure-failure");
+    assert.equal(summary.captureQualification, "unqualified");
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
 test("retains cancellation and recorder loss as distinct partial outcomes", async () => {
   for (const [name, behavior, classification, qualification] of [
     ["cancelled", { cancelledResult: true }, "interrupted", "qualified"],
@@ -510,6 +526,7 @@ function fakeAgentFactory(behavior: {
   nestedToolError?: boolean;
   foreignStoreRecords?: boolean;
   oversizedStoreRecord?: boolean;
+  mismatchedModelParams?: boolean;
 } = {}): CursorSdkAgentFactory {
   return async (options: AgentOptions): Promise<SDKAgent> => {
     assert.equal(process.env.CURSOR_API_KEY, options.apiKey);
@@ -531,12 +548,13 @@ function fakeAgentFactory(behavior: {
         let status: Run["status"] = "running";
         let resolveDone!: () => void;
         const done = new Promise<void>((resolve) => { resolveDone = resolve; });
-        const result: RunResult = { id: NATIVE_RUN_ID, status: behavior.cancelledResult ? "cancelled" : "finished", model: options.model, durationMs: 17,
+        const effectiveModel = behavior.mismatchedModelParams ? { id: MODEL.id, params: [{ id: "thinking", value: "high" }] } : options.model;
+        const result: RunResult = { id: NATIVE_RUN_ID, status: behavior.cancelledResult ? "cancelled" : "finished", model: effectiveModel, durationMs: 17,
           usage: { inputTokens: 3, outputTokens: 5, cacheReadTokens: 1, cacheWriteTokens: 0, totalTokens: 9, reasoningTokens: 2 } };
         const run: Run = {
           id: NATIVE_RUN_ID,
           agentId: AGENT_ID,
-          model: options.model,
+          model: effectiveModel,
           supports: () => true,
           unsupportedReason: () => undefined,
           async *stream() {

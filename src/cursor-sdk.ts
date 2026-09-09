@@ -483,6 +483,9 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
     });
     requireText(run.id, "Cursor run ID");
     if (run.agentId !== agent.agentId) throw new Error("Cursor run identity differs from its owned agent.");
+    if (!sameModelSelection(run.model, options.configuration.model)) {
+      throw new Error("Cursor run model selection differs from the requested model and parameters.");
+    }
     options.setRunId(run.id);
     await options.writer.record("run-created", { runId: run.id, agentId: run.agentId, model: run.model, createdAt: run.createdAt }, ids(agent, run));
     if (options.signal.aborted) await run.cancel();
@@ -504,7 +507,7 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
     try {
       result = await abortable(run.wait(), options.signal, "Cursor terminal wait", async () => undefined);
       options.setTerminal(result);
-      assertTerminalIdentity(result, agent.agentId, run);
+      assertTerminalIdentity(result, agent.agentId, run, options.configuration.model);
       await options.writer.record("terminal", { result: snapshotJson(result) }, ids(agent, run));
     } catch (error) {
       executionError = `wait: ${errorMessage(error)}`;
@@ -723,16 +726,16 @@ function assertRetainedCursorIdentity(manifest: RunManifest, records: readonly C
     }
   }
   const configuration = asRecord(configurations[0]!.payload);
-  const configuredModel = modelId(configuration?.model);
-  if (configuration?.sdkVersion !== CURSOR_SDK_VERSION || configuredModel !== manifest.run.model.id
+  const configuredModel = configuration?.model;
+  if (configuration?.sdkVersion !== CURSOR_SDK_VERSION || modelId(configuredModel) !== manifest.run.model.id
       || configuration?.workingDirectoryPolicy !== "isolated-local.cwd"
       || !Array.isArray(configuration?.environmentKeys) || configuration.environmentKeys.some((key) => typeof key !== "string")) {
     throw new Error("Retained Cursor configuration differs from the effective run manifest or policy.");
   }
   const runPayload = asRecord(runs[0]!.payload);
   const terminal = asRecord(asRecord(terminals[0]!.payload)?.result);
-  if (runPayload?.runId !== runId || runPayload.agentId !== agentId || modelId(runPayload.model) !== manifest.run.model.id
-      || terminal?.id !== runId || modelId(terminal.model) !== manifest.run.model.id
+  if (runPayload?.runId !== runId || runPayload.agentId !== agentId || !sameModelSelection(runPayload.model, configuredModel)
+      || terminal?.id !== runId || !sameModelSelection(terminal.model, configuredModel)
       || !["finished", "cancelled", "error"].includes(String(terminal.status))) {
     throw new Error("Retained Cursor terminal/model identity differs from the owned run.");
   }
@@ -748,7 +751,7 @@ function assertRetainedCursorIdentity(manifest: RunManifest, records: readonly C
   const storeCheckpoints = records.filter((record) => cursorNativeType(record) === "store:checkpoint");
   if (storeAgents.length !== 1 || storeAgents[0]!.agentId !== agentId
       || storeRuns.length !== 1 || storeRuns[0]!.agentId !== agentId || storeRuns[0]!.runId !== runId
-      || modelId(storeRuns[0]!.model) !== manifest.run.model.id
+      || !sameModelSelection(storeRuns[0]!.model, configuredModel)
       || storeEvents.some((record) => record.runId !== runId)
       || storeCheckpoints.some((record) => record.agentId !== agentId)) {
     throw new Error("Retained Cursor native store identity differs from the owned agent/run/model.");
@@ -981,12 +984,10 @@ function assertMessageIdentity(message: SDKMessage, agentId: string, runId: stri
   }
 }
 
-function assertTerminalIdentity(result: RunResult, agentId: string, run: Run): void {
+function assertTerminalIdentity(result: RunResult, agentId: string, run: Run, expectedModel: ModelSelection): void {
   if (result.id !== run.id || run.agentId !== agentId) throw new Error("Cursor terminal identity differs from its owned agent/run.");
-  const expectedModel = modelId(run.model);
-  const actualModel = modelId(result.model);
-  if (expectedModel !== undefined && actualModel !== undefined && expectedModel !== actualModel) {
-    throw new Error("Cursor terminal model differs from the selected run model.");
+  if (!sameModelSelection(run.model, expectedModel) || !sameModelSelection(result.model, expectedModel)) {
+    throw new Error("Cursor terminal model selection differs from the requested model and parameters.");
   }
 }
 
@@ -1069,6 +1070,25 @@ function snapshotJson<T>(value: T): T {
 
 function modelId(value: unknown): string | undefined {
   return typeof value === "string" ? value : text(asRecord(value)?.id);
+}
+
+function sameModelSelection(value: unknown, expected: unknown): boolean {
+  const normalize = (candidate: unknown): unknown => {
+    if (typeof candidate === "string") return { id: candidate, params: [] };
+    const record = asRecord(candidate);
+    if (record === undefined || typeof record.id !== "string" || !Array.isArray(record.params)) {
+      return record !== undefined && typeof record.id === "string" && record.params === undefined
+        ? { id: record.id, params: [] }
+        : undefined;
+    }
+    if (record.params.some((entry) => !isRecord(entry) || typeof entry.id !== "string" || typeof entry.value !== "string")) return undefined;
+    return {
+      id: record.id,
+      params: (record.params as Array<{ id: string; value: string }>).map(({ id, value }) => ({ id, value }))
+        .sort((left, right) => left.id.localeCompare(right.id) || left.value.localeCompare(right.value)),
+    };
+  };
+  return JSON.stringify(normalize(value)) === JSON.stringify(normalize(expected));
 }
 
 function nonnegativeInteger(value: unknown): number | undefined {
