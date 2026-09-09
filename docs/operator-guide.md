@@ -350,7 +350,7 @@ import {
   retryAttempt,
 } from "../src/index.js";
 
-const previous = readAttemptRecord(previousAttemptRecordPath);
+const previous = await readAttemptRecord(previousAttemptRecordPath);
 const attempt = retryAttempt(previous);
 
 await captureClaudeAgentSdkRun({
