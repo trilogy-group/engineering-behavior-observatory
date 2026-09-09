@@ -36,6 +36,11 @@ The optional [Codex app-server adapter](docs/codex-harness.md) owns one pinned
 independently verified OTLP receipts, and runs one frozen observational queue
 entry through `ebo codex run`.
 
+The [Cursor TypeScript SDK adapter](docs/cursor-sdk.md) uses the direct pinned
+`@cursor/sdk` local-agent API, an attempt-owned official JSONL store, explicit
+local sandbox/tool policy, and separate stream, callback, history, terminal,
+and billing evidence through `ebo cursor run`.
+
 ## Release 0.1.0
 
 EBO includes native capture, portable export, cross-harness normalization,
@@ -82,6 +87,8 @@ EBO TypeScript coordinator
 │   └── pinned Agent Server REST/WebSocket API
 ├── Codex adapter
 │   └── pinned app-server JSONL protocol over owned stdio
+├── Cursor adapter
+│   └── direct TypeScript SDK with attempt-owned JSONL persistence
 └── uniform event projection
     └── only after native capture qualification
 ```
@@ -121,6 +128,7 @@ node dist/src/cli.js queue inspect <queue.json>
 node dist/src/cli.js queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
 node dist/src/cli.js agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 node dist/src/cli.js codex run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
+node dist/src/cli.js cursor run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 node dist/src/cli.js export create <run-bundle-root> <policy.json> <export-root>
 node dist/src/cli.js corpus build <corpus-root> <index.jsonl>
 node dist/src/cli.js corpus query <index.jsonl> [--task <id>] [--model <id>] [--harness <id>] [--assessment-mode <observational|verified>]
@@ -243,7 +251,7 @@ terminal, capture, workspace, and mode-appropriate verifier outcomes, then
 compute exact native-evidence facts. Logical tool operations use native IDs,
 resource snapshots are not added repeatedly, unrelated order domains stay
 separate, and missing capability is unavailable rather than zero. The CLI reads
-qualified retained Claude Agent SDK, Codex, OpenHands, or DeepSeek bundles or an exact corpus selection and always
+qualified retained Claude Agent SDK, Codex, OpenHands, DeepSeek, or Cursor bundles or an exact corpus selection and always
 writes derived records outside immutable source evidence.
 
 Portable archives accept only `ready` or `exported` partner/public trees that

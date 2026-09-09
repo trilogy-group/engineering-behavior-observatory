@@ -62,8 +62,9 @@ node --test --test-name-pattern='minimal capture and normalization adapter contr
 
 Current source-specific examples are the Agent SDK normalizer,
 `createOpenHandsHarnessAdapter`, `createDeepSeekHarnessAdapter`, and
-`createCodexHarnessAdapter`. A new adapter must not weaken their native-first
-rules to fit a common convenience model.
+`createCodexHarnessAdapter`; `createCursorSdkBehaviorEvidence` applies the same
+native-first contract to the direct SDK boundary. A new adapter must not weaken
+their rules to fit a common convenience model.
 
 ## Source-specific process or API boundary
 
@@ -102,6 +103,11 @@ typed calls/notifications rather than recreating the protocol client with
 `runProtocolProcess`. OpenHands uses its pinned REST/WebSocket contract, and
 Codex uses its pinned app-server contract; neither is forced into a generic
 JSONL method schema.
+
+Cursor uses direct `Agent.create({ local: ... })`, `send`, detailed callbacks,
+stream/wait/conversation, and the exported `JsonlLocalAgentStore`. Its durable
+store and callback channels overlap with the stream; retain them separately and
+select one authoritative normalized source instead of counting them twice.
 
 Evidence obligations:
 

@@ -21,6 +21,7 @@ import {
 import { runAgentSdkQueueEntry } from "./agent-sdk-runner.js";
 import { validateRetainedBehaviorAssertion, type BehaviorAssertion, type BehaviorReview } from "./behavior-assertions.js";
 import { runCodexQueueEntry } from "./codex-run.js";
+import { runCursorSdkQueueEntry } from "./cursor-sdk-runner.js";
 import { createPortableRunBundleExport, type PortableExportPolicy } from "./exports.js";
 import {
   assertCalibrationDestination,
@@ -66,6 +67,7 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
        ebo agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
        ebo codex run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
+       ebo cursor run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
        ebo export create <run-bundle-root> <policy.json> <export-root>
        ebo corpus build <corpus-root> <index.jsonl>
        ebo corpus query <index.jsonl> [--kind|--run|--attempt|--task|--model|--harness|--assessment-mode|--terminal|--failure-class|--verifier-status|--capture|--export-status|--sharing-class <value>]
@@ -137,6 +139,10 @@ export function main(
 
   if (args[0] === "codex" && args[1] === "run") {
     return runCodexCommand(args.slice(2), write);
+  }
+
+  if (args[0] === "cursor" && args[1] === "run") {
+    return runCursorSdkCommand(args.slice(2), write);
   }
 
   if (args[0] === "export" && args[1] === "create") {
@@ -686,6 +692,53 @@ async function runCodexCommand(
   process.on("SIGTERM", abort);
   try {
     const summary = await runCodexQueueEntry({
+      bundleRoot,
+      queuePath,
+      runId,
+      outputRoot,
+      signal: controller.signal,
+      ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+    });
+    write(`${canonicalizeMetadata(summary)}\n`);
+    return 0;
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  } finally {
+    process.off("SIGINT", abort);
+    process.off("SIGTERM", abort);
+  }
+}
+
+async function runCursorSdkCommand(
+  args: string[],
+  write: (message: string) => void,
+): Promise<number> {
+  const commandUsage = "Usage: ebo cursor run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]\n";
+  const positional: string[] = [];
+  let workspaceRoot: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === "--workspace-root") {
+      const value = args[++index];
+      if (value === undefined || value.startsWith("--")) {
+        write(commandUsage);
+        return 1;
+      }
+      workspaceRoot = value;
+    } else positional.push(args[index]!);
+  }
+  const [bundleRoot, queuePath, runId, outputRoot] = positional;
+  if (bundleRoot === undefined || queuePath === undefined || runId === undefined
+      || outputRoot === undefined || positional.length !== 4) {
+    write(commandUsage);
+    return 1;
+  }
+  const controller = new AbortController();
+  const abort = (): void => controller.abort();
+  process.on("SIGINT", abort);
+  process.on("SIGTERM", abort);
+  try {
+    const summary = await runCursorSdkQueueEntry({
       bundleRoot,
       queuePath,
       runId,
