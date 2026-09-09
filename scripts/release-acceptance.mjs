@@ -105,7 +105,7 @@ function output(command, args) {
 
 function pack(destination) {
   mkdirSync(destination);
-  const result = spawnSync("npm", ["pack", "--json", "--pack-destination", destination], { cwd: root, encoding: "utf8" });
+  const result = spawnSync("npm", ["pack", "--json", "--silent", "--pack-destination", destination], { cwd: root, encoding: "utf8" });
   if (result.status !== 0) throw new Error(result.stderr || "npm pack failed.");
   const packed = JSON.parse(result.stdout)[0];
   if (!packed?.filename || !Array.isArray(packed.files)) throw new Error("npm pack returned an incomplete manifest.");

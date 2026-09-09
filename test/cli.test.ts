@@ -46,7 +46,7 @@ test("a clean source checkout packs an executable ebo binary", () => {
       { cwd: sourceRoot, env: npmEnvironment, stdio: "pipe" },
     );
     const [{ filename }] = JSON.parse(
-      execFileSync("npm", ["pack", "--json"], {
+      execFileSync("npm", ["pack", "--json", "--silent"], {
         cwd: sourceRoot,
         encoding: "utf8",
         env: npmEnvironment,
