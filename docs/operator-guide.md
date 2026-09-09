@@ -329,13 +329,46 @@ are separate modes. See [the Atlas guide](atlas.md) before using `--share`.
 | packet/freeze digest mismatch | packet, referenced bytes, freeze record | restore exact admitted bytes or create and admit a new packet; never rewrite the old freeze |
 | stale or invalid queue | experiment, packet freeze, all configuration digests | compile a new queue after correcting inputs; do not edit run identities in place |
 | run cannot start | CLI error and unchanged input bundle | correct auth/runtime/configuration, then use a new output destination |
-| interrupted or failed attempt | partial manifest, native JSONL, diagnostics, capture report, retained workspace path | keep the partial bundle; retry as a new linked attempt rather than replacing it |
+| interrupted or failed attempt | partial manifest, native JSONL, diagnostics, capture report, retained workspace path | keep the partial bundle; use the linked-retry API below or record a CLI rerun as an independent attempt |
 | missing collector receipt | native stream/hooks plus explicit telemetry gap | repair/check the collector for a later attempt; do not claim receipt or discard otherwise valid native evidence |
 | workspace packaging/cleanup failure | `retainedWorkspacePath` from the summary | recover from that path before manual cleanup; do not infer an outcome without retained workspace evidence |
 | export rejected | source bundle plus export diagnostics | correct the policy/input or remove the detected secret at its source; use a new export destination |
 | stale corpus/derived output | source manifests and current index validation errors | rebuild the index and derived outputs into new paths |
 | judge failure/abstention | bounded input, raw output/failure record, selected evidence | preserve it; change inputs/configuration only in a new judgment run |
 | Atlas rejects inputs | corpus validation, assertion/review lineage, comparison gates, source digests | repair/rebuild the upstream derived artifact; never serve a stale cached report |
+
+The `agent-sdk run` and `codex run` commands currently create independent
+attempts with no `retryOf` option. Never describe an ordinary CLI rerun as a
+linked retry. Embedded operators for the Agent SDK, Codex, or OpenHands capture
+paths can preserve lineage with the existing lifecycle helper and a new bundle
+destination:
+
+```ts
+import {
+  captureClaudeAgentSdkRun,
+  readAttemptRecord,
+  retryAttempt,
+} from "../src/index.js";
+
+const previous = readAttemptRecord(previousAttemptRecordPath);
+const attempt = retryAttempt(previous);
+
+await captureClaudeAgentSdkRun({
+  ...captureOptions,
+  definition: {
+    ...captureOptions.definition,
+    bundleRoot: newBundleRoot,
+    bundleId: newBundleId,
+    attempt,
+  },
+});
+```
+
+Use the same `RunBundleDefinition.attempt` composition with
+`captureCodexAppServerRun` or `captureOpenHandsAgentServerRun`. A linked-retry
+operator path for any other source is unsupported until its source-specific
+capture composition accepts that identity; do not synthesize lineage in a
+manifest afterward.
 
 ## Command reference
 
