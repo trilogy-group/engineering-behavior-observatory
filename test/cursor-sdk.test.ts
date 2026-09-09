@@ -386,6 +386,7 @@ test("foreign or oversized native store records make capture unqualified", async
         agentFactory: fakeAgentFactory(behavior),
       });
       assert.equal(summary.captureQualification, "unqualified");
+      assert.equal(summary.classification, "capture-incomplete");
       await assert.rejects(createRetainedBehaviorEvidence(summary.bundlePath), /unqualified structural capture report|capture-qualified evidence/u);
     } finally {
       rmSync(fixture.parent, { recursive: true, force: true });

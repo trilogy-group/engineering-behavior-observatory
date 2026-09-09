@@ -284,6 +284,7 @@ export async function captureCursorSdkRun(options: CaptureCursorSdkRunOptions): 
           apiKey: options.apiKey,
           configuration: options.configuration,
           store,
+          storeRoot,
           writer,
           signal: context.signal,
           registerShutdown: context.registerShutdown,
@@ -323,14 +324,6 @@ export async function captureCursorSdkRun(options: CaptureCursorSdkRunOptions): 
   }
 
   if (workspace?.status === "ready") await captureWorkspace().catch(() => undefined);
-  if (agentId !== undefined && nativeRunId !== undefined) {
-    await validateStoreFiles(
-      storeRoot,
-      agentId,
-      nativeRunId,
-      options.configuration.maxNativeRecordBytes ?? MAX_NATIVE_RECORD_BYTES,
-    ).catch((error: unknown) => errors.push(`store: ${errorMessage(error)}`));
-  }
   const sessionPath = join(assembler.bundleRoot, "native", "session.jsonl");
   if (await nonempty(sessionPath)) {
     await assembler.registerArtifact({
@@ -389,6 +382,7 @@ type ExecuteCursorSdkOptions = {
   apiKey: string;
   configuration: CursorSdkCaptureConfiguration;
   store: JsonlLocalAgentStore;
+  storeRoot: string;
   writer: CursorNativeWriter;
   signal: AbortSignal;
   registerShutdown: (shutdown: () => void | Promise<void>) => void;
@@ -560,6 +554,15 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
       }
     }
     environment.restore();
+  }
+  if (agent !== undefined && run !== undefined) {
+    try {
+      await validateStoreFiles(options.storeRoot, agent.agentId, run.id, options.configuration.maxNativeRecordBytes ?? MAX_NATIVE_RECORD_BYTES);
+    } catch (error) {
+      captureError ??= `store: ${errorMessage(error)}`;
+      options.errors.push(captureError);
+      await options.writer.record("error", { stage: "store", message: errorMessage(error) }, ids(agent, run)).catch(() => undefined);
+    }
   }
   captureError ??= options.writer.error;
   if (captureError !== undefined && !options.errors.includes(captureError)) options.errors.push(captureError);
