@@ -482,7 +482,9 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
     }
     options.setRunId(run.id);
     await options.writer.record("run-created", { runId: run.id, agentId: run.agentId, model: run.model, createdAt: run.createdAt }, ids(agent, run));
-    if (options.signal.aborted) await run.cancel();
+    if (options.signal.aborted) {
+      await settleWithin(run.cancel(), options.shutdownGraceMs, "Cursor post-creation cancellation");
+    }
 
     const stream = (async () => {
       try {
@@ -529,7 +531,13 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
       options.errors.push(`billing: ${errorMessage(error)}`);
       await options.writer.record("error", { stage: "billing", message: errorMessage(error) }, ids(agent, run)).catch(() => undefined);
     }
-    await validateStoreIdentity(options.store, agent.agentId, run.id);
+    try {
+      await validateStoreIdentity(options.store, agent.agentId, run.id, options.configuration.model);
+    } catch (error) {
+      captureError ??= `store: ${errorMessage(error)}`;
+      options.errors.push(captureError);
+      await options.writer.record("error", { stage: "store", message: errorMessage(error) }, ids(agent, run)).catch(() => undefined);
+    }
   } catch (error) {
     executionError ??= errorMessage(error);
     options.errors.push(`execution: ${executionError}`);
@@ -557,7 +565,13 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
   }
   if (agent !== undefined && run !== undefined) {
     try {
-      await validateStoreFiles(options.storeRoot, agent.agentId, run.id, options.configuration.maxNativeRecordBytes ?? MAX_NATIVE_RECORD_BYTES);
+      await validateStoreFiles(
+        options.storeRoot,
+        agent.agentId,
+        run.id,
+        options.configuration.model,
+        options.configuration.maxNativeRecordBytes ?? MAX_NATIVE_RECORD_BYTES,
+      );
     } catch (error) {
       captureError ??= `store: ${errorMessage(error)}`;
       options.errors.push(captureError);
@@ -939,7 +953,7 @@ class CursorNativeWriter {
   }
 }
 
-async function validateStoreIdentity(store: JsonlLocalAgentStore, agentId: string, runId: string): Promise<void> {
+async function validateStoreIdentity(store: JsonlLocalAgentStore, agentId: string, runId: string, expectedModel: ModelSelection): Promise<void> {
   const [agent, run, agents, runs] = await Promise.all([
     store.agents.get({ agentId }),
     store.runs.get({ agentId, runId }),
@@ -947,14 +961,23 @@ async function validateStoreIdentity(store: JsonlLocalAgentStore, agentId: strin
     store.runs.list({ filter: { limit: 2 } }),
   ]);
   if (agent?.agentId !== agentId) throw new Error("Cursor native store omits or mismatches the owned agent identity.");
-  if (run?.agentId !== agentId || run.runId !== runId) throw new Error("Cursor native store omits or mismatches the owned run identity.");
+  if (run?.agentId !== agentId || run.runId !== runId || !sameModelSelection(run.model, expectedModel)) {
+    throw new Error("Cursor native store omits or mismatches the owned run/model identity.");
+  }
   if (agents.items.length !== 1 || agents.items[0]?.agentId !== agentId
-      || runs.items.length !== 1 || runs.items[0]?.agentId !== agentId || runs.items[0]?.runId !== runId) {
+      || runs.items.length !== 1 || runs.items[0]?.agentId !== agentId || runs.items[0]?.runId !== runId
+      || !sameModelSelection(runs.items[0]?.model, expectedModel)) {
     throw new Error("Cursor native store contains a foreign agent or run.");
   }
 }
 
-async function validateStoreFiles(storeRoot: string, agentId: string, runId: string, maxRecordBytes: number): Promise<void> {
+async function validateStoreFiles(
+  storeRoot: string,
+  agentId: string,
+  runId: string,
+  expectedModel: ModelSelection,
+  maxRecordBytes: number,
+): Promise<void> {
   const documents = (name: keyof typeof JSONL_LOCAL_AGENT_STORE_FILES): CursorNativeRecord[] => {
     const path = join(storeRoot, JSONL_LOCAL_AGENT_STORE_FILES[name]);
     if (!existsSync(path)) return [];
@@ -975,6 +998,7 @@ async function validateStoreFiles(storeRoot: string, agentId: string, runId: str
   const checkpoints = documents("checkpoints");
   if (agents.length !== 1 || agents[0]!.agentId !== agentId
       || runs.length !== 1 || runs[0]!.agentId !== agentId || runs[0]!.runId !== runId
+      || !sameModelSelection(runs[0]!.model, expectedModel)
       || runEvents.some((record) => record.runId !== runId)
       || checkpoints.some((record) => record.agentId !== agentId)) {
     throw new Error("Cursor native store contains evidence outside the owned agent/run.");

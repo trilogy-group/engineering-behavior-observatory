@@ -375,8 +375,8 @@ test("treats a completed tool envelope with an error result as failure, not muta
   }
 });
 
-test("foreign or oversized native store records make capture unqualified", async () => {
-  for (const behavior of [{ foreignStoreRecords: true }, { oversizedStoreRecord: true }]) {
+test("foreign, oversized, or model-mismatched native store records make capture unqualified", async () => {
+  for (const behavior of [{ foreignStoreRecords: true }, { oversizedStoreRecord: true }, { storeModelMismatch: true }]) {
     const fixture = createCursorFixture();
     try {
       const summary = await runCursorSdkQueueEntry({
@@ -528,6 +528,7 @@ function fakeAgentFactory(behavior: {
   foreignStoreRecords?: boolean;
   oversizedStoreRecord?: boolean;
   mismatchedModelParams?: boolean;
+  storeModelMismatch?: boolean;
 } = {}): CursorSdkAgentFactory {
   return async (options: AgentOptions): Promise<SDKAgent> => {
     assert.equal(process.env.CURSOR_API_KEY, options.apiKey);
@@ -580,7 +581,9 @@ function fakeAgentFactory(behavior: {
             try {
               for (const message of messages) yield message;
               status = "finished";
-              await store.runs.update({ run: { ...(await store.runs.get({ agentId: AGENT_ID, runId: NATIVE_RUN_ID }))!, status: "finished", updatedAt: 2, endedAt: 2, usage: behavior.omitUsage ? null : result.usage } });
+              await store.runs.update({ run: { ...(await store.runs.get({ agentId: AGENT_ID, runId: NATIVE_RUN_ID }))!,
+                status: "finished", updatedAt: 2, endedAt: 2, usage: behavior.omitUsage ? null : result.usage,
+                ...(behavior.storeModelMismatch ? { model: { id: MODEL.id, params: [{ id: "thinking", value: "high" }] } } : {}) } });
               await store.runEvents.append({ runId: NATIVE_RUN_ID, eventType: "interaction", payload: { type: "thinking-delta", text: "hidden store reasoning" } });
               await store.checkpoints.create({ agentId: AGENT_ID, blobId: "checkpoint-1", data: new Uint8Array([1, 2, 3, 4]) });
               if (behavior.foreignStoreRecords) {
