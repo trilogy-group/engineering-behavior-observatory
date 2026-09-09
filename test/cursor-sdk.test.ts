@@ -72,8 +72,9 @@ test("runs one frozen Cursor SDK entry through native store, export, observation
 
     const evidence = await createRetainedBehaviorEvidence(summary.bundlePath);
     assert.equal(evidence.dataset.adapter.harness, "cursor-sdk");
+    assert.equal(evidence.dataset.capabilityProfile.families.artifact.status, "unsupported");
     assert.equal(evidence.dataset.events.filter(({ family }) => family === "tool").length, 2);
-    assert.equal(evidence.dataset.events.filter(({ family }) => family === "artifact").length, 1);
+    assert.equal(evidence.dataset.events.filter(({ family }) => family === "artifact").length, 0);
     const observations = await createRetainedStructuralObservationSet(summary.bundlePath);
     const toolCount = observations.observations.find(({ id }) => id.endsWith(":tool-operation-count"))!.value;
     const inputTokens = observations.observations.find(({ id }) => id.endsWith(":input-token-count"))!.value;
@@ -175,6 +176,73 @@ test("retains cancellation and recorder loss as distinct partial outcomes", asyn
   }
 });
 
+test("aborts pending agent creation, restores the environment, and disposes a late agent", async () => {
+  const fixture = createCursorFixture();
+  const controller = new AbortController();
+  let resolveAgent!: (agent: SDKAgent) => void;
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  let disposed = 0;
+  const factory: CursorSdkAgentFactory = async () => await new Promise<SDKAgent>((resolve) => { resolveAgent = resolve; markStarted(); });
+  const marker = process.env.EBO_CURSOR_TEST_SECRET;
+  process.env.EBO_CURSOR_TEST_SECRET = "restore-me";
+  try {
+    const pending = runCursorSdkQueueEntry({ ...fixture, apiKey: "fixture-key", modelLister: fakeModelLister, agentFactory: factory, signal: controller.signal });
+    await started;
+    controller.abort();
+    const summary = await pending;
+    assert.equal(summary.classification, "interrupted");
+    assert.equal(summary.captureQualification, "unqualified");
+    assert.equal(process.env.EBO_CURSOR_TEST_SECRET, "restore-me");
+    resolveAgent({
+      agentId: "late-agent", model: MODEL, send: async () => { throw new Error("late agent must not send"); }, close() {}, async reload() {},
+      async [Symbol.asyncDispose]() { disposed += 1; }, async listArtifacts() { return []; }, async downloadArtifact() { return Buffer.alloc(0); },
+      async getUsage() { return { usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0 }, runs: [] }; },
+    });
+    await nextTurn();
+    assert.equal(disposed, 1);
+  } finally {
+    if (marker === undefined) delete process.env.EBO_CURSOR_TEST_SECRET; else process.env.EBO_CURSOR_TEST_SECRET = marker;
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
+test("aborts pending send, fences late callbacks, and cancels the late run", async () => {
+  const fixture = createCursorFixture();
+  const controller = new AbortController();
+  let resolveRun!: (run: Run) => void;
+  let markSendStarted!: () => void;
+  const sendStarted = new Promise<void>((resolve) => { markSendStarted = resolve; });
+  let sendOptions: SendOptions | undefined;
+  let cancelled = 0;
+  try {
+    const baseFactory = fakeAgentFactory();
+    const factory: CursorSdkAgentFactory = async (options) => {
+      const agent = await baseFactory(options);
+      return { ...agent, send: async (_message, options) => {
+        sendOptions = options;
+        return await new Promise<Run>((resolve) => { resolveRun = resolve; markSendStarted(); });
+      } };
+    };
+    const pending = runCursorSdkQueueEntry({ ...fixture, apiKey: "fixture-key", modelLister: fakeModelLister, agentFactory: factory, signal: controller.signal });
+    await sendStarted;
+    controller.abort();
+    const summary = await pending;
+    assert.equal(summary.classification, "interrupted");
+    assert.equal(summary.captureQualification, "unqualified");
+    await sendOptions?.onDelta?.({ update: { type: "text-delta", text: "late" } });
+    resolveRun({
+      id: "late-run", agentId: AGENT_ID, model: MODEL, supports: () => true, unsupportedReason: () => undefined,
+      async *stream() {}, async conversation() { return []; }, async wait() { return { id: "late-run", status: "cancelled" }; },
+      async cancel() { cancelled += 1; }, status: "running", onDidChangeStatus() { return () => undefined; },
+    });
+    await nextTurn();
+    assert.equal(cancelled, 1);
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
 for (const behavior of [
   { name: "history failure", historyError: true, expected: "capture-incomplete" },
   { name: "stream identity mismatch", mismatchedStreamIdentity: true, expected: "capture-incomplete" },
@@ -230,6 +298,22 @@ test("treats a completed tool envelope with an error result as failure, not muta
     const evidence = await createRetainedBehaviorEvidence(summary.bundlePath);
     assert.ok(evidence.dataset.events.some(({ family, attributes }) => family === "tool" && attributes.failed === true));
     assert.equal(evidence.dataset.events.filter(({ family }) => family === "artifact").length, 0);
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
+test("foreign native store events and checkpoints make capture unqualified", async () => {
+  const fixture = createCursorFixture();
+  try {
+    const summary = await runCursorSdkQueueEntry({
+      ...fixture,
+      apiKey: "fixture-key",
+      modelLister: fakeModelLister,
+      agentFactory: fakeAgentFactory({ foreignStoreRecords: true }),
+    });
+    assert.equal(summary.captureQualification, "unqualified");
+    await assert.rejects(createRetainedBehaviorEvidence(summary.bundlePath), /unqualified structural capture report|capture-qualified evidence/u);
   } finally {
     rmSync(fixture.parent, { recursive: true, force: true });
   }
@@ -366,6 +450,7 @@ function fakeAgentFactory(behavior: {
   cancelledResult?: boolean;
   oversizedStreamRecord?: boolean;
   nestedToolError?: boolean;
+  foreignStoreRecords?: boolean;
 } = {}): CursorSdkAgentFactory {
   return async (options: AgentOptions): Promise<SDKAgent> => {
     assert.equal(process.env.CURSOR_API_KEY, options.apiKey);
@@ -420,6 +505,10 @@ function fakeAgentFactory(behavior: {
               await store.runs.update({ run: { ...(await store.runs.get({ agentId: AGENT_ID, runId: NATIVE_RUN_ID }))!, status: "finished", updatedAt: 2, endedAt: 2, usage: behavior.omitUsage ? null : result.usage } });
               await store.runEvents.append({ runId: NATIVE_RUN_ID, eventType: "interaction", payload: { type: "thinking-delta", text: "hidden store reasoning" } });
               await store.checkpoints.create({ agentId: AGENT_ID, blobId: "checkpoint-1", data: new Uint8Array([1, 2, 3, 4]) });
+              if (behavior.foreignStoreRecords) {
+                await store.runEvents.append({ runId: "foreign-run", eventType: "interaction", payload: { type: "text-delta", text: "foreign" } });
+                await store.checkpoints.create({ agentId: "foreign-agent", blobId: "foreign-checkpoint", data: new Uint8Array([5]) });
+              }
               await store.agents.update({ agent: { ...(await store.agents.get({ agentId: AGENT_ID }))!, status: "idle", activeRunId: null, updatedAt: 2,
                 latestCheckpoint: { schemaVersion: 1, rootBlobId: "checkpoint-1" } } });
             } finally {
@@ -458,4 +547,8 @@ function fakeAgentFactory(behavior: {
 
 function readManifest(bundleRoot: string): RunManifest {
   return JSON.parse(readFileSync(join(bundleRoot, "manifest.json"), "utf8")) as RunManifest;
+}
+
+async function nextTurn(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
 }

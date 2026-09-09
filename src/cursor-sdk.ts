@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { lstat, mkdir, open, stat, type FileHandle } from "node:fs/promises";
 import { dirname, join, parse, resolve } from "node:path";
 
@@ -17,7 +18,7 @@ import {
   type SDKMessage,
 } from "@cursor/sdk";
 
-import { digestMetadata } from "./artifacts.js";
+import { assertNoDuplicateJsonKeys, digestMetadata } from "./artifacts.js";
 import {
   createAttemptIdentity,
   createRunIdentity,
@@ -166,7 +167,7 @@ export const CURSOR_SDK_CAPABILITIES: AdapterCapabilityProfile = {
     context: { status: "partial", detail: "Detailed summary and nested-task callback records remain native and are not semantically reconstructed." },
     permission: { status: "unsupported", detail: "The public SDK does not expose individual local approval decisions." },
     delegation: { status: "partial", detail: "Task tool records are retained as tool operations without inventing subagent lifecycle boundaries." },
-    artifact: { status: "partial", detail: "Completed edit/write/delete tool calls identify mutations; workspace outcome remains authoritative." },
+    artifact: { status: "unsupported", detail: "Tool names express intent, not verified mutations; retained workspace outcome remains authoritative." },
     validation: { status: "unsupported", detail: "No validation is inferred from shell command text." },
     runtime: { status: "available", detail: "Per-turn stream usage is projected as increments; cumulative run and billing readbacks remain separate." },
     outcome: { status: "available", detail: "run.wait() is authoritative; stream EOF is never treated as completion." },
@@ -296,6 +297,7 @@ export async function captureCursorSdkRun(options: CaptureCursorSdkRunOptions): 
           setHistoryStatus: (value) => { historyStatus = value; },
           setBillingStatus: (value) => { billingStatus = value; },
           errors,
+          shutdownGraceMs: options.shutdownGraceMs ?? CURSOR_SDK_DEFAULT_SHUTDOWN_GRACE_MS,
         });
         return result;
       },
@@ -321,6 +323,9 @@ export async function captureCursorSdkRun(options: CaptureCursorSdkRunOptions): 
   }
 
   if (workspace?.status === "ready") await captureWorkspace().catch(() => undefined);
+  if (agentId !== undefined && nativeRunId !== undefined) {
+    await validateStoreFiles(storeRoot, agentId, nativeRunId).catch((error: unknown) => errors.push(`store: ${errorMessage(error)}`));
+  }
   const sessionPath = join(assembler.bundleRoot, "native", "session.jsonl");
   if (await nonempty(sessionPath)) {
     await assembler.registerArtifact({
@@ -392,6 +397,7 @@ type ExecuteCursorSdkOptions = {
   setHistoryStatus: (status: CursorSdkCaptureReport["historyStatus"]) => void;
   setBillingStatus: (status: CursorSdkCaptureReport["billingStatus"]) => void;
   errors: string[];
+  shutdownGraceMs: number;
 };
 
 async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<HarnessExecutionResult> {
@@ -401,7 +407,23 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
   let executionError: string | undefined;
   let captureError: string | undefined;
   let cleanupError: string | undefined;
+  let callbacksOpen = true;
+  let disposePromise: Promise<void> | undefined;
   const environment = restrictCursorProcessEnvironment(options.apiKey);
+  const disposeAgent = async (): Promise<void> => {
+    if (agent === undefined) return;
+    disposePromise ??= settleWithin(agent[Symbol.asyncDispose](), options.shutdownGraceMs, "Cursor agent disposal");
+    await disposePromise;
+  };
+  options.registerShutdown(async () => {
+    callbacksOpen = false;
+    const outcomes = await Promise.allSettled([
+      ...(run === undefined ? [] : [settleWithin(run.cancel(), options.shutdownGraceMs, "Cursor run cancellation")]),
+      disposeAgent(),
+    ]);
+    const failed = outcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+    if (failed !== undefined) throw failed.reason;
+  });
   try {
     await assertCursorWorkspaceIsolation(options.workspacePath);
     await options.writer.record("configuration", {
@@ -414,7 +436,8 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
       environmentKeys: environment.keys,
       telemetry: { nativeOtlp: "unsupported" },
     });
-    agent = await options.agentFactory({
+    if (options.signal.aborted) throw new Error("Cursor agent creation was interrupted.");
+    const agentPromise = options.agentFactory({
       apiKey: options.apiKey,
       model: structuredClone(options.configuration.model),
       tools: [...options.configuration.toolPolicy.tools],
@@ -428,34 +451,35 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
         enableAgentRetries: false,
       },
     });
+    agent = await abortable(agentPromise, options.signal, "Cursor agent creation", async (lateAgent) => {
+      await settleWithin(lateAgent[Symbol.asyncDispose](), options.shutdownGraceMs, "Late Cursor agent disposal").catch(() => undefined);
+    });
     requireText(agent.agentId, "Cursor agent ID");
     options.setAgentId(agent.agentId);
     await options.writer.record("agent-created", { agentId: agent.agentId, model: agent.model }, { agentId: agent.agentId, sessionId: agent.agentId });
 
-    run = await agent.send(options.prompt, {
+    if (options.signal.aborted) throw new Error("Cursor run creation was interrupted.");
+    const sendPromise = agent.send(options.prompt, {
       onDelta: async ({ update }: { update: InteractionUpdate }) => {
+        if (!callbacksOpen) return;
         const snapshot = snapshotJson(update);
         options.onDelta();
         await options.writer.record("delta", { update: snapshot }, { agentId: agent!.agentId, runId: run?.id, sessionId: agent!.agentId });
       },
       onStep: async ({ step }: { step: ConversationStep }) => {
+        if (!callbacksOpen) return;
         const snapshot = snapshotJson(step);
         options.onStep();
         await options.writer.record("step", { step: snapshot }, { agentId: agent!.agentId, runId: run?.id, sessionId: agent!.agentId });
       },
     });
+    run = await abortable(sendPromise, options.signal, "Cursor run creation", async (lateRun) => {
+      await settleWithin(lateRun.cancel(), options.shutdownGraceMs, "Late Cursor run cancellation").catch(() => undefined);
+    });
     requireText(run.id, "Cursor run ID");
     if (run.agentId !== agent.agentId) throw new Error("Cursor run identity differs from its owned agent.");
     options.setRunId(run.id);
     await options.writer.record("run-created", { runId: run.id, agentId: run.agentId, model: run.model, createdAt: run.createdAt }, ids(agent, run));
-    options.registerShutdown(async () => {
-      try {
-        await run!.cancel();
-      } catch (error) {
-        await options.writer.record("error", { stage: "cancel", message: errorMessage(error) }, ids(agent!, run!)).catch(() => undefined);
-        throw error;
-      }
-    });
     if (options.signal.aborted) await run.cancel();
 
     const stream = (async () => {
@@ -511,9 +535,10 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
       ...(run === undefined ? {} : { runId: run.id }),
     }).catch(() => undefined);
   } finally {
+    callbacksOpen = false;
     if (agent !== undefined) {
       try {
-        await agent[Symbol.asyncDispose]();
+        await disposeAgent();
         await options.writer.record("cleanup", { status: "completed" }, {
           agentId: agent.agentId, sessionId: agent.agentId, ...(run === undefined ? {} : { runId: run.id }),
         });
@@ -545,6 +570,57 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
     return { status: "failed", failureClass: "infrastructure", reason: "Cursor run did not produce owned terminal evidence.", ...(captureError === undefined ? {} : { captureError }) };
   }
   return { status: "completed", ...(captureError === undefined ? {} : { captureError }), completionEvidence: result };
+}
+
+async function abortable<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+  label: string,
+  onLateValue: (value: T) => void | Promise<void>,
+): Promise<T> {
+  if (signal.aborted) {
+    void promise.then(onLateValue, () => undefined);
+    throw new Error(`${label} was interrupted.`);
+  }
+  return await new Promise<T>((resolvePromise, rejectPromise) => {
+    let settled = false;
+    const onAbort = (): void => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      rejectPromise(new Error(`${label} was interrupted.`));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    void promise.then((value) => {
+      if (settled) {
+        void Promise.resolve(onLateValue(value)).catch(() => undefined);
+        return;
+      }
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      resolvePromise(value);
+    }, (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      rejectPromise(error);
+    });
+  });
+}
+
+async function settleWithin(promise: Promise<void>, timeoutMs: number, label: string): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} exceeded ${String(timeoutMs)}ms.`)), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /** Prevent Cursor from promoting an ancestor checkout above the materialized workspace. */
@@ -662,9 +738,13 @@ function assertRetainedCursorIdentity(manifest: RunManifest, records: readonly C
   }
   const storeAgents = records.filter((record) => cursorNativeType(record) === "store:agent");
   const storeRuns = records.filter((record) => cursorNativeType(record) === "store:run");
+  const storeEvents = records.filter((record) => cursorNativeType(record) === "store:run-event");
+  const storeCheckpoints = records.filter((record) => cursorNativeType(record) === "store:checkpoint");
   if (storeAgents.length !== 1 || storeAgents[0]!.agentId !== agentId
       || storeRuns.length !== 1 || storeRuns[0]!.agentId !== agentId || storeRuns[0]!.runId !== runId
-      || modelId(storeRuns[0]!.model) !== manifest.run.model.id) {
+      || modelId(storeRuns[0]!.model) !== manifest.run.model.id
+      || storeEvents.some((record) => record.runId !== runId)
+      || storeCheckpoints.some((record) => record.agentId !== agentId)) {
     throw new Error("Retained Cursor native store identity differs from the owned agent/run/model.");
   }
 }
@@ -738,14 +818,6 @@ function mapCursorRecord(
       if (message.args !== undefined) content.push(contentReference(reference, "", "tool-input"));
       if (message.result !== undefined) content.push(contentReference(reference, "", failed ? "tool-error" : "tool-result"));
       if (content.length > 0) event.content = knownContent(...content);
-      const toolName = text(message.name)?.toLowerCase();
-      if (phase === "after" && !failed && toolName !== undefined && ["edit", "write", "delete", "applyagentdiff"].includes(toolName)) {
-        const artifact = base("artifact", "after", `artifact:${callId ?? sequence}`);
-        artifact.scope = { kind: "workspace" };
-        artifact.attributes = compactAttributes({ ...artifact.attributes, mutation: true, operationId: callId, toolName });
-        artifact.content = event.content;
-        return [event, artifact];
-      }
       return [event];
     }
     if (type === "usage") {
@@ -856,12 +928,42 @@ class CursorNativeWriter {
 }
 
 async function validateStoreIdentity(store: JsonlLocalAgentStore, agentId: string, runId: string): Promise<void> {
-  const [agent, run] = await Promise.all([
+  const [agent, run, agents, runs] = await Promise.all([
     store.agents.get({ agentId }),
     store.runs.get({ agentId, runId }),
+    store.agents.list({ filter: { limit: 2 } }),
+    store.runs.list({ filter: { limit: 2 } }),
   ]);
   if (agent?.agentId !== agentId) throw new Error("Cursor native store omits or mismatches the owned agent identity.");
   if (run?.agentId !== agentId || run.runId !== runId) throw new Error("Cursor native store omits or mismatches the owned run identity.");
+  if (agents.items.length !== 1 || agents.items[0]?.agentId !== agentId
+      || runs.items.length !== 1 || runs.items[0]?.agentId !== agentId || runs.items[0]?.runId !== runId) {
+    throw new Error("Cursor native store contains a foreign agent or run.");
+  }
+}
+
+async function validateStoreFiles(storeRoot: string, agentId: string, runId: string): Promise<void> {
+  const documents = (name: keyof typeof JSONL_LOCAL_AGENT_STORE_FILES): CursorNativeRecord[] => {
+    const path = join(storeRoot, JSONL_LOCAL_AGENT_STORE_FILES[name]);
+    if (!existsSync(path)) return [];
+    const source = readBoundedFile(path, `Cursor ${name} store`).toString("utf8");
+    return source.split(/\r?\n/u).filter(Boolean).map((line, index) => {
+      assertNoDuplicateJsonKeys(line);
+      const value = JSON.parse(line) as unknown;
+      if (!isRecord(value)) throw new Error(`Cursor ${name} store line ${String(index + 1)} is not an object.`);
+      return value;
+    });
+  };
+  const agents = documents("agents");
+  const runs = documents("runs");
+  const runEvents = documents("runEvents");
+  const checkpoints = documents("checkpoints");
+  if (agents.length !== 1 || agents[0]!.agentId !== agentId
+      || runs.length !== 1 || runs[0]!.agentId !== agentId || runs[0]!.runId !== runId
+      || runEvents.some((record) => record.runId !== runId)
+      || checkpoints.some((record) => record.agentId !== agentId)) {
+    throw new Error("Cursor native store contains evidence outside the owned agent/run.");
+  }
 }
 
 function assertMessageIdentity(message: SDKMessage, agentId: string, runId: string): void {

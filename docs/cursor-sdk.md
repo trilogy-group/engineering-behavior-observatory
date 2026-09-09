@@ -115,7 +115,7 @@ source artifacts are unchanged.
 | tools | available | SDK stream `tool_call` identity/status/args/result |
 | context | partial | detailed summaries/nested updates retained, not reconstructed |
 | delegation | partial | task tool retained without invented subagent lifecycle |
-| artifacts | partial | completed edit/write/delete tool calls plus retained workspace |
+| artifacts | unsupported | tool names retain intent only; verified workspace outcome remains separate and authoritative |
 | usage | available | per-turn stream increments; cumulative/billing channels remain separate |
 | terminal outcome | available | exact owned `run.wait()` result |
 | parentage/native time | partial | exposed identities and adapter receipt order only |
