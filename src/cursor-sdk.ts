@@ -348,7 +348,7 @@ export async function captureCursorSdkRun(options: CaptureCursorSdkRunOptions): 
 
   const captureFailure = errors.some((error) => !error.startsWith("billing:"));
   const missingEvidence: CaptureMissingEvidence[] = [
-    { kind: "telemetry", reason: "unsupported", affects: ["timing-resource"], detail: "@cursor/sdk 1.0.31 exposes no verified native OTLP configuration or receipt API." },
+    { kind: "telemetry", reason: "unsupported", affects: ["timing-resource"], detail: "@cursor/sdk 1.0.31 exposes no SDK-local per-run OTLP configuration or receipt API." },
     ...(captureFailure ? [{ kind: "session", reason: "not-collected" as const, affects: ["semantic" as const], detail: errors.join("; ").slice(0, 4096) }] : []),
     ...(terminalResult === undefined ? [{ kind: "session-completion", reason: attempt.terminal.state === "interrupted" ? "process-interrupted" as const : "not-emitted" as const, affects: ["semantic" as const] }] : []),
     ...(workspaceOutcome === undefined && workspaceCaptureError !== undefined ? [{ kind: "workspace", reason: "not-collected" as const, affects: ["outcome" as const], detail: workspaceCaptureError.slice(0, 4096) }] : []),
@@ -434,7 +434,7 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
       workingDirectory: options.workspacePath,
       workingDirectoryPolicy: "isolated-local.cwd",
       environmentKeys: environment.keys,
-      telemetry: { nativeOtlp: "unsupported" },
+      telemetry: { sdkLocalOtlp: "unsupported", enterpriseTeamExport: "not-checked" },
     });
     if (options.signal.aborted) throw new Error("Cursor agent creation was interrupted.");
     const agentPromise = options.agentFactory({
@@ -485,6 +485,7 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
     const stream = (async () => {
       try {
         for await (const message of run!.stream()) {
+          if (!callbacksOpen) break;
           assertMessageIdentity(message, agent!.agentId, run!.id);
           options.onStream();
           await options.writer.record("stream", { message: snapshotJson(message) }, ids(agent!, run!));
@@ -496,7 +497,7 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
       }
     })();
     try {
-      result = await run.wait();
+      result = await abortable(run.wait(), options.signal, "Cursor terminal wait", async () => undefined);
       options.setTerminal(result);
       assertTerminalIdentity(result, agent.agentId, run);
       await options.writer.record("terminal", { result: snapshotJson(result) }, ids(agent, run));
@@ -505,10 +506,10 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
       options.errors.push(executionError);
       await options.writer.record("error", { stage: "wait", message: errorMessage(error) }, ids(agent, run)).catch(() => undefined);
     }
-    await stream;
+    await abortable(stream, options.signal, "Cursor stream drain", async () => undefined);
 
     try {
-      const conversation = await run.conversation();
+      const conversation = await abortable(run.conversation(), options.signal, "Cursor conversation readback", async () => undefined);
       options.setHistoryStatus("captured");
       await options.writer.record("history", { conversation: snapshotJson(conversation) }, ids(agent, run));
     } catch (error) {
@@ -518,7 +519,7 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
       await options.writer.record("error", { stage: "history", message: errorMessage(error) }, ids(agent, run)).catch(() => undefined);
     }
     try {
-      const usage: AgentUsage = await agent.getUsage();
+      const usage: AgentUsage = await abortable(agent.getUsage(), options.signal, "Cursor billing readback", async () => undefined);
       options.setBillingStatus("captured");
       await options.writer.record("billing", { scope: "agent", retrievedAt: new Date().toISOString(), usage: snapshotJson(usage) }, ids(agent, run));
     } catch (error) {

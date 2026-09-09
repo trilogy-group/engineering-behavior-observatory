@@ -9,9 +9,21 @@ the official native store, and the final workspace before normalization.
 The SDK package version does not freeze Cursor's service, selected model, or
 separately deployed local runtime. The selected model must be an exact result
 from `Cursor.models.list()` at launch. SDK `1.0.31` does not expose a separate
-local-runtime version or native OTLP configuration/receipt surface, so EBO
-records those capabilities as `not-exposed` and `unsupported` instead of
+local-runtime version or SDK-local per-run OTLP configuration/receipt surface,
+so EBO records those capabilities as `not-exposed` and `unsupported` instead of
 inventing identities or spans.
+
+Cursor also offers a distinct [Enterprise OpenTelemetry Export](https://prod.cursor.com/docs/enterprise/opentelemetry-export)
+configured by a team admin. It runs server-side and pushes OTLP/HTTP protobuf
+metrics and logs to one public HTTPS collector; the [wire reference](https://prod.cursor.com/docs/enterprise/opentelemetry-export/wire)
+includes `sdk_ts` as an entrypoint. This PR does not configure or receive that
+team export. Its metrics are aggregate deltas without conversation/request IDs,
+and although logs have dedupe IDs plus optional conversation/request/usage-event
+IDs, the public docs do not establish an exact join from those fields to this
+SDK's agent/run IDs. It provides no traces, prompt content, or historical
+backfill. EBO therefore records Enterprise export as `not-checked`, separately
+from the SDK-local `unsupported` result; future ingestion would require an
+approved admin destination and observed identity correlation evidence.
 
 ## Safety policy
 
@@ -119,7 +131,8 @@ source artifacts are unchanged.
 | usage | available | per-turn stream increments; cumulative/billing channels remain separate |
 | terminal outcome | available | exact owned `run.wait()` result |
 | parentage/native time | partial | exposed identities and adapter receipt order only |
-| native OTLP | unsupported | no public SDK `1.0.31` configuration or receipt API |
+| SDK-local OTLP configuration/receipt | unsupported | no public SDK `1.0.31` per-run API |
+| Enterprise team OTLP export | not checked | server-side metrics/logs exist, but no destination or exact SDK run correlation was verified |
 | OS containment | unsupported | SDK sandbox policy is not an OS/container boundary |
 
 Run the deterministic contract proof with:

@@ -55,6 +55,7 @@ export type CursorSdkNativeToolPolicyConfiguration = CursorSdkToolPolicy & {
 export type CursorSdkCaptureProfileConfiguration = {
   schemaVersion: typeof CURSOR_SDK_CONFIG_SCHEMA_VERSION;
   kind: "capture-profile";
+  /** SDK-local per-run configuration/receipt only; not Cursor's Enterprise team export. */
   nativeOtlp: "unsupported";
   workspaceOutcome?: {
     excludeDirectoryNames: string[];
@@ -72,7 +73,7 @@ export type CursorSdkConfigurationRecord =
 
 export type CursorSdkConfigurationKind = CursorSdkConfigurationRecord["kind"];
 
-export type CursorSdkModelLister = (options: { apiKey: string }) => Promise<SDKModel[]>;
+export type CursorSdkModelLister = (options: { apiKey: string; signal?: AbortSignal }) => Promise<SDKModel[]>;
 
 export type RunCursorSdkQueueEntryOptions = {
   bundleRoot: string;
@@ -121,7 +122,11 @@ export async function runCursorSdkQueueEntry(options: RunCursorSdkQueueEntryOpti
   if (auth === undefined || auth.trim() === "") {
     throw new Error("An approved Cursor credential is required through the runtime secret path.");
   }
-  const availableModels = await (options.modelLister ?? ((input) => Cursor.models.list(input)))({ apiKey: auth });
+  if (options.signal?.aborted) throw new Error("Cursor model catalog lookup was interrupted.");
+  const catalogPromise = (options.modelLister ?? ((input) => Cursor.models.list({ apiKey: input.apiKey })))(
+    { apiKey: auth, ...(options.signal === undefined ? {} : { signal: options.signal }) },
+  );
+  const availableModels = await abortablePreflight(catalogPromise, options.signal, "Cursor model catalog lookup");
   const catalogModel = availableModels.find(({ id }) => id === model.model.id);
   if (catalogModel === undefined) throw new Error(`Cursor model "${model.model.id}" is not an exact available catalog model.`);
   validateModelParameters(model.model, catalogModel);
@@ -377,6 +382,32 @@ function validateModelParameters(selection: ModelSelection, catalog: SDKModel): 
       throw new Error(`Cursor model parameter ${parameter.id}=${parameter.value} is not available in the current catalog.`);
     }
   }
+}
+
+async function abortablePreflight<T>(promise: Promise<T>, signal: AbortSignal | undefined, label: string): Promise<T> {
+  if (signal === undefined) return await promise;
+  if (signal.aborted) throw new Error(`${label} was interrupted.`);
+  return await new Promise<T>((resolvePromise, rejectPromise) => {
+    let settled = false;
+    const onAbort = (): void => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      rejectPromise(new Error(`${label} was interrupted.`));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    void promise.then((value) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      resolvePromise(value);
+    }, (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      rejectPromise(error);
+    });
+  });
 }
 
 function reopenFinalManifest(bundleRoot: string): RunManifest {

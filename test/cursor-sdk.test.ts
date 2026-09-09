@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -115,6 +115,30 @@ test("requires an exact caller-selected catalog model before creating an attempt
     }), /not an exact available catalog model/u);
     assert.equal(creates, 0);
     assert.equal(readdirSync(fixture.workspaceRoot).length, 0);
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
+test("aborts a pending model catalog preflight without creating an attempt", async () => {
+  const fixture = createCursorFixture();
+  const controller = new AbortController();
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => { markStarted = resolve; });
+  let creates = 0;
+  try {
+    const pending = runCursorSdkQueueEntry({
+      ...fixture,
+      apiKey: "fixture-key",
+      signal: controller.signal,
+      modelLister: async () => await new Promise(() => { markStarted(); }),
+      agentFactory: async () => { creates += 1; throw new Error("must not create"); },
+    });
+    await started;
+    controller.abort();
+    await assert.rejects(pending, /catalog lookup was interrupted/u);
+    assert.equal(creates, 0);
+    assert.equal(existsSync(fixture.outputRoot), false);
   } finally {
     rmSync(fixture.parent, { recursive: true, force: true });
   }
@@ -238,6 +262,38 @@ test("aborts pending send, fences late callbacks, and cancels the late run", asy
     });
     await nextTurn();
     assert.equal(cancelled, 1);
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
+test("aborts and fences a pending conversation readback", async () => {
+  const fixture = createCursorFixture();
+  const controller = new AbortController();
+  let markConversationStarted!: () => void;
+  const conversationStarted = new Promise<void>((resolve) => { markConversationStarted = resolve; });
+  let resolveConversation!: (turns: ConversationTurn[]) => void;
+  try {
+    const baseFactory = fakeAgentFactory();
+    const factory: CursorSdkAgentFactory = async (options) => {
+      const agent = await baseFactory(options);
+      return { ...agent, send: async (message, sendOptions) => {
+        const run = await agent.send(message, sendOptions);
+        return { ...run, conversation: async () => await new Promise<ConversationTurn[]>((resolve) => {
+          resolveConversation = resolve;
+          markConversationStarted();
+        }) };
+      } };
+    };
+    const pending = runCursorSdkQueueEntry({ ...fixture, apiKey: "fixture-key", modelLister: fakeModelLister, agentFactory: factory, signal: controller.signal });
+    await conversationStarted;
+    controller.abort();
+    const summary = await pending;
+    assert.equal(summary.classification, "capture-incomplete");
+    assert.equal(summary.captureQualification, "unqualified");
+    resolveConversation([{ type: "assistant", text: "late conversation" }] as unknown as ConversationTurn[]);
+    await nextTurn();
+    assert.doesNotMatch(readFileSync(join(summary.bundlePath, "native/session.jsonl"), "utf8"), /late conversation/u);
   } finally {
     rmSync(fixture.parent, { recursive: true, force: true });
   }
