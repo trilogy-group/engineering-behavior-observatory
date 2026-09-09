@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { readFileSync, rmSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -780,7 +780,11 @@ test("interrupts after delivered frames and flushes partial evidence", async () 
       source: "fake-harness",
       evidencePath,
     });
-    setTimeout(() => void protocol.interrupt(), 100);
+    const deadline = Date.now() + 5_000;
+    while ((!existsSync(evidencePath) || !readFileSync(evidencePath, "utf8").includes("notification")) && Date.now() < deadline) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+    }
+    await protocol.interrupt();
     const processResult = await protocol.wait();
     assert.equal(processResult.status, "interrupted");
     assert.equal(processResult.termination, "interrupted");

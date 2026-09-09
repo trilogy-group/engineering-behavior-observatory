@@ -77,4 +77,4 @@ observed behavioral difference.
 The schema is
 [`schemas/normalization-integrity.v1.json`](../schemas/normalization-integrity.v1.json).
 Exact-match and incompatible-fixture examples live under
-[`test/fixtures/comparison`](../test/fixtures/comparison).
+`test/fixtures/comparison` in the source repository.

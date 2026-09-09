@@ -169,6 +169,7 @@ const LOCAL_IDENTIFIER_PATTERNS = [
   /((?:user(?:name)?|owner|login)\s*[:=])(?!(?:\s*)\[LOCAL_USER\])\s*[^\s,"'}\]]+()/giu,
 ];
 const LOCAL_PATH = /(^|[\s"'=:(+\-])(?:[A-Za-z]:\\(?:[^\\\s"']+\\)*[^\\\s"']*|\/(?!\/)[^\s"']+)/gu;
+const LOCAL_HOME_PATH = /(?:^|[\s`"'=:(+\-]|file:\/\/)(?:[A-Za-z]:\\+Users\\+[^\\\s`"']+(?=[\\\s`"',;:)}\]]|$)|\/(?:Users|home)\/[^/\s`"']+(?=[/\s`"',;:)}\]]|$)|\/root(?=[/\s`"',;:)}\]]|$))/giu;
 
 /** Create one separately rooted, sanitized derivative of an M2 run bundle. */
 export async function createPortableRunBundleExport(
@@ -712,7 +713,7 @@ function scanPortableTree(
     const text = decode(bytes, "portable export");
     const failure = [
       ["known sensitive value", sensitiveValues.some((value) => text.includes(value))],
-      ["secret pattern", containsSecretPattern(text, mediaType)],
+      ["secret pattern", containsPortableSecretPattern(text, mediaType)],
       ["absolute path", containsLocalPath(text, mediaType)],
       ["local identifier", LOCAL_IDENTIFIER_PATTERNS.some((pattern) => pattern.test(text))],
       ["source correlation", sourceCorrelations.filter((value) => value.length >= 8).some((value) => text.includes(value))],
@@ -761,7 +762,8 @@ function valueContainsCodexReasoningContent(value: unknown): boolean {
   return Object.values(value).some(valueContainsCodexReasoningContent);
 }
 
-function containsSecretPattern(text: string, mediaType: string): boolean {
+/** Use the export pipeline's fail-closed credential patterns on release material. */
+export function containsPortableSecretPattern(text: string, mediaType: string): boolean {
   if (mediaType === "application/json") {
     return valueContainsSecretPattern(parseJson(Buffer.from(text), "Portable JSON final scan"));
   }
@@ -772,12 +774,40 @@ function containsSecretPattern(text: string, mediaType: string): boolean {
   return stringContainsSecretPattern(text);
 }
 
+/** Detect user-identifying home paths without rejecting documented generic paths. */
+export function containsPortableLocalHomePath(text: string, mediaType = "text/plain"): boolean {
+  if (mediaType === "application/json") {
+    return valueContainsLocalHomePath(parseJson(Buffer.from(text), "Portable JSON local-home scan"));
+  }
+  if (mediaType === "application/x-ndjson") {
+    return text.split(/\r?\n/gu).filter(Boolean).some((line) =>
+      valueContainsLocalHomePath(parseJson(Buffer.from(line), "Portable JSONL local-home scan")));
+  }
+  return stringContainsLocalHomePath(text);
+}
+
+function valueContainsLocalHomePath(value: unknown): boolean {
+  if (typeof value === "string") return stringContainsLocalHomePath(value);
+  if (Array.isArray(value)) return value.some(valueContainsLocalHomePath);
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(([key, entry]) =>
+    stringContainsLocalHomePath(key) || valueContainsLocalHomePath(entry));
+}
+
+function stringContainsLocalHomePath(text: string): boolean {
+  const matched = LOCAL_HOME_PATH.test(text);
+  LOCAL_HOME_PATH.lastIndex = 0;
+  return matched;
+}
+
 function valueContainsSecretPattern(value: unknown): boolean {
   if (typeof value === "string") return stringContainsSecretPattern(value);
   if (Array.isArray(value)) return value.some(valueContainsSecretPattern);
   if (!isRecord(value)) return false;
   return Object.entries(value).some(([key, entry]) =>
-    stringContainsSecretPattern(key) || valueContainsSecretPattern(entry));
+    SECRET_FIELDS.has(normalizeFieldName(key)) && entry !== "[REDACTED_SECRET]"
+      || stringContainsSecretPattern(key)
+      || valueContainsSecretPattern(entry));
 }
 
 function stringContainsSecretPattern(value: string): boolean {

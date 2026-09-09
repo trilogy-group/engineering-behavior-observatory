@@ -100,11 +100,12 @@ and a permitted model route:
 
 ```sh
 export EBO_LIVE_OPENHANDS_WORKSPACE_ROOT=/path-visible-to-host-and-server
-export EBO_OPENHANDS_SESSION_API_KEY=local-smoke-key
+# Set SESSION_API_KEY and EBO_OPENHANDS_SESSION_API_KEY to the same local
+# smoke-only value in the invoking environment.
 mkdir -p "$EBO_LIVE_OPENHANDS_WORKSPACE_ROOT"
 docker run --rm --name ebo-openhands-smoke -p 127.0.0.1:8010:8000 \
   -v "$EBO_LIVE_OPENHANDS_WORKSPACE_ROOT:$EBO_LIVE_OPENHANDS_WORKSPACE_ROOT" \
-  -e SESSION_API_KEY="$EBO_OPENHANDS_SESSION_API_KEY" \
+  -e SESSION_API_KEY \
   ghcr.io/openhands/agent-server:1.44.1-python --host 0.0.0.0
 
 npm run build

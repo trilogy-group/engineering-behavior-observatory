@@ -72,7 +72,7 @@ adapter supplies its own native types and capability profile; it does not add
 convenience fields to the event schema.
 
 The golden examples in
-[`test/fixtures/uniform-events/all-families.v1.json`](../test/fixtures/uniform-events/all-families.v1.json)
+`test/fixtures/uniform-events/all-families.v1.json`
 cover all initial families using representative retained harness, verifier,
 telemetry, workspace, and terminal evidence shapes. They deliberately preserve unknown
 time, parentage, and content where the qualified fixtures do not establish
