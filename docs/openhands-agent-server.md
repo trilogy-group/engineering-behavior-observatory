@@ -137,3 +137,17 @@ The smoke asks the agent to modify one file, verifies the retained workspace,
 and requires native stream/final records, hook evidence, a verifier result, a
 run bundle, normalized events, and the explicit EventLog completeness gap.
 `LLM_MODEL` and `LLM_API_KEY` must name an approved route before the test runs.
+
+For an OpenAI-compatible endpoint, use its LiteLLM `openai/` model prefix and
+set `LLM_BASE_URL`. For example, the Z.ai coding-plan smoke used
+`LLM_MODEL=openai/glm-5.3-flash` and
+`LLM_BASE_URL=https://api.z.ai/api/coding/paas/v4`, with `LLM_API_KEY` supplied
+from the operator's `ZAI_API_KEY` environment variable.
+
+Set `EBO_LIVE_OPENHANDS_KEEP_ARTIFACTS=1` to retain the smoke directory and print
+its location, including on failure. These native artifacts remain restricted.
+On the tested macOS installation, the default tmux pool failed during tool
+initialization. `EBO_LIVE_OPENHANDS_TERMINAL_TYPE=subprocess` selects OpenHands'
+supported subprocess terminal for this smoke. With that setting, the 1.46.0
+server completed the Z.ai run, verified the workspace, and produced normalized
+events with the declared EventLog completeness gap.

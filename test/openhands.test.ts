@@ -1625,7 +1625,7 @@ test("pins the exact upstream OpenAPI and TypeScript-client comparison artifacts
 test("approved live Agent Server smoke produces a verified run bundle", {
   skip: process.env.EBO_LIVE_OPENHANDS_SMOKE !== "1",
   timeout: 300_000,
-}, async () => {
+}, async (context) => {
   const workspaceRoot = process.env.EBO_LIVE_OPENHANDS_WORKSPACE_ROOT;
   const model = process.env.LLM_MODEL;
   const apiKey = process.env.LLM_API_KEY;
@@ -1673,7 +1673,7 @@ test("approved live Agent Server smoke produces a verified run bundle", {
               ...(process.env.LLM_BASE_URL === undefined ? {} : { base_url: process.env.LLM_BASE_URL }),
             },
             tools: [
-              { name: "terminal", params: {} },
+              { name: "terminal", params: process.env.EBO_LIVE_OPENHANDS_TERMINAL_TYPE === "subprocess" ? { terminal_type: "subprocess" } : {} },
               { name: "file_editor", params: {} },
             ],
           },
@@ -1717,7 +1717,8 @@ test("approved live Agent Server smoke produces a verified run bundle", {
     assert.ok(result.normalized);
     assert.equal(result.normalized.events.length > 0, true);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    if (process.env.EBO_LIVE_OPENHANDS_KEEP_ARTIFACTS === "1") context.diagnostic(`Retained live smoke: ${root}`);
+    else rmSync(root, { recursive: true, force: true });
   }
 });
 
