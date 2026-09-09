@@ -164,7 +164,7 @@ function markdownFiles(directory) {
 }
 
 function forbiddenPackagePath(path) {
-  return /^(?:\.agents|\.ebo|\.env|\.git|\.opensymphony|test|tests|workspaces|run-bundles|exports)(?:\/|$)|(?:^|\/)(?:credentials?|restricted)(?:\/|$)|\.(?:key|pem)$/u.test(path);
+  return /^(?:\.agents|\.ebo|\.git|\.opensymphony|test|tests|workspaces|run-bundles|exports)(?:\/|$)|(?:^|\/)\.env(?:\.[^/]*)?(?:\/|$)|(?:^|\/)(?:credentials?|restricted)(?:\/|$)|\.(?:key|pem)$/u.test(path);
 }
 
 function sha256(bytes) {

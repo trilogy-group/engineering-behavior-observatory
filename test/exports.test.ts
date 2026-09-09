@@ -49,6 +49,7 @@ test("release scanning reuses the complete export credential patterns", () => {
   assert.equal(containsPortableSecretPattern("const config = { api_key: request.apiKey };", "application/javascript"), false);
   assert.equal(containsPortableSecretPattern("const config = { session_api_key: request.sessionApiKey };", "application/javascript"), false);
   assert.equal(containsPortableSecretPattern('const config = { api_key: "synthetic-credential-value" };', "application/javascript"), true);
+  assert.equal(containsPortableSecretPattern("// api_key=sk-ant-api03-syntheticvalue", "application/javascript"), true);
 });
 
 test("exports a sanitized public M2 bundle without mutating its source", async () => {

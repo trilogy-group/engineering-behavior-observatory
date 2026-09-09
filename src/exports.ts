@@ -764,6 +764,9 @@ function valueContainsCodexReasoningContent(value: unknown): boolean {
 /** Use the export pipeline's fail-closed credential patterns on release material. */
 export function containsPortableSecretPattern(text: string, mediaType: string): boolean {
   if (mediaType === "application/javascript") {
+    const highConfidence = SECRET_PATTERNS.slice(0, 2).some((pattern) => pattern.test(text));
+    resetPatterns();
+    if (highConfidence) return true;
     text = text.replace(/([A-Za-z_$][\w$]*)\s*([:=])\s*((?:[A-Za-z_$][\w$]*\.)*[A-Za-z_$][\w$]*)/gu,
       (match, key: unknown, operator: unknown) => typeof key === "string"
         && [...SECRET_FIELDS].some((secret) => normalizeFieldName(key).endsWith(secret))
