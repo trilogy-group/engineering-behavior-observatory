@@ -240,6 +240,7 @@ const policy: PortableExportPolicy = {
   sharingClass: "partner",
   maxArtifactBytes: 16 * 1024 * 1024,
   maxStringBytes: 8192,
+  sensitiveValues: [callerKnownConfidentialValue],
 };
 
 await createPortableRunBundleExport({
@@ -248,6 +249,10 @@ await createPortableRunBundleExport({
   policy,
 });
 ```
+
+Keep caller-known `sensitiveValues` with restricted study inputs and never
+commit real values. See [the operator guide](operator-guide.md#5-export-an-approved-derivative)
+for handling details.
 
 Extend the existing sanitizer/readback only when a new artifact kind has an
 explicit sharing classification. Do not add a permissive fallback.
