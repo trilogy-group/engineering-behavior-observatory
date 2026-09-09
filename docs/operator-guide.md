@@ -346,12 +346,10 @@ destination:
 ```ts
 import {
   captureClaudeAgentSdkRun,
-  readAttemptRecord,
   retryAttempt,
 } from "../src/index.js";
 
-const previous = await readAttemptRecord(previousAttemptRecordPath);
-const attempt = retryAttempt(previous);
+const attempt = retryAttempt(previousCaptureResult.attempt);
 
 await captureClaudeAgentSdkRun({
   ...captureOptions,
@@ -366,9 +364,11 @@ await captureClaudeAgentSdkRun({
 
 Use the same `RunBundleDefinition.attempt` composition with
 `captureCodexAppServerRun` or `captureOpenHandsAgentServerRun`. A linked-retry
-operator path for any other source is unsupported until its source-specific
-capture composition accepts that identity; do not synthesize lineage in a
-manifest afterward.
+operator can use this form only while it retains the prior capture result in
+process; these wrappers do not write a standalone lifecycle attempt record.
+Cross-process retry lineage and any other source without an equivalent capture
+composition are unsupported. Do not synthesize lineage in a manifest
+afterward.
 
 ## Command reference
 
