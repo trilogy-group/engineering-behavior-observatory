@@ -117,11 +117,11 @@ export async function runCursorSdkQueueEntry(options: RunCursorSdkQueueEntryOpti
   const limits = resolveCursorSdkConfigurationRecord(bundleRoot, entry.configuration.nativeLimits, "native-limits");
   const toolPolicy = resolveCursorSdkConfigurationRecord(bundleRoot, entry.configuration.nativeToolPolicy, "native-tool-policy");
   const captureProfile = resolveCursorSdkConfigurationRecord(bundleRoot, queue.captureProfile, "capture-profile");
-  const apiKey = options.apiKey ?? process.env.CURSOR_API_KEY;
-  if (apiKey === undefined || apiKey.trim() === "") {
-    throw new Error("CURSOR_API_KEY is required through the approved runtime secret path.");
+  const auth = options.apiKey ?? process.env.CURSOR_API_KEY;
+  if (auth === undefined || auth.trim() === "") {
+    throw new Error("An approved Cursor credential is required through the runtime secret path.");
   }
-  const availableModels = await (options.modelLister ?? ((input) => Cursor.models.list(input)))({ apiKey });
+  const availableModels = await (options.modelLister ?? ((input) => Cursor.models.list(input)))({ apiKey: auth });
   const catalogModel = availableModels.find(({ id }) => id === model.model.id);
   if (catalogModel === undefined) throw new Error(`Cursor model "${model.model.id}" is not an exact available catalog model.`);
   validateModelParameters(model.model, catalogModel);
@@ -187,7 +187,7 @@ export async function runCursorSdkQueueEntry(options: RunCursorSdkQueueEntryOpti
         cleanup: async () => cleanupWorkspace(workspace),
       },
       configuration,
-      apiKey,
+      apiKey: auth,
       prompt: packet.agentInput.prompt,
       ...(captureProfile.workspaceOutcome === undefined ? {} : {
         workspaceOutcomeExcludedDirectoryNames: captureProfile.workspaceOutcome.excludeDirectoryNames,
