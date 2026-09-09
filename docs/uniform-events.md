@@ -13,6 +13,11 @@ event, run, and attempt identities; source harness and native type; native
 evidence reference; native order and time; actor; family; phase; scope;
 relations; bounded attributes; and content references.
 
+An event may retain up to 4,096 known relations. Native model-request and
+assembled-message events can reference many source chunks; the live DeepSeek
+smoke required 119 relations on one event. Relations are preserved rather than
+silently truncated, and larger sets fail validation explicitly.
+
 The initial families are `message`, `model-request`, `tool`, `context`,
 `permission`, `delegation`, `artifact`, `validation`, `runtime`, and `outcome`.
 They are observation categories, not a shared transport or lifecycle protocol.
@@ -72,7 +77,7 @@ adapter supplies its own native types and capability profile; it does not add
 convenience fields to the event schema.
 
 The golden examples in
-[`test/fixtures/uniform-events/all-families.v1.json`](../test/fixtures/uniform-events/all-families.v1.json)
+`test/fixtures/uniform-events/all-families.v1.json`
 cover all initial families using representative retained harness, verifier,
 telemetry, workspace, and terminal evidence shapes. They deliberately preserve unknown
 time, parentage, and content where the qualified fixtures do not establish

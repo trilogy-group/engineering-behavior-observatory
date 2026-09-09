@@ -22,6 +22,29 @@ import { main } from "../src/cli.js";
 import { readBoundedFile } from "../src/scheduler.js";
 
 const fixtures = resolve("test/fixtures/run-bundles");
+
+test("structural qualification supersedes legacy capture summaries without rewriting evidence", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-qualification-index-"));
+  try {
+    cpSync(join(fixtures, "complete"), root, { recursive: true });
+    const path = join(root, "manifest.json");
+    const manifest = JSON.parse(readFileSync(path, "utf8"));
+    const descriptor = manifest.evidence.find((item: any) => item.kind === "capture-report");
+    const reportPath = join(root, descriptor.relativePath);
+    const report = JSON.parse(readFileSync(reportPath, "utf8"));
+    for (const status of ["qualified", "qualified-with-gaps", "unqualified", "incomplete", "unavailable", "invalid", undefined]) {
+      const document = { ...report, qualification: "qualified", ...(status === undefined ? {} : { structuralQualification: { status } }) };
+      if (status === undefined) delete document.structuralQualification;
+      const bytes = Buffer.from(JSON.stringify(document));
+      descriptor.digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+      descriptor.sizeBytes = bytes.length;
+      writeFileSync(reportPath, bytes);
+      writeFileSync(path, JSON.stringify(manifest));
+      assert.equal(buildCorpusIndex(root).find(({ manifestKind }) => manifestKind === "run")!.captureQualification, status === undefined ? "qualified" : status === "invalid" ? "unavailable" : status);
+      assert.deepEqual(readFileSync(reportPath), bytes);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 const policy: PortableExportPolicy = {
   sharingClass: "partner",
   maxArtifactBytes: 16 * 1024,
@@ -53,6 +76,7 @@ test("builds, queries, and validates a deterministic mixed corpus index", async 
     assert.equal(queryCorpusIndex(first, { verifierStatus: "failed" })[0]?.attemptId, "attempt-task-failed-1");
     assert.equal(queryCorpusIndex(first, { failureClass: "infrastructure" })[0]?.attemptId, "attempt-interrupted-1");
     assert.equal(queryCorpusIndex(first, { exportStatus: "ready" }).length, 1);
+    assert.equal(queryCorpusIndex(first, { manifestKind: "export", verifierStatus: "passed" }).length, 1);
     assert.equal(queryCorpusIndex(first, { runId: "run-complete" })[0]?.attemptNumber, 1);
     const indexed = readCorpusIndex(indexPath);
     assert.deepEqual(validateCorpusIndex(corpus, indexed), []);
@@ -74,6 +98,35 @@ test("builds, queries, and validates a deterministic mixed corpus index", async 
     const manifestPath = join(corpus, "runs", "task-failed", "manifest.json");
     writeFileSync(manifestPath, `${readFileSync(manifestPath, "utf8")}\n`);
     assert.ok(validateCorpusIndex(corpus, indexed).some(({ kind }) => kind === "digest-mismatch"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("indexes only the verifier bound to the terminal workspace", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-corpus-verifier-binding-"));
+  try {
+    const bundle = join(root, "bundle");
+    cpSync(join(fixtures, "complete"), bundle, { recursive: true });
+    const manifestPath = join(bundle, "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as any;
+    const source = manifest.evidence.find((descriptor: any) => descriptor.kind === "verifier");
+    const verifier = JSON.parse(readFileSync(join(bundle, source.relativePath), "utf8"));
+    const oldVerifier = { ...verifier, status: "failed", workspace: { ...verifier.workspace, artifactId: "old-workspace" } };
+    const bytes = Buffer.from(`${JSON.stringify(oldVerifier)}\n`);
+    writeFileSync(join(bundle, "old-verifier.json"), bytes);
+    manifest.evidence.push({
+      ...source,
+      id: "old-verifier",
+      relativePath: "old-verifier.json",
+      digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+      sizeBytes: bytes.length,
+    });
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    const indexed = buildCorpusIndex(bundle).find(({ manifestKind }) => manifestKind === "run")!;
+    assert.deepEqual(indexed.verifierStatuses, ["passed"]);
+    assert.deepEqual(indexed.verifierArtifactIds.sort(), ["old-verifier", source.id].sort());
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

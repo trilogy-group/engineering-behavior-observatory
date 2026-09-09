@@ -1,0 +1,31 @@
+{
+  "present": {
+    "model-request-count": 1,
+    "tool-operation-count": 2,
+    "tool-native-record-count": 4,
+    "unidentified-tool-native-record-count": 0,
+    "tool-error-count": 1,
+    "repeated-tool-operation-count": 1,
+    "failure-followed-by-same-tool-count": 1,
+    "failure-followed-by-alternate-tool-count": 0,
+    "validation-after-last-mutation": true,
+    "compaction-boundary-record-count": 1,
+    "input-token-count": 9,
+    "attempt-latency-ms": 1200
+  },
+  "zero": {
+    "model-request-count": 0,
+    "tool-operation-count": 0,
+    "tool-error-count": 0,
+    "repeated-tool-operation-count": 0,
+    "compaction-boundary-record-count": 0
+  },
+  "unavailable": [
+    "model-request-count",
+    "tool-operation-count",
+    "tool-error-count",
+    "compaction-boundary-record-count",
+    "input-token-count",
+    "validation-after-last-mutation"
+  ]
+}

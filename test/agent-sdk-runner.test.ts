@@ -9,10 +9,14 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { RunBundleAssembler } from "../src/run-bundles.js";
+import { checkRetainedEvaluation } from "./retained-evaluation-helper.js";
 import type { HookEvent, HookInput, Options, SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import {
+  aggregateEvaluation,
+  assessComparisonEligibility,
   buildCorpusIndex,
+  createAgentSdkStructuralObservationSet,
   digestBytes,
   digestMetadata,
   freezeTaskPacket,
@@ -23,6 +27,7 @@ import {
   writeRunQueue,
   compileRunQueue,
   type ClaudeAgentSdkTelemetryConfiguration,
+  type ComparisonRequest,
   type ExperimentConfiguration,
   type RunManifest,
   type TaskPacket,
@@ -49,7 +54,7 @@ process.stdout.write(JSON.stringify({ assertions: [{ id: "result-file", status: 
 if (!passed) process.exitCode = 1;
 `;
 
-test("executes one frozen queue entry end to end and retains a qualified bundle", async () => {
+test("runs one frozen Agent SDK entry through capture, export, evaluation, review, aggregation, and Atlas", async () => {
   const fixture = createRunnerFixture();
   const query = fakeQuery({ resultContent: "done\n", extraFiles: { "node_modules/cache.txt": "generated\n" } });
   try {
@@ -79,6 +84,48 @@ test("executes one frozen queue entry end to end and retains a qualified bundle"
     assert.equal(workspaceEvidence.mediaType, "text/x-diff", "the small change must retain an applicable patch");
     assert.equal(manifest.run.verifier?.locator, "restricted/verifier.cjs");
     assert.equal(manifest.run.verifier?.format, "commonjs");
+    assert.equal(manifest.run.trial?.index, 1);
+    const corpusEntries = buildCorpusIndex(summary.bundlePath);
+    const corpusEntry = corpusEntries[0]!;
+    assert.equal(corpusEntry.trialId, "1");
+    const observationSet = await createAgentSdkStructuralObservationSet(summary.bundlePath);
+    const candidate = {
+      id: manifest.run.id,
+      manifestDigest: corpusEntry.manifestDigest,
+      adapterVersion: observationSet.normalization.adapter.version,
+      task: { id: corpusEntry.taskId!, digest: corpusEntry.taskDigest! },
+      fixture: { id: corpusEntry.fixtureId!, digest: corpusEntry.fixtureDigest! },
+      model: { id: corpusEntry.modelId!, configurationDigest: corpusEntry.modelConfigurationDigest! },
+      harness: { id: corpusEntry.harnessId!, version: corpusEntry.harnessVersion!, configurationDigest: corpusEntry.harnessConfigurationDigest! },
+      assessmentMode: "verified" as const,
+      captureProfileDigest: corpusEntry.captureProfileDigest!,
+      budgetDigest: corpusEntry.budgetDigest!,
+      toolPolicyDigest: corpusEntry.toolPolicyDigest!,
+      capabilityProfile: observationSet.normalization.capabilityProfile!,
+    };
+    const comparisonRequest: ComparisonRequest = {
+      schemaVersion: "ebo.comparison-request/v2",
+      measure: "structural:tool-operation-count",
+      left: candidate,
+      right: structuredClone(candidate),
+      policy: { declaredDifferences: [], requiredCapabilities: ["family:tool"] },
+    };
+    const aggregate = await aggregateEvaluation({
+      corpusEntries,
+      observationSets: [{ bundleRoot: summary.bundlePath, document: observationSet }],
+      assertions: [],
+      calibrations: [],
+      comparisons: [{
+        id: "structural-self-comparison",
+        measure: comparisonRequest.measure,
+        left: { trial: "1" },
+        right: { trial: "1" },
+        matchBy: ["trial"],
+        eligibility: [{ request: comparisonRequest, report: assessComparisonEligibility(comparisonRequest) }],
+      }],
+    }, { groupBy: ["task"], selectedAttemptPolicy: "all-attempts", recurrence: { minimumOccurrences: 2 } });
+    assert.equal(aggregate.comparisons[0]!.claimStatus, "no-difference");
+    assert.equal(aggregate.comparisons[0]!.matchedDifference.numerator.unit, "right-minus-left-identified-logical-tool-operations");
 
     const verifier = readVerifierResult(summary.bundlePath, manifest);
     assert.equal(verifier.status, "passed");
@@ -87,6 +134,18 @@ test("executes one frozen queue entry end to end and retains a qualified bundle"
     assert.equal(verifier.status === "passed" ? verifier.workspace.fingerprint : undefined, workspaceEvidence.fingerprint);
     assert.ok(readFileSync(join(summary.bundlePath, "session.jsonl"), "utf8").trim().length > 0);
     assert.ok(readFileSync(join(summary.bundlePath, "hooks.jsonl"), "utf8").trim().length > 0);
+
+    const policyPath = join(fixture.parent, "release-export-policy.json");
+    const exportRoot = join(fixture.parent, "release-export");
+    writeFileSync(policyPath, JSON.stringify({
+      sharingClass: "partner",
+      maxArtifactBytes: 8 * 1024 * 1024,
+      maxStringBytes: 64 * 1024,
+    }));
+    const output: string[] = [];
+    assert.equal(await main(["export", "create", summary.bundlePath, policyPath, exportRoot], (message) => output.push(message)), 0, output.join(""));
+    assert.equal(JSON.parse(readFileSync(join(exportRoot, "manifest.json"), "utf8")).status, "ready");
+    await checkRetainedEvaluation(summary.bundlePath, join(fixture.parent, "release-evaluation"));
   } finally {
     rmSync(fixture.parent, { recursive: true, force: true });
   }

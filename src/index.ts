@@ -215,6 +215,8 @@ export {
   runProtocolProcess,
   spawnProtocolProcess,
 } from "./process-protocol.js";
+export { loadAtlas, queryAtlas, serveAtlas, shareAtlas, writeAtlas } from "./atlas.js";
+export type { AtlasCase, AtlasFilters, AtlasRequest, AtlasSource, AtlasView } from "./atlas.js";
 export {
   captureCodexAppServer,
   CODEX_ADAPTER_VERSION,
@@ -349,11 +351,91 @@ export type {
 } from "./uniform-events.js";
 export {
   assessComparisonEligibility,
+  assessLegacyComparisonEligibility,
   createCapturedNativeEvidenceResolver,
   describeNormalizedDataset,
   validateNormalizedCorpus,
   validateNormalizedDataset,
 } from "./normalization-integrity.js";
+export {
+  CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_VERSION,
+  createAgentSdkStructuralObservationSet,
+  createStructuralObservationSet,
+  STRUCTURAL_EXTRACTOR_REGISTRY,
+  STRUCTURAL_EXTRACTOR_VERSION,
+  validateStructuralObservationSet,
+} from "./structural-observations.js";
+export type {
+  StructuralObservation,
+  StructuralObservationSet,
+} from "./structural-observations.js";
+export {
+  createAgentSdkBehaviorEvidence,
+  DEFAULT_BEHAVIOR_VOCABULARY,
+  isConfirmedBehaviorAssertion,
+  validateAgentSdkBehaviorAssertion,
+  validateBehaviorAssertion,
+  validateBehaviorReview,
+} from "./behavior-assertions.js";
+export type {
+  AgentSdkBehaviorEvidence,
+  BehaviorAssertion,
+  BehaviorCitation,
+  BehaviorReview,
+  BehaviorVocabulary,
+  ResolvedBehaviorCitation,
+} from "./behavior-assertions.js";
+export {
+  assertCalibrationDestination,
+  effectiveReviewOutcome,
+  isDisputedReviewOutcome,
+  importReviewDecision,
+  selectReviewSample,
+  summarizeCalibration,
+  revalidateReviewSample,
+  terminalVerifierOutcome,
+  validateReviewSample,
+  validateReviewHistory,
+  writeReviewPacket,
+} from "./human-calibration.js";
+export type {
+  CalibrationSummary,
+  ReviewCandidate,
+  ReviewDecision,
+  ReviewFilters,
+  ReviewHistory,
+  ReviewSample,
+  ReviewSampleCriteria,
+  ReviewSourceSet,
+} from "./human-calibration.js";
+export { aggregateEvaluation } from "./aggregation.js";
+export type {
+  AggregateMeasurement,
+  AggregateMetric,
+  AggregationDimension,
+  AggregationInput,
+  AggregationReport,
+  AggregationRequest,
+  AttemptSelectionPolicy,
+} from "./aggregation.js";
+export {
+  CLAUDE_SEMANTIC_JUDGE_BACKEND_ID,
+  packageSemanticJudgeInput,
+  parseSemanticJudgeResponse,
+  runAgentSdkSemanticJudge,
+  runClaudeAgentSdkSemanticJudge,
+  SEMANTIC_JUDGE_PROMPT_VERSION,
+} from "./semantic-judge.js";
+export type {
+  RunAgentSdkSemanticJudgeOptions,
+  SemanticJudgeBackend,
+  SemanticJudgeBackendResult,
+  SemanticJudgeEvidenceItem,
+  SemanticJudgeInput,
+  SemanticJudgeRequest,
+  SemanticJudgmentRecord,
+  SemanticJudgeUsage,
+} from "./semantic-judge.js";
 export type {
   AdapterCoverageReport,
   ComparisonCandidate,
@@ -361,6 +443,8 @@ export type {
   ComparisonReason,
   ComparisonReport,
   ComparisonRequest,
+  LegacyComparisonReport,
+  LegacyComparisonRequest,
   NormalizedDataset,
   NormalizedDatasetInput,
   NormalizedContentReference,
@@ -432,3 +516,11 @@ export type {
   ProtocolProcessOptions,
   ProtocolProcessResult,
 } from "./process-protocol.js";
+export { createRetainedBehaviorEvidence } from "./retained-evidence.js";
+export type { RetainedBehaviorEvidence } from "./retained-evidence.js";
+export { createRetainedStructuralObservationSet } from "./structural-observations.js";
+export { validateRetainedBehaviorAssertion } from "./behavior-assertions.js";
+export { runAgentSdkSemanticJudge as runRetainedSemanticJudge } from "./semantic-judge.js";
+export { runCodexSemanticJudge } from "./codex-judge.js";
+export type { BehaviorAggregate } from "./aggregation.js";
+export { selectAggregationAttempts } from "./aggregation.js";

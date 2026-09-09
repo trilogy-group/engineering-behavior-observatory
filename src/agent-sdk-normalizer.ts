@@ -36,6 +36,7 @@ import {
 
 export const CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_ID = "claude-agent-sdk/v1";
 export const CLAUDE_AGENT_SDK_HARNESS = "claude-agent-sdk";
+export const CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_VERSION = "1.0.0";
 
 type JsonRecord = Record<string, unknown>;
 type AgentSdkNativeKind =
@@ -168,6 +169,17 @@ export async function normalizeClaudeAgentSdkRunBundle(bundleRoot: string): Prom
 export async function readQualifiedClaudeAgentSdkCapture(
   bundleRoot: string,
 ): Promise<NormalizationInput<AgentSdkNativeRecord>> {
+  const manifest = readManifest(resolve(bundleRoot));
+  if (!manifest.run.runtime.some(({ source, name }) => source === "anthropic" && ["agent-sdk", CLAUDE_AGENT_SDK_HARNESS].includes(name))) {
+    throw new Error("Run bundle is not an Agent SDK capture.");
+  }
+  const capture = await readQualifiedRunCapture(bundleRoot);
+  assertQualifiedInput(capture);
+  return capture;
+}
+
+/** Verified retained artifact envelopes; native session documents remain source-specific. */
+export async function readQualifiedRunCapture(bundleRoot: string): Promise<NormalizationInput<AgentSdkNativeRecord>> {
   const root = resolve(bundleRoot);
   const manifest = readManifest(root);
   await assertPersistedStructuralQualification(root, manifest);
@@ -176,11 +188,6 @@ export async function readQualifiedClaudeAgentSdkCapture(
       || !["qualified", "qualified-with-gaps"].includes(qualification.status)) {
     const reasons = qualification.reasons.map(({ code }) => code).join(", ") || "unknown qualification failure";
     throw new Error(`Agent SDK normalization requires capture-qualified evidence: ${reasons}.`);
-  }
-
-  if (manifest.run.harness.id !== "agent-sdk"
-      || !manifest.run.runtime.some(({ source, name }) => source === "anthropic" && name === "agent-sdk")) {
-    throw new Error("Run bundle is not an Agent SDK capture.");
   }
 
   const records: Array<CapturedNativeRecord<AgentSdkNativeRecord>> = [];
@@ -235,7 +242,6 @@ export async function readQualifiedClaudeAgentSdkCapture(
     qualification: qualification.status === "qualified" ? "qualified" : "qualified-with-gaps",
     records,
   };
-  assertQualifiedInput(input);
   return input;
 }
 
@@ -330,10 +336,53 @@ function mapSessionRecord(
       parentKey: parentToolKey(message),
     }));
   }
+  if (nativeType === "result") drafts.push(...mapResultResources(common, message));
   if (nativeType === "assistant" || nativeType === "user") {
     drafts.push(...mapToolBlocks(common, message));
   }
   return drafts;
+}
+
+function mapResultResources(
+  common: {
+    input: NormalizationInput<AgentSdkNativeRecord>;
+    captured: CapturedNativeRecord<AgentSdkNativeRecord>;
+    nativeType: string;
+    nativeOrder: UniformEvent["nativeOrder"];
+    nativeTime: UniformEvent["nativeTime"];
+    sessionId?: string;
+  },
+  message: JsonRecord,
+): DraftEvent[] {
+  const modelUsage = asRecord(message.modelUsage);
+  if (modelUsage === undefined && typeof message.total_cost_usd !== "number") return [];
+  return [draftEvent({
+    ...common,
+    discriminator: "resources",
+    family: "runtime",
+    phase: "after",
+    actor: { kind: "harness" },
+    scope: common.sessionId === undefined
+      ? { kind: "attempt", id: common.input.attemptId }
+      : { kind: "session", id: common.sessionId },
+    attributes: compactAttributes({
+      inputTokens: summedModelUsage(modelUsage, "inputTokens"),
+      outputTokens: summedModelUsage(modelUsage, "outputTokens"),
+      cacheReadInputTokens: summedModelUsage(modelUsage, "cacheReadInputTokens"),
+      cacheCreationInputTokens: summedModelUsage(modelUsage, "cacheCreationInputTokens"),
+      totalCostUsd: scalar(message.total_cost_usd),
+      resourceSemantics: "cumulative-final",
+    }),
+    content: { status: "unknown", reason: "Native resource details remain in the Agent SDK result record" },
+  })];
+}
+
+function summedModelUsage(modelUsage: JsonRecord | undefined, field: string): number | undefined {
+  const records = Object.values(modelUsage ?? {}).map(asRecord);
+  const values = records.map((record) => record?.[field]);
+  return records.length > 0 && values.every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0)
+    ? (values as number[]).reduce((total, value) => total + value, 0)
+    : undefined;
 }
 
 function sessionEventShape(
@@ -400,7 +449,11 @@ function mapToolBlocks(
         phase: "before",
         actor: { kind: "model" },
         scope: { kind: "operation", id: toolUseId },
-        attributes: { toolName, toolUseId },
+        attributes: {
+          toolName,
+          toolUseId,
+          ...(block.input === undefined ? {} : { inputDigest: digestAttribute(block.input) }),
+        },
         content: knownContent(contentReference(common.captured.reference, `/message/message/content/${index}`, "tool-input")),
         anchors: [{ key: `tool:${toolUseId}`, rank: 0 }],
       })];
@@ -864,13 +917,27 @@ function sessionAttributes(nativeType: string, subtype: string | undefined, mess
     isError: scalar(message.is_error),
     stopReason: scalar(message.stop_reason),
     numTurns: scalar(message.num_turns),
-    totalCostUsd: scalar(message.total_cost_usd),
     toolName: scalar(message.tool_name),
     elapsedSeconds: scalar(message.elapsed_time_seconds),
+    durationMs: scalar(message.duration_ms),
+    apiDurationMs: scalar(message.duration_api_ms),
+    unprojectedToolBlockCount: unprojectedToolBlockCount(message),
+    resourceSemantics: nativeType === "result" && typeof message.duration_ms === "number" ? "cumulative-final" : undefined,
     rateLimitStatus: nativeType === "rate_limit_event" ? scalar(rateLimit?.status) : undefined,
     rateLimitType: nativeType === "rate_limit_event" ? scalar(rateLimit?.rateLimitType) : undefined,
     utilization: nativeType === "rate_limit_event" ? scalar(rateLimit?.utilization) : undefined,
   });
+}
+
+function unprojectedToolBlockCount(message: JsonRecord): number | undefined {
+  const content = asRecord(message.message)?.content;
+  if (!Array.isArray(content)) return undefined;
+  const count = content.filter((value) => {
+    const block = asRecord(value);
+    return block?.type === "tool_use" && (text(block.id) === undefined || text(block.name) === undefined)
+      || block?.type === "tool_result" && text(block.tool_use_id) === undefined;
+  }).length;
+  return count === 0 ? undefined : count;
 }
 
 function sessionContent(
@@ -931,8 +998,12 @@ function hookAttributes(
 ): Record<string, UniformAttributeValue> {
   return compactAttributes({
     hook,
+    mutation: hook === "FileChanged" ? true : undefined,
     toolUseId,
     toolName: scalar(payload.tool_name),
+    inputDigest: hook === "PreToolUse" && payload.tool_input !== undefined
+      ? digestAttribute(payload.tool_input)
+      : undefined,
     agentId,
     agentType: scalar(payload.agent_type),
     taskId,
@@ -1025,6 +1096,10 @@ function scalarList(value: unknown): UniformAttributeValue | undefined {
   return Array.isArray(value) && value.length <= 16 && value.every(validAttributeScalar)
     ? value as UniformAttributeValue
     : undefined;
+}
+
+function digestAttribute(value: unknown): string {
+  return `sha256:${digestMetadata(value).value}`;
 }
 
 function validAttributeValue(value: UniformAttributeValue): boolean {

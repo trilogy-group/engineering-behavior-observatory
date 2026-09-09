@@ -19,28 +19,96 @@ import {
   type CodexAppServerCapture,
   type CodexAppServerConfiguration,
 } from "../src/codex.js";
-import { captureCodexAppServerRun, runCodexQueueEntry } from "../src/codex-run.js";
+import { captureCodexAppServerRun, runCodexQueueEntry, CODEX_CONTRACT_DIGEST } from "../src/codex-run.js";
 import { RunBundleAssembler, type RunBundleDefinition, type RunManifest } from "../src/run-bundles.js";
 import {
   buildCorpusIndex,
   compileRunQueue,
   createPortableRunBundleExport,
+  createRetainedBehaviorEvidence,
+  createRetainedStructuralObservationSet,
   digestBytes,
   digestMetadata,
   freezeTaskPacket,
+  main,
   packPortableExport,
   readPortableRunBundleExport,
+  qualifyRunBundle,
+  runRetainedSemanticJudge,
   unpackPortableExport,
   validateCorpusIndex,
   writeRunQueue,
   type ExperimentConfiguration,
   type PortableExportPolicy,
   type TaskPacket,
+  type SemanticJudgeRequest,
 } from "../src/index.js";
 
 const fixture = resolve("test/fixtures/codex/fake-app-server.mjs");
-const contractRoot = resolve("contracts/codex-app-server-0.150.1");
+const contractRoot = resolve("contracts/codex-app-server-0.153.4");
 const reasoningSentinel = "EBO_RAW_REASONING_SENTINEL";
+
+test("retained 0.150.1 evidence keeps its original normalized dataset", async () => {
+  const root = resolve("test/fixtures/codex/legacy-0.150.1");
+  const before = await readFile(join(root, "manifest.json"));
+  const evidence = await createRetainedBehaviorEvidence(root);
+  const expected = JSON.parse(await readFile(resolve("test/fixtures/codex/legacy-0.150.1.dataset.json"), "utf8"));
+  assert.deepEqual(evidence.dataset, expected);
+  assert.equal(evidence.dataset.adapter.id, "ebo-codex-app-server-v0.150.1");
+  assert.deepEqual(await readFile(join(root, "manifest.json")), before);
+});
+
+test("new capture rejects the older runtime declaration before launching", async () => {
+  await assert.rejects(captureCodexAppServer({ runId: "fixture", attemptId: "fixture", workspacePath: tmpdir(), evidencePath: tmpdir(), prompt: "fixture",
+    configuration: { ...fakeConfiguration("success"), version: "0.150.1" as typeof CODEX_APP_SERVER_VERSION },
+  }), /requires pinned runtime 0\.153\.4/u);
+});
+
+for (const mode of ["sandbox-implicit-cwd", "sandbox-cwd-mismatch"]) {
+  test(`checks the effective cwd with native ${mode} sandbox roots`, async () => {
+    const root = await temporaryRoot();
+    try {
+      const capture = await runFake(root, mode);
+      assert.equal(capture.gaps.some(({ kind }) => kind === "sandbox-mismatch"), mode === "sandbox-cwd-mismatch");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+}
+
+for (const mode of ["history-paginated", "history-summary", "history-not-loaded"]) {
+  test(`does not claim complete native history for ${mode}`, async () => {
+    const root = await temporaryRoot();
+    try {
+      const capture = await runFake(root, mode);
+      assert.equal(capture.terminalStatus, "completed");
+      assert.ok(capture.history);
+      assert.ok(capture.gaps.some(({ kind }) => kind === "history-mismatch"));
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+}
+
+test("approved existing-auth 0.153.4 native capture smoke", { skip: process.env.EBO_LIVE_CODEX_CAPTURE_SMOKE !== "1" }, async (context) => {
+  const model = process.env.EBO_LIVE_CODEX_CAPTURE_MODEL;
+  assert.ok(model, "Supply an existing authenticated model route.");
+  const root = await temporaryRoot();
+  try {
+    const capture = await captureCodexAppServer({ runId: "synthetic-live-capture", attemptId: "synthetic-live-capture-1", workspacePath: root,
+      prompt: "Synthetic test only. Create capture-proof.txt in the current workspace containing exactly EBO_SYNTHETIC_CAPTURE_OK followed by a newline, then reply done.", evidencePath: join(root, "session.jsonl"),
+      configuration: { executable: "codex", version: CODEX_APP_SERVER_VERSION, provider: "openai", model, effort: "low",
+        approvalPolicy: "never", sandbox: "workspace-write", telemetry: { signals: ["logs", "traces", "metrics"] } },
+      signal: AbortSignal.timeout(30000), shutdownGraceMs: 3000,
+    });
+    assert.equal(capture.terminalStatus, "completed", JSON.stringify(capture.gaps));
+    assert.equal(await readFile(join(root, "capture-proof.txt"), "utf8"), "EBO_SYNTHETIC_CAPTURE_OK\n");
+    assert.ok(capture.records.some(({ record }) => record.kind === "response" && record.method === "initialize"
+      && JSON.stringify(record.payload).includes(CODEX_APP_SERVER_VERSION)), "Native handshake must report the installed pinned version.");
+    assert.equal(capture.gaps.some(({ kind }) => kind === "history-mismatch" || kind === "history-mode-mismatch" || kind === "history-readback"), false, JSON.stringify(capture.gaps));
+    assert.equal(capture.gaps.some(({ kind }) => kind === "effort-mismatch" || kind === "sandbox-mismatch"), false, JSON.stringify(capture.gaps));
+    const { dataset } = await describeAndValidateCodexDataset(capture);
+    assert.equal(dataset.adapter.id, "ebo-codex-app-server-v0.153.4");
+    context.diagnostic(JSON.stringify({ runtime: capture.telemetry.runtime.version, terminal: capture.terminalStatus, events: dataset.events.length,
+      receipt: capture.telemetry.telemetry.receipt, gaps: capture.gaps }));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test("captures matching native lifecycle, interleaving, usage, history, and independent OTLP receipts", async () => {
   const root = await temporaryRoot();
@@ -62,6 +130,16 @@ test("captures matching native lifecycle, interleaving, usage, history, and inde
     const normalized = await normalizeCodexCapture(capture);
     assert.equal(normalized.events.filter(({ family }) => family === "tool").length, 1, "item start and deltas must not inflate tool counts");
     assert.equal(normalized.events.filter(({ family }) => family === "outcome").length, 1);
+    assert.deepEqual(normalized.events.find(({ source }) => source.nativeType === "thread/tokenUsage/updated")?.attributes, {
+      method: "thread/tokenUsage/updated",
+      totalTokens: 14,
+      inputTokens: 8,
+      cachedInputTokens: 2,
+      cacheWriteInputTokens: 1,
+      outputTokens: 4,
+      reasoningOutputTokens: 2,
+      resourceSemantics: "cumulative-snapshot",
+    });
     assert.ok(normalized.unmapped.some(({ reference }) => {
       const record = capture.records.find(({ reference: candidate }) => candidate.recordLocator === reference.recordLocator)?.record;
       return record?.method === "unknown/native";
@@ -71,6 +149,35 @@ test("captures matching native lifecycle, interleaving, usage, history, and inde
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("marks only successfully completed Codex file changes as mutations", async () => {
+  const capture = {
+    runId: "run-codex-mutations",
+    attemptId: "attempt-codex-mutations",
+    qualification: "qualified",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    records: ["completed", "failed"].map((status, index) => ({
+      reference: { artifactId: "session", recordLocator: `line:${index + 1}` },
+      record: {
+        schemaVersion: "ebo.protocol-observation/v1",
+        sequence: index + 1,
+        observedAt: "2026-09-07T00:00:00.000Z",
+        kind: "notification",
+        source: "codex-app-server",
+        method: "item/completed",
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: { id: `file-${index + 1}`, type: "fileChange", status },
+        },
+      },
+    })),
+  } as unknown as CodexAppServerCapture;
+  const events = (await normalizeCodexCapture(capture)).events;
+  assert.equal(events.find(({ attributes }) => attributes.itemId === "file-1")?.attributes.mutation, true);
+  assert.equal(events.find(({ attributes }) => attributes.itemId === "file-2")?.attributes.mutation, undefined);
 });
 
 test("answers an unexpected approval with a retained unattended decline", async () => {
@@ -549,9 +656,97 @@ test("composes a qualified observational run bundle with workspace, protocol, di
     assert.ok(result.manifest.evidence.some(({ kind }) => kind === "telemetry"));
     assert.ok((result.normalized?.events.length ?? 0) > 0);
     assert.equal(result.coverage?.records.total, result.capture?.records.length);
+    await checkRetainedEvaluation(definition.bundleRoot, root);
+    const manifest = result.manifest;
+    const session = manifest.evidence.find(({ kind }) => kind === "session")!;
+    const sessionPath = join(definition.bundleRoot, session.relativePath);
+    const originalBytes = await readFile(sessionPath);
+    const records = originalBytes.toString().trim().split("\n").map((line) => JSON.parse(line));
+    for (const mutation of ["missing", "foreign-thread", "foreign-turn", "failed-status", "failed-before-completed", "completed-then-failed", "completed-then-interrupted", "duplicate-completed"]) {
+      const changedRecords = structuredClone(records).flatMap((record) => {
+        if (record.kind !== "notification" || record.method !== "turn/completed") return [record];
+        if (mutation === "missing") return [];
+        if (mutation === "failed-before-completed") return [
+          { ...record, payload: { ...record.payload, turn: { ...record.payload.turn, status: "failed" } } }, record,
+        ];
+        if (["completed-then-failed", "completed-then-interrupted", "duplicate-completed"].includes(mutation)) return [record,
+          { ...record, payload: { ...record.payload, turn: { ...record.payload.turn,
+            status: mutation === "completed-then-failed" ? "failed" : mutation === "completed-then-interrupted" ? "interrupted" : "completed" } } },
+        ];
+        if (mutation === "foreign-thread") record.payload.threadId = "foreign-thread";
+        if (mutation === "foreign-turn") record.payload.turn.id = "foreign-turn";
+        if (mutation === "failed-status") record.payload.turn.status = "failed";
+        return [record];
+      });
+      const bytes = Buffer.from(`${changedRecords.map((record, index) => JSON.stringify({ ...record, sequence: index + 1 })).join("\n")}\n`);
+      const changedManifest = structuredClone(manifest);
+      const descriptor = changedManifest.evidence.find(({ id }) => id === session.id)!;
+      descriptor.digest = `sha256:${digestBytes(bytes).value}`;
+      descriptor.sizeBytes = bytes.length;
+      await writeFile(sessionPath, bytes);
+      await writeFile(join(definition.bundleRoot, "manifest.json"), JSON.stringify(changedManifest));
+      assert.equal((await qualifyRunBundle(definition.bundleRoot)).semanticAnalysisUsable, true, "Generic qualification does not enforce owned Codex completion.");
+      await assert.rejects(createRetainedBehaviorEvidence(definition.bundleRoot), /matching owned terminal evidence/u, mutation);
+    }
+    const telemetry = manifest.evidence.find(({ relativePath }) => relativePath === "telemetry/codex.json")!;
+    const telemetryPath = join(definition.bundleRoot, telemetry.relativePath);
+    const originalTelemetry = await readFile(telemetryPath);
+    for (const mutation of ["initialize", "telemetry"]) {
+      await writeFile(sessionPath, originalBytes);
+      await writeFile(telemetryPath, originalTelemetry);
+      const changedManifest = structuredClone(manifest);
+      const changed = mutation === "initialize"
+        ? Buffer.from(`${records.map((record) => JSON.stringify(record.kind === "response" && record.method === "initialize"
+          ? { ...record, payload: { ...record.payload, userAgent: "ebo/0.150.1 (synthetic fixture)" } } : record)).join("\n")}\n`)
+        : Buffer.from(JSON.stringify({ ...JSON.parse(originalTelemetry.toString()), runtime: { ...JSON.parse(originalTelemetry.toString()).runtime, version: "0.150.1" } }));
+      const descriptor = changedManifest.evidence.find(({ id }) => id === (mutation === "initialize" ? session.id : telemetry.id))!;
+      descriptor.digest = `sha256:${digestBytes(changed).value}`;
+      descriptor.sizeBytes = changed.length;
+      await writeFile(mutation === "initialize" ? sessionPath : telemetryPath, changed);
+      await writeFile(join(definition.bundleRoot, "manifest.json"), JSON.stringify(changedManifest));
+      assert.equal((await qualifyRunBundle(definition.bundleRoot)).semanticAnalysisUsable, true);
+      await assert.rejects(createRetainedBehaviorEvidence(definition.bundleRoot), /native runtime version differs/u, mutation);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("retained auth failure without an owned turn supports observations and abstaining judgment", async () => {
+  const root = await temporaryRoot();
+  try {
+    const start = join(root, "start");
+    const workspace = join(root, "workspace");
+    await mkdir(start);
+    await mkdir(workspace);
+    const definition = codexDefinition(join(root, "bundle"), "auth-failure");
+    const result = await captureCodexAppServerRun({ definition, startingWorkspacePath: start,
+      workspace: { setup: () => ({ status: "ready", path: workspace, artifactId: "workspace", retained: true }) },
+      configuration: fakeConfiguration("auth-failure"), prompt: "Synthetic failure before turn acceptance." });
+    assert.equal(result.attempt.terminal.state, "failed");
+    assert.equal(result.capture?.turnId, undefined);
+    const before = await readFile(join(definition.bundleRoot, "manifest.json"));
+    const evidence = await createRetainedBehaviorEvidence(definition.bundleRoot);
+    assert.equal(evidence.capture.qualification, "qualified-with-gaps");
+    assert.equal(evidence.dataset.events.length, 0, "No invented events without an owned turn.");
+    const observations = await createRetainedStructuralObservationSet(definition.bundleRoot);
+    assert.equal(await main(["observations", "create", definition.bundleRoot, join(root, "observations.json")], () => undefined), 0);
+    const request: SemanticJudgeRequest = { schemaVersion: "ebo.semantic-judge-request/v1", id: "partial-fixture",
+      behavior: { vocabularyVersion: "1.0.0", categoryId: "verification-completion", dimensionId: "verification-completion" },
+      rubric: { id: "synthetic", version: "1.0.0", instructions: "Synthetic partial evidence only." },
+      evaluator: { backend: "codex-app-server", provider: "openai", model: "fixture", effort: "low" },
+      selection: { eventIds: [], structuralObservationIds: [], includeOutcomeObservations: true },
+      limits: { maxEvidenceItems: 20, maxRecordChars: 4096, maxInputChars: 40000, maxOutputChars: 16000, maxCitations: 2, maxWallClockMs: 1000, maxTurns: 1 },
+      blinding: { evaluatedModelIdentity: "redact" } };
+    const outputRoot = join(root, "judgment");
+    const judgment = await runRetainedSemanticJudge({ bundleRoot: definition.bundleRoot, observations, request, outputRoot,
+      backend: { id: "codex-app-server", version: CODEX_APP_SERVER_VERSION, run: async () => ({ status: "completed", raw: { synthetic: true }, response: { judgment: {
+        disposition: "abstained", assessment: null, confidence: null, reason: "No completed turn.", missingEvidenceCapability: null,
+        rationale: "Synthetic fixture.", alternativeExplanation: "No behavioral claim.", citations: [] } } }) } });
+    assert.equal(judgment.status, "proposed");
+    assert.equal(await main(["assertions", "validate", definition.bundleRoot, join(outputRoot, "assertion.json")], () => undefined), 0);
+    assert.deepEqual(await readFile(join(definition.bundleRoot, "manifest.json")), before);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("shares the omitted shutdown grace across lifecycle and Codex capture finalization", async () => {
@@ -627,7 +822,7 @@ test("keeps native evidence and the source workspace when post-start packaging f
   }
 });
 
-test("pins the generated contract subset and validates representative 0.150.1 fixtures", async () => {
+test("pins the generated contract subset and validates representative 0.153.4 fixtures", async () => {
   const manifest = JSON.parse(await readFile(join(contractRoot, "manifest.json"), "utf8")) as {
     codexCliVersion: string;
     files: Record<string, string>;
@@ -638,6 +833,7 @@ test("pins the generated contract subset and validates representative 0.150.1 fi
   }
   const ajv = new Ajv2020({ strict: false, validateSchema: false });
   ajv.addFormat("int64", true);
+  ajv.addFormat("uint", true);
   const rpc = ajv.compile(JSON.parse(await readFile(join(contractRoot, "schema/JSONRPCMessage.json"), "utf8")));
   assert.equal(rpc({ method: "thread/read", id: 4, params: { threadId: "thread-1", includeTurns: true } }), true);
   const usage = ajv.compile(JSON.parse(await readFile(join(contractRoot, "schema/v2/ThreadTokenUsageUpdatedNotification.json"), "utf8")));
@@ -650,6 +846,10 @@ test("pins the generated contract subset and validates representative 0.150.1 fi
       modelContextWindow: 128000,
     },
   }), true);
+  const start = ajv.compile(JSON.parse(await readFile(join(contractRoot, "schema/v2/ThreadStartParams.json"), "utf8")));
+  assert.equal(start({ model: "fixture", historyMode: "legacy", environments: [] }), true);
+  const turn = ajv.compile(JSON.parse(await readFile(join(contractRoot, "schema/v2/TurnStartParams.json"), "utf8")));
+  assert.equal(turn({ threadId: "thread-1", input: [{ type: "text", text: "fixture", text_elements: [] }], environments: [], outputSchema: { type: "object" } }), true);
 });
 
 test("runs one frozen observational queue entry and passes export, corpus, and archive readback", async () => {
@@ -904,7 +1104,7 @@ function createQueueFixture(parent: string, executable = process.execPath): { bu
 
   const configs = {
     model: { schemaVersion: "ebo.codex-config/v1", kind: "model", provider: "openai", model: "gpt-5.6-sol", effort: "high" },
-    harness: { schemaVersion: "ebo.codex-config/v1", kind: "harness", adapter: "codex-app-server", executable, version: "0.150.1", contractDigest: "sha256:844b52d4a5a8cda58794e28b3b119c3a3d20a588b7db83209c298bec62704092" },
+    harness: { schemaVersion: "ebo.codex-config/v1", kind: "harness", adapter: "codex-app-server", executable, version: CODEX_APP_SERVER_VERSION, contractDigest: CODEX_CONTRACT_DIGEST },
     limits: { schemaVersion: "ebo.codex-config/v1", kind: "native-limits", shutdownGraceMs: 1_000 },
     tools: { schemaVersion: "ebo.codex-config/v1", kind: "native-tool-policy", approvalPolicy: "never", sandbox: "workspace-write" },
     capture: { schemaVersion: "ebo.codex-config/v1", kind: "capture-profile", telemetrySignals: ["logs", "traces", "metrics"], workspaceOutcome: { excludeDirectoryNames: ["node_modules"] } },
@@ -976,3 +1176,4 @@ async function waitForRecord(path: string, predicate: (record: Record<string, un
   }
   throw new Error("Timed out waiting for the fake Codex protocol record.");
 }
+import { checkRetainedEvaluation } from "./retained-evaluation-helper.js";

@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 
-import { realpathSync } from "node:fs";
-import { dirname } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } from "node:fs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { assertNoDuplicateJsonKeys, canonicalizeMetadata, validateArtifact, validateExportManifest, validateRunManifestEvidence } from "./artifacts.js";
+import { assertNoDuplicateJsonKeys, canonicalizeMetadata, digestMetadata, validateArtifact, validateExportManifest, validateRunManifestEvidence, writeMetadataAtomically } from "./artifacts.js";
+import { aggregateEvaluation, type AggregationRequest } from "./aggregation.js";
+import { serveAtlas, writeAtlas, type AtlasFilters } from "./atlas.js";
 import {
   buildCorpusIndex,
   packPortableExport,
@@ -16,9 +19,31 @@ import {
   type CorpusIndexQuery,
 } from "./corpus.js";
 import { runAgentSdkQueueEntry } from "./agent-sdk-runner.js";
+import { validateRetainedBehaviorAssertion, type BehaviorAssertion, type BehaviorReview } from "./behavior-assertions.js";
 import { runCodexQueueEntry } from "./codex-run.js";
 import { createPortableRunBundleExport, type PortableExportPolicy } from "./exports.js";
-import { assessComparisonEligibility, type ComparisonRequest } from "./normalization-integrity.js";
+import {
+  assertCalibrationDestination,
+  importReviewDecision,
+  selectReviewSample,
+  summarizeCalibration,
+  revalidateReviewSample,
+  validateReviewHistory,
+  writeReviewPacket,
+  type ReviewDecision,
+  type ReviewHistory,
+  type ReviewSample,
+  type ReviewSampleCriteria,
+  type ReviewSourceSet,
+} from "./human-calibration.js";
+import { assessComparisonEligibility, assessLegacyComparisonEligibility, type ComparisonRequest, type LegacyComparisonRequest } from "./normalization-integrity.js";
+import {
+  runAgentSdkSemanticJudge,
+  type SemanticJudgeBackend,
+  type SemanticJudgeRequest,
+} from "./semantic-judge.js";
+import { createRetainedStructuralObservationSet } from "./structural-observations.js";
+import type { StructuralObservationSet } from "./structural-observations.js";
 import {
   admitTaskPacket,
   formatErrors,
@@ -48,6 +73,19 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo corpus pack <export-root> <policy.json> <archive.tar.gz>
        ebo corpus unpack <archive.tar.gz> <destination-root>
        ebo comparison check <request.json>
+       ebo aggregate build <request.json> <output.json>
+       ebo atlas build <request.json> <output-root> [--share] [--filter <name=value>]
+       ebo atlas serve <request.json> [--port <port>]
+       ebo observations create <run-bundle-root> <output.json>
+       ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
+       ebo assertions validate <run-bundle-root> <assertion.json> [review.json]
+       ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root>
+       ebo calibration sample <sources.json> <criteria.json> <selection.json>
+       ebo calibration packet <selection.json> <output-root>
+       ebo calibration inspect <packet.json> <assertion-id> [event-id]
+       ebo calibration binding <selection.json> <assertion-id> [history.json]
+       ebo calibration <import|adjudicate> <selection.json> <history.json> <decision.json>
+       ebo calibration summarize <selection.json> <history.json> <summary.json>
 
 Engineering Behavior Observatory
 `;
@@ -59,6 +97,7 @@ export function main(
   write: (message: string) => void = (message) => {
     process.stdout.write(message);
   },
+  dependencies: { semanticJudgeBackend?: SemanticJudgeBackend } = {},
 ): number | Promise<number> {
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     write(usage);
@@ -114,13 +153,117 @@ export function main(
       return 1;
     }
     try {
-      const report = assessComparisonEligibility(readJson(args[2]) as ComparisonRequest);
+      const request = readJson(args[2]) as ComparisonRequest | LegacyComparisonRequest;
+      const report = request.schemaVersion === "ebo.comparison-request/v1"
+        ? assessLegacyComparisonEligibility(request)
+        : assessComparisonEligibility(request);
       write(`${canonicalizeMetadata(report)}\n`);
       return report.status === "unsupported" ? 1 : 0;
     } catch (error) {
       write(`${errorMessage(error)}\n`);
       return 1;
     }
+  }
+
+  if (args[0] === "aggregate" && args[1] === "build") {
+    return runAggregationCommand(args.slice(2), write);
+  }
+
+  if (args[0] === "atlas") {
+    return (async () => {
+    try {
+      if (args[1] === "serve" && args[2] && (args.length === 3 || (args.length === 5 && args[3] === "--port"))) {
+        const server = await serveAtlas(args[2], args[4] === undefined ? 13011 : Number(args[4]));
+        const address = server.address();
+        write(`Atlas listening at http://127.0.0.1:${typeof address === "object" && address ? address.port : 13011}\n`);
+        return 0;
+      }
+      if (args[1] !== "build" || !args[2] || !args[3]) throw new Error("Usage: ebo atlas build <request.json> <output-root> [--share] [--filter <name=value>] | atlas serve <request.json> [--port <port>]");
+      const filters: AtlasFilters = {};
+      let share = false;
+      for (let i = 4; i < args.length; i++) {
+        if (args[i] === "--share") { share = true; continue; }
+        if (args[i] !== "--filter" || !args[i + 1]?.includes("=")) throw new Error("Unknown Atlas argument.");
+        const pair = args[++i]!; const offset = pair.indexOf("=");
+        filters[pair.slice(0, offset) as keyof AtlasFilters] = pair.slice(offset + 1);
+      }
+      const view = await writeAtlas(args[2], args[3], filters, share);
+      write(`Built Atlas: ${view.report.sourcePopulation.selectedAttempts} selected attempts; ${view.mode}; ${view.cohortDigest}\n`);
+      return 0;
+    } catch (error) { write(`${errorMessage(error)}\n`); return 1; }
+    })();
+  }
+
+  if (args[0] === "observations") {
+    return runObservationsCommand(args.slice(1), write);
+  }
+
+  if (args[0] === "assertions" && args[1] === "validate") {
+    const bundleRoot = args[2];
+    const assertionPath = args[3];
+    const reviewPath = args[4];
+    if (bundleRoot === undefined || assertionPath === undefined || args.length > 5) {
+      write("Usage: ebo assertions validate <run-bundle-root> <assertion.json> [review.json]\n");
+      return 1;
+    }
+    try {
+      const assertion = readJson(assertionPath) as BehaviorAssertion;
+      const review = reviewPath === undefined ? undefined : readJson(reviewPath) as BehaviorReview;
+      return validateRetainedBehaviorAssertion(bundleRoot, assertion, review).then((citations) => {
+        write(`Validated behavior assertion "${assertion.id}" (${citations.length} citation(s); review=${review?.state ?? "unreviewed"}).\n`);
+        return 0;
+      }, (error: unknown) => {
+        write(`${errorMessage(error)}\n`);
+        return 1;
+      });
+    } catch (error) {
+      write(`${errorMessage(error)}\n`);
+      return 1;
+    }
+  }
+
+  if (args[0] === "judge" && args[1] === "run") {
+    const bundleRoot = args[2];
+    const observationsPath = args[3];
+    const requestPath = args[4];
+    const outputRoot = args[5];
+    if (bundleRoot === undefined || observationsPath === undefined || requestPath === undefined
+        || outputRoot === undefined || args.length !== 6) {
+      write("Usage: ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root>\n");
+      return 1;
+    }
+    const controller = new AbortController();
+    const abort = (): void => controller.abort();
+    const cleanup = (): void => {
+      process.off("SIGINT", abort);
+      process.off("SIGTERM", abort);
+    };
+    process.on("SIGINT", abort);
+    process.on("SIGTERM", abort);
+    try {
+      return runAgentSdkSemanticJudge({
+        bundleRoot,
+        observations: readJson(observationsPath) as StructuralObservationSet,
+        request: readJson(requestPath) as SemanticJudgeRequest,
+        outputRoot,
+        signal: controller.signal,
+        ...(dependencies.semanticJudgeBackend === undefined ? {} : { backend: dependencies.semanticJudgeBackend }),
+      }).then((record) => {
+        write(`${canonicalizeMetadata(record)}\n`);
+        return record.status === "proposed" ? 0 : 1;
+      }, (error: unknown) => {
+        write(`${errorMessage(error)}\n`);
+        return 1;
+      }).finally(cleanup);
+    } catch (error) {
+      cleanup();
+      write(`${errorMessage(error)}\n`);
+      return 1;
+    }
+  }
+
+  if (args[0] === "calibration") {
+    return runCalibrationCommand(args.slice(1), write);
   }
 
   if (args[0] === "validate") {
@@ -178,6 +321,147 @@ export function main(
 
   process.stderr.write(`Unknown argument: ${args[0]}\n`);
   return 1;
+}
+
+async function runAggregationCommand(args: string[], write: (message: string) => void): Promise<number> {
+  const [requestPath, outputPath] = args;
+  if (requestPath === undefined || outputPath === undefined || args.length !== 2) {
+    write("Usage: ebo aggregate build <request.json> <output.json>\n");
+    return 1;
+  }
+  try {
+    const request = readJson(requestPath) as AggregationRequest;
+    const errors = validateArtifact(requestPath, request);
+    if (errors.length > 0) throw new Error(errors.map(({ field, message }) => `${field}: ${message}`).join("\n"));
+    const base = dirname(resolve(requestPath));
+    const source = request.sources;
+    const corpusRoot = resolve(base, source.corpusRoot);
+    const corpusIndexPath = resolve(base, source.corpusIndex);
+    const corpusEntries = readCorpusIndex(corpusIndexPath);
+    const corpusIssues = validateCorpusIndex(corpusRoot, corpusEntries);
+    if (corpusIssues.length > 0) throw new Error(`Corpus index is not current: ${corpusIssues[0]!.manifestPath} ${corpusIssues[0]!.message}`);
+    const resolveJson = <Value>(path: string, label: string): Value => {
+      const resolved = resolve(base, path);
+      const value = readJson(resolved);
+      const validation = validateArtifact(resolved, value);
+      if (validation.length > 0) throw new Error(`${label} ${validation[0]!.field}: ${validation[0]!.message}`);
+      return value as Value;
+    };
+    const destination = resolve(outputPath);
+    prepareDerivedParent(corpusRoot, destination);
+    const report = await aggregateEvaluation({
+      lineage: {
+        requestDigest: `sha256:${digestMetadata(request).value}`,
+        corpusIndexDigest: `sha256:${digestMetadata(corpusEntries).value}`,
+      },
+      corpusEntries,
+      observationSets: source.observationSets.map(({ bundleRoot, path }) => ({
+        bundleRoot: resolve(base, bundleRoot),
+        document: resolveJson<StructuralObservationSet>(path, "Structural observation set"),
+      })),
+      assertions: source.assertions.map(({ bundleRoot, path }) => ({
+        bundleRoot: resolve(base, bundleRoot),
+        document: resolveJson<BehaviorAssertion>(path, "Behavior assertion"),
+      })),
+      calibrations: source.calibrations.map(({ selection, history }) => ({
+        selection: resolveJson<ReviewSample>(selection, "Review sample"),
+        history: resolveJson<ReviewHistory>(history, "Review history"),
+      })),
+      comparisons: request.comparisons.map(({ eligibilityGates, ...comparison }) => ({
+        ...comparison,
+        eligibility: eligibilityGates.map(({ request: comparisonRequest, report }) => ({
+          request: resolveJson<ComparisonRequest>(comparisonRequest, "Comparison request"),
+          report: resolveJson<ReturnType<typeof assessComparisonEligibility>>(report, "Comparison report"),
+        })),
+      })),
+    }, request);
+    await writeMetadataAtomically(dirname(destination), basename(destination), report, undefined, { overwrite: false });
+    write(`Built ${report.groups.length} aggregate group(s) and ${report.comparisons.length} matched comparison(s).\n`);
+    return 0;
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  }
+}
+
+async function runCalibrationCommand(args: string[], write: (message: string) => void): Promise<number> {
+  const [command, first, second, third] = args;
+  try {
+    if (command === "sample" && first !== undefined && second !== undefined && third !== undefined && args.length === 4) {
+      const sources = readJson(first) as ReviewSourceSet;
+      assertCalibrationDestination(sources.sources.map(({ bundleRoot }) => bundleRoot), third);
+      const sample = await selectReviewSample(sources, readJson(second) as ReviewSampleCriteria);
+      await writeMetadataAtomically(dirname(resolve(third)), basename(third), sample, undefined, { overwrite: false });
+      write(`Selected ${sample.candidates.length} of ${sample.population.eligibleAssertionIds.length} eligible behavior assertions.\n`);
+      return 0;
+    }
+    if (command === "packet" && first !== undefined && second !== undefined && args.length === 3) {
+      const sample = readJson(first) as ReviewSample;
+      await writeReviewPacket(sample, second);
+      write(`Created local review packet for ${sample.candidates.length} assertion(s).\n`);
+      return 0;
+    }
+    if (command === "inspect" && first !== undefined && second !== undefined && args.length >= 3 && args.length <= 4) {
+      const packet = readJson(first);
+      const errors = validateArtifact(first, packet);
+      if (errors.length > 0) throw new Error(errors.map(({ field, message }) => `${field}: ${message}`).join("\n"));
+      const items = (packet as { items?: Array<{ assertion?: { id?: string }; assertionBinding?: { id: string; digest: string }; citations?: Array<{ eventId?: string }> }> }).items ?? [];
+      const matching = items.filter(({ assertionBinding }) => matchesAssertionSelector(assertionBinding, second));
+      if (matching.length !== 1) throw new Error(matching.length === 0
+        ? `Review packet has no assertion "${second}".` : `Review packet assertion "${second}" is ambiguous; append @<digest>.`);
+      const item = matching[0]!;
+      const value = third === undefined ? item : item.citations?.find(({ eventId }) => eventId === third);
+      if (value === undefined) throw new Error(`Review assertion "${second}" has no citation "${third}".`);
+      write(`${canonicalizeMetadata(value)}\n`);
+      return 0;
+    }
+    if (command === "binding" && first !== undefined && second !== undefined && args.length >= 3 && args.length <= 4) {
+      const selection = readJson(first) as ReviewSample;
+      await revalidateReviewSample(selection);
+      const matching = selection.candidates.filter(({ assertion }) => matchesAssertionSelector(assertion, second));
+      if (matching.length !== 1) throw new Error(matching.length === 0
+        ? `Review sample has no assertion "${second}".` : `Review sample assertion "${second}" is ambiguous; append @<digest>.`);
+      const candidate = matching[0]!;
+      const history = third === undefined ? undefined : readJson(third) as ReviewHistory;
+      if (history !== undefined) validateReviewHistory(selection, history);
+      write(`${canonicalizeMetadata({
+        assertion: candidate.assertion,
+        previousHistory: history === undefined || history.decisions.length === 0 ? null : {
+          schemaVersion: history.schemaVersion,
+          digest: `sha256:${digestMetadata(history).value}`,
+        },
+      })}\n`);
+      return 0;
+    }
+    if ((command === "import" || command === "adjudicate") && first !== undefined && second !== undefined && third !== undefined && args.length === 4) {
+      const decision = readJson(third) as ReviewDecision;
+      const expectedKind = command === "adjudicate" ? "adjudication" : "review";
+      if (decision.kind !== expectedKind) throw new Error(`The calibration ${command} command requires a ${expectedKind} decision.`);
+      const result = await importReviewDecision(readJson(first) as ReviewSample, second, decision);
+      write(`${result.appended ? "Appended" : "Already imported"} human ${command === "adjudicate" ? "adjudication" : "review"} decision.\n`);
+      return 0;
+    }
+    if (command === "summarize" && first !== undefined && second !== undefined && third !== undefined && args.length === 4) {
+      const selection = readJson(first) as ReviewSample;
+      assertCalibrationDestination(selection.sources.sources.map(({ bundleRoot }) => bundleRoot), third);
+      const summary = await summarizeCalibration(selection, readJson(second) as ReviewHistory);
+      await writeMetadataAtomically(dirname(resolve(third)), basename(third), summary, undefined, { overwrite: false });
+      write(`Summarized ${summary.totals.selectedAssertions} selected assertion(s); confirmed=${summary.totals.confirmedEligibleAssertions}, unresolved=${summary.totals.unresolvedAssertions}.\n`);
+      return 0;
+    }
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  }
+  write("Usage: ebo calibration <sample|packet|inspect|binding|import|adjudicate|summarize> ...\n");
+  return 1;
+}
+
+function matchesAssertionSelector(assertion: { id: string; digest: string } | undefined, selector: string): boolean {
+  if (assertion === undefined) return false;
+  const separator = selector.lastIndexOf("@sha256:");
+  return separator < 0 ? assertion.id === selector
+    : assertion.id === selector.slice(0, separator) && assertion.digest === selector.slice(separator + 1);
 }
 
 function runCorpusCommand(args: string[], write: (message: string) => void): number | Promise<number> {
@@ -248,6 +532,90 @@ function parseCorpusQuery(args: string[]): CorpusIndexQuery {
     query[field] = value;
   }
   return query as CorpusIndexQuery;
+}
+
+async function runObservationsCommand(args: string[], write: (message: string) => void): Promise<number> {
+  const [command, first, second, third] = args;
+  try {
+    if (command === "create" && first !== undefined && second !== undefined && args.length === 3) {
+      assertDerivedDestination(first, second);
+      const report = await createRetainedStructuralObservationSet(first);
+      await writeObservationReport(second, report, first);
+      write(`Created ${report.observations.length} structural observations for attempt ${report.attemptId}.\n`);
+      return 0;
+    }
+    if (command === "corpus" && first !== undefined && second !== undefined && third !== undefined) {
+      assertDerivedDestination(first, third);
+      const index = readCorpusIndex(second);
+      const issues = validateCorpusIndex(first, index);
+      if (issues.length > 0) throw new Error(`Corpus index is not current: ${issues[0]!.manifestPath} ${issues[0]!.message}`);
+      const selected = queryCorpusIndex(index, { ...parseCorpusQuery(args.slice(4)), manifestKind: "run" });
+      if (selected.length === 0) throw new Error("Corpus selection matched no retained run bundles.");
+      const outputRoot = resolve(third);
+      const outputParent = prepareDerivedParent(first, outputRoot);
+      if (existsSync(outputRoot)) throw new Error("Structural observation corpus destination already exists.");
+      const stagingRoot = mkdtempSync(join(outputParent, ".ebo-observations-"));
+      let published = false;
+      try {
+        for (const entry of selected) {
+          if (entry.runId === undefined || entry.attemptId === undefined || entry.issues.length > 0) throw new Error(`Corpus entry ${entry.manifestPath} is not observation-ready.`);
+          const bundleRoot = dirname(join(resolve(first), ...entry.manifestPath.split("/")));
+          const report = await createRetainedStructuralObservationSet(bundleRoot);
+          await writeObservationReport(join(stagingRoot, observationFileName(entry.runId, entry.attemptId)), report, first);
+        }
+        renameSync(stagingRoot, outputRoot);
+        published = true;
+      } finally {
+        if (!published) rmSync(stagingRoot, { recursive: true, force: true });
+      }
+      write(`Created structural observations for ${selected.length} corpus run bundle(s).\n`);
+      return 0;
+    }
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  }
+  write("Usage: ebo observations <create|corpus> ...\n");
+  return 1;
+}
+
+async function writeObservationReport(path: string, report: unknown, sourceRoot: string): Promise<void> {
+  const destination = resolve(path);
+  prepareDerivedParent(sourceRoot, destination);
+  await writeMetadataAtomically(dirname(destination), basename(destination), report, undefined, { overwrite: false });
+}
+
+function prepareDerivedParent(sourceRoot: string, destination: string): string {
+  const source = realpathSync(sourceRoot);
+  const parent = dirname(resolve(destination));
+  let existing = parent;
+  while (!existsSync(existing)) {
+    const next = dirname(existing);
+    if (next === existing) break;
+    existing = next;
+  }
+  assertOutside(source, realpathSync(existing));
+  mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const resolved = realpathSync(parent);
+  assertOutside(source, resolved);
+  return resolved;
+}
+
+function assertDerivedDestination(sourceRoot: string, destination: string): void {
+  const source = resolve(sourceRoot);
+  const output = resolve(destination);
+  assertOutside(source, output);
+}
+
+function assertOutside(source: string, output: string): void {
+  const locator = relative(source, output);
+  if (locator === "" || locator !== ".." && !locator.startsWith(`..${sep}`)) {
+    throw new Error("Structural observations must be written outside immutable source evidence.");
+  }
+}
+
+function observationFileName(runId: string, attemptId: string): string {
+  return `sha256-${createHash("sha256").update(JSON.stringify([runId, attemptId])).digest("hex")}.json`;
 }
 
 async function runAgentSdkCommand(

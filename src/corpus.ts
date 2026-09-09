@@ -48,13 +48,20 @@ export type CorpusIndexEntry = {
   attemptNumber?: number;
   retryOf?: string;
   taskId?: string;
+  taskDigest?: DigestString;
   fixtureId?: string;
+  fixtureDigest?: DigestString;
   modelProvider?: string;
   modelId?: string;
+  modelConfigurationDigest?: DigestString;
   harnessId?: string;
   harnessVersion?: string;
+  harnessConfigurationDigest?: DigestString;
   assessmentMode?: string;
   configurationDigest?: DigestString;
+  captureProfileDigest?: DigestString;
+  budgetDigest?: DigestString;
+  toolPolicyDigest?: DigestString;
   terminalState?: string;
   failureClass?: string;
   stopReason?: string;
@@ -279,13 +286,20 @@ function projectRun(entry: CorpusIndexEntry, manifest: RunManifest, manifestRoot
     .map(({ field, message }) => ({ field, message })));
   if (isRecord(manifest.run)) {
     assignString(entry, "runId", manifest.run.id);
-    assignString(entry, "trialId", entry.runId);
+    if (isRecord(manifest.run.trial)) {
+      const trialIndex = numberValue(manifest.run.trial.index);
+      if (trialIndex !== undefined) entry.trialId = String(trialIndex);
+    }
     assignString(entry, "taskId", isRecord(manifest.run.task) ? manifest.run.task.id : undefined);
+    if (isRecord(manifest.run.task)) assignDigest(entry, "taskDigest", manifest.run.task.digest);
     assignString(entry, "fixtureId", isRecord(manifest.run.fixture) ? manifest.run.fixture.id : undefined);
+    if (isRecord(manifest.run.fixture)) assignDigest(entry, "fixtureDigest", manifest.run.fixture.digest);
     assignString(entry, "modelProvider", isRecord(manifest.run.model) ? manifest.run.model.provider : undefined);
     assignString(entry, "modelId", isRecord(manifest.run.model) ? manifest.run.model.id : undefined);
+    if (isRecord(manifest.run.model)) assignDigest(entry, "modelConfigurationDigest", manifest.run.model.configurationDigest);
     assignString(entry, "harnessId", isRecord(manifest.run.harness) ? manifest.run.harness.id : undefined);
     assignString(entry, "harnessVersion", isRecord(manifest.run.harness) ? manifest.run.harness.version : undefined);
+    if (isRecord(manifest.run.harness)) assignDigest(entry, "harnessConfigurationDigest", manifest.run.harness.configurationDigest);
     assignString(entry, "assessmentMode", manifest.run.assessmentMode ?? "verified");
     if (isRecord(manifest.run.verifier)) {
       assignString(entry, "verifierLocator", manifest.run.verifier.locator);
@@ -298,13 +312,20 @@ function projectRun(entry: CorpusIndexEntry, manifest: RunManifest, manifestRoot
     if (attemptNumber !== undefined) entry.attemptNumber = attemptNumber;
     assignString(entry, "retryOf", manifest.attempt.retryOf);
   }
-  if (isRecord(manifest.configuration)) assignDigest(entry, "configurationDigest", manifest.configuration.digest);
+  if (isRecord(manifest.configuration)) {
+    assignDigest(entry, "configurationDigest", manifest.configuration.digest);
+    assignDigest(entry, "captureProfileDigest", manifest.configuration.captureProfileDigest);
+    assignDigest(entry, "budgetDigest", manifest.configuration.budgetDigest);
+    assignDigest(entry, "toolPolicyDigest", manifest.configuration.toolPolicyDigest);
+  }
   if (isRecord(manifest.terminal)) {
     assignString(entry, "terminalState", manifest.terminal.state);
     assignString(entry, "failureClass", manifest.terminal.failureClass);
     assignString(entry, "stopReason", manifest.terminal.stopReason);
   }
-  projectEvidence(entry, manifestRoot, Array.isArray(manifest.evidence) ? manifest.evidence : []);
+  projectEvidence(entry, manifestRoot, Array.isArray(manifest.evidence) ? manifest.evidence : [],
+    isRecord(manifest.terminal) && typeof manifest.terminal.workspaceArtifactId === "string" ? manifest.terminal.workspaceArtifactId : undefined,
+    true);
 }
 
 function projectExport(entry: CorpusIndexEntry, manifest: PortableExportManifest, manifestRoot: string): void {
@@ -315,7 +336,6 @@ function projectExport(entry: CorpusIndexEntry, manifest: PortableExportManifest
   assignDigest(entry, "sourceManifestDigest", manifest.sourceManifestDigest);
   if (isRecord(manifest.correlations)) {
     assignString(entry, "runId", manifest.correlations.runId);
-    assignString(entry, "trialId", entry.runId);
     assignString(entry, "attemptId", manifest.correlations.attemptId);
   }
   const artifacts = Array.isArray(manifest.artifacts) ? manifest.artifacts : [];
@@ -337,6 +357,8 @@ function projectEvidence(
   entry: CorpusIndexEntry,
   root: string,
   descriptors: readonly unknown[],
+  terminalWorkspaceArtifactId?: string,
+  terminalVerifierOnly = false,
 ): void {
   for (const candidate of descriptors) {
     if (!isRecord(candidate) || typeof candidate.id !== "string") continue;
@@ -344,11 +366,23 @@ function projectEvidence(
     if (descriptor.kind === "verifier") {
       entry.verifierArtifactIds.push(descriptor.id);
       const document = readDescriptorJson(root, candidate, entry.issues);
-      if (isRecord(document) && typeof document.status === "string") entry.verifierStatuses.push(document.status);
+      const workspace = isRecord(document) && isRecord(document.workspace) ? document.workspace : undefined;
+      if (isRecord(document) && typeof document.status === "string" && (!terminalVerifierOnly
+          || !isRecord(candidate.sanitizedFrom) && terminalWorkspaceArtifactId !== undefined
+            && workspace?.artifactId === terminalWorkspaceArtifactId)) {
+        entry.verifierStatuses.push(document.status);
+      }
     } else if (descriptor.kind === "capture-report") {
       entry.captureArtifactIds.push(descriptor.id);
       const document = readDescriptorJson(root, candidate, entry.issues);
-      if (isRecord(document)) assignString(entry, "captureQualification", document.qualification);
+      if (isRecord(document)) {
+        const structural = document.structuralQualification;
+        // Structural qualification supersedes the legacy coarse capture summary.
+        const status = isRecord(structural) ? structural.status : structural === undefined ? document.qualification : undefined;
+        if (["qualified", "qualified-with-gaps", "incomplete", "unqualified", "unavailable"].includes(String(status))) {
+          assignString(entry, "captureQualification", status);
+        } else entry.captureQualification = "unavailable";
+      }
     } else if (descriptor.kind === "export-manifest") entry.exportArtifactIds.push(descriptor.id);
   }
   entry.verifierArtifactIds.sort();
@@ -598,7 +632,9 @@ type StringField = "runId" | "trialId" | "attemptId" | "retryOf" | "taskId" | "f
   | "assessmentMode"
   | "failureClass" | "stopReason" | "verifierLocator" | "captureQualification" | "exportStatus"
   | "sharingClass";
-type DigestField = "configurationDigest" | "verifierDigest" | "policyDigest" | "sourceManifestDigest";
+type DigestField = "configurationDigest" | "taskDigest" | "fixtureDigest" | "modelConfigurationDigest"
+  | "harnessConfigurationDigest" | "captureProfileDigest" | "budgetDigest" | "toolPolicyDigest"
+  | "verifierDigest" | "policyDigest" | "sourceManifestDigest";
 
 function assignString(entry: CorpusIndexEntry, field: StringField, value: unknown): void {
   if (typeof value === "string") entry[field] = value;

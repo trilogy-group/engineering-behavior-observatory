@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "ebo.behavior-assertion/v1",
+  "id": "assertion-invalid-reference",
+  "runId": "run-behavior-fixture",
+  "attemptId": "attempt-behavior-fixture",
+  "dataset": {
+    "schemaVersion": "ebo.normalized-dataset/v1",
+    "digest": "sha256:855ff7b36acbd7dd94b685e079c27bc1a6b7fae798a9ec2da603784a44a90e27"
+  },
+  "behavior": {
+    "vocabularyVersion": "1.0.0",
+    "categoryId": "verification-completion",
+    "dimensionId": "verification-completion"
+  },
+  "rubric": { "id": "verification-rubric", "version": "1.0.0" },
+  "evaluator": { "id": "fixture-judge", "version": "1.0.0" },
+  "judgment": {
+    "disposition": "assessed",
+    "assessment": "constructive",
+    "confidence": { "value": 0.8, "scale": "evaluator-reported-0-to-1" },
+    "rationale": "The assertion cites an event that is not in the dataset.",
+    "alternativeExplanation": "The event may have belonged to a different dataset version.",
+    "citations": [
+      {
+        "eventId": "missing-event",
+        "nativeReference": { "artifactId": "session", "recordLocator": "line:1" }
+      }
+    ]
+  }
+}

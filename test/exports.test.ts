@@ -25,6 +25,7 @@ import {
   type PortableExportPolicy,
   type RunManifest,
 } from "../src/index.js";
+import { containsPortableLocalHomePath, containsPortableSecretPattern } from "../src/exports.js";
 
 const fixtureRoot = resolve("test/fixtures/run-bundles/complete");
 const token = "ghp_abcdefghijklmnopqrstuvwxyz123456";
@@ -38,6 +39,29 @@ const genericToken = "generic-token-value-12345";
 const privateKeyBlock = "-----BEGIN PRIVATE KEY-----\ncHJpdmF0ZS1rZXktbWF0ZXJpYWw=\n-----END PRIVATE KEY-----";
 const encryptedPrivateKeyBlock = "-----BEGIN ENCRYPTED PRIVATE KEY-----\nZW5jcnlwdGVkLWtleS1tYXRlcmlhbA==\n-----END ENCRYPTED PRIVATE KEY-----";
 const pgpPrivateKeyBlock = "-----BEGIN PGP PRIVATE KEY BLOCK-----\ncGdwLWtleS1tYXRlcmlhbA==\n-----END PGP PRIVATE KEY BLOCK-----";
+
+test("release scanning reuses the complete export credential patterns", () => {
+  for (const value of [
+    "sk-ant-api03-syntheticvalue",
+    "AKIAIOSFODNN7EXAMPLE",
+    'api_key="synthetic-credential-value"',
+  ]) assert.equal(containsPortableSecretPattern(value, "text/plain"), true);
+  assert.equal(containsPortableSecretPattern('const fixture = "api_key=syntheticcredential;";', "text/plain"), true);
+  assert.equal(containsPortableSecretPattern("// api_key=sk-ant-api03-syntheticvalue", "text/plain"), true);
+  assert.equal(containsPortableSecretPattern("// authorization=Bearer syntheticcredentialvalue", "text/plain"), true);
+  assert.equal(containsPortableSecretPattern('{"api_key":"synthetic-credential-value"}', "application/json"), true);
+  assert.equal(containsPortableSecretPattern('{"api_key":"[REDACTED_SECRET]"}', "application/json"), false);
+  for (const path of ["/Users/alice", "/Users/alice/repo", "/home/alice/repo", "/root/private", "C:\\Users\\alice\\repo"]) {
+    assert.equal(containsPortableLocalHomePath(path), true);
+  }
+  assert.equal(containsPortableLocalHomePath('{"home":"/Users/alice"}'), true);
+  assert.equal(containsPortableLocalHomePath('{"home":"C:\\Users\\alice"}'), true);
+  assert.equal(containsPortableLocalHomePath(JSON.stringify({ home: "C:\\Users\\alice" }), "application/json"), true);
+  assert.equal(containsPortableLocalHomePath("`/Users/alice/private-project`"), true);
+  assert.equal(containsPortableLocalHomePath("file:///Users/alice/repo"), true);
+  assert.equal(containsPortableLocalHomePath(String.raw`const home = "C:\\Users\\alice\\repo";`), true);
+  assert.equal(containsPortableLocalHomePath("/tmp/example"), false);
+});
 
 test("exports a sanitized public M2 bundle without mutating its source", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-export-"));

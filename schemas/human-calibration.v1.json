@@ -1,0 +1,336 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ebo:schema:human-calibration:v1",
+  "$defs": {
+    "identifier": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": ".*\\S.*" },
+    "path": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": ".*\\S.*" },
+    "text": { "type": "string", "minLength": 1, "maxLength": 8192, "pattern": ".*\\S.*" },
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "assertionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "schemaVersion", "digest"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "schemaVersion": { "const": "ebo.behavior-assertion/v1" },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bundleRoot", "assertionPath", "taskContext"],
+      "properties": {
+        "bundleRoot": { "$ref": "#/$defs/path" },
+        "assertionPath": { "$ref": "#/$defs/path" },
+        "taskContext": { "$ref": "#/$defs/text" }
+      }
+    },
+    "sourceLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bundleRoot", "assertionPath"],
+      "properties": {
+        "bundleRoot": { "$ref": "#/$defs/path" },
+        "assertionPath": { "$ref": "#/$defs/path" }
+      }
+    },
+    "sourceSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "sources"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.review-source-set/v1" },
+        "sources": { "type": "array", "minItems": 1, "maxItems": 100000, "items": { "$ref": "#/$defs/source" } }
+      }
+    },
+    "stringList": { "type": "array", "minItems": 1, "maxItems": 10000, "uniqueItems": true, "items": { "$ref": "#/$defs/identifier" } },
+    "filters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "taskIds": { "$ref": "#/$defs/stringList" },
+        "modelIds": { "$ref": "#/$defs/stringList" },
+        "harnessIds": { "$ref": "#/$defs/stringList" },
+        "outcomes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["passed", "failed", "not-run", "error", "unavailable"] } },
+        "terminalStates": { "$ref": "#/$defs/stringList" },
+        "categoryIds": { "$ref": "#/$defs/stringList" },
+        "abstentions": { "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true, "items": { "type": "boolean" } },
+        "confidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "min": { "type": "number", "minimum": 0, "maximum": 1 },
+            "max": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      }
+    },
+    "criteria": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "seed", "strata"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.review-sample-criteria/v1" },
+        "seed": { "$ref": "#/$defs/identifier" },
+        "strata": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "sampleSize", "filters"],
+            "properties": {
+              "id": { "$ref": "#/$defs/identifier" },
+              "sampleSize": { "type": "integer", "minimum": 1, "maximum": 100000 },
+              "filters": { "$ref": "#/$defs/filters" }
+            }
+          }
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runId", "attemptId", "taskId", "taskContext", "modelId", "harnessId", "terminalState", "outcome", "categoryId", "abstained", "confidence"],
+      "properties": {
+        "runId": { "$ref": "#/$defs/identifier" },
+        "attemptId": { "$ref": "#/$defs/identifier" },
+        "taskId": { "$ref": "#/$defs/identifier" },
+        "taskContext": { "$ref": "#/$defs/text" },
+        "modelId": { "$ref": "#/$defs/identifier" },
+        "harnessId": { "$ref": "#/$defs/identifier" },
+        "terminalState": { "$ref": "#/$defs/identifier" },
+        "outcome": { "enum": ["passed", "failed", "not-run", "error", "unavailable"] },
+        "categoryId": { "$ref": "#/$defs/identifier" },
+        "abstained": { "type": "boolean" },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assertion", "source", "context"],
+      "properties": {
+        "assertion": { "$ref": "#/$defs/assertionBinding" },
+        "source": { "$ref": "#/$defs/sourceLocator" },
+        "context": { "$ref": "#/$defs/context" }
+      }
+    },
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "createdAt", "sources", "criteria", "population", "candidates"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.review-sample/v1" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "sources": { "$ref": "#/$defs/sourceSet" },
+        "criteria": { "$ref": "#/$defs/criteria" },
+        "population": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sourceCount", "eligibleAssertionIds", "selectedAssertionIds", "unavailableStrata", "strata"],
+          "properties": {
+            "sourceCount": { "type": "integer", "minimum": 0 },
+            "eligibleAssertionIds": { "type": "array", "items": { "$ref": "#/$defs/identifier" } },
+            "selectedAssertionIds": { "type": "array", "items": { "$ref": "#/$defs/identifier" } },
+            "unavailableStrata": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/identifier" } },
+            "strata": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "eligible", "selected", "requested"],
+                "properties": {
+                  "id": { "$ref": "#/$defs/identifier" },
+                  "eligible": { "type": "integer", "minimum": 0 },
+                  "selected": { "type": "integer", "minimum": 0 },
+                  "requested": { "type": "integer", "minimum": 1 }
+                }
+              }
+            }
+          }
+        },
+        "candidates": { "type": "array", "maxItems": 100000, "items": { "$ref": "#/$defs/candidate" } }
+      }
+    },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": { "kind": { "const": "human" }, "id": { "$ref": "#/$defs/identifier" } }
+    },
+    "historyBinding": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "digest"],
+          "properties": { "schemaVersion": { "const": "ebo.review-history/v1" }, "digest": { "$ref": "#/$defs/digest" } }
+        }
+      ]
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "id", "kind", "assertion", "reviewer", "decidedAt", "state", "rationale", "previousHistory"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.human-review-decision/v1" },
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": { "enum": ["review", "adjudication"] },
+        "assertion": { "$ref": "#/$defs/assertionBinding" },
+        "reviewer": { "$ref": "#/$defs/reviewer" },
+        "decidedAt": { "type": "string", "format": "date-time" },
+        "state": { "enum": ["confirmed", "disputed", "rejected", "insufficient-evidence"] },
+        "rationale": { "$ref": "#/$defs/text" },
+        "previousHistory": { "$ref": "#/$defs/historyBinding" },
+        "adjudicates": { "type": "array", "minItems": 2, "uniqueItems": true, "items": { "$ref": "#/$defs/identifier" } }
+      }
+    },
+    "selectionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "digest"],
+      "properties": { "schemaVersion": { "const": "ebo.review-sample/v1" }, "digest": { "$ref": "#/$defs/digest" } }
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "selection", "decisions"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.review-history/v1" },
+        "selection": { "$ref": "#/$defs/selectionBinding" },
+        "decisions": { "type": "array", "maxItems": 100000, "items": { "$ref": "#/$defs/decision" } }
+      }
+    },
+    "agreement": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "denominator", "population", "reason"],
+          "properties": { "status": { "const": "unavailable" }, "denominator": { "const": 0 }, "population": { "$ref": "#/$defs/text" }, "reason": { "$ref": "#/$defs/text" } }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "denominator", "population", "agreements", "disagreements", "rate"],
+          "properties": {
+            "status": { "const": "available" }, "denominator": { "type": "integer", "minimum": 1 }, "population": { "$ref": "#/$defs/text" },
+            "agreements": { "type": "integer", "minimum": 0 }, "disagreements": { "type": "integer", "minimum": 0 }, "rate": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      ]
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selectedAssertions", "judgeAbstentions", "humanDecisionAbstentions", "disputedAssertions", "unresolvedAssertions", "confirmedEligibleAssertions", "rejectedAssertions", "judgeHumanAgreement", "humanHumanAgreement", "adjudication"],
+      "properties": {
+        "selectedAssertions": { "type": "integer", "minimum": 0 },
+        "judgeAbstentions": { "type": "integer", "minimum": 0 },
+        "humanDecisionAbstentions": { "type": "integer", "minimum": 0 },
+        "disputedAssertions": { "type": "integer", "minimum": 0 },
+        "unresolvedAssertions": { "type": "integer", "minimum": 0 },
+        "confirmedEligibleAssertions": { "type": "integer", "minimum": 0 },
+        "rejectedAssertions": { "type": "integer", "minimum": 0 },
+        "judgeHumanAgreement": { "$ref": "#/$defs/agreement" },
+        "humanHumanAgreement": { "$ref": "#/$defs/agreement" },
+        "adjudication": {
+          "type": "object", "additionalProperties": false,
+          "required": ["denominator", "population", "confirmed", "rejected", "unresolved"],
+          "properties": {
+            "denominator": { "type": "integer", "minimum": 0 }, "population": { "const": "human adjudication decisions" },
+            "confirmed": { "type": "integer", "minimum": 0 }, "rejected": { "type": "integer", "minimum": 0 }, "unresolved": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "selection", "history", "totals", "categories"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.calibration-summary/v1" },
+        "selection": { "$ref": "#/$defs/selectionBinding" },
+        "history": {
+          "type": "object", "additionalProperties": false, "required": ["schemaVersion", "digest"],
+          "properties": { "schemaVersion": { "const": "ebo.review-history/v1" }, "digest": { "$ref": "#/$defs/digest" } }
+        },
+        "totals": { "$ref": "#/$defs/counts" },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["categoryId", "counts"],
+            "properties": { "categoryId": { "$ref": "#/$defs/identifier" }, "counts": { "$ref": "#/$defs/counts" } }
+          }
+        }
+      }
+    },
+    "packet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "createdAt", "selection", "evidenceBoundary", "items"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.review-packet/v1" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "selection": { "$ref": "#/$defs/selectionBinding" },
+        "evidenceBoundary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["classification", "copiedNativeEvidence", "note"],
+          "properties": {
+            "classification": { "const": "restricted-local-only" },
+            "copiedNativeEvidence": { "const": true },
+            "note": { "$ref": "#/$defs/text" }
+          }
+        },
+        "items": {
+          "type": "array",
+          "maxItems": 100000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["assertion", "assertionBinding", "context", "source", "citations"],
+            "properties": {
+              "assertion": { "$ref": "urn:ebo:schema:behavior-assertions:v1#/$defs/assertion" },
+              "assertionBinding": { "$ref": "#/$defs/assertionBinding" },
+              "context": { "$ref": "#/$defs/context" },
+              "source": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["evidenceRoot"],
+                "properties": { "evidenceRoot": { "$ref": "#/$defs/path" } }
+              },
+              "citations": {
+                "type": "array",
+                "maxItems": 256,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["eventId", "nativeReference", "sharingClass", "href", "nativeHref"],
+                  "properties": {
+                    "eventId": { "$ref": "#/$defs/identifier" },
+                    "nativeReference": { "$ref": "urn:ebo:schema:uniform-events:v1#/$defs/nativeReference" },
+                    "sharingClass": { "enum": ["unknown", "restricted", "internal", "partner", "public"] },
+                    "href": { "$ref": "#/$defs/path" },
+                    "nativeHref": { "$ref": "#/$defs/path" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/sourceSet" },
+    { "$ref": "#/$defs/criteria" },
+    { "$ref": "#/$defs/sample" },
+    { "$ref": "#/$defs/decision" },
+    { "$ref": "#/$defs/history" },
+    { "$ref": "#/$defs/summary" },
+    { "$ref": "#/$defs/packet" }
+  ]
+}
