@@ -12,6 +12,8 @@ last_memory_sync: 2026-09-08T12:05:11.096246+00:00
 ## Current model
 
 - COE-563 contributed: PR #7: Implement task-packet admission and freeze tooling (merge `eb26151`)
+- COE-587 contributed: PR #42: docs(operations): document workflows and extension contracts (merge `c618c0c`)
+- COE-588 contributed: PR #43: feat(release): add reproducible 0.1.0 acceptance gate (merge `37e1d80`)
 
 ## Important invariants
 
@@ -29,9 +31,13 @@ last_memory_sync: 2026-09-08T12:05:11.096246+00:00
 ## Recent changes
 
 - COE-563: Implement task-packet admission and freeze tooling
+- COE-587: Document operator workflows and extension contracts
+- COE-588: Complete release acceptance and reproducibility audit
 
 ## Source refs
 
 - COE-563
+- COE-587
+- COE-588
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

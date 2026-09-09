@@ -54,6 +54,8 @@ last_memory_sync: 2026-08-31T17:10:33.049054+00:00
 - COE-584: Implement human calibration and adjudication workflow
 - COE-585: Implement comparison and aggregation
 - COE-586: Build the interactive Behavior Atlas with Grafana and report export
+- COE-587: Document operator workflows and extension contracts
+- COE-588: Complete release acceptance and reproducibility audit
 - COE-591: Operationalize one Agent SDK run from a frozen queue entry
 - COE-592: Support observational Agent SDK tasks without verifiers
 - COE-593: Admit common framework filenames in observational fixtures
@@ -84,6 +86,8 @@ last_memory_sync: 2026-08-31T17:10:33.049054+00:00
 - COE-584
 - COE-585
 - COE-586
+- COE-587
+- COE-588
 - COE-591
 - COE-592
 - COE-593

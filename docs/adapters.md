@@ -51,6 +51,8 @@ last_memory_sync: 2026-09-07T07:19:40.801865+00:00
 - COE-584: Implement human calibration and adjudication workflow
 - COE-585: Implement comparison and aggregation
 - COE-586: Build the interactive Behavior Atlas with Grafana and report export
+- COE-587: Document operator workflows and extension contracts
+- COE-588: Complete release acceptance and reproducibility audit
 - COE-597: Complete cross-harness behavioral evaluation and configurable Codex judging
 
 ## Source refs
@@ -73,6 +75,8 @@ last_memory_sync: 2026-09-07T07:19:40.801865+00:00
 - COE-584
 - COE-585
 - COE-586
+- COE-587
+- COE-588
 - COE-597
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

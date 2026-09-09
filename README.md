@@ -2,14 +2,14 @@
 
 Engineering Behavior Observatory (EBO) captures the native evidence produced by
 software-engineering agents, connects it to final workspace outcomes, and
-later supports evidence-grounded behavioral comparison across harnesses.
+supports evidence-grounded behavioral comparison across harnesses.
 
-The first useful product is capture and observation: retained sessions, events,
+Capture and observation retain sessions, events,
 hooks, telemetry references, workspace changes, optional verified-task results, and explicit
 capture-quality reports. Cross-harness normalization, behavioral evaluation,
 and the local Behavior Atlas build on capture-qualified bundles afterward.
 
-The first post-capture contract is now available: versioned
+Versioned
 [uniform events and explicit adapter interfaces](docs/uniform-events.md) project
 capture-qualified native evidence without replacing source records or transport
 semantics.
@@ -36,9 +36,19 @@ The optional [Codex app-server adapter](docs/codex-harness.md) owns one pinned
 independently verified OTLP receipts, and runs one frozen observational queue
 entry through `ebo codex run`.
 
-## Status
+## Release 0.1.0
 
-M2 native Agent SDK capture is available through the public
+EBO includes native capture, portable export, cross-harness normalization,
+structural observations, configurable semantic judging, human review,
+comparison, aggregation, and the local Behavior Atlas.
+
+The [release notes](release/0.1.0/README.md) describe verification and packaging.
+The [support matrix](release/0.1.0/KNOWN_LIMITATIONS.md) distinguishes live-tested
+routes from deterministic contract coverage. Agent SDK and Codex capture, a
+Codex abstention judgment, and OpenHands with Z.ai were live-tested. DeepSeek
+remains verified against controlled official-client fixtures.
+
+Native Agent SDK capture is available through the public
 `captureClaudeAgentSdkRun` library entry point. It executes one caller-supplied
 attempt and retains its native stream, hooks, telemetry receipt, workspace,
 assessment mode, capability profile, and structural qualification. Verified
@@ -80,7 +90,7 @@ Native evidence remains authoritative. EBO does not replace harness histories,
 reconstruct a telemetry backend, or force distinct control protocols into a
 universal broker.
 
-## Planned delivery
+## Workflow
 
 1. **Capture and observe:** repository and evidence contracts, task/run
    orchestration, direct Claude Agent SDK capture, safe export, and corpus access.
@@ -96,7 +106,6 @@ run the checks:
 ```sh
 nvm use
 npm ci
-npm run acceptance
 npm run build
 npm run typecheck
 npm test
@@ -138,7 +147,7 @@ EBO_LIVE_AGENT_SDK_SMOKE=1 node --test --test-name-pattern='approved live Agent 
 EBO_LIVE_AGENT_SDK_RUNNER=1 node --test --test-name-pattern='approved live Agent SDK operational runner' dist/test/agent-sdk-runner.test.js
 ```
 
-`npm run acceptance` is the release gate. It runs the complete deterministic
+From a clean Git checkout, `npm run acceptance` is the release gate. It runs the complete deterministic
 suite, verifies local documentation links and pinned fixture digests, and packs
 the npm artifact twice to prove byte-identical output. It writes the package,
 checksum, and current result under `.ebo/releases/0.1.0/`; nothing is published
@@ -180,14 +189,14 @@ semantics.
 
 `ebo validate` checks the supported task-packet, experiment, and run-bundle
 artifact versions. On failure it identifies the artifact, schema version, and
-failing JSON field. Harness-specific normalizers, evaluation, and Atlas
-behavior are introduced by their separately scoped tasks.
+failing JSON field. The operator guide covers the normalizers, evaluation,
+and Atlas commands built on these contracts.
 
 Task-packet commands validate externally authored packets, enforce their
 recorded admission decision, persist a digest-based freeze record, and report
 component changes. They do not generate tasks or perform human review.
 
-Safe M2 evidence export is a library boundary:
+Safe evidence export is available through the CLI and library:
 `createPortableRunBundleExport` writes a separate partner/public derivative,
 and `readPortableRunBundleExport` performs the required schema, integrity,
 policy, and secret-scan readback. It does not publish or package a corpus.

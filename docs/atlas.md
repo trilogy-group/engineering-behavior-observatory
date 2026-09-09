@@ -148,6 +148,8 @@ missing observations, an unsupported comparison and hostile text.
 ## Current model
 
 - COE-586 contributed: PR #41: feat(atlas): add Grafana cohort exploration and evidence reports (merge `2fecc0d`)
+- COE-587 contributed: PR #42: docs(operations): document workflows and extension contracts (merge `c618c0c`)
+- COE-588 contributed: PR #43: feat(release): add reproducible 0.1.0 acceptance gate (merge `37e1d80`)
 
 ## Important invariants
 
@@ -165,9 +167,13 @@ missing observations, an unsupported comparison and hostile text.
 ## Recent changes
 
 - COE-586: Build the interactive Behavior Atlas with Grafana and report export
+- COE-587: Document operator workflows and extension contracts
+- COE-588: Complete release acceptance and reproducibility audit
 
 ## Source refs
 
 - COE-586
+- COE-587
+- COE-588
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

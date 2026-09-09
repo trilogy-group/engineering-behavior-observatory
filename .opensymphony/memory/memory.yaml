@@ -36,6 +36,7 @@ areas:
       - area:calibration
       - area:data-contracts
       - area:deepseek-runtime
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -44,11 +45,14 @@ areas:
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -83,6 +87,7 @@ areas:
       - area:corpus
       - area:data-contracts
       - area:deepseek-runtime
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -94,11 +99,14 @@ areas:
       - area:ontology
       - area:openhands-runtime
       - area:opentelemetry
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -126,18 +134,23 @@ areas:
     - aggregation
     source_refs:
       linear_labels:
+      - area:adapters
       - area:aggregation
       - area:analysis
       - area:atlas
       - area:data-contracts
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:runner
       - area:scheduler
       - area:task-packets
@@ -158,17 +171,22 @@ areas:
     - analysis
     source_refs:
       linear_labels:
+      - area:adapters
       - area:analysis
       - area:atlas
       - area:data-contracts
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:runner
       - area:scheduler
       - area:task-packets
@@ -189,9 +207,15 @@ areas:
     - atlas
     source_refs:
       linear_labels:
+      - area:adapters
       - area:atlas
+      - area:documentation
       - area:evidence
+      - area:operations
+      - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       linear_milestones:
       - 'M6: Atlas And Release'
   calibration:
@@ -204,19 +228,24 @@ areas:
     - calibration
     source_refs:
       linear_labels:
+      - area:adapters
       - area:aggregation
       - area:analysis
       - area:atlas
       - area:calibration
       - area:data-contracts
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -248,6 +277,7 @@ areas:
       - area:corpus
       - area:data-contracts
       - area:deepseek-runtime
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -259,11 +289,14 @@ areas:
       - area:ontology
       - area:openhands-runtime
       - area:opentelemetry
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -300,6 +333,7 @@ areas:
       - area:corpus
       - area:data-contracts
       - area:deepseek-runtime
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -309,11 +343,14 @@ areas:
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -339,12 +376,18 @@ areas:
     - data-contracts
     source_refs:
       linear_labels:
+      - area:adapters
       - area:data-contracts
+      - area:documentation
       - area:evidence
+      - area:operations
       - area:quality
+      - area:release
+      - area:reproducibility
       - area:task-packets
       linear_milestones:
       - 'M0: Foundation And Evidence Contracts'
+      - 'M6: Atlas And Release'
   deepseek-runtime:
     title: Deepseek Runtime
     docs_target: docs/deepseek-runtime.md
@@ -356,12 +399,14 @@ areas:
     - deepseek-runtime
     source_refs:
       linear_labels:
+      - area:adapters
       - area:aggregation
       - area:analysis
       - area:atlas
       - area:calibration
       - area:data-contracts
       - area:deepseek-runtime
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -369,11 +414,14 @@ areas:
       - area:llm-judge
       - area:normalization
       - area:ontology
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -387,6 +435,20 @@ areas:
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
       - 'M6: Atlas And Release'
+  documentation:
+    title: Documentation
+    docs_target: docs/documentation.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - documentation
+    source_refs:
+      linear_labels:
+      - area:documentation
+      - area:operations
+      linear_milestones:
+      - 'M6: Atlas And Release'
   evaluation:
     title: Evaluation
     docs_target: docs/evaluation.md
@@ -397,21 +459,26 @@ areas:
     - evaluation
     source_refs:
       linear_labels:
+      - area:adapters
       - area:aggregation
       - area:analysis
       - area:atlas
       - area:calibration
       - area:data-contracts
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
       - area:llm-judge
       - area:ontology
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -444,6 +511,7 @@ areas:
       - area:corpus
       - area:data-contracts
       - area:deepseek-runtime
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -453,11 +521,14 @@ areas:
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -484,10 +555,17 @@ areas:
     - experiments
     source_refs:
       linear_labels:
+      - area:adapters
+      - area:documentation
       - area:experiments
+      - area:operations
+      - area:quality
+      - area:release
+      - area:reproducibility
       - area:scheduler
       linear_milestones:
       - 'M1: Task And Run Orchestration'
+      - 'M6: Atlas And Release'
   export:
     title: Export
     docs_target: docs/export.md
@@ -507,6 +585,7 @@ areas:
       - area:corpus
       - area:data-contracts
       - area:deepseek-runtime
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -516,11 +595,14 @@ areas:
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -556,6 +638,7 @@ areas:
       - area:corpus
       - area:data-contracts
       - area:deepseek-runtime
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -566,11 +649,14 @@ areas:
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -598,11 +684,13 @@ areas:
     - json-rpc
     source_refs:
       linear_labels:
+      - area:adapters
       - area:aggregation
       - area:analysis
       - area:atlas
       - area:calibration
       - area:data-contracts
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -610,11 +698,14 @@ areas:
       - area:llm-judge
       - area:normalization
       - area:ontology
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -639,20 +730,25 @@ areas:
     - llm-judge
     source_refs:
       linear_labels:
+      - area:adapters
       - area:aggregation
       - area:analysis
       - area:atlas
       - area:calibration
       - area:data-contracts
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
       - area:llm-judge
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -693,6 +789,7 @@ areas:
       - area:calibration
       - area:data-contracts
       - area:deepseek-runtime
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -701,11 +798,14 @@ areas:
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -729,21 +829,26 @@ areas:
     - ontology
     source_refs:
       linear_labels:
+      - area:adapters
       - area:aggregation
       - area:analysis
       - area:atlas
       - area:calibration
       - area:data-contracts
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
       - area:llm-judge
       - area:ontology
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -768,22 +873,27 @@ areas:
     - openhands-runtime
     source_refs:
       linear_labels:
+      - area:adapters
       - area:aggregation
       - area:analysis
       - area:atlas
       - area:calibration
       - area:data-contracts
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
       - area:llm-judge
       - area:ontology
       - area:openhands-runtime
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -817,6 +927,7 @@ areas:
       - area:corpus
       - area:data-contracts
       - area:deepseek-runtime
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -827,11 +938,14 @@ areas:
       - area:ontology
       - area:openhands-runtime
       - area:opentelemetry
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -847,6 +961,19 @@ areas:
       - 'M3: Safe Export And Corpus Access'
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
+      - 'M6: Atlas And Release'
+  operations:
+    title: Operations
+    docs_target: docs/operations.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - operations
+    source_refs:
+      linear_labels:
+      - area:operations
+      linear_milestones:
       - 'M6: Atlas And Release'
   outcomes:
     title: Outcomes
@@ -868,6 +995,7 @@ areas:
       - area:corpus
       - area:data-contracts
       - area:deepseek-runtime
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -877,11 +1005,14 @@ areas:
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -909,10 +1040,17 @@ areas:
     - process-protocol
     source_refs:
       linear_labels:
+      - area:adapters
+      - area:documentation
+      - area:operations
       - area:process-protocol
+      - area:quality
+      - area:release
+      - area:reproducibility
       - area:runner
       linear_milestones:
       - 'M1: Task And Run Orchestration'
+      - 'M6: Atlas And Release'
   provenance:
     title: Provenance
     docs_target: docs/provenance.md
@@ -923,10 +1061,17 @@ areas:
     - provenance
     source_refs:
       linear_labels:
+      - area:adapters
+      - area:documentation
+      - area:operations
       - area:provenance
+      - area:quality
+      - area:release
+      - area:reproducibility
       - area:task-packets
       linear_milestones:
       - 'M1: Task And Run Orchestration'
+      - 'M6: Atlas And Release'
   quality:
     title: Quality
     docs_target: docs/quality.md
@@ -947,6 +1092,7 @@ areas:
       - area:corpus
       - area:data-contracts
       - area:deepseek-runtime
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -958,12 +1104,15 @@ areas:
       - area:ontology
       - area:openhands-runtime
       - area:opentelemetry
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
       - area:repository
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -981,6 +1130,20 @@ areas:
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
       - 'M6: Atlas And Release'
+  release:
+    title: Release
+    docs_target: docs/release.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - release
+    source_refs:
+      linear_labels:
+      - area:release
+      - area:reproducibility
+      linear_milestones:
+      - 'M6: Atlas And Release'
   reporting:
     title: Reporting
     docs_target: docs/reporting.md
@@ -991,7 +1154,13 @@ areas:
     - reporting
     source_refs:
       linear_labels:
+      - area:adapters
+      - area:documentation
+      - area:operations
+      - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       linear_milestones:
       - 'M6: Atlas And Release'
   repository:
@@ -1014,6 +1183,7 @@ areas:
       - area:corpus
       - area:data-contracts
       - area:deepseek-runtime
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -1025,12 +1195,15 @@ areas:
       - area:ontology
       - area:openhands-runtime
       - area:opentelemetry
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
       - area:repository
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -1048,6 +1221,19 @@ areas:
       - 'M4: Uniform Events And Harness Adapters'
       - 'M5: Behavioral Evaluation'
       - 'M6: Atlas And Release'
+  reproducibility:
+    title: Reproducibility
+    docs_target: docs/reproducibility.md
+    visibility: public
+    status: stable
+    confidence: 95
+    aliases:
+    - reproducibility
+    source_refs:
+      linear_labels:
+      - area:reproducibility
+      linear_milestones:
+      - 'M6: Atlas And Release'
   review:
     title: Review
     docs_target: docs/review.md
@@ -1058,18 +1244,23 @@ areas:
     - review
     source_refs:
       linear_labels:
+      - area:adapters
       - area:aggregation
       - area:analysis
       - area:atlas
       - area:data-contracts
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -1101,6 +1292,7 @@ areas:
       - area:corpus
       - area:data-contracts
       - area:deepseek-runtime
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -1110,11 +1302,14 @@ areas:
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -1141,9 +1336,16 @@ areas:
     - scheduler
     source_refs:
       linear_labels:
+      - area:adapters
+      - area:documentation
+      - area:operations
+      - area:quality
+      - area:release
+      - area:reproducibility
       - area:scheduler
       linear_milestones:
       - 'M1: Task And Run Orchestration'
+      - 'M6: Atlas And Release'
   security:
     title: Security
     docs_target: docs/security.md
@@ -1162,6 +1364,7 @@ areas:
       - area:calibration
       - area:data-contracts
       - area:deepseek-runtime
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -1170,11 +1373,14 @@ areas:
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -1210,6 +1416,7 @@ areas:
       - area:corpus
       - area:data-contracts
       - area:deepseek-runtime
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
@@ -1219,11 +1426,14 @@ areas:
       - area:normalization
       - area:ontology
       - area:openhands-runtime
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -1252,21 +1462,26 @@ areas:
     - structural-analysis
     source_refs:
       linear_labels:
+      - area:adapters
       - area:aggregation
       - area:analysis
       - area:atlas
       - area:calibration
       - area:data-contracts
+      - area:documentation
       - area:evaluation
       - area:evidence
       - area:experiments
       - area:llm-judge
       - area:ontology
+      - area:operations
       - area:outcomes
       - area:process-protocol
       - area:provenance
       - area:quality
+      - area:release
       - area:reporting
+      - area:reproducibility
       - area:review
       - area:runner
       - area:scheduler
@@ -1290,12 +1505,19 @@ areas:
     - task-packets
     source_refs:
       linear_labels:
+      - area:adapters
+      - area:documentation
+      - area:operations
       - area:provenance
+      - area:quality
+      - area:release
+      - area:reproducibility
       - area:task-packets
       - area:workspace
       linear_milestones:
       - 'M0: Foundation And Evidence Contracts'
       - 'M1: Task And Run Orchestration'
+      - 'M6: Atlas And Release'
   verifiers:
     title: Verifiers
     docs_target: docs/verifiers.md
@@ -1306,9 +1528,16 @@ areas:
     - verifiers
     source_refs:
       linear_labels:
+      - area:adapters
+      - area:documentation
+      - area:operations
+      - area:quality
+      - area:release
+      - area:reproducibility
       - area:verifiers
       linear_milestones:
       - 'M1: Task And Run Orchestration'
+      - 'M6: Atlas And Release'
   workspace:
     title: Workspace
     docs_target: docs/workspace.md
@@ -1319,8 +1548,15 @@ areas:
     - workspace
     source_refs:
       linear_labels:
+      - area:adapters
+      - area:documentation
+      - area:operations
+      - area:quality
+      - area:release
+      - area:reproducibility
       - area:workspace
       linear_milestones:
       - 'M1: Task And Run Orchestration'
+      - 'M6: Atlas And Release'
 redaction:
   deny_patterns: []

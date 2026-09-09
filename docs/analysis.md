@@ -43,6 +43,8 @@ last_memory_sync: 2026-09-07T23:02:20.007207+00:00
 - COE-567: Implement run lifecycle and process-protocol primitives
 - COE-585: Implement comparison and aggregation
 - COE-586: Build the interactive Behavior Atlas with Grafana and report export
+- COE-587: Document operator workflows and extension contracts
+- COE-588: Complete release acceptance and reproducibility audit
 - COE-597: Complete cross-harness behavioral evaluation and configurable Codex judging
 
 ## Source refs
@@ -57,6 +59,8 @@ last_memory_sync: 2026-09-07T23:02:20.007207+00:00
 - COE-567
 - COE-585
 - COE-586
+- COE-587
+- COE-588
 - COE-597
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

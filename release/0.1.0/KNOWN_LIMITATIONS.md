@@ -4,13 +4,16 @@
 
 | Boundary | Deterministic acceptance | Live audit on 2026-09-09 |
 |---|---|---|
-| Claude Agent SDK `0.3.258` | Direct SDK capture, frozen-entry runner, hooks, OTLP receipt, export, normalization, evaluation, review, aggregation, and Atlas pass with controlled fixtures. | Attempted with existing OAuth and no API-key override. The OAuth session was expired and could not refresh, so EBO retained an infrastructure-failure bundle. Live success is not claimed. |
+| Claude Agent SDK `0.3.258` | Direct SDK capture, frozen-entry runner, hooks, OTLP receipt, export, normalization, evaluation, review, aggregation, and Atlas pass with controlled fixtures. | Operational smoke completed in 13 seconds using explicitly supplied existing OAuth: 6 native messages, 6 hooks, all three OTLP signals, qualified observational capture, workspace retention, portable export, and corpus validation. An earlier authentication failure did not recur. |
 | OpenHands Agent Server `1.46.0` | Conversation endpoints and consumed event schemas match 1.44.1; contract tests cover current execution and historical retained evidence. The in-process EventLog completeness gap remains explicit. | Native macOS ARM64 binary and identity verified. Z.ai coding-plan `openai/glm-5.3-flash` completed a 40-second file-edit smoke with verified workspace, retained native evidence, and normalization. Capture is qualified-with-gaps. The default local tmux pool failed before model execution; the successful run used the supported subprocess terminal. |
 | DeepSeek Harness client/protocol `0.1.1-rc.2` | Official-client controlled-runtime tests pass for protocol-only stdout, redacted stderr, receipt-to-idle completion, unsupported capabilities, partial interruption, clean shutdown, and configuration-only composition swaps. | No production route is declared by this release. The controlled child is a fixture, not proof of a live provider/model route. |
-| Codex app-server `0.153.4` | Owned-child contract, lifecycle/history, OTLP, failure, export, and retained-evaluation fixtures pass; legacy `0.150.1` readback remains covered. | Attempted with the installed pinned CLI; `codex login status` reported an existing ChatGPT login. The 30-second bound expired while `thread/start` was pending and teardown interrupted the child. No native response identified whether route/network latency or isolated-home startup caused the stall, so live success is not claimed and a live integration regression remains unresolved. |
+| Codex app-server `0.153.4` | Owned-child contract, lifecycle/history, OTLP, failure, export, and retained-evaluation fixtures pass; legacy `0.150.1` readback remains covered. | `gpt-5.6-sol` completed a file-write capture in 17 seconds: 59 protocol records, correct workspace output, complete history and validated normalization with no capture gaps. OTLP logs and traces arrived; metrics did not. `thread/start` took 1.44 seconds; an earlier 30-second startup timeout did not recur, and its cause remains unknown. |
 
-Configurable judging is deterministic-fixture verified for both the Claude Agent
-SDK and Codex app-server backends. No live judge result is used as calibration.
+Configurable judging is deterministic-fixture verified for both backends.
+The live Codex judge completed a no-evidence smoke in 9.5 seconds, returning a
+structured abstention, null assessment/confidence, and zero citations.
+Live evidence-backed citation judgments and the Claude judge backend were not
+revalidated in this audit. These smokes are wiring evidence, not calibration.
 
 ## Product boundaries
 
@@ -27,5 +30,6 @@ SDK and Codex app-server backends. No live judge result is used as calibration.
 - Runtime timestamps, temporary paths, and provider timing/usage are evidence,
   not reproducibility keys. Stable identities, fixture digests, normalized
   projections, queue order, archives, and the npm package are deterministic.
-- This candidate is prepared locally only. It has no tag, remote release,
-  registry publication, partner handoff, evaluation campaign, or model claims.
+- The release distributes reusable software and synthetic contract fixtures.
+  Restricted study trajectories and credentials are excluded from release assets.
+  The package remains private; npm registry publication is not part of this release.
