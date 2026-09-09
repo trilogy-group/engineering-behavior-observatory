@@ -49,7 +49,11 @@ try {
     .filter((name) => name.endsWith(".test.js"))
     .sort()
     .map((name) => join("dist", "test", name));
-  run(process.execPath, ["--test", "--test-concurrency=1", ...tests]);
+  const testEnvironment = { ...process.env };
+  for (const key of Object.keys(testEnvironment)) {
+    if (key.startsWith("EBO_LIVE_") || key === "EBO_NATIVE_CODEX_CONTRACT") delete testEnvironment[key];
+  }
+  run(process.execPath, ["--test", "--test-concurrency=1", ...tests], testEnvironment);
   checkLinks(root);
 
   stage = "package";
@@ -107,8 +111,8 @@ try {
   throw error;
 }
 
-function run(command, args) {
-  const result = spawnSync(command, args, { cwd: root, stdio: "inherit" });
+function run(command, args, env = process.env) {
+  const result = spawnSync(command, args, { cwd: root, env, stdio: "inherit" });
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed with status ${result.status}.`);
 }
 

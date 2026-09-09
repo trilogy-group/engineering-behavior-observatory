@@ -169,7 +169,7 @@ const LOCAL_IDENTIFIER_PATTERNS = [
   /((?:user(?:name)?|owner|login)\s*[:=])(?!(?:\s*)\[LOCAL_USER\])\s*[^\s,"'}\]]+()/giu,
 ];
 const LOCAL_PATH = /(^|[\s"'=:(+\-])(?:[A-Za-z]:\\(?:[^\\\s"']+\\)*[^\\\s"']*|\/(?!\/)[^\s"']+)/gu;
-const LOCAL_HOME_PATH = /(?:^|[\s"'=:(+\-])(?:[A-Za-z]:\\Users\\[^\\\s"']+(?=[\\\s"',;:)}\]]|$)|\/(?:Users|home)\/[^/\s"']+(?=[/\s"',;:)}\]]|$)|\/root(?=[/\s"',;:)}\]]|$))/giu;
+const LOCAL_HOME_PATH = /(?:^|[\s`"'=:(+\-]|file:\/\/)(?:[A-Za-z]:\\+Users\\+[^\\\s`"']+(?=[\\\s`"',;:)}\]]|$)|\/(?:Users|home)\/[^/\s`"']+(?=[/\s`"',;:)}\]]|$)|\/root(?=[/\s`"',;:)}\]]|$))/giu;
 
 /** Create one separately rooted, sanitized derivative of an M2 run bundle. */
 export async function createPortableRunBundleExport(
