@@ -23,6 +23,7 @@ import {
   createAttemptIdentity,
   createRunIdentity,
   executeRunAttempt,
+  type AttemptClassification,
   type HarnessExecutionResult,
   type RunAttemptResult,
   type VerifierExecutionContext,
@@ -270,6 +271,7 @@ export async function captureCursorSdkRun(options: CaptureCursorSdkRunOptions): 
   );
 
   let attempt: RunAttemptResult;
+  let recorderCloseError: string | undefined;
   try {
     attempt = await executeRunAttempt({
       run,
@@ -320,8 +322,12 @@ export async function captureCursorSdkRun(options: CaptureCursorSdkRunOptions): 
       shutdownGraceMs: options.shutdownGraceMs ?? CURSOR_SDK_DEFAULT_SHUTDOWN_GRACE_MS,
     });
   } finally {
-    await writer.close().catch((error: unknown) => errors.push(`recorder-close: ${errorMessage(error)}`));
+    await writer.close().catch((error: unknown) => {
+      recorderCloseError = `recorder-close: ${errorMessage(error)}`;
+      errors.push(recorderCloseError);
+    });
   }
+  if (recorderCloseError !== undefined) attempt = withCaptureIncomplete(attempt, recorderCloseError);
 
   if (workspace?.status === "ready") await captureWorkspace().catch(() => undefined);
   const sessionPath = join(assembler.bundleRoot, "native", "session.jsonl");
@@ -461,15 +467,27 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
     const sendPromise = agent.send(options.prompt, {
       onDelta: async ({ update }: { update: InteractionUpdate }) => {
         if (!callbacksOpen) return;
-        const snapshot = snapshotJson(update);
-        options.onDelta();
-        await options.writer.record("delta", { update: snapshot }, { agentId: agent!.agentId, runId: run?.id, sessionId: agent!.agentId });
+        try {
+          const snapshot = snapshotJson(update);
+          options.onDelta();
+          await options.writer.record("delta", { update: snapshot }, { agentId: agent!.agentId, runId: run?.id, sessionId: agent!.agentId });
+        } catch (error) {
+          callbacksOpen = false;
+          captureError ??= `delta-recorder: ${errorMessage(error)}`;
+          options.errors.push(captureError);
+        }
       },
       onStep: async ({ step }: { step: ConversationStep }) => {
         if (!callbacksOpen) return;
-        const snapshot = snapshotJson(step);
-        options.onStep();
-        await options.writer.record("step", { step: snapshot }, { agentId: agent!.agentId, runId: run?.id, sessionId: agent!.agentId });
+        try {
+          const snapshot = snapshotJson(step);
+          options.onStep();
+          await options.writer.record("step", { step: snapshot }, { agentId: agent!.agentId, runId: run?.id, sessionId: agent!.agentId });
+        } catch (error) {
+          callbacksOpen = false;
+          captureError ??= `step-recorder: ${errorMessage(error)}`;
+          options.errors.push(captureError);
+        }
       },
     });
     run = await abortable(sendPromise, options.signal, "Cursor run creation", async (lateRun) => {
@@ -504,11 +522,19 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
       result = await abortable(run.wait(), options.signal, "Cursor terminal wait", async () => undefined);
       options.setTerminal(result);
       assertTerminalIdentity(result, agent.agentId, run, options.configuration.model);
-      await options.writer.record("terminal", { result: snapshotJson(result) }, ids(agent, run));
     } catch (error) {
       executionError = `wait: ${errorMessage(error)}`;
       options.errors.push(executionError);
       await options.writer.record("error", { stage: "wait", message: errorMessage(error) }, ids(agent, run)).catch(() => undefined);
+    }
+    if (result !== undefined && executionError === undefined) {
+      try {
+        await options.writer.record("terminal", { result: snapshotJson(result) }, ids(agent, run));
+      } catch (error) {
+        callbacksOpen = false;
+        captureError ??= `terminal-recorder: ${errorMessage(error)}`;
+        options.errors.push(captureError);
+      }
     }
     await abortable(stream, options.signal, "Cursor stream drain", async () => undefined);
 
@@ -913,6 +939,7 @@ class CursorNativeWriter {
     payload: unknown,
     identity: { agentId?: string; runId?: string; sessionId?: string } = {},
   ): Promise<void> {
+    if (this.failure !== undefined) throw new Error(this.failure);
     const record = {
       schemaVersion: CURSOR_NATIVE_SCHEMA_VERSION,
       sequence: ++this.sequence,
@@ -951,6 +978,28 @@ class CursorNativeWriter {
     await this.file.close();
     if (failure !== undefined) throw failure;
   }
+}
+
+function withCaptureIncomplete(attempt: RunAttemptResult, error: string): RunAttemptResult {
+  if (attempt.classification.kind === "capture-incomplete") return attempt;
+  const classification: AttemptClassification = {
+    kind: "capture-incomplete",
+    terminal: structuredClone(attempt.terminal),
+    reason: error,
+    source: "capture",
+    underlying: attempt.classification.kind,
+    ...(attempt.classification.source === undefined ? {} : { underlyingSource: attempt.classification.source }),
+  };
+  return {
+    ...attempt,
+    classification,
+    record: {
+      ...attempt.record,
+      classification: structuredClone(classification),
+      capture: { status: "incomplete", error },
+      partial: true,
+    },
+  };
 }
 
 async function validateStoreIdentity(store: JsonlLocalAgentStore, agentId: string, runId: string, expectedModel: ModelSelection): Promise<void> {

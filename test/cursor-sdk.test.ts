@@ -198,7 +198,9 @@ test("rejects effective model parameter drift under the requested configuration 
 test("retains cancellation and recorder loss as distinct partial outcomes", async () => {
   for (const [name, behavior, classification, qualification] of [
     ["cancelled", { cancelledResult: true }, "interrupted", "qualified"],
-    ["recorder", { oversizedStreamRecord: true }, "capture-incomplete", "unqualified"],
+    ["stream recorder", { oversizedStreamRecord: true }, "capture-incomplete", "unqualified"],
+    ["delta recorder", { oversizedDeltaRecord: true }, "capture-incomplete", "unqualified"],
+    ["terminal recorder", { oversizedTerminalRecord: true }, "capture-incomplete", "unqualified"],
   ] as const) {
     const fixture = createCursorFixture();
     try {
@@ -529,6 +531,8 @@ function fakeAgentFactory(behavior: {
   oversizedStoreRecord?: boolean;
   mismatchedModelParams?: boolean;
   storeModelMismatch?: boolean;
+  oversizedDeltaRecord?: boolean;
+  oversizedTerminalRecord?: boolean;
 } = {}): CursorSdkAgentFactory {
   return async (options: AgentOptions): Promise<SDKAgent> => {
     assert.equal(process.env.CURSOR_API_KEY, options.apiKey);
@@ -552,6 +556,7 @@ function fakeAgentFactory(behavior: {
         const done = new Promise<void>((resolve) => { resolveDone = resolve; });
         const effectiveModel = behavior.mismatchedModelParams ? { id: MODEL.id, params: [{ id: "thinking", value: "high" }] } : options.model;
         const result: RunResult = { id: NATIVE_RUN_ID, status: behavior.cancelledResult ? "cancelled" : "finished", model: effectiveModel, durationMs: 17,
+          ...(behavior.oversizedTerminalRecord ? { result: "x".repeat(1_100_000) } : {}),
           usage: { inputTokens: 3, outputTokens: 5, cacheReadTokens: 1, cacheWriteTokens: 0, totalTokens: 9, reasoningTokens: 2 } };
         const run: Run = {
           id: NATIVE_RUN_ID,
@@ -560,7 +565,7 @@ function fakeAgentFactory(behavior: {
           supports: () => true,
           unsupportedReason: () => undefined,
           async *stream() {
-            const delta = { type: "thinking-delta", text: "hidden delta reasoning" } as never;
+            const delta = { type: "thinking-delta", text: behavior.oversizedDeltaRecord ? "x".repeat(1_100_000) : "hidden delta reasoning" } as never;
             await sendOptions?.onDelta?.({ update: delta });
             (delta as { text: string }).text = "mutated after callback";
             await sendOptions?.onStep?.({ step: { type: "assistantMessage", message: { text: "step snapshot" } } });
