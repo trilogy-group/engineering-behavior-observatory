@@ -1,7 +1,7 @@
 # Evidence-grounded semantic judge
 
 `ebo judge run` evaluates one declared behavior dimension against a bounded,
-caller-selected projection of a qualified Claude Agent SDK, Codex, OpenHands,
+caller-selected projection of a qualified Claude Agent SDK, Codex, OpenHands, Pi,
 or DeepSeek retained run bundle and an
 `ebo.structural-observation-set/v1` file:
 

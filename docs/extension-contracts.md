@@ -62,7 +62,9 @@ node --test --test-name-pattern='minimal capture and normalization adapter contr
 
 Current source-specific examples are the Agent SDK normalizer,
 `createOpenHandsHarnessAdapter`, `createDeepSeekHarnessAdapter`, and
-`createCodexHarnessAdapter`. A new adapter must not weaken their native-first
+`createCodexHarnessAdapter`. The Pi integration keeps its direct public SDK
+session/history/subscription contract in `src/pi.ts` and uses the same retained
+evidence boundary without forcing Pi into a process protocol. A new adapter must not weaken their native-first
 rules to fit a common convenience model.
 
 ## Source-specific process or API boundary

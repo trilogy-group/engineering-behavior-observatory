@@ -1,0 +1,1 @@
+{"schemaVersion":"ebo.pi-config/v1","kind":"native-limits","shutdownGraceMs":1000,"maxRetries":1,"retryBaseDelayMs":1000,"providerTimeoutMs":60000}
