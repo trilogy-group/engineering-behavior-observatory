@@ -502,6 +502,7 @@ test("aborts through the public Pi session API and retains the interrupted attem
   let markPromptStarted!: () => void;
   const promptStarted = new Promise<void>((resolvePromise) => { markPromptStarted = resolvePromise; });
   let shutdownEmitted = false;
+  let abortCalls = 0;
   try {
     const createSession: PiSessionFactory = async (input) => {
       const listeners: Array<(event: AgentSessionEvent) => void> = [];
@@ -517,11 +518,13 @@ test("aborts through the public Pi session API and retains the interrupted attem
         prompt: () => new Promise<void>((resolve) => { resolvePrompt = resolve; markPromptStarted(); }),
         async waitForIdle() {},
         async abort() {
+          abortCalls += 1;
           if (messages.length > 0) return;
           const assistant = { role: "assistant", content: [], provider: input.model.provider, model: input.model.model, stopReason: "aborted", timestamp: Date.now(), usage: zeroUsage() };
           messages.push(assistant);
           emit(listeners, { type: "agent_settled" } as AgentSessionEvent);
           resolvePrompt?.();
+          throw new Error("synthetic signal abort failure");
         },
         exportToJsonl(outputPath) {
           const records = [
@@ -543,6 +546,8 @@ test("aborts through the public Pi session API and retains the interrupted attem
     assert.equal(summary.terminal.state, "interrupted");
     assert.equal(summary.captureQualification, "unqualified", "interrupted attempts remain valid partial evidence rather than invented complete capture");
     assert.equal(shutdownEmitted, true, "capture must join adapter finalization before returning from cancellation");
+    assert.equal(abortCalls, 1, "the signal and shutdown paths must join one handled abort promise");
+    assert.equal(summary.terminal.failureClass, "infrastructure", "a rejected native abort remains explicit shutdown evidence");
   } finally {
     rmSync(fixture.parent, { recursive: true, force: true });
   }

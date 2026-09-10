@@ -372,11 +372,17 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
         let resolveAdapterFinalized!: () => void;
         const adapterFinalized = new Promise<void>((resolvePromise) => { resolveAdapterFinalized = resolvePromise; });
         adapterFinalization = adapterFinalized;
-        const abortSession = (): void => { void session?.abort(); };
+        let signalAbort: Promise<void> | undefined;
+        const abortSession = (): void => {
+          if (session === undefined || signalAbort !== undefined) return;
+          signalAbort = session.abort();
+          void signalAbort.catch(() => undefined);
+        };
         registerShutdown(async () => {
-          await session?.abort();
-          await session?.waitForIdle();
-          await adapterFinalized;
+          abortSession();
+          const outcomes = await Promise.allSettled([signalAbort ?? Promise.resolve(), session?.waitForIdle() ?? Promise.resolve(), adapterFinalized]);
+          const rejected = outcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+          if (rejected !== undefined) throw rejected.reason;
         });
         try {
           session = await createSession({
@@ -679,42 +685,40 @@ async function createProductionPiSession(input: PiSessionFactoryInput): Promise<
     excludeTools: [...(input.toolPolicy.excludeTools ?? [])],
     customTools: input.toolPolicy.tools.includes("bash") ? [bashTool as unknown as ToolDefinition] : [],
   });
-  if (input.signal.aborted) {
+  try {
+    input.signal.throwIfAborted();
+    if (extensionsResult.errors.length > 0) {
+      throw new Error(`Pi extension binding failed: ${extensionsResult.errors.map(({ error }) => error).join("; ")}`);
+    }
+    await session.bindExtensions({
+      onError: (error) => {
+        void input.observer.record({
+          channel: "observer",
+          nativeType: "extension_error",
+          hook: error.event,
+          stage: "extension-error",
+          payload: { extensionPath: error.extensionPath, event: error.event, error: error.error },
+        });
+      },
+    });
+    const expectedTools = input.toolPolicy.tools.filter((tool) => !(input.toolPolicy.excludeTools ?? []).includes(tool)).sort();
+    const activeBuiltins = session.getActiveToolNames().filter((tool) => (PI_TOOLS as readonly string[]).includes(tool)).sort();
+    if (JSON.stringify(activeBuiltins) !== JSON.stringify(expectedTools)) {
+      throw new Error("Pi active tools differ from the digest-pinned tool policy.");
+    }
+    if (session.model?.provider !== input.model.provider || session.model.id !== input.model.model
+        || session.model.api !== input.model.api || session.model.baseUrl !== input.model.baseUrl) {
+      throw new Error("Pi effective model/provider route differs from the digest-pinned model configuration.");
+    }
+    if (session.thinkingLevel !== input.model.thinkingLevel) {
+      throw new Error("Pi effective thinking level differs from the digest-pinned model configuration.");
+    }
+    return session;
+  } catch (error) {
     await session.abort().catch(() => undefined);
     session.dispose();
-    input.signal.throwIfAborted();
+    throw error;
   }
-  if (extensionsResult.errors.length > 0) {
-    session.dispose();
-    throw new Error(`Pi extension binding failed: ${extensionsResult.errors.map(({ error }) => error).join("; ")}`);
-  }
-  await session.bindExtensions({
-    onError: (error) => {
-      void input.observer.record({
-        channel: "observer",
-        nativeType: "extension_error",
-        hook: error.event,
-        stage: "extension-error",
-        payload: { extensionPath: error.extensionPath, event: error.event, error: error.error },
-      });
-    },
-  });
-  const expectedTools = input.toolPolicy.tools.filter((tool) => !(input.toolPolicy.excludeTools ?? []).includes(tool)).sort();
-  const activeBuiltins = session.getActiveToolNames().filter((tool) => (PI_TOOLS as readonly string[]).includes(tool)).sort();
-  if (JSON.stringify(activeBuiltins) !== JSON.stringify(expectedTools)) {
-    session.dispose();
-    throw new Error("Pi active tools differ from the digest-pinned tool policy.");
-  }
-  if (session.model?.provider !== input.model.provider || session.model.id !== input.model.model
-      || session.model.api !== input.model.api || session.model.baseUrl !== input.model.baseUrl) {
-    session.dispose();
-    throw new Error("Pi effective model/provider route differs from the digest-pinned model configuration.");
-  }
-  if (session.thinkingLevel !== input.model.thinkingLevel) {
-    session.dispose();
-    throw new Error("Pi effective thinking level differs from the digest-pinned model configuration.");
-  }
-  return session;
 }
 
 export function filterPiToolEnvironment(
