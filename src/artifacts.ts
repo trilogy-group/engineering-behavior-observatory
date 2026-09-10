@@ -1004,9 +1004,13 @@ export async function readVerifiedArtifact(
 export async function inspectRetainedArtifact(
   artifactRoot: string,
   relativePath: string,
+  maxBytes?: number,
 ): Promise<{ digest: Digest; sizeBytes: number }> {
+  if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 0)) {
+    throw new Error("Artifact byte limit must be a nonnegative safe integer.");
+  }
   const { path } = await resolveExistingArtifactPath(artifactRoot, relativePath);
-  return inspectExistingPath(path, relativePath);
+  return inspectExistingPath(path, relativePath, maxBytes);
 }
 
 export async function writeMetadataAtomically(
@@ -1023,18 +1027,27 @@ export async function writeMetadataAtomically(
 export async function writeArtifactAtomically(
   artifactRoot: string,
   relativePath: string,
-  content: Uint8Array,
+  content: Uint8Array | AsyncIterable<Uint8Array>,
   signal?: AbortSignal,
   options: { overwrite?: boolean } = {},
 ): Promise<Digest> {
-  const bytes = Buffer.from(content);
+  const source = content instanceof Uint8Array ? [Buffer.from(content)] : content;
+  const hash = createHash("sha256");
+  async function* chunks(): AsyncGenerator<Buffer> {
+    for await (const chunk of source) {
+      if (signal?.aborted) throw new Error("Artifact metadata write interrupted.");
+      const bytes = Buffer.from(chunk);
+      hash.update(bytes);
+      yield bytes;
+    }
+  }
   const { parent, path } = await prepareArtifactPath(artifactRoot, relativePath);
   const temporaryPath = resolve(parent, `.${randomUUID()}.tmp`);
   let handle: Awaited<ReturnType<typeof open>> | undefined;
 
   try {
     handle = await open(temporaryPath, "wx", 0o600);
-    await handle.writeFile(bytes);
+    await handle.writeFile(chunks());
     await handle.sync();
     await handle.close();
     handle = undefined;
@@ -1058,8 +1071,9 @@ export async function writeArtifactAtomically(
     await rm(temporaryPath, { force: true });
   }
 
-  const digest = digestBytes(bytes);
-  await readVerifiedArtifact(artifactRoot, relativePath, digest);
+  const digest: Digest = { algorithm: "sha256", value: hash.digest("hex") };
+  const inspected = await inspectRetainedArtifact(artifactRoot, relativePath);
+  if (inspected.digest.value !== digest.value) throw new Error(`Artifact "${relativePath}" digest does not match its source reference.`);
   return digest;
 }
 
@@ -1473,7 +1487,7 @@ function digestExistingPath(path: string, relativePath: string): Digest {
   return inspectExistingPath(path, relativePath).digest;
 }
 
-function inspectExistingPath(path: string, relativePath: string): { digest: Digest; sizeBytes: number } {
+function inspectExistingPath(path: string, relativePath: string, maxBytes?: number): { digest: Digest; sizeBytes: number } {
   const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     let opened = fstatSync(descriptor);
@@ -1485,6 +1499,9 @@ function inspectExistingPath(path: string, relativePath: string): { digest: Dige
     if (!opened.isFile() || !isReadablePublishedFile(path, opened)
         || !Number.isSafeInteger(opened.size) || opened.size < 0) {
       throw new Error(`Artifact path "${relativePath}" is not an isolated regular file.`);
+    }
+    if (maxBytes !== undefined && opened.size > maxBytes) {
+      throw new Error(`Artifact "${relativePath}" exceeds the qualification byte limit of ${maxBytes}.`);
     }
     const hash = createHash("sha256");
     const chunk = Buffer.allocUnsafe(64 * 1024);

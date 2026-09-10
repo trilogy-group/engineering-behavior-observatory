@@ -1,9 +1,12 @@
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { createReadStream, createWriteStream } from "node:fs";
 import { cp, lstat, mkdir, mkdtemp, readdir, rm, rmdir, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { HOOK_EVENTS } from "@anthropic-ai/claude-agent-sdk";
 
 import {
@@ -214,7 +217,7 @@ export type CaptureQualificationOptions = {
 
 const execFileAsync = promisify(execFile);
 const MAX_WORKSPACE_PATCH_BYTES = 64 * 1024 * 1024;
-const MAX_WORKSPACE_SNAPSHOT_BYTES = 128 * 1024 * 1024;
+const MAX_WORKSPACE_SNAPSHOT_BYTES = 1024 * 1024 * 1024;
 const MAX_QUALIFICATION_ARTIFACT_BYTES = 64 * 1024 * 1024;
 const QUALIFICATION_DIMENSION_RANK = { qualified: 0, unsupported: 1, gap: 2, unqualified: 3 } as const;
 const PINNED_HOOK_EVENTS = new Set<string>(HOOK_EVENTS);
@@ -370,11 +373,16 @@ export class RunBundleAssembler {
         throw new Error("Final workspace metadata changed while its outcome was being captured.");
       }
       const format = patch === undefined ? "snapshot" : "patch";
-      const content = patch ?? await workspaceSnapshot(capturedPath, treeDigest);
       const relativePath = format === "patch"
         ? options.relativePath ?? "workspace.patch"
         : options.snapshotRelativePath ?? "workspace.tar.gz";
-      await writeArtifactAtomically(this.bundleRoot, relativePath, content, undefined, { overwrite: false });
+      if (patch !== undefined) {
+        await writeArtifactAtomically(this.bundleRoot, relativePath, patch, undefined, { overwrite: false });
+      } else {
+        await workspaceSnapshot(capturedPath, treeDigest, async (snapshotPath) => {
+          await writeArtifactAtomically(this.bundleRoot, relativePath, createReadStream(snapshotPath), undefined, { overwrite: false });
+        });
+      }
       const descriptor = await this.registerArtifact({
         id: options.id ?? "workspace",
         source: options.source ?? `workspace-${format}`,
@@ -563,13 +571,19 @@ export async function qualifyRunBundle(
     const state: ArtifactState = { descriptor, valid: true };
     states.set(descriptor.id, state);
     try {
+      if (descriptor.kind === "workspace" && descriptor.mediaType === "application/gzip") {
+        // Opaque snapshots need streaming integrity checks, not a whole-archive buffer.
+        const inspected = await inspectRetainedArtifact(bundleRoot, descriptor.relativePath, MAX_WORKSPACE_SNAPSHOT_BYTES);
+        if (inspected.sizeBytes !== descriptor.sizeBytes || digestString(inspected.digest.value) !== descriptor.digest) {
+          throw new Error("Workspace snapshot size or digest does not match its descriptor.");
+        }
+        continue;
+      }
       const bytes = await readVerifiedArtifact(
         bundleRoot,
         descriptor.relativePath,
         digestValue(descriptor.digest),
-        descriptor.kind === "workspace" && descriptor.mediaType === "application/gzip"
-          ? MAX_WORKSPACE_SNAPSHOT_BYTES
-          : MAX_QUALIFICATION_ARTIFACT_BYTES,
+        MAX_QUALIFICATION_ARTIFACT_BYTES,
       );
       if (descriptor.mediaType === "application/x-ndjson") {
         const summary = parseNativeJsonl(bytes);
@@ -1296,7 +1310,7 @@ async function workspacePatch(startPath: string, finalPath: string, finalTreeDig
   }
 }
 
-async function workspaceSnapshot(finalPath: string, finalTreeDigest: DigestString): Promise<Buffer> {
+async function workspaceSnapshot(finalPath: string, finalTreeDigest: DigestString, use: (path: string) => Promise<void>): Promise<void> {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "ebo-workspace-snapshot-"));
   const snapshotPath = join(temporaryRoot, "workspace.tar.gz");
   const snapshotParent = join(temporaryRoot, "source");
@@ -1305,18 +1319,31 @@ async function workspaceSnapshot(finalPath: string, finalTreeDigest: DigestStrin
   try {
     await mkdir(snapshotParent);
     await cp(finalPath, snapshotRoot, { recursive: true, preserveTimestamps: true, force: false });
-    const { stdout } = await execFileAsync(TAR_COMMAND, ["-czf", "-", "-C", snapshotParent, "workspace"], {
-      encoding: "buffer",
-      maxBuffer: MAX_WORKSPACE_SNAPSHOT_BYTES,
+    const child = spawn(TAR_COMMAND, ["-czf", "-", "-C", snapshotParent, "workspace"], { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString("utf8")).slice(-8192); });
+    const exited = new Promise<void>((resolveExit, reject) => {
+      child.once("error", reject);
+      child.once("close", (code) => code === 0 ? resolveExit() : reject(new Error(`Workspace snapshot tar failed (${code}): ${stderr.trim()}`)));
     });
-    const snapshot = Buffer.from(stdout);
-    await writeFile(snapshotPath, snapshot, { flag: "wx", mode: 0o600 });
+    let size = 0;
+    const limit = new Transform({ transform(chunk: Buffer, _encoding, callback) {
+      size += chunk.length;
+      callback(size > MAX_WORKSPACE_SNAPSHOT_BYTES ? new Error("Workspace snapshot exceeds the 1 GiB compressed byte limit.") : null, chunk);
+    } });
+    const streamed = pipeline(child.stdout, limit, createWriteStream(snapshotPath, { flags: "wx", mode: 0o600 }));
+    try {
+      await Promise.all([exited, streamed]);
+    } finally {
+      if (child.exitCode === null) child.kill("SIGKILL");
+      await Promise.allSettled([exited, streamed]);
+    }
     await mkdir(extracted, { mode: 0o700 });
     await execFileAsync(TAR_COMMAND, ["-xzpf", snapshotPath, "-C", extracted]);
     if (await digestWorkspaceTree(join(extracted, "workspace")) !== finalTreeDigest) {
       throw new Error("Bounded workspace snapshot cannot reproduce the final workspace tree.");
     }
-    return snapshot;
+    await use(snapshotPath);
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }

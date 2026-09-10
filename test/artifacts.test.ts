@@ -16,12 +16,32 @@ import {
   validateRunManifestEvidence,
   verifyDigest,
   writeMetadataAtomically,
+  writeArtifactAtomically,
+  inspectRetainedArtifact,
 } from "../src/artifacts.js";
 import { main } from "../src/cli.js";
 
 const repositoryRoot = new URL("../../", import.meta.url);
 const fixturePath = (path: string) => new URL(`tests/fixtures/${path}`, repositoryRoot).pathname;
 const runFixturePath = (path: string) => new URL(`test/fixtures/run-bundles/${path}`, repositoryRoot).pathname;
+
+test("streamed artifact publication verifies bytes and preserves no-clobber and failure cleanup", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ebo-stream-artifact-"));
+  async function* chunks() { yield Buffer.from("first"); yield Buffer.from("second"); }
+  try {
+    const digest = await writeArtifactAtomically(root, "stream.bin", chunks(), undefined, { overwrite: false });
+    assert.deepEqual(digest, digestBytes(Buffer.from("firstsecond")));
+    assert.deepEqual((await inspectRetainedArtifact(root, "stream.bin", 11)).digest, digest);
+    await assert.rejects(inspectRetainedArtifact(root, "stream.bin", 10), /qualification byte limit/);
+    await assert.rejects(inspectRetainedArtifact(root, "stream.bin", -1), /nonnegative safe integer/);
+    assert.equal((await readVerifiedArtifact(root, "stream.bin", digest)).toString(), "firstsecond");
+    await assert.rejects(writeArtifactAtomically(root, "stream.bin", chunks(), undefined, { overwrite: false }), /already exists/);
+    async function* failed() { yield Buffer.from("partial"); throw new Error("source failed"); }
+    await assert.rejects(writeArtifactAtomically(root, "failed.bin", failed()), /source failed/);
+    await assert.rejects(readFile(join(root, "failed.bin")), { code: "ENOENT" });
+    assert.equal((await readVerifiedArtifact(root, "stream.bin", digest)).toString(), "firstsecond");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test("canonical metadata and binary payloads have stable, distinct digests", () => {
   assert.equal(canonicalizeMetadata({ z: [true, null], a: { b: 2, a: 1 } }), '{"a":{"a":1,"b":2},"z":[true,null]}');

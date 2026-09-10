@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import {
   chmodSync,
   cpSync,
@@ -20,6 +21,7 @@ import {
   createRunBundleAssembler,
   digestWorkspaceTree,
   inspectRetainedArtifact,
+  qualifyRunBundle,
   validateArtifact,
   validateRunManifestEvidence,
   type CapturedWorkspaceOutcome,
@@ -377,6 +379,24 @@ test("an oversized patch falls back to a bounded compressible snapshot", { timeo
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("snapshot capture and qualification stream archives larger than the old stdout buffer", { timeout: 120_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-run-bundle-large-snapshot-"));
+  try {
+    const fixture = createWorkspaceFixture(root);
+    // Incompressible content must cross the old 128 MiB compressed limit.
+    writeFileSync(join(fixture.final, "cache.bin"), randomBytes(129 * 1024 * 1024));
+    mkdirSync(join(fixture.final, "empty"));
+    const bundleRoot = join(root, "bundle");
+    const assembler = await createRunBundleAssembler(definition(bundleRoot, "large-snapshot"));
+    const captured = await assembler.captureWorkspaceOutcome({ startPath: fixture.start, finalPath: fixture.final });
+    assert.equal(captured.format, "snapshot");
+    assert.ok(captured.descriptor.sizeBytes > 128 * 1024 * 1024);
+    const inspected = await inspectRetainedArtifact(bundleRoot, captured.descriptor.relativePath);
+    assert.equal(`sha256:${inspected.digest.value}`, captured.descriptor.digest);
+    assert.equal((await qualifyRunBundle(bundleRoot)).dimensions.workspace.status, "qualified");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("usage-only evidence keeps telemetry capture explicitly missing", async () => {
