@@ -577,6 +577,27 @@ test("recorder failure prevents a qualified success and still disposes the SDK s
   }
 });
 
+test("recorder close failure prevents a qualified success", async (t) => {
+  const fixture = createPiFixture();
+  const close = JsonlEvidenceWriter.prototype.close;
+  let calls = 0;
+  t.mock.method(JsonlEvidenceWriter.prototype, "close", async function (this: JsonlEvidenceWriter) {
+    await Reflect.apply(close, this, []);
+    calls += 1;
+    if (calls === 1) throw new Error("synthetic recorder close failure");
+  });
+  try {
+    const summary = await runPiQueueEntry({ ...fixture, createSession: fakePiSessionFactory().createSession });
+    assert.equal(summary.classification, "completed");
+    assert.equal(summary.captureQualification, "unqualified");
+    const manifest = readManifest(summary.bundlePath);
+    const report = manifest.evidence.find(({ kind }) => kind === "capture-report")!;
+    assert.match(readFileSync(join(summary.bundlePath, report.relativePath), "utf8"), /synthetic recorder close failure/u);
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
 test("approved live Pi SDK smoke", { skip: process.env.EBO_LIVE_PI_SDK_SMOKE !== "1" }, async () => {
   assert.ok(process.env.ZAI_API_KEY, "ZAI_API_KEY is required for the approved live smoke");
   const fixture = createPiFixture({ live: true });
@@ -719,7 +740,7 @@ export default function (pi) {
     const helper = { locator: "resources/helper.mjs", digest: digestBytes(Buffer.alloc(0)) };
     writeRef(helper, helper.locator, Buffer.from("export const value = 1;\n"));
     const extension = { locator: "resources/importing-extension.mjs", digest: digestBytes(Buffer.alloc(0)) };
-    writeRef(extension, extension.locator, Buffer.from('run();import {\n  value\n} from "./helper.mjs";\nexport default function () {}\n'));
+    writeRef(extension, extension.locator, Buffer.from('run();import{x}from"./helper.mjs";\nexport default function () {}\n'));
     records.harness.extensions = [extension];
   }
   const modelKey = String(records.model.model).replaceAll(".", "-");

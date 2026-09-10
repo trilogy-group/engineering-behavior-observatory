@@ -308,6 +308,7 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
   let terminalEvidenceObserved = false;
   let agentSettledObserved = false;
   let adapterFinalization: Promise<void> = Promise.resolve();
+  let recorderCloseFailure: string | undefined;
 
   const captureWorkspace = async (context?: VerifierExecutionContext): Promise<CapturedWorkspaceOutcome> => {
     if (workspaceOutcome !== undefined) return workspaceOutcome;
@@ -502,7 +503,9 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
     });
   } finally {
     await adapterFinalization;
-    await Promise.allSettled([stream.close(), observer.close()]);
+    const closeResults = await Promise.allSettled([stream.close(), observer.close()]);
+    const failures = closeResults.flatMap((result) => result.status === "rejected" ? [errorMessage(result.reason)] : []);
+    if (failures.length > 0) recorderCloseFailure = `Pi recorder close failed: ${failures.join("; ")}`;
   }
 
   if (sessionExported && await nonempty(join(assembler.bundleRoot, "pi-session.jsonl"))) {
@@ -537,7 +540,10 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
   }] : []), ...(attempt.record.capture?.status === "incomplete" ? [{
     kind: "session", reason: "not-collected" as const, affects: ["semantic" as const],
     detail: attempt.record.capture.error ?? "Pi evidence recorder did not drain cleanly.",
-  }] : [])];
+  }] : []), ...(recorderCloseFailure === undefined ? [] : [{
+    kind: "session", reason: "not-collected" as const, affects: ["semantic" as const],
+    detail: recorderCloseFailure,
+  }])];
   const qualificationOptions = {
     startingWorkspacePath: options.startingWorkspacePath,
     semanticEvidenceKinds: ["session"] as const,
@@ -791,11 +797,11 @@ function resolvePiResources(bundleRoot: string, configuration: PiHarnessConfigur
 }
 
 function assertSelfContainedPiExtension(source: string, reference: ArtifactReference): void {
-  const importOrDynamicImport = /\bimport(?:\s|\()/u;
+  const importSyntax = /\bimport\b/u;
   const commonJs = /\brequire\s*\(/u;
-  const exportList = /\bexport\s+(?:\*|\{)/u;
+  const exportList = /\bexport\s*(?:\*|\{)/u;
   const fromSpecifier = /\bfrom\s*["']/u;
-  if (importOrDynamicImport.test(source) || commonJs.test(source) || exportList.test(source) && fromSpecifier.test(source)) {
+  if (importSyntax.test(source) || commonJs.test(source) || exportList.test(source) && fromSpecifier.test(source)) {
     throw piConfigError(reference, "must be self-contained and cannot import or require an unpinned dependency graph");
   }
 }
