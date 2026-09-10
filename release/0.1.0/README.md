@@ -42,5 +42,5 @@ shasum -a 256 -c SHA256SUMS
 
 Use a source checkout at the tag to reproduce acceptance; the runtime package
 excludes tests and private orchestration files. See the
-[operator guide](../../docs/operator-guide.md) for packet-to-Atlas commands and
-the [extension guide](../../docs/extension-contracts.md) for contract tests.
+[operator guide](../../docs/guides/operator-guide.md) for packet-to-Atlas commands and
+the [extension guide](../../docs/development/extension-contracts.md) for contract tests.

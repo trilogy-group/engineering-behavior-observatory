@@ -1,8 +1,21 @@
 {
   "name": "engineering-behavior-observatory",
-  "version": "0.2.0",
-  "private": true,
-  "description": "Native engineering-agent evidence capture and observation.",
+  "version": "0.2.1",
+  "description": "Capture engineering-agent trajectories, evaluate behavior, and inspect cited evidence across harnesses.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trilogy-group/engineering-behavior-observatory.git"
+  },
+  "homepage": "https://github.com/trilogy-group/engineering-behavior-observatory#readme",
+  "bugs": {
+    "url": "https://github.com/trilogy-group/engineering-behavior-observatory/issues"
+  },
+  "keywords": ["agents", "observability", "evaluation", "opentelemetry", "trajectories"],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "type": "module",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
@@ -28,8 +41,10 @@
     "docs/",
     "examples/",
     "ontology/",
+    "release/README.md",
     "release/0.1.0/",
     "release/0.2.0/",
+    "release/0.2.1/",
     "schemas/",
     "scripts/atlas-grafana.sh"
   ],

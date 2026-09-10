@@ -13,8 +13,8 @@ Agent SDK, Codex, OpenHands, and DeepSeek integrations.
 - Export retains both adapters' protections for hidden reasoning, credential
   fields, and opaque Cursor checkpoint content.
 
-See the [Pi operator guide](../../docs/pi-sdk.md) and
-[Cursor operator guide](../../docs/cursor-sdk.md) for configuration and commands.
+See the [Pi operator guide](../../docs/harnesses/pi-sdk.md) and
+[Cursor operator guide](../../docs/harnesses/cursor-sdk.md) for configuration and commands.
 The [limitations](KNOWN_LIMITATIONS.md) distinguish live smoke evidence from
 contract coverage and document the Cursor dependency audit findings.
 

@@ -90,10 +90,22 @@ or implement beyond the assigned issue.
 5. Run the documented checks after the final edit and include the fresh output
    in the PR description.
 
-The Node release is pinned in `.nvmrc` and `package.json`. The bootstrap checks
-are `npm ci`, `npm run build`, `npm run typecheck`, `npm test`, and
-`node dist/src/cli.js --help`. Keep this list and `README.md` current as the
-project gains only issue-backed commands.
+The Node release is pinned in `.nvmrc` and `package.json`. Follow the
+[contributor guide](docs/development/README.md) for setup and checks, and the
+[CLI reference](docs/reference/cli.md) for operator syntax. `npm link` exposes
+the built checkout as `ebo`; `npm run ebo -- --help` needs no global link.
+
+## Documentation ownership
+
+Use [the documentation index](docs/README.md) before adding a page. Keep the
+README focused on motivation, installation, quickstart, and navigation. Put
+runtime pins in harness guides and release history in `release/`.
+
+OpenSymphony generated topic notes are private provenance, not public guides.
+Memory sync targets the ignored `.opensymphony/memory/sync-notes/` tree. Inspect
+dry-run targets before syncing and do not restore generated blocks or title-only
+pages under `docs/`. Author public guidance from current code and verified
+behavior, preserving the separate capture and evaluation boundaries.
 
 ## Code Review Rules
 
