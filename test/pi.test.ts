@@ -719,7 +719,7 @@ export default function (pi) {
     const helper = { locator: "resources/helper.mjs", digest: digestBytes(Buffer.alloc(0)) };
     writeRef(helper, helper.locator, Buffer.from("export const value = 1;\n"));
     const extension = { locator: "resources/importing-extension.mjs", digest: digestBytes(Buffer.alloc(0)) };
-    writeRef(extension, extension.locator, Buffer.from('import "./helper.mjs";\nexport default function () {}\n'));
+    writeRef(extension, extension.locator, Buffer.from('run();import {\n  value\n} from "./helper.mjs";\nexport default function () {}\n'));
     records.harness.extensions = [extension];
   }
   const modelKey = String(records.model.model).replaceAll(".", "-");

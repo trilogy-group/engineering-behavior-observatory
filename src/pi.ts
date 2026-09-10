@@ -791,11 +791,11 @@ function resolvePiResources(bundleRoot: string, configuration: PiHarnessConfigur
 }
 
 function assertSelfContainedPiExtension(source: string, reference: ArtifactReference): void {
-  const staticImport = /(?:^|[;\n])\s*import\s+(?:[^"'();\n]{0,512}\sfrom\s*)?["']/mu;
-  const dynamicImport = /\bimport\s*\(/u;
-  const reexport = /(?:^|[;\n])\s*export\s+(?:\*|\{[^}]{0,512}\})\s+from\s*["']/mu;
+  const importOrDynamicImport = /\bimport(?:\s|\()/u;
   const commonJs = /\brequire\s*\(/u;
-  if (staticImport.test(source) || dynamicImport.test(source) || reexport.test(source) || commonJs.test(source)) {
+  const exportList = /\bexport\s+(?:\*|\{)/u;
+  const fromSpecifier = /\bfrom\s*["']/u;
+  if (importOrDynamicImport.test(source) || commonJs.test(source) || exportList.test(source) && fromSpecifier.test(source)) {
     throw piConfigError(reference, "must be self-contained and cannot import or require an unpinned dependency graph");
   }
 }
