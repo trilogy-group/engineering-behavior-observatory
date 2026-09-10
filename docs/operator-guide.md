@@ -31,11 +31,13 @@ Harness prerequisites differ:
 | Codex | owned pinned `codex app-server` child | Codex `0.153.4` and existing login; EBO creates an isolated temporary home |
 | OpenHands | Agent Server REST/WebSocket | pinned `1.46.0` server and workspace path visible to both processes |
 | DeepSeek Harness | official TypeScript client over JSON-RPC stdio | digest-pinned runtime composition; the official client owns framing and teardown |
+| Cursor SDK | direct pinned TypeScript SDK with official JSONL store | `CURSOR_API_KEY`, an exact current catalog model, and explicit local sandbox/tool policy |
 | Pi SDK | direct pinned TypeScript SDK | digest-pinned provider/resources, credential environment variable, and explicit tool policy |
 
 See [Agent SDK runner](agent-sdk-operational-runner.md),
-[Codex](codex-harness.md), [OpenHands](openhands-agent-server.md), and
-[DeepSeek](deepseek-harness.md), and [Pi](pi-sdk.md) for their exact configuration and version pins.
+[Codex](codex-harness.md), [OpenHands](openhands-agent-server.md),
+[DeepSeek](deepseek-harness.md), [Pi](pi-sdk.md), and [Cursor SDK](cursor-sdk.md) for their exact
+configuration and version pins.
 
 ## Release acceptance
 
@@ -181,6 +183,12 @@ node dist/src/cli.js agent-sdk run \
 node dist/src/cli.js codex run \
   study/bundle study/queue.json <run-id> study/runs \
   --workspace-root study/workspaces
+
+# Or, after injecting CURSOR_API_KEY through the approved secret environment,
+# run a queue compiled with the pinned Cursor SDK configuration:
+node dist/src/cli.js cursor run \
+  study/bundle study/queue.json <run-id> study/runs \
+    --workspace-root study/workspaces
 
 # Or, for a queue compiled with the pinned Pi SDK configuration:
 node dist/src/cli.js pi run \

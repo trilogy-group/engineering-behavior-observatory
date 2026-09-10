@@ -124,6 +124,7 @@ const HIDDEN_FIELDS = new Set([
 ]);
 const CODEX_REASONING_DELTA_METHOD = "item/reasoning/textDelta";
 const CODEX_REASONING_CONTENT_FIELDS = new Set(["content", "delta", "encryptedcontent", "summary", "text"]);
+const CURSOR_REASONING_TYPES = new Set(["thinking", "thinkingdelta", "thinkingcompleted", "thinkingmessage"]);
 const PI_PRIVATE_CONTENT_TYPES = new Set([
   "thinking", "thinkingstart", "thinkingdelta", "thinkingend",
   "reasoning", "reasoningstart", "reasoningdelta", "reasoningend",
@@ -135,6 +136,7 @@ const SECRET_FIELDS = new Set([
   "accesstoken",
   "apikey",
   "authorization",
+  "blobencryptionkey",
   "clientsecret",
   "connectionstring",
   "credential",
@@ -592,11 +594,21 @@ function stripCodexReasoning(
   if (!isRecord(value)) return value;
   const reasoningItem = value.type === "reasoning";
   const reasoningDelta = value.method === CODEX_REASONING_DELTA_METHOD;
+  const cursorReasoning = typeof value.type === "string" && CURSOR_REASONING_TYPES.has(normalizeFieldName(value.type));
+  const cursorCheckpoint = typeof value.agentId === "string" && typeof value.blobId === "string" && typeof value.dataBase64 === "string";
   const payloadContainsReasoning = containsCodexReasoning(value.payload);
   const output: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
     const normalized = normalizeFieldName(key);
     if (reasoningItem && key !== "type" && key !== "id") {
+      increment(counts, "removed-field");
+      continue;
+    }
+    if (cursorReasoning && (CODEX_REASONING_CONTENT_FIELDS.has(normalized) || normalized === "thinkingdurationms" || normalized === "message")) {
+      increment(counts, "removed-field");
+      continue;
+    }
+    if (cursorCheckpoint && normalized === "database64") {
       increment(counts, "removed-field");
       continue;
     }

@@ -36,6 +36,10 @@ The optional [Codex app-server adapter](docs/codex-harness.md) owns one pinned
 independently verified OTLP receipts, and runs one frozen observational queue
 entry through `ebo codex run`.
 
+The [Cursor TypeScript SDK adapter](docs/cursor-sdk.md) uses the direct pinned
+`@cursor/sdk` local-agent API, an attempt-owned official JSONL store, explicit
+local sandbox/tool policy, and separate stream, callback, history, terminal,
+and billing evidence through `ebo cursor run`.
 The [Pi TypeScript SDK adapter](docs/pi-sdk.md) uses the pinned public `0.85.1`
 session, persistence, subscription, and extension APIs directly. It retains one
 native session per attempt and runs a frozen queue entry through `ebo pi run`.
@@ -86,6 +90,8 @@ EBO TypeScript coordinator
 │   └── pinned Agent Server REST/WebSocket API
 ├── Codex adapter
 │   └── pinned app-server JSONL protocol over owned stdio
+├── Cursor adapter
+│   └── direct TypeScript SDK with attempt-owned JSONL persistence
 ├── Pi adapter
 │   └── direct pinned TypeScript session and extension APIs
 └── uniform event projection
@@ -127,6 +133,7 @@ node dist/src/cli.js queue inspect <queue.json>
 node dist/src/cli.js queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
 node dist/src/cli.js agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 node dist/src/cli.js codex run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
+node dist/src/cli.js cursor run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 node dist/src/cli.js pi run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 node dist/src/cli.js export create <run-bundle-root> <policy.json> <export-root>
 node dist/src/cli.js corpus build <corpus-root> <index.jsonl>
@@ -252,7 +259,7 @@ terminal, capture, workspace, and mode-appropriate verifier outcomes, then
 compute exact native-evidence facts. Logical tool operations use native IDs,
 resource snapshots are not added repeatedly, unrelated order domains stay
 separate, and missing capability is unavailable rather than zero. The CLI reads
-qualified retained Claude Agent SDK, Codex, OpenHands, DeepSeek, or Pi bundles or an exact corpus selection and always
+qualified retained Claude Agent SDK, Codex, OpenHands, DeepSeek, Pi, or Cursor bundles or an exact corpus selection and always
 writes derived records outside immutable source evidence.
 
 Portable archives accept only `ready` or `exported` partner/public trees that
