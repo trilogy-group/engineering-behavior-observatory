@@ -446,7 +446,19 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
               sessionExportFailed = true;
             } finally {
               if (session.extensionRunner !== undefined) {
-                await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }).catch(() => undefined);
+                try {
+                  await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+                } catch (error) {
+                  exportFailure ??= error;
+                  sessionExportFailed = true;
+                  await observer.record({
+                    channel: "observer",
+                    nativeType: "extension_error",
+                    hook: "session_shutdown",
+                    stage: "extension-error",
+                    payload: { event: "session_shutdown", error: errorMessage(error) },
+                  });
+                }
               }
               session.dispose();
             }

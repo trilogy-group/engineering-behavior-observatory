@@ -239,6 +239,26 @@ test("retains persisted native history without regenerating it through the branc
   }
 });
 
+test("retains and disqualifies an unexpected session-shutdown emission failure", async () => {
+  const fixture = createPiFixture();
+  const base = fakePiSessionFactory();
+  try {
+    const createSession: PiSessionFactory = async (input) => {
+      const session = await base.createSession(input);
+      return {
+        ...session,
+        extensionRunner: { emit: async () => { throw new Error("synthetic session shutdown failure"); } },
+      };
+    };
+    const summary = await runPiQueueEntry({ ...fixture, createSession });
+    assert.equal(summary.classification, "infrastructure-failure");
+    assert.equal(summary.captureQualification, "unqualified");
+    assert.match(readFileSync(join(summary.bundlePath, "pi-observer.jsonl"), "utf8"), /synthetic session shutdown failure/u);
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
 test("does not invent completion from an unknown assistant stop reason", async () => {
   const fixture = createPiFixture();
   const base = fakePiSessionFactory();
