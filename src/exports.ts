@@ -107,19 +107,36 @@ const HIDDEN_FIELDS = new Set([
   "chainofthought",
   "extendedthinking",
   "hiddenreasoning",
+  "encryptedreasoning",
+  "encryptedthinking",
   "rawapibody",
   "rawrequestbody",
   "rawresponsebody",
   "reasoning",
+  "reasoningcontent",
+  "reasoningdetails",
+  "reasoningsignature",
   "thinking",
+  "thinkingcontent",
+  "thinkingsignature",
+  "textsignature",
+  "thoughtsignature",
 ]);
 const CODEX_REASONING_DELTA_METHOD = "item/reasoning/textDelta";
 const CODEX_REASONING_CONTENT_FIELDS = new Set(["content", "delta", "encryptedcontent", "summary", "text"]);
+const CURSOR_REASONING_TYPES = new Set(["thinking", "thinkingdelta", "thinkingcompleted", "thinkingmessage"]);
+const PI_PRIVATE_CONTENT_TYPES = new Set([
+  "thinking", "thinkingstart", "thinkingdelta", "thinkingend",
+  "reasoning", "reasoningstart", "reasoningdelta", "reasoningend",
+]);
+const PI_PRIVATE_CONTENT_FIELDS = new Set(["content", "delta", "encryptedcontent", "reasoning", "signature", "summary", "text", "thinking", "thinkingsignature"]);
+const PI_PRIVATE_FIELDS = new Set(["encryptedreasoning", "encryptedthinking", "reasoningcontent", "reasoningdetails", "reasoningsignature", "thinkingcontent", "thinkingsignature", "textsignature", "thoughtsignature"]);
 const SECRET_FIELDS = new Set([
   "accesskey",
   "accesstoken",
   "apikey",
   "authorization",
+  "blobencryptionkey",
   "clientsecret",
   "connectionstring",
   "credential",
@@ -429,7 +446,7 @@ function sanitizeArtifact(
     const output = Buffer.from(canonicalizeMetadata(sanitizeValue(
       kind === "verifier"
         ? rewriteVerifierDiagnosticReferences(parseJson(bytes, "JSON evidence"), portableDiagnostics)
-        : stripCodexReasoning(parseJson(bytes, "JSON evidence"), kind, counts),
+        : stripNativeReasoning(parseJson(bytes, "JSON evidence"), kind, counts),
       policy,
       replacements,
       sensitiveValues,
@@ -444,7 +461,7 @@ function sanitizeArtifact(
     if (lines.length === 0) throw new Error("JSONL evidence is empty.");
     increment(counts, "canonicalized", lines.length);
     const sanitized = lines.map((line) => canonicalizeMetadata(sanitizeValue(
-      stripCodexReasoning(parseJson(Buffer.from(line), "JSONL evidence record"), kind, counts),
+      stripNativeReasoning(parseJson(Buffer.from(line), "JSONL evidence record"), kind, counts),
       policy, replacements, sensitiveValues, localIdentifiers, counts,
     )));
     const retained: string[] = [];
@@ -577,11 +594,21 @@ function stripCodexReasoning(
   if (!isRecord(value)) return value;
   const reasoningItem = value.type === "reasoning";
   const reasoningDelta = value.method === CODEX_REASONING_DELTA_METHOD;
+  const cursorReasoning = typeof value.type === "string" && CURSOR_REASONING_TYPES.has(normalizeFieldName(value.type));
+  const cursorCheckpoint = typeof value.agentId === "string" && typeof value.blobId === "string" && typeof value.dataBase64 === "string";
   const payloadContainsReasoning = containsCodexReasoning(value.payload);
   const output: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
     const normalized = normalizeFieldName(key);
     if (reasoningItem && key !== "type" && key !== "id") {
+      increment(counts, "removed-field");
+      continue;
+    }
+    if (cursorReasoning && (CODEX_REASONING_CONTENT_FIELDS.has(normalized) || normalized === "thinkingdurationms" || normalized === "message")) {
+      increment(counts, "removed-field");
+      continue;
+    }
+    if (cursorCheckpoint && normalized === "database64") {
       increment(counts, "removed-field");
       continue;
     }
@@ -598,6 +625,36 @@ function stripCodexReasoning(
       continue;
     }
     output[key] = stripCodexReasoning(entry, kind, counts);
+  }
+  return output;
+}
+
+function stripNativeReasoning(
+  value: unknown,
+  kind: PortableKind | undefined,
+  counts: Map<TransformationAction, number>,
+): unknown {
+  return stripPiReasoning(stripCodexReasoning(value, kind, counts), kind, counts);
+}
+
+function stripPiReasoning(
+  value: unknown,
+  kind: PortableKind | undefined,
+  counts: Map<TransformationAction, number>,
+): unknown {
+  if (kind !== "session") return value;
+  if (Array.isArray(value)) return value.map((entry) => stripPiReasoning(entry, kind, counts));
+  if (!isRecord(value)) return value;
+  const privateContent = value.thought === true
+    || typeof value.type === "string" && PI_PRIVATE_CONTENT_TYPES.has(normalizeFieldName(value.type));
+  const output: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const normalized = normalizeFieldName(key);
+    if (PI_PRIVATE_FIELDS.has(normalized) || privateContent && PI_PRIVATE_CONTENT_FIELDS.has(normalized)) {
+      increment(counts, "removed-field");
+      continue;
+    }
+    output[key] = stripPiReasoning(entry, kind, counts);
   }
   return output;
 }
@@ -717,8 +774,9 @@ function scanPortableTree(
       ["absolute path", containsLocalPath(text, mediaType)],
       ["local identifier", LOCAL_IDENTIFIER_PATTERNS.some((pattern) => pattern.test(text))],
       ["source correlation", sourceCorrelations.filter((value) => value.length >= 8).some((value) => text.includes(value))],
-      ["hidden content field", /"(?:chain[_-]?of[_-]?thought|extended[_-]?thinking|hidden[_-]?reasoning|reasoning|thinking|raw[_-]?(?:api|request|response)[_-]?body)"\s*:/iu.test(text)],
+      ["hidden content field", /"(?:chain[_-]?of[_-]?thought|extended[_-]?thinking|hidden[_-]?reasoning|encrypted[_-]?(?:reasoning|thinking)|reasoning(?:[_-]?(?:content|details|signature))?|thinking(?:[_-]?(?:content|signature))?|text[_-]?signature|thought[_-]?signature|raw[_-]?(?:api|request|response)[_-]?body)"\s*:/iu.test(text)],
       ["Codex reasoning content", containsCodexReasoningContent(text, mediaType)],
+      ["Pi private reasoning content", containsPiReasoningContent(text, mediaType)],
     ].find(([, matched]) => matched);
     if (failure !== undefined) {
       resetPatterns();
@@ -726,6 +784,22 @@ function scanPortableTree(
     }
     resetPatterns();
   }
+}
+
+function containsPiReasoningContent(text: string, mediaType: string): boolean {
+  if (mediaType === "application/json") return valueContainsPiReasoningContent(parseJson(Buffer.from(text), "Portable JSON Pi reasoning scan"));
+  if (mediaType === "application/x-ndjson") return text.split(/\r?\n/gu).filter(Boolean).some((line) =>
+    valueContainsPiReasoningContent(parseJson(Buffer.from(line), "Portable JSONL Pi reasoning scan")));
+  return false;
+}
+
+function valueContainsPiReasoningContent(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(valueContainsPiReasoningContent);
+  if (!isRecord(value)) return false;
+  if (Object.keys(value).some((key) => PI_PRIVATE_FIELDS.has(normalizeFieldName(key)))) return true;
+  if ((value.thought === true || typeof value.type === "string" && PI_PRIVATE_CONTENT_TYPES.has(normalizeFieldName(value.type)))
+      && Object.keys(value).some((key) => PI_PRIVATE_CONTENT_FIELDS.has(normalizeFieldName(key)))) return true;
+  return Object.values(value).some(valueContainsPiReasoningContent);
 }
 
 function containsCodexReasoningContent(text: string, mediaType: string): boolean {

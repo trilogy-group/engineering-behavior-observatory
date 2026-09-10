@@ -33,7 +33,7 @@ human confirmation itself.
 
 The callable validator accepts any `ebo.normalized-dataset/v1` and its
 source-specific native resolver. The current CLI rebuilds and validates the
-normalized dataset from a retained Claude Agent SDK, Codex, OpenHands, or
+normalized dataset from a retained Claude Agent SDK, Codex, OpenHands, Pi, or
 DeepSeek run bundle through `validateRetainedBehaviorAssertion`:
 
 ```sh

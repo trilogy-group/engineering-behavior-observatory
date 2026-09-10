@@ -36,17 +36,27 @@ The optional [Codex app-server adapter](docs/codex-harness.md) owns one pinned
 independently verified OTLP receipts, and runs one frozen observational queue
 entry through `ebo codex run`.
 
-## Release 0.1.0
+The [Cursor TypeScript SDK adapter](docs/cursor-sdk.md) uses the direct pinned
+`@cursor/sdk` local-agent API, an attempt-owned official JSONL store, explicit
+local sandbox/tool policy, and separate stream, callback, history, terminal,
+and billing evidence through `ebo cursor run`.
+
+The [Pi TypeScript SDK adapter](docs/pi-sdk.md) uses the pinned public `0.85.1`
+session, persistence, subscription, and extension APIs directly. It retains one
+native session per attempt and runs a frozen queue entry through `ebo pi run`.
+
+## Release 0.2.0
 
 EBO includes native capture, portable export, cross-harness normalization,
 structural observations, configurable semantic judging, human review,
 comparison, aggregation, and the local Behavior Atlas.
 
-The [release notes](release/0.1.0/README.md) describe verification and packaging.
-The [support matrix](release/0.1.0/KNOWN_LIMITATIONS.md) distinguishes live-tested
+The [release notes](release/0.2.0/README.md) describe verification and packaging.
+The [support matrix](release/0.2.0/KNOWN_LIMITATIONS.md) distinguishes live-tested
 routes from deterministic contract coverage. Agent SDK and Codex capture, a
 Codex abstention judgment, and OpenHands and DeepSeek Harness with Z.ai were
-live-tested. Each route's telemetry and completeness limits remain explicit.
+live-tested for 0.1.0. Pi and Cursor SDK file-edit smokes were live-tested for
+0.2.0. Each route's telemetry and completeness limits remain explicit.
 
 Native Agent SDK capture is available through the public
 `captureClaudeAgentSdkRun` library entry point. It executes one caller-supplied
@@ -82,6 +92,10 @@ EBO TypeScript coordinator
 │   └── pinned Agent Server REST/WebSocket API
 ├── Codex adapter
 │   └── pinned app-server JSONL protocol over owned stdio
+├── Cursor adapter
+│   └── direct TypeScript SDK with attempt-owned JSONL persistence
+├── Pi adapter
+│   └── direct pinned TypeScript session and extension APIs
 └── uniform event projection
     └── only after native capture qualification
 ```
@@ -121,6 +135,8 @@ node dist/src/cli.js queue inspect <queue.json>
 node dist/src/cli.js queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
 node dist/src/cli.js agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 node dist/src/cli.js codex run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
+node dist/src/cli.js cursor run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
+node dist/src/cli.js pi run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 node dist/src/cli.js export create <run-bundle-root> <policy.json> <export-root>
 node dist/src/cli.js corpus build <corpus-root> <index.jsonl>
 node dist/src/cli.js corpus query <index.jsonl> [--task <id>] [--model <id>] [--harness <id>] [--assessment-mode <observational|verified>]
@@ -145,14 +161,16 @@ unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
 EBO_LIVE_AGENT_SDK_SMOKE=1 node --test --test-name-pattern='approved live Agent SDK smoke' dist/test/capture-qualification.test.js
 # Optional approved OAuth proof of the operational runner; same auth rules.
 EBO_LIVE_AGENT_SDK_RUNNER=1 node --test --test-name-pattern='approved live Agent SDK operational runner' dist/test/agent-sdk-runner.test.js
+# Optional approved Pi SDK smoke; uses ZAI_API_KEY without persisting it.
+EBO_LIVE_PI_SDK_SMOKE=1 node --test --test-name-pattern='approved live Pi SDK smoke' dist/test/pi.test.js
 ```
 
 From a clean Git checkout, `npm run acceptance` is the release gate. It runs the complete deterministic
 suite, verifies local documentation links and pinned fixture digests, and packs
 the npm artifact twice to prove byte-identical output. It writes the package,
-checksum, and current result under `.ebo/releases/0.1.0/`; nothing is published
-or tagged. See [the release audit](release/0.1.0/README.md) and
-[known limitations](release/0.1.0/KNOWN_LIMITATIONS.md).
+checksum, and current result under `.ebo/releases/0.2.0/`; nothing is published
+or tagged by that command. See [the release audit](release/0.2.0/README.md) and
+[known limitations](release/0.2.0/KNOWN_LIMITATIONS.md).
 
 `captureClaudeAgentSdkRun` is intentionally a library API rather than another
 configuration dialect: callers provide an already-resolved run definition,
@@ -243,7 +261,7 @@ terminal, capture, workspace, and mode-appropriate verifier outcomes, then
 compute exact native-evidence facts. Logical tool operations use native IDs,
 resource snapshots are not added repeatedly, unrelated order domains stay
 separate, and missing capability is unavailable rather than zero. The CLI reads
-qualified retained Claude Agent SDK, Codex, OpenHands, or DeepSeek bundles or an exact corpus selection and always
+qualified retained Claude Agent SDK, Codex, OpenHands, DeepSeek, Pi, or Cursor bundles or an exact corpus selection and always
 writes derived records outside immutable source evidence.
 
 Portable archives accept only `ready` or `exported` partner/public trees that

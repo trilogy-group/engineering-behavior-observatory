@@ -1,0 +1,1 @@
+{"schemaVersion":"ebo.cursor-sdk-config/v1","kind":"native-tool-policy","tools":["read","edit","grep","glob","ls"],"disallowedTools":["shell","task","mcp","webSearch","webFetch"],"sandbox":{"enabled":false},"settingSources":[],"autoReview":false,"enableAgentRetries":false}

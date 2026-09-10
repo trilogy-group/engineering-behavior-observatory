@@ -1,14 +1,26 @@
 import { join } from "node:path";
-import { readQualifiedRunCapture, createAgentSdkNativeEvidenceResolver, type AgentSdkNativeRecord } from "./agent-sdk-normalizer.js";
+import { CLAUDE_AGENT_SDK_HARNESS, readQualifiedRunCapture, createAgentSdkNativeEvidenceResolver, type AgentSdkNativeRecord } from "./agent-sdk-normalizer.js";
 import { createAgentSdkBehaviorEvidence } from "./behavior-assertions.js";
 import { describeAndValidateCodexDataset, CODEX_HARNESS } from "./codex.js";
 import { normalizeOpenHandsCapture, openHandsCapabilityProfile, type OpenHandsNativeRecord } from "./openhands.js";
 import { createDeepSeekHarnessAdapter, DEEPSEEK_HARNESS_ID, DEEPSEEK_SDK_VERSION, normalizeDeepSeekCapture, qualifyRetainedDeepSeekCapture, type DeepSeekNativeObservation } from "./deepseek-adapter.js";
+import { createCursorSdkBehaviorEvidence, CURSOR_SDK_HARNESS } from "./cursor-sdk.js";
 import { createCapturedNativeEvidenceResolver, describeNormalizedDataset, validateNormalizedDataset, type AdapterCoverageReport, type NormalizedDataset } from "./normalization-integrity.js";
 import { readBoundedFile } from "./scheduler.js";
 import { assertProtocolObservation, type ProtocolObservation } from "./process-protocol.js";
 import type { NormalizationInput, NativeEvidenceResolver } from "./uniform-events.js";
 import type { RunManifest } from "./run-bundles.js";
+import {
+  assertPiNativeRecord,
+  normalizePiCapture,
+  piCapabilityProfile,
+  piNativeType,
+  qualifyRetainedPiCapture,
+  PI_ADAPTER_VERSION,
+  PI_HARNESS,
+  PINNED_PI_SDK_VERSION,
+  type PiNativeRecord,
+} from "./pi.js";
 
 export type RetainedBehaviorEvidence = {
   capture: NormalizationInput<unknown>;
@@ -22,13 +34,35 @@ export type RetainedBehaviorEvidence = {
 export async function createRetainedBehaviorEvidence(bundleRoot: string): Promise<RetainedBehaviorEvidence> {
   const manifest = JSON.parse(readBoundedFile(join(bundleRoot, "manifest.json"), "Run manifest").toString("utf8")) as RunManifest;
   const harness = manifest.run.harness.id;
-  if (![CODEX_HARNESS, "openhands-agent-server", DEEPSEEK_HARNESS_ID].includes(harness)) {
+  if (harness === CURSOR_SDK_HARNESS) return createCursorSdkBehaviorEvidence(bundleRoot);
+  const isAgentSdk = [CLAUDE_AGENT_SDK_HARNESS, "agent-sdk"].includes(harness)
+    || manifest.run.runtime.some(({ source, name }) => source === "anthropic" && [CLAUDE_AGENT_SDK_HARNESS, "agent-sdk"].includes(name));
+  if (isAgentSdk) {
     const evidence = await createAgentSdkBehaviorEvidence(bundleRoot);
     return { ...evidence, outcomeCapture: evidence.capture };
+  }
+  if (![CODEX_HARNESS, "openhands-agent-server", DEEPSEEK_HARNESS_ID, PI_HARNESS].includes(harness)) {
+    throw new Error(`Unsupported retained harness ${harness}; refusing Agent SDK fallback normalization.`);
   }
   if (harness === "openhands-agent-server") openHandsCapabilityProfile(manifest.run.harness.version);
   if (harness === DEEPSEEK_HARNESS_ID && manifest.run.harness.version !== DEEPSEEK_SDK_VERSION) {
     throw new Error(`Unsupported retained DeepSeek runtime ${manifest.run.harness.version}.`);
+  }
+  if (harness === PI_HARNESS && manifest.run.harness.version !== PINNED_PI_SDK_VERSION) {
+    throw new Error(`Unsupported retained Pi runtime ${manifest.run.harness.version}.`);
+  }
+  if (harness === PI_HARNESS) {
+    const expected = new Map([
+      ["pi-coding-agent", { source: "earendil-works", version: PINNED_PI_SDK_VERSION }],
+      [PI_HARNESS, { source: "EBO", version: PINNED_PI_SDK_VERSION }],
+      ["pi-sdk-adapter", { source: "EBO", version: PI_ADAPTER_VERSION }],
+    ]);
+    for (const [name, identity] of expected) {
+      const matches = manifest.run.runtime.filter((runtime) => runtime.name === name);
+      if (matches.length !== 1 || matches[0]!.source !== identity.source || matches[0]!.version !== identity.version) {
+        throw new Error(`Retained Pi runtime identity ${name} differs from the pinned adapter manifest.`);
+      }
+    }
   }
   const outcomeCapture = await readQualifiedRunCapture(bundleRoot);
   // A verifier task failure also presupposes a normally completed native run.
@@ -37,7 +71,9 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
     ...outcomeCapture,
     records: outcomeCapture.records.filter(({ record }) => record.kind === "session")
       .map(({ reference, record }) => {
-        assertNativeEnvelope(harness, record.document, Number(reference.recordLocator.match(/^line:(\d+)$/u)?.[1]));
+        const line = Number(reference.recordLocator.match(/^line:(\d+)$/u)?.[1]);
+        if (harness === PI_HARNESS) assertPiNativeRecord(record.document, line);
+        else assertNativeEnvelope(harness, record.document, line);
         return { reference, record: record.document };
       }),
   };
@@ -45,7 +81,18 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
     records: outcomeCapture.records.filter(({ record }) => record.kind !== "session" && record.kind !== "hook"),
   }));
   let dataset: NormalizedDataset;
-  if (harness === CODEX_HARNESS) {
+  if (harness === PI_HARNESS) {
+    const native = qualifyRetainedPiCapture(capture as NormalizationInput<PiNativeRecord>, manifest.run.native?.sessionId, expectsCompletion);
+    capture.qualification = native.qualification;
+    outcomeCapture.qualification = native.qualification;
+    dataset = describeNormalizedDataset({
+      capture: native,
+      normalization: await normalizePiCapture(native),
+      capabilityProfile: piCapabilityProfile,
+      adapterVersion: PI_ADAPTER_VERSION,
+      nativeType: piNativeType,
+    });
+  } else if (harness === CODEX_HARNESS) {
     const native = capture as NormalizationInput<ProtocolObservation> & { threadId?: string; turnId?: string };
     const handshakeVersions = native.records.filter(({ record }) => record.kind === "response" && record.source === CODEX_HARNESS && record.method === "initialize")
       .map(({ record }) => String((record.payload as Record<string, unknown> | undefined)?.userAgent ?? "").match(/^[^\s/]+\/([^\s]+)/u)?.[1]);

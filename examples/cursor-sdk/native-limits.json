@@ -1,0 +1,1 @@
+{"schemaVersion":"ebo.cursor-sdk-config/v1","kind":"native-limits","shutdownGraceMs":2000,"maxNativeRecordBytes":16777216}

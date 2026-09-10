@@ -1,6 +1,6 @@
 {
   "name": "engineering-behavior-observatory",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Native engineering-agent evidence capture and observation.",
   "type": "module",
@@ -26,15 +26,19 @@
     "dist/contracts/",
     "dist/src/",
     "docs/",
+    "examples/",
     "ontology/",
     "release/0.1.0/",
+    "release/0.2.0/",
     "schemas/",
     "scripts/atlas-grafana.sh"
   ],
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.258",
+    "@cursor/sdk": "1.0.31",
     "@deepseek-ai/dsh-sdk-client": "0.1.1-rc.2",
     "@deepseek-ai/dsh-sdk-protocol": "0.1.1-rc.2",
+    "@earendil-works/pi-coding-agent": "0.85.1",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "proper-lockfile": "4.1.2"

@@ -492,6 +492,40 @@ export {
   resolveAgentSdkConfigurationRecord,
   runAgentSdkQueueEntry,
 } from "./agent-sdk-runner.js";
+export {
+  assertPiNativeRecord,
+  capturePiSdkRun,
+  createPiPassiveObserver,
+  describeAndValidatePiDataset,
+  filterPiToolEnvironment,
+  normalizePiCapture,
+  piCapabilityProfile,
+  piNativeType,
+  qualifyRetainedPiCapture,
+  resolvePiConfigurationRecord,
+  runPiQueueEntry,
+  PI_ADAPTER_VERSION,
+  PI_CONFIG_SCHEMA_VERSION,
+  PI_HARNESS,
+  PINNED_PI_SDK_VERSION,
+} from "./pi.js";
+export type {
+  CapturePiSdkRunOptions,
+  CapturePiSdkRunResult,
+  PiCaptureProfileConfiguration,
+  PiConfigurationKind,
+  PiConfigurationRecord,
+  PiHarnessConfiguration,
+  PiModelConfiguration,
+  PiNativeLimitsConfiguration,
+  PiNativeRecord,
+  PiNativeToolPolicyConfiguration,
+  PiRunSummary,
+  PiSession,
+  PiSessionFactory,
+  PiSessionFactoryInput,
+  RunPiQueueEntryOptions,
+} from "./pi.js";
 export type {
   AgentSdkCaptureProfileConfiguration,
   AgentSdkConfigurationKind,
@@ -516,6 +550,46 @@ export type {
   ProtocolProcessOptions,
   ProtocolProcessResult,
 } from "./process-protocol.js";
+export {
+  assertCursorWorkspaceIsolation,
+  captureCursorSdkRun,
+  createCursorSdkBehaviorEvidence,
+  CURSOR_SDK_ADAPTER_ID,
+  CURSOR_SDK_ADAPTER_VERSION,
+  CURSOR_SDK_CAPABILITIES,
+  CURSOR_SDK_DEFAULT_SHUTDOWN_GRACE_MS,
+  CURSOR_SDK_HARNESS,
+  CURSOR_SDK_VERSION,
+  normalizeCursorSdkCapture,
+} from "./cursor-sdk.js";
+export type {
+  CaptureCursorSdkRunOptions,
+  CaptureCursorSdkRunResult,
+  CaptureCursorSdkVerifier,
+  CursorNativeRecord,
+  CursorSdkAgentFactory,
+  CursorSdkBehaviorEvidence,
+  CursorSdkCaptureConfiguration,
+  CursorSdkCaptureReport,
+  CursorSdkToolPolicy,
+} from "./cursor-sdk.js";
+export {
+  CURSOR_SDK_CONFIG_SCHEMA_VERSION,
+  resolveCursorSdkConfigurationRecord,
+  runCursorSdkQueueEntry,
+} from "./cursor-sdk-runner.js";
+export type {
+  CursorSdkCaptureProfileConfiguration,
+  CursorSdkConfigurationKind,
+  CursorSdkConfigurationRecord,
+  CursorSdkHarnessConfiguration,
+  CursorSdkModelConfiguration,
+  CursorSdkModelLister,
+  CursorSdkNativeLimitsConfiguration,
+  CursorSdkNativeToolPolicyConfiguration,
+  CursorSdkRunSummary,
+  RunCursorSdkQueueEntryOptions,
+} from "./cursor-sdk-runner.js";
 export { createRetainedBehaviorEvidence } from "./retained-evidence.js";
 export type { RetainedBehaviorEvidence } from "./retained-evidence.js";
 export { createRetainedStructuralObservationSet } from "./structural-observations.js";
