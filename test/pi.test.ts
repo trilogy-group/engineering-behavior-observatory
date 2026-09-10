@@ -468,6 +468,16 @@ test("fails closed when a declared digest-pinned skill is not loadable", async (
   }
 });
 
+test("rejects a declared extension whose dependency graph is not fully digest-bound", async () => {
+  const fixture = createPiFixture({ extensionImport: true });
+  try {
+    await assert.rejects(runPiQueueEntry(fixture), /must be self-contained/u);
+    assert.equal(existsSync(fixture.outputRoot), false, "extension dependency rejection occurs before attempt capture");
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
 test("aborts through the public Pi session API and retains the interrupted attempt", async () => {
   const fixture = createPiFixture();
   const controller = new AbortController();
@@ -620,6 +630,7 @@ function createPiFixture(options: {
   malformedSkill?: boolean;
   modelBaseUrl?: string;
   declaredToolExtension?: boolean;
+  extensionImport?: boolean;
 } = {}): PiFixture {
   const parent = mkdtempSync(join(tmpdir(), "ebo-pi-runner-"));
   const bundleRoot = join(parent, "bundle");
@@ -702,6 +713,13 @@ export default function (pi) {
   });
 }
 `));
+    records.harness.extensions = [extension];
+  }
+  if (options.extensionImport) {
+    const helper = { locator: "resources/helper.mjs", digest: digestBytes(Buffer.alloc(0)) };
+    writeRef(helper, helper.locator, Buffer.from("export const value = 1;\n"));
+    const extension = { locator: "resources/importing-extension.mjs", digest: digestBytes(Buffer.alloc(0)) };
+    writeRef(extension, extension.locator, Buffer.from('import "./helper.mjs";\nexport default function () {}\n'));
     records.harness.extensions = [extension];
   }
   const modelKey = String(records.model.model).replaceAll(".", "-");

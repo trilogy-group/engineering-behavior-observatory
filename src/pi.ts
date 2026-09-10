@@ -770,6 +770,11 @@ function resolvePiResources(bundleRoot: string, configuration: PiHarnessConfigur
     resolveBundleConfiguration(bundleRoot, reference);
     return resolve(bundleRoot, reference.locator);
   });
+  const extensions = (configuration.extensions ?? []).map((reference) => {
+    const source = new TextDecoder("utf-8", { fatal: true }).decode(resolveBundleConfiguration(bundleRoot, reference));
+    assertSelfContainedPiExtension(source, reference);
+    return resolve(bundleRoot, reference.locator);
+  });
   const contextFiles = (configuration.contextFiles ?? []).map((reference) => ({
     path: resolve(bundleRoot, reference.locator),
     content: new TextDecoder("utf-8", { fatal: true }).decode(resolveBundleConfiguration(bundleRoot, reference)),
@@ -777,12 +782,22 @@ function resolvePiResources(bundleRoot: string, configuration: PiHarnessConfigur
   const systemPrompt = configuration.systemPrompt === undefined ? undefined
     : new TextDecoder("utf-8", { fatal: true }).decode(resolveBundleConfiguration(bundleRoot, configuration.systemPrompt));
   return {
-    extensions: paths(configuration.extensions),
+    extensions,
     skills: paths(configuration.skills),
     prompts: paths(configuration.prompts),
     contextFiles,
     ...(systemPrompt === undefined ? {} : { systemPrompt }),
   };
+}
+
+function assertSelfContainedPiExtension(source: string, reference: ArtifactReference): void {
+  const staticImport = /(?:^|[;\n])\s*import\s+(?:[^"'();\n]{0,512}\sfrom\s*)?["']/mu;
+  const dynamicImport = /\bimport\s*\(/u;
+  const reexport = /(?:^|[;\n])\s*export\s+(?:\*|\{[^}]{0,512}\})\s+from\s*["']/mu;
+  const commonJs = /\brequire\s*\(/u;
+  if (staticImport.test(source) || dynamicImport.test(source) || reexport.test(source) || commonJs.test(source)) {
+    throw piConfigError(reference, "must be self-contained and cannot import or require an unpinned dependency graph");
+  }
 }
 
 export async function normalizePiCapture(input: NormalizationInput<PiNativeRecord>): Promise<NormalizationResult> {
