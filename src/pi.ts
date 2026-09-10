@@ -360,11 +360,19 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.maxWallClockMs === undefined ? {} : { maxWallClockMs: options.maxWallClockMs }),
       ...(options.limits.shutdownGraceMs === undefined ? {} : { shutdownGraceMs: options.limits.shutdownGraceMs }),
-      harness: async ({ registerShutdown }) => {
+      harness: async ({ registerShutdown, signal }) => {
         if (workspace?.status !== "ready" || workspace.path === undefined) throw new Error("Pi run requires a ready workspace.");
         let session: PiSession | undefined;
         let unsubscribe: (() => void) | undefined;
         let failure: unknown;
+        let resolveAdapterFinalized!: () => void;
+        const adapterFinalized = new Promise<void>((resolvePromise) => { resolveAdapterFinalized = resolvePromise; });
+        const abortSession = (): void => { void session?.abort(); };
+        registerShutdown(async () => {
+          await session?.abort();
+          await session?.waitForIdle();
+          await adapterFinalized;
+        });
         try {
           session = await createSession({
             workspacePath: workspace.path,
@@ -378,6 +386,8 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
             observer,
           });
           sessionId = session.sessionId;
+          if (signal.aborted) await session.abort();
+          else signal.addEventListener("abort", abortSession, { once: true });
           await stream.record({
             channel: "adapter",
             nativeType: "session_created",
@@ -388,10 +398,7 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
             if (event.type === "agent_settled") agentSettledObserved = true;
             void stream.record({ channel: "stream", nativeType: event.type, sessionId, payload: compactPiStreamEvent(event) });
           });
-          registerShutdown(async () => {
-            await session?.abort();
-            await session?.waitForIdle();
-          });
+          if (signal.aborted) return { status: "interrupted", reason: "Pi session was aborted before prompting.", evidence: piEvidence(sessionId, session) };
           await session.prompt(options.prompt, { expandPromptTemplates: false, source: "extension" });
           await session.waitForIdle();
           const lastAssistant = [...session.messages].reverse().find((message) => isRecord(message) && message.role === "assistant") as Record<string, unknown> | undefined;
@@ -428,46 +435,51 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
           await stream.record({ channel: "adapter", nativeType: "capture_error", ...(sessionId === undefined ? {} : { sessionId }), payload: { message: errorMessage(error) } });
           return { status: "failed", failureClass: "infrastructure", reason: errorMessage(error), evidence: piEvidence(sessionId, session) };
         } finally {
-          unsubscribe?.();
-          if (session !== undefined) {
-            await session.waitForIdle().catch(() => undefined);
-            let exportFailure: unknown;
-            const nativeSessionPath = session.sessionFile;
-            try {
-              if (nativeSessionPath !== undefined && await nonempty(nativeSessionPath)) {
-                await cp(nativeSessionPath, join(assembler.bundleRoot, "pi-session.jsonl"), { force: true });
-              } else {
-                session.exportToJsonl(join(assembler.bundleRoot, "pi-session.jsonl"));
-                if (options.createSession === undefined) sessionExportFailed = true;
-              }
-              sessionExported = true;
-            } catch (error) {
-              exportFailure = error;
-              sessionExportFailed = true;
-            } finally {
-              if (session.extensionRunner !== undefined) {
-                try {
-                  await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-                } catch (error) {
-                  exportFailure ??= error;
-                  sessionExportFailed = true;
-                  await observer.record({
-                    channel: "observer",
-                    nativeType: "extension_error",
-                    hook: "session_shutdown",
-                    stage: "extension-error",
-                    payload: { event: "session_shutdown", error: errorMessage(error) },
-                  });
+          try {
+            unsubscribe?.();
+            if (session !== undefined) {
+              await session.waitForIdle().catch(() => undefined);
+              let exportFailure: unknown;
+              const nativeSessionPath = session.sessionFile;
+              try {
+                if (nativeSessionPath !== undefined && await nonempty(nativeSessionPath)) {
+                  await cp(nativeSessionPath, join(assembler.bundleRoot, "pi-session.jsonl"), { force: true });
+                } else {
+                  session.exportToJsonl(join(assembler.bundleRoot, "pi-session.jsonl"));
+                  if (options.createSession === undefined) sessionExportFailed = true;
                 }
+                sessionExported = true;
+              } catch (error) {
+                exportFailure = error;
+                sessionExportFailed = true;
+              } finally {
+                if (session.extensionRunner !== undefined) {
+                  try {
+                    await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+                  } catch (error) {
+                    exportFailure ??= error;
+                    sessionExportFailed = true;
+                    await observer.record({
+                      channel: "observer",
+                      nativeType: "extension_error",
+                      hook: "session_shutdown",
+                      stage: "extension-error",
+                      payload: { event: "session_shutdown", error: errorMessage(error) },
+                    });
+                  }
+                }
+                session.dispose();
               }
-              session.dispose();
+              await stream.record({ channel: "adapter", nativeType: "cleanup", sessionId, payload: {
+                disposed: true, promptFailed: failure !== undefined, sessionExported,
+                ...(exportFailure === undefined ? {} : { exportError: errorMessage(exportFailure) }),
+              } });
+              if (sessionExported) await rm(join(assembler.bundleRoot, ".pi-native"), { recursive: true, force: true });
+              if (exportFailure !== undefined) throw exportFailure;
             }
-            await stream.record({ channel: "adapter", nativeType: "cleanup", sessionId, payload: {
-              disposed: true, promptFailed: failure !== undefined, sessionExported,
-              ...(exportFailure === undefined ? {} : { exportError: errorMessage(exportFailure) }),
-            } });
-            if (sessionExported) await rm(join(assembler.bundleRoot, ".pi-native"), { recursive: true, force: true });
-            if (exportFailure !== undefined) throw exportFailure;
+          } finally {
+            signal.removeEventListener("abort", abortSession);
+            resolveAdapterFinalized();
           }
         }
       },
@@ -510,9 +522,9 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
   const missingEvidence: CaptureMissingEvidence[] = [{
     kind: "telemetry", reason: "unsupported", affects: ["timing-resource"],
     detail: "Pi 0.85.1 has no verified native OTLP receipt surface in this integration.",
-  }, ...(terminalEvidenceObserved ? [] : [{
+  }, ...(attempt.terminal.state === "completed" && terminalEvidenceObserved ? [] : [{
     kind: "session", reason: "not-emitted" as const, affects: ["semantic" as const],
-    detail: "Pi did not retain an assistant terminal message after the owned prompt.",
+    detail: "Pi did not retain a completed assistant terminal after the owned prompt.",
   }]), ...(sessionExportFailed ? [{
     kind: "session", reason: "not-collected" as const, affects: ["semantic" as const],
     detail: "Pi session export failed; a persisted native-session fallback was retained when available.",
@@ -901,7 +913,12 @@ function mapPiRecord(
     }
     if (["compaction_start", "compaction_end"].includes(kind)) return [event(kind, "context", kind.endsWith("start") ? "before" : "after", { kind: "harness" }, { kind: "session", id: sourceId }, { boundary: "compaction", subtype: "compact_boundary" })];
     if (["agent_start", "agent_end", "agent_settled", "turn_start", "turn_end", "auto_retry_start", "auto_retry_end"].includes(kind)) {
-      return [event(kind, kind.startsWith("auto_retry") ? "context" : "runtime", kind.endsWith("start") ? "before" : "after", { kind: "harness" }, { kind: kind.startsWith("turn") ? "turn" : "session", id: sourceId }, compactAttributes({ lifecycle: kind, receiptAt: text(record.receivedAt) }))];
+      const turnIndex = number(payload.turnIndex);
+      const scope = kind.startsWith("turn")
+        ? { kind: "turn" as const, ...(turnIndex === undefined ? {} : { id: `${sourceId}:turn:${String(turnIndex)}` }) }
+        : { kind: "session" as const, id: sourceId };
+      return [event(kind, kind.startsWith("auto_retry") ? "context" : "runtime", kind.endsWith("start") ? "before" : "after", { kind: "harness" }, scope,
+        compactAttributes({ lifecycle: kind, turnIndex, receiptAt: text(record.receivedAt) }))];
     }
     return [];
   }

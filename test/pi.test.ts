@@ -74,7 +74,10 @@ test("runs a frozen observational Pi entry through capture, export, retained eva
     assert.equal(evidence.dataset.events.filter(({ family }) => family === "tool").length, 2);
     assert.ok(evidence.dataset.unmapped.some(({ reason }) => /Transient message delta/u.test(reason)));
     assert.ok(evidence.dataset.unmapped.some(({ reason }) => /future_event/u.test(reason)));
-    const streamTurnEnd = evidence.dataset.events.find(({ source }) => source.nativeType === "stream:turn_end");
+    const turnScopes = evidence.dataset.events.filter(({ source }) => source.nativeType === "stream:turn_start")
+      .map(({ scope }) => scope.id);
+    assert.deepEqual(turnScopes, [`${SESSION_ID}:turn:0`, `${SESSION_ID}:turn:1`]);
+    const streamTurnEnd = evidence.dataset.events.filter(({ source }) => source.nativeType === "stream:turn_end").at(-1);
     assert.deepEqual(streamTurnEnd?.nativeTime, { status: "known", value: "2023-11-14T22:13:20.400Z" });
     const observations = await createRetainedStructuralObservationSet(summary.bundlePath);
     const toolCount = observations.observations.find(({ id }) => id.endsWith("tool-operation-count"));
@@ -463,6 +466,9 @@ test("aborts through the public Pi session API and retains the interrupted attem
   const fixture = createPiFixture();
   const controller = new AbortController();
   let resolvePrompt: (() => void) | undefined;
+  let markPromptStarted!: () => void;
+  const promptStarted = new Promise<void>((resolvePromise) => { markPromptStarted = resolvePromise; });
+  let shutdownEmitted = false;
   try {
     const createSession: PiSessionFactory = async (input) => {
       const listeners: Array<(event: AgentSessionEvent) => void> = [];
@@ -470,11 +476,15 @@ test("aborts through the public Pi session API and retains the interrupted attem
       return {
         sessionId: SESSION_ID,
         messages,
-        extensionRunner: { emit: async () => undefined },
+        extensionRunner: { emit: async () => {
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+          shutdownEmitted = true;
+        } },
         subscribe(listener) { listeners.push(listener); return () => undefined; },
-        prompt: () => new Promise<void>((resolve) => { resolvePrompt = resolve; }),
+        prompt: () => new Promise<void>((resolve) => { resolvePrompt = resolve; markPromptStarted(); }),
         async waitForIdle() {},
         async abort() {
+          if (messages.length > 0) return;
           const assistant = { role: "assistant", content: [], provider: input.model.provider, model: input.model.model, stopReason: "aborted", timestamp: Date.now(), usage: zeroUsage() };
           messages.push(assistant);
           emit(listeners, { type: "agent_settled" } as AgentSessionEvent);
@@ -493,11 +503,13 @@ test("aborts through the public Pi session API and retains the interrupted attem
       };
     };
     const pending = runPiQueueEntry({ ...fixture, signal: controller.signal, createSession });
-    setTimeout(() => controller.abort("synthetic timeout"), 20);
+    await promptStarted;
+    controller.abort("synthetic timeout");
     const summary = await pending;
     assert.equal(summary.classification, "interrupted");
     assert.equal(summary.terminal.state, "interrupted");
     assert.equal(summary.captureQualification, "unqualified", "interrupted attempts remain valid partial evidence rather than invented complete capture");
+    assert.equal(shutdownEmitted, true, "capture must join adapter finalization before returning from cancellation");
   } finally {
     rmSync(fixture.parent, { recursive: true, force: true });
   }
@@ -731,10 +743,12 @@ function fakePiSessionFactory(): { createSession: PiSessionFactory; calls(): num
         emit(listeners, { type: "message_update", message: toolAssistant, assistantMessageEvent: { type: "toolcall_start", contentIndex: 1, partial: toolAssistant } } as unknown as AgentSessionEvent);
         writeFileSync(join(input.workspacePath, "result.txt"), "done\n");
         emit(listeners, { type: "tool_execution_end", toolCallId: "tool-1", toolName: "write", result: { content: "done" }, isError: false } as unknown as AgentSessionEvent);
+        emit(listeners, { type: "turn_end", turnIndex: 0, message: toolAssistant, toolResults: [] } as unknown as AgentSessionEvent);
+        emit(listeners, { type: "turn_start", turnIndex: 1, timestamp: 1_700_000_000_350 } as AgentSessionEvent);
         emit(listeners, { type: "compaction_start", reason: "threshold" } as unknown as AgentSessionEvent);
         emit(listeners, { type: "compaction_end", reason: "threshold", result: {}, aborted: false, willRetry: false } as unknown as AgentSessionEvent);
         emit(listeners, { type: "future_event", payload: { retained: true } } as unknown as AgentSessionEvent);
-        emit(listeners, { type: "turn_end", turnIndex: 0, message: finalAssistant, toolResults: [] } as unknown as AgentSessionEvent);
+        emit(listeners, { type: "turn_end", turnIndex: 1, message: finalAssistant, toolResults: [] } as unknown as AgentSessionEvent);
         emit(listeners, { type: "agent_end", messages: [finalAssistant], willRetry: false } as unknown as AgentSessionEvent);
         emit(listeners, { type: "agent_settled" } as AgentSessionEvent);
       },
