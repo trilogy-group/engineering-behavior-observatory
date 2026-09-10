@@ -540,7 +540,7 @@ function resolveCitationContent(candidate: LoadedCandidate, reference: { artifac
     && current.recordLocator === reference.recordLocator);
   if (captured === undefined) throw new Error(`Assertion "${candidate.assertion.id}" cites a native record that cannot be rendered.`);
   const record = captured.record;
-  const nativeSession = ["codex-app-server", "openhands-agent-server", "deepseek-harness", "cursor-sdk"].includes(candidate.manifest.run.harness.id);
+  const nativeSession = ["codex-app-server", "openhands-agent-server", "deepseek-harness", "cursor-sdk", "pi-sdk"].includes(candidate.manifest.run.harness.id);
   return structuredClone(nativeSession ? record : (record as { document: unknown }).document);
 }
 

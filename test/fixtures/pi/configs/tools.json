@@ -1,0 +1,1 @@
+{"schemaVersion":"ebo.pi-config/v1","kind":"native-tool-policy","tools":["read","bash","edit","write"],"environmentAllowlist":["PATH","HOME","TMPDIR","LANG"]}

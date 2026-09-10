@@ -21,7 +21,7 @@ Verifier task failures also require normal native completion; infrastructure
 failures and interruptions can retain qualified partial evidence instead.
 
 `ebo observations` derives versioned, deterministic facts from a
-capture-qualified retained Claude Agent SDK, Codex, OpenHands, DeepSeek, or Cursor run bundle. It runs qualification,
+capture-qualified retained Claude Agent SDK, Codex, OpenHands, DeepSeek, Pi, or Cursor run bundle. It runs qualification,
 normalization, native-reference integrity validation, and the registered
 extractors in that order. Source bundles are read-only; the command rejects an
 output path inside the source bundle or corpus.

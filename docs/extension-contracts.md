@@ -66,6 +66,9 @@ Current source-specific examples are the Agent SDK normalizer,
 native-first contract to the direct SDK boundary. A new adapter must not weaken
 their rules to fit a common convenience model.
 
+The Pi integration uses direct public SDK session/history/subscription APIs in
+`src/pi.ts`, without forcing Pi into a process protocol.
+
 ## Source-specific process or API boundary
 
 Use `runProtocolProcess` only for a source whose owned child actually speaks
