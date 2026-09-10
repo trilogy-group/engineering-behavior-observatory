@@ -153,6 +153,7 @@ export const piCapabilityProfile: AdapterCapabilityProfile = {
     "stream:auto_retry_start", "stream:auto_retry_end", "observer:session_start", "observer:session_shutdown",
     "observer:context", "observer:before_provider_request", "observer:before_provider_headers",
     "observer:after_provider_response", "observer:before_agent_start", "observer:tool_call", "observer:tool_result",
+    "observer:session_before_compact", "observer:session_compact", "observer:session_compact_failed",
     "adapter:session_created", "adapter:capture_error", "adapter:cleanup",
   ],
   families: {
@@ -254,6 +255,7 @@ export type PiSessionFactoryInput = {
   captureProfile: PiCaptureProfileConfiguration;
   bundleRoot: string;
   observer: PiEvidenceRecorder;
+  signal: AbortSignal;
 };
 
 export type PiSessionFactory = (input: PiSessionFactoryInput) => Promise<PiSession>;
@@ -305,6 +307,7 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
   let sessionExportFailed = false;
   let terminalEvidenceObserved = false;
   let agentSettledObserved = false;
+  let adapterFinalization: Promise<void> = Promise.resolve();
 
   const captureWorkspace = async (context?: VerifierExecutionContext): Promise<CapturedWorkspaceOutcome> => {
     if (workspaceOutcome !== undefined) return workspaceOutcome;
@@ -367,6 +370,7 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
         let failure: unknown;
         let resolveAdapterFinalized!: () => void;
         const adapterFinalized = new Promise<void>((resolvePromise) => { resolveAdapterFinalized = resolvePromise; });
+        adapterFinalization = adapterFinalized;
         const abortSession = (): void => { void session?.abort(); };
         registerShutdown(async () => {
           await session?.abort();
@@ -384,6 +388,7 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
             captureProfile: options.captureProfile,
             bundleRoot: resolve(options.configurationRoot),
             observer,
+            signal,
           });
           sessionId = session.sessionId;
           if (signal.aborted) await session.abort();
@@ -496,6 +501,7 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
       }),
     });
   } finally {
+    await adapterFinalization;
     await Promise.allSettled([stream.close(), observer.close()]);
   }
 
@@ -559,12 +565,15 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
 }
 
 async function createProductionPiSession(input: PiSessionFactoryInput): Promise<PiSession> {
+  input.signal.throwIfAborted();
   const modelRuntime = await ModelRuntime.create({
     authPath: join(input.sessionDirectory, "auth.json"),
     modelsPath: null,
     refreshOnCreate: false,
     allowModelNetwork: false,
+    signal: input.signal,
   });
+  input.signal.throwIfAborted();
   const provider: ProviderConfig = {
     name: input.model.provider,
     baseUrl: input.model.baseUrl,
@@ -618,6 +627,7 @@ async function createProductionPiSession(input: PiSessionFactoryInput): Promise<
       : [createPiPassiveObserver(input.observer, resources.extensions.length, input.captureProfile.includeProviderPayloads === true)],
   });
   await resourceLoader.reload();
+  input.signal.throwIfAborted();
   const resourceErrors = resourceLoader.getExtensions().errors;
   if (resourceErrors.length > 0) throw new Error(`Pi extension loading failed: ${resourceErrors.map(({ path, error }) => `${path}: ${error}`).join("; ")}`);
   const skillResult = resourceLoader.getSkills();
@@ -641,6 +651,7 @@ async function createProductionPiSession(input: PiSessionFactoryInput): Promise<
 
   const sessionManager = SessionManager.create(input.workspacePath, input.sessionDirectory);
   const allowedEnvironment = new Set(input.toolPolicy.environmentAllowlist);
+  const extensionToolNames = resourceLoader.getExtensions().extensions.flatMap((extension) => [...extension.tools.keys()]);
   const bashTool = createBashToolDefinition(input.workspacePath, {
     exposeSessionEnvironment: false,
     spawnHook: ({ command, cwd, env }) => ({
@@ -658,10 +669,15 @@ async function createProductionPiSession(input: PiSessionFactoryInput): Promise<
     sessionManager,
     settingsManager,
     resourceLoader,
-    tools: [...input.toolPolicy.tools],
+    tools: [...new Set([...input.toolPolicy.tools, ...extensionToolNames])],
     excludeTools: [...(input.toolPolicy.excludeTools ?? [])],
     customTools: input.toolPolicy.tools.includes("bash") ? [bashTool as unknown as ToolDefinition] : [],
   });
+  if (input.signal.aborted) {
+    await session.abort().catch(() => undefined);
+    session.dispose();
+    input.signal.throwIfAborted();
+  }
   if (extensionsResult.errors.length > 0) {
     session.dispose();
     throw new Error(`Pi extension binding failed: ${extensionsResult.errors.map(({ error }) => error).join("; ")}`);
@@ -678,7 +694,8 @@ async function createProductionPiSession(input: PiSessionFactoryInput): Promise<
     },
   });
   const expectedTools = input.toolPolicy.tools.filter((tool) => !(input.toolPolicy.excludeTools ?? []).includes(tool)).sort();
-  if (JSON.stringify(session.getActiveToolNames().sort()) !== JSON.stringify(expectedTools)) {
+  const activeBuiltins = session.getActiveToolNames().filter((tool) => (PI_TOOLS as readonly string[]).includes(tool)).sort();
+  if (JSON.stringify(activeBuiltins) !== JSON.stringify(expectedTools)) {
     session.dispose();
     throw new Error("Pi active tools differ from the digest-pinned tool policy.");
   }

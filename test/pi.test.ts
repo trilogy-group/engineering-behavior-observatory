@@ -85,7 +85,7 @@ test("runs a frozen observational Pi entry through capture, export, retained eva
     const inputTokens = observations.observations.find(({ id }) => id.endsWith("input-token-count"));
     assert.deepEqual(inputTokens?.value, { status: "known", value: 12, unit: "tokens" });
     const compactions = observations.observations.find(({ id }) => id.endsWith("compaction-boundary-record-count"));
-    assert.deepEqual(compactions?.value, { status: "known", value: 3, unit: "native-records" });
+    assert.deepEqual(compactions?.value, { status: "known", value: 4, unit: "native-records" });
     const totalCost = observations.observations.find(({ id }) => id.endsWith("total-cost-usd"));
     assert.deepEqual(totalCost?.value, { status: "known", value: 0, unit: "usd" });
 
@@ -433,12 +433,18 @@ test("production Pi session creation preserves explicit xhigh and max mappings",
   const previous = process.env.PI_SYNTHETIC_API_KEY;
   process.env.PI_SYNTHETIC_API_KEY = "synthetic-local-test-key";
   try {
-    for (const thinkingLevel of ["xhigh", "max"] as const) {
-      const fixture = createPiFixture({ thinkingLevel, reasoning: true, modelBaseUrl: `http://127.0.0.1:${address.port}/v1` });
+    for (const scenario of [
+      { thinkingLevel: "xhigh" as const, declaredToolExtension: false },
+      { thinkingLevel: "max" as const, declaredToolExtension: false },
+      { thinkingLevel: "max" as const, declaredToolExtension: true },
+    ]) {
+      const fixture = createPiFixture({ ...scenario, reasoning: true, modelBaseUrl: `http://127.0.0.1:${address.port}/v1` });
       try {
         const summary = await runPiQueueEntry(fixture);
         assert.equal(summary.classification, "completed");
         assert.equal(summary.captureQualification, "qualified");
+        const composition = readJsonl(join(summary.bundlePath, "pi-events.jsonl")).find(({ nativeType }) => nativeType === "session_created")!.payload as Record<string, any>;
+        assert.equal(composition.tools.active.includes("declared_tool"), scenario.declaredToolExtension);
       } finally {
         rmSync(fixture.parent, { recursive: true, force: true });
       }
@@ -510,6 +516,32 @@ test("aborts through the public Pi session API and retains the interrupted attem
     assert.equal(summary.terminal.state, "interrupted");
     assert.equal(summary.captureQualification, "unqualified", "interrupted attempts remain valid partial evidence rather than invented complete capture");
     assert.equal(shutdownEmitted, true, "capture must join adapter finalization before returning from cancellation");
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
+test("cancellation during session creation is propagated and joined before capture returns", async () => {
+  const fixture = createPiFixture();
+  const controller = new AbortController();
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolvePromise) => { markStarted = resolvePromise; });
+  let creationSettled = false;
+  try {
+    const createSession: PiSessionFactory = async ({ signal }) => {
+      markStarted();
+      await new Promise<void>((resolvePromise) => signal.addEventListener("abort", () => resolvePromise(), { once: true }));
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+      creationSettled = true;
+      throw new Error("synthetic cancelled creation");
+    };
+    const pending = runPiQueueEntry({ ...fixture, signal: controller.signal, createSession });
+    await started;
+    controller.abort("synthetic creation cancellation");
+    const summary = await pending;
+    assert.equal(summary.classification, "interrupted");
+    assert.equal(summary.captureQualification, "unqualified");
+    assert.equal(creationSettled, true, "capture must join cancellation-aware session construction");
   } finally {
     rmSync(fixture.parent, { recursive: true, force: true });
   }
@@ -587,6 +619,7 @@ function createPiFixture(options: {
   reasoning?: boolean;
   malformedSkill?: boolean;
   modelBaseUrl?: string;
+  declaredToolExtension?: boolean;
 } = {}): PiFixture {
   const parent = mkdtempSync(join(tmpdir(), "ebo-pi-runner-"));
   const bundleRoot = join(parent, "bundle");
@@ -655,6 +688,21 @@ if (value !== "done") process.exitCode = 1;
     const skill = { locator: "resources/SKILL.md", digest: digestBytes(Buffer.alloc(0)) };
     writeRef(skill, skill.locator, Buffer.from("---\nname: malformed\n---\nbody\n"));
     records.harness.skills = [skill];
+  }
+  if (options.declaredToolExtension) {
+    const extension = { locator: "resources/declared-tool.mjs", digest: digestBytes(Buffer.alloc(0)) };
+    writeRef(extension, extension.locator, Buffer.from(`
+export default function (pi) {
+  pi.registerTool({
+    name: "declared_tool",
+    label: "Declared tool",
+    description: "A deterministic digest-pinned fixture tool.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+  });
+}
+`));
+    records.harness.extensions = [extension];
   }
   const modelKey = String(records.model.model).replaceAll(".", "-");
   const experiment: ExperimentConfiguration = {
@@ -732,6 +780,10 @@ function fakePiSessionFactory(): { createSession: PiSessionFactory; calls(): num
           const result = await observerHook(providerEvent, { sessionManager: { getSessionId: () => SESSION_ID } });
           assert.deepEqual(providerEvent, before, "the production observer must not mutate provider input");
           assert.equal(result, undefined, "the production observer must not replace provider input");
+        }
+        const compactionHook = observerHandlers.get("session_before_compact");
+        if (compactionHook !== undefined) {
+          await compactionHook({ type: "session_before_compact", reason: "threshold", willRetry: false, branchEntries: [] }, { sessionManager: { getSessionId: () => SESSION_ID } });
         }
         const mutable = { type: "tool_execution_start", toolCallId: "tool-1", toolName: "write", args: { path: "result.txt", content: "done\n" } } as unknown as AgentSessionEvent;
         emit(listeners, { type: "agent_start" } as AgentSessionEvent);
