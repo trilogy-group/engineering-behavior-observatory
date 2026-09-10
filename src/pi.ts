@@ -611,10 +611,11 @@ async function createProductionPiSession(input: PiSessionFactoryInput): Promise<
     signal: input.signal,
   });
   input.signal.throwIfAborted();
+  const credentialReference = `$${input.model.apiKeyEnv}`;
   const provider: ProviderConfig = {
     name: input.model.provider,
     baseUrl: input.model.baseUrl,
-    apiKey: `$${input.model.apiKeyEnv}`,
+    apiKey: credentialReference,
     api: input.model.api,
     models: [{
       id: input.model.model,
