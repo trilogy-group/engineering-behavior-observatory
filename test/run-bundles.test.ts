@@ -310,6 +310,37 @@ test("workspace projection rejects hard-linked source evidence before copying it
   }
 });
 
+test("partial capture reports retain the workspace error and a successful retry clears it", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-workspace-capture-error-"));
+  try {
+    const fixture = createWorkspaceFixture(root);
+    linkSync(join(fixture.final, "changed.txt"), join(fixture.final, "linked.txt"));
+    for (const recover of [false, true]) {
+      const bundleRoot = join(root, recover ? "recovered" : "failed");
+      const runDefinition = definition(bundleRoot, recover ? "recovered" : "failed");
+      runDefinition.run.assessmentMode = "observational";
+      const assembler = await createRunBundleAssembler(runDefinition);
+      const options = { startPath: fixture.start, finalPath: fixture.final, omitEmptyDirectories: true };
+      await assert.rejects(assembler.captureWorkspaceOutcome(options), /hard-linked file/);
+      if (recover) {
+        rmSync(join(fixture.final, "linked.txt"));
+        await assembler.captureWorkspaceOutcome(options);
+      }
+      const manifest = await assembler.finalize({ terminal: {
+        state: recover ? "completed" : "failed", failureClass: recover ? "none" : "infrastructure", stopReason: "none",
+        ...(recover ? { workspaceArtifactId: "workspace" } : {}),
+      } });
+      const report = JSON.parse(readFileSync(join(bundleRoot, manifest.evidence.find(e => e.kind === "capture-report")!.relativePath), "utf8"));
+      const errors = report.missingEvidence.filter((e: { kind: string }) => e.kind === "workspace-capture-error");
+      assert.equal(errors.length, recover ? 0 : 1);
+      if (!recover) assert.match(errors[0].detail, /hard-linked file/);
+      assertBundleValid(bundleRoot);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("falls back to a bounded standard snapshot when a patch cannot preserve the tree", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-run-bundle-snapshot-"));
   try {

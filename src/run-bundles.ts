@@ -387,6 +387,18 @@ export class RunBundleAssembler {
       const outcome: CapturedWorkspaceOutcome = { descriptor, fingerprint, treeDigest, format };
       await whileProjected?.(capturedPath, outcome);
       return outcome;
+    }).then((outcome) => {
+      this.captureMissing = this.captureMissing.filter(({ kind }) => kind !== "workspace-capture-error");
+      return outcome;
+    }, (error: unknown) => {
+      // Keep the cause when a harness retains a partial bundle after packaging fails.
+      // Otherwise its terminal classification alone loses the actionable exception.
+      this.captureMissing = this.captureMissing.filter(({ kind }) => kind !== "workspace-capture-error");
+      this.captureMissing.push({
+        kind: "workspace-capture-error", reason: "not-collected", affects: ["outcome"],
+        detail: errorMessage(error),
+      });
+      throw error;
     });
   }
 
