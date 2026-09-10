@@ -19,7 +19,7 @@ import {
   type CodexAppServerCapture,
   type CodexAppServerConfiguration,
 } from "../src/codex.js";
-import { captureCodexAppServerRun, runCodexQueueEntry, CODEX_CONTRACT_DIGEST } from "../src/codex-run.js";
+import { captureCodexAppServerRun, runCodexQueueEntry, resolveCodexConfigurationRecord, CODEX_CONTRACT_DIGEST } from "../src/codex-run.js";
 import { RunBundleAssembler, type RunBundleDefinition, type RunManifest } from "../src/run-bundles.js";
 import {
   buildCorpusIndex,
@@ -47,6 +47,54 @@ import {
 const fixture = resolve("test/fixtures/codex/fake-app-server.mjs");
 const contractRoot = resolve("contracts/codex-app-server-0.153.4");
 const reasoningSentinel = "EBO_RAW_REASONING_SENTINEL";
+
+for (const networkAccess of [undefined, true, false]) {
+  test(`workspace-write network policy is propagated and retained (${String(networkAccess)})`, async () => {
+    const root = await temporaryRoot();
+    try {
+      const configuration = { ...fakeConfiguration("success"), ...(networkAccess === undefined ? {} : { networkAccess }) };
+      const capture = await captureCodexAppServer({ runId: "network", attemptId: "network", workspacePath: root,
+        prompt: "Fixture", evidencePath: join(root, "session.jsonl"), configuration });
+      assert.equal(capture.gaps.some(({ kind }) => kind === "sandbox-mismatch"), false);
+      const start = capture.records.find(({ record }) => record.kind === "request" && record.method === "thread/start")!.record.payload as any;
+      const turn = capture.records.find(({ record }) => record.kind === "request" && record.method === "turn/start")!.record.payload as any;
+      assert.equal(start.config.sandbox_workspace_write.network_access, networkAccess ?? true);
+      assert.equal(turn.sandboxPolicy.networkAccess, networkAccess ?? true);
+      assert.equal((capture.telemetry.effectiveConfiguration.threadStart!.sandbox as any).networkAccess, networkAccess ?? true);
+      assert.deepEqual(turn.sandboxPolicy.writableRoots, [root]);
+      assert.equal(turn.sandboxPolicy.excludeSlashTmp, true);
+      assert.equal(turn.sandboxPolicy.excludeTmpdirEnvVar, true);
+      assert.equal(turn.approvalPolicy, "never");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+}
+
+test("reports an applied network policy mismatch", async () => {
+  const root = await temporaryRoot();
+  try {
+    const capture = await runFake(root, "network-mismatch");
+    assert.ok(capture.gaps.some(({ kind }) => kind === "sandbox-mismatch"));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("validates digest-pinned network policy before launching", async () => {
+  const root = await temporaryRoot();
+  try {
+    for (const [sandbox, networkAccess, valid] of [
+      ["workspace-write", true, true], ["workspace-write", false, true],
+      ["workspace-write", "false", false], ["read-only", true, false], ["danger-full-access", false, false],
+    ] as const) {
+      const bytes = Buffer.from(JSON.stringify({ schemaVersion: "ebo.codex-config/v1", kind: "native-tool-policy", approvalPolicy: "never", sandbox, networkAccess }));
+      await writeFile(join(root, "tools.json"), bytes);
+      const read = () => resolveCodexConfigurationRecord(root, { locator: "tools.json", digest: digestBytes(bytes) }, "native-tool-policy");
+      if (valid) assert.equal(read().networkAccess, networkAccess);
+      else assert.throws(read, /networkAccess/);
+    }
+    await assert.rejects(captureCodexAppServer({ runId: "network", attemptId: "network", workspacePath: root,
+      prompt: "Fixture", evidencePath: join(root, "session.jsonl"),
+      configuration: { ...fakeConfiguration("success"), sandbox: "read-only", networkAccess: true } }), /networkAccess/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test("retained 0.150.1 evidence keeps its original normalized dataset", async () => {
   const root = resolve("test/fixtures/codex/legacy-0.150.1");
@@ -871,6 +919,9 @@ test("runs one frozen observational queue entry and passes export, corpus, and a
     assert.equal(summary.captureQualification, "qualified");
     assert.ok(summary.normalizedEvents > 0);
     assert.equal(summary.threadId, "thread-1");
+    const telemetry = JSON.parse(await readFile(join(summary.bundlePath, "telemetry/codex.json"), "utf8"));
+    assert.equal(telemetry.effectiveConfiguration.threadStart.sandbox.networkAccess, false,
+      "The frozen queue's explicit offline policy must reach the native runner.");
 
     const policy: PortableExportPolicy = { sharingClass: "partner", maxArtifactBytes: 8 * 1024 * 1024, maxStringBytes: 64 * 1024 };
     const exportRoot = join(corpusRoot, "exports", "codex");
@@ -1106,7 +1157,7 @@ function createQueueFixture(parent: string, executable = process.execPath): { bu
     model: { schemaVersion: "ebo.codex-config/v1", kind: "model", provider: "openai", model: "gpt-5.6-sol", effort: "high" },
     harness: { schemaVersion: "ebo.codex-config/v1", kind: "harness", adapter: "codex-app-server", executable, version: CODEX_APP_SERVER_VERSION, contractDigest: CODEX_CONTRACT_DIGEST },
     limits: { schemaVersion: "ebo.codex-config/v1", kind: "native-limits", shutdownGraceMs: 1_000 },
-    tools: { schemaVersion: "ebo.codex-config/v1", kind: "native-tool-policy", approvalPolicy: "never", sandbox: "workspace-write" },
+    tools: { schemaVersion: "ebo.codex-config/v1", kind: "native-tool-policy", approvalPolicy: "never", sandbox: "workspace-write", networkAccess: false },
     capture: { schemaVersion: "ebo.codex-config/v1", kind: "capture-profile", telemetrySignals: ["logs", "traces", "metrics"], workspaceOutcome: { excludeDirectoryNames: ["node_modules"] } },
   };
   const references = Object.fromEntries(Object.entries(configs).map(([name, value]) => {

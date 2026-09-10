@@ -63,7 +63,7 @@ the actual provider model and effort. A minimal observational configuration is:
 { "schemaVersion": "ebo.codex-config/v1", "kind": "model", "provider": "openai", "model": "gpt-5.6-sol", "effort": "high" }
 { "schemaVersion": "ebo.codex-config/v1", "kind": "harness", "adapter": "codex-app-server", "executable": "/opt/homebrew/bin/codex", "version": "0.153.4", "contractDigest": "sha256:e5f798fd1343c539f01fedea0e8a84a43c080fcca4615c80eb04a5edab4f7d0a" }
 { "schemaVersion": "ebo.codex-config/v1", "kind": "native-limits", "shutdownGraceMs": 2000 }
-{ "schemaVersion": "ebo.codex-config/v1", "kind": "native-tool-policy", "approvalPolicy": "never", "sandbox": "workspace-write" }
+{ "schemaVersion": "ebo.codex-config/v1", "kind": "native-tool-policy", "approvalPolicy": "never", "sandbox": "workspace-write", "networkAccess": true }
 { "schemaVersion": "ebo.codex-config/v1", "kind": "capture-profile", "telemetrySignals": ["logs", "traces", "metrics"], "workspaceOutcome": { "excludeDirectoryNames": ["node_modules"] } }
 ```
 
@@ -78,6 +78,24 @@ ebo codex run \
 
 `runCodexQueueEntry` is the equivalent library API. It does not iterate, retry,
 resume, or overwrite an existing attempt destination.
+
+Workspace-write runs enable outbound tool network access by default, allowing
+dependency installation and documentation retrieval. Set `networkAccess: false`
+in the digest-pinned tool policy for an offline condition. The setting applies
+to both thread and turn policy; EBO verifies the applied thread policy and retains
+the request and response as native evidence. Filesystem writable roots and
+noninteractive approvals are unchanged. Network access permits outbound data
+transfer, so use only the admitted task inputs and permitted destinations.
+
+`networkAccess` is supported only with `workspace-write`. Read-only mode keeps
+tool network access disabled; danger-full-access retains its native unrestricted
+policy. Invalid combinations are rejected rather than silently ignored. This
+setting does not block model-provider traffic or configure the separate Codex
+web-search tool. Context-window and compaction settings remain unspecified.
+
+Before this change, workspace-write runs always disabled tool network access.
+Historical bundles retain their recorded policy. For reproducible re-execution,
+compile a new queue with an explicit boolean; an omitted value now means `true`.
 
 ## Lifecycle and evidence
 

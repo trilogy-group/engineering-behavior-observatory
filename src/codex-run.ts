@@ -80,6 +80,8 @@ export type CodexNativeToolPolicyConfiguration = {
   kind: "native-tool-policy";
   approvalPolicy: CodexApprovalPolicy;
   sandbox: CodexSandbox;
+  /** Only for workspace-write; defaults to true. */
+  networkAccess?: boolean;
 };
 
 export type CodexCaptureProfileConfiguration = {
@@ -419,6 +421,7 @@ export async function runCodexQueueEntry(options: RunCodexQueueEntryOptions): Pr
         effort: model.effort,
         approvalPolicy: toolPolicy.approvalPolicy,
         sandbox: toolPolicy.sandbox,
+        ...(toolPolicy.networkAccess === undefined ? {} : { networkAccess: toolPolicy.networkAccess }),
         ...(captureProfile.telemetrySignals === undefined ? {} : {
           telemetry: { signals: captureProfile.telemetrySignals },
         }),
@@ -518,9 +521,12 @@ function validateConfiguration(record: Record<string, unknown>, kind: CodexConfi
     keys(record, ["schemaVersion", "kind", "shutdownGraceMs"], [], reference);
     if (record.shutdownGraceMs !== undefined && (!Number.isSafeInteger(record.shutdownGraceMs) || (record.shutdownGraceMs as number) < 1)) throw configError(reference, "shutdownGraceMs must be positive");
   } else if (kind === "native-tool-policy") {
-    keys(record, ["schemaVersion", "kind", "approvalPolicy", "sandbox"], ["approvalPolicy", "sandbox"], reference);
+    keys(record, ["schemaVersion", "kind", "approvalPolicy", "sandbox", "networkAccess"], ["approvalPolicy", "sandbox"], reference);
     if (!["untrusted", "on-request", "never"].includes(String(record.approvalPolicy))) throw configError(reference, "approvalPolicy is invalid");
     if (!["read-only", "workspace-write", "danger-full-access"].includes(String(record.sandbox))) throw configError(reference, "sandbox is invalid");
+    if (record.networkAccess !== undefined && (typeof record.networkAccess !== "boolean" || record.sandbox !== "workspace-write")) {
+      throw configError(reference, "networkAccess must be a boolean and requires workspace-write");
+    }
   } else {
     keys(record, ["schemaVersion", "kind", "telemetrySignals", "workspaceOutcome"], [], reference);
     if (record.telemetrySignals !== undefined && (!Array.isArray(record.telemetrySignals)

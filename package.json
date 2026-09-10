@@ -1,6 +1,6 @@
 {
   "name": "engineering-behavior-observatory",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Capture engineering-agent trajectories, evaluate behavior, and inspect cited evidence across harnesses.",
   "license": "Apache-2.0",
   "repository": {
@@ -45,6 +45,7 @@
     "release/0.1.0/",
     "release/0.2.0/",
     "release/0.2.1/",
+    "release/0.2.2/",
     "schemas/",
     "scripts/atlas-grafana.sh"
   ],

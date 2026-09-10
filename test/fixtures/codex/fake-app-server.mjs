@@ -7,9 +7,9 @@ const mode = process.argv.find((argument) => argument.startsWith("--mode="))?.sl
 const endpoints = process.argv.flatMap((argument) => [...argument.matchAll(/endpoint = \"([^\"]+)\"/g)].map((match) => match[1]));
 const lines = readline.createInterface({ input: process.stdin });
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
-const sandboxPolicy = (mode, cwd) => mode === "danger-full-access" ? { type: "dangerFullAccess" }
+const sandboxPolicy = (mode, cwd, networkAccess) => mode === "danger-full-access" ? { type: "dangerFullAccess" }
   : mode === "read-only" ? { type: "readOnly", networkAccess: false }
-    : { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true };
+    : { type: "workspaceWrite", writableRoots: [cwd], networkAccess, excludeTmpdirEnvVar: true, excludeSlashTmp: true };
 let approvalPending = false;
 if (mode === "history-success-stall-shutdown" || mode === "ignore-all-interrupts") {
   process.on("SIGINT", () => {});
@@ -116,6 +116,7 @@ lines.on("line", async (line) => {
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "codex_cli_rs/0.153.4", codexHome: "/redacted", platformFamily: "unix", platformOs: "linux" } });
   } else if (message.method === "thread/start") {
+    const networkAccess = message.params.config?.sandbox_workspace_write?.network_access ?? false;
     send({ id: message.id, result: {
       thread: { id: "thread-1", historyMode: mode === "history-paginated" ? "paginated" : message.params.historyMode, turns: [] },
       model: "gpt-5.6-sol",
@@ -129,8 +130,8 @@ lines.on("line", async (line) => {
       sandbox: mode === "policy-mismatch" ? { type: "readOnly", networkAccess: false }
         : mode === "sandbox-root-mismatch" ? { type: "workspaceWrite", writableRoots: [message.params.cwd, "/tmp"], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }
           : mode === "sandbox-implicit-cwd" || mode === "sandbox-cwd-mismatch"
-            ? { ...sandboxPolicy(message.params.sandbox, message.params.cwd), writableRoots: [] }
-            : sandboxPolicy(message.params.sandbox, message.params.cwd),
+            ? { ...sandboxPolicy(message.params.sandbox, message.params.cwd, networkAccess), writableRoots: [] }
+            : sandboxPolicy(message.params.sandbox, message.params.cwd, mode === "network-mismatch" ? !networkAccess : networkAccess),
       activePermissionProfile: null,
       reasoningEffort: "high",
       multiAgentMode: "explicitRequestOnly",
