@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -377,8 +377,8 @@ test("treats a completed tool envelope with an error result as failure, not muta
   }
 });
 
-test("foreign, oversized, or model-mismatched native store records make capture unqualified", async () => {
-  for (const behavior of [{ foreignStoreRecords: true }, { oversizedStoreRecord: true }, { storeModelMismatch: true }]) {
+test("foreign, oversized, malformed, or model-mismatched native store records make capture unqualified", async () => {
+  for (const behavior of [{ foreignStoreRecords: true }, { oversizedStoreRecord: true }, { malformedStoreRecord: true }, { storeModelMismatch: true }]) {
     const fixture = createCursorFixture();
     try {
       const summary = await runCursorSdkQueueEntry({
@@ -531,6 +531,7 @@ function fakeAgentFactory(behavior: {
   oversizedStoreRecord?: boolean;
   mismatchedModelParams?: boolean;
   storeModelMismatch?: boolean;
+  malformedStoreRecord?: boolean;
   oversizedDeltaRecord?: boolean;
   oversizedTerminalRecord?: boolean;
 } = {}): CursorSdkAgentFactory {
@@ -597,6 +598,10 @@ function fakeAgentFactory(behavior: {
               }
               if (behavior.oversizedStoreRecord) {
                 await store.runEvents.append({ runId: NATIVE_RUN_ID, eventType: "interaction", payload: { text: "x".repeat(1_100_000) } });
+              }
+              if (behavior.malformedStoreRecord) {
+                const storeRoot = (store as unknown as { rootDir: string }).rootDir;
+                appendFileSync(join(storeRoot, "run_events.ndjson"), `${JSON.stringify({ runId: NATIVE_RUN_ID, payload: {} })}\n`);
               }
               await store.agents.update({ agent: { ...(await store.agents.get({ agentId: AGENT_ID }))!, status: "idle", activeRunId: null, updatedAt: 2,
                 latestCheckpoint: { schemaVersion: 1, rootBlobId: "checkpoint-1" } } });

@@ -1038,6 +1038,16 @@ async function validateStoreFiles(
       assertNoDuplicateJsonKeys(line);
       const value = JSON.parse(line) as unknown;
       if (!isRecord(value)) throw new Error(`Cursor ${name} store line ${String(index + 1)} is not an object.`);
+      assertCursorRecord(value, { artifactId: `cursor-store-${name}`, recordLocator: `line:${String(index + 1)}` });
+      const expectedType = {
+        agents: "store:agent",
+        runs: "store:run",
+        runEvents: "store:run-event",
+        checkpoints: "store:checkpoint",
+      }[name];
+      if (cursorNativeType(value) !== expectedType) {
+        throw new Error(`Cursor ${name} store line ${String(index + 1)} has the wrong record shape.`);
+      }
       return value;
     });
   };
