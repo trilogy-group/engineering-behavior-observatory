@@ -1,288 +1,151 @@
 # Engineering Behavior Observatory
 
-Engineering Behavior Observatory (EBO) captures the native evidence produced by
-software-engineering agents, connects it to final workspace outcomes, and
-supports evidence-grounded behavioral comparison across harnesses.
+### Capture and evaluate how engineering agents work.
 
-Capture and observation retain sessions, events,
-hooks, telemetry references, workspace changes, optional verified-task results, and explicit
-capture-quality reports. Cross-harness normalization, behavioral evaluation,
-and the local Behavior Atlas build on capture-qualified bundles afterward.
+EBO captures an agent's native trajectory and workspace changes, then connects
+behavioral assessments to the evidence behind them. Use it to investigate a
+refactor, compare repeated trials, examine failures, or share a reviewable
+record of an open-ended engineering task.
 
-Versioned
-[uniform events and explicit adapter interfaces](docs/uniform-events.md) project
-capture-qualified native evidence without replacing source records or transport
-semantics.
+[Quickstart](docs/guides/quickstart.md) · [Documentation](docs/README.md) ·
+[CLI reference](docs/reference/cli.md) ·
+[Releases](https://github.com/trilogy-group/engineering-behavior-observatory/releases)
 
-The versioned [behavior assertion contract](docs/behavior-assertions.md) binds
-one declared behavior dimension to the exact normalized dataset, event, and
-reachable native source. Human review remains a separate record.
+## Install
 
-The [semantic judge runner](docs/semantic-judge.md) packages caller-selected,
-bounded evidence for one dimension and retains proposed assertions,
-abstentions, and failed judgments through an explicitly selected isolated
-Claude Agent SDK or native Codex backend, independently of the evaluated harness.
-
-The [OpenHands Agent Server adapter](docs/openhands-agent-server.md) implements
-the pinned `1.46.0` REST/WebSocket boundary with native-first reconciliation,
-explicit completeness gaps, and verified run-bundle packaging.
-
-The [DeepSeek Harness adapter](docs/deepseek-harness.md) uses the official
-out-of-process TypeScript client, retains native session evidence and explicit
-receipt-to-idle completion boundaries, and normalizes only qualified records.
-
-The optional [Codex app-server adapter](docs/codex-harness.md) owns one pinned
-`0.153.4` stdio child per attempt, retains native thread/turn/item evidence and
-independently verified OTLP receipts, and runs one frozen observational queue
-entry through `ebo codex run`.
-
-The [Cursor TypeScript SDK adapter](docs/cursor-sdk.md) uses the direct pinned
-`@cursor/sdk` local-agent API, an attempt-owned official JSONL store, explicit
-local sandbox/tool policy, and separate stream, callback, history, terminal,
-and billing evidence through `ebo cursor run`.
-
-The [Pi TypeScript SDK adapter](docs/pi-sdk.md) uses the pinned public `0.85.1`
-session, persistence, subscription, and extension APIs directly. It retains one
-native session per attempt and runs a frozen queue entry through `ebo pi run`.
-
-## Release 0.2.0
-
-EBO includes native capture, portable export, cross-harness normalization,
-structural observations, configurable semantic judging, human review,
-comparison, aggregation, and the local Behavior Atlas.
-
-The [release notes](release/0.2.0/README.md) describe verification and packaging.
-The [support matrix](release/0.2.0/KNOWN_LIMITATIONS.md) distinguishes live-tested
-routes from deterministic contract coverage. Agent SDK and Codex capture, a
-Codex abstention judgment, and OpenHands and DeepSeek Harness with Z.ai were
-live-tested for 0.1.0. Pi and Cursor SDK file-edit smokes were live-tested for
-0.2.0. Each route's telemetry and completeness limits remain explicit.
-
-Native Agent SDK capture is available through the public
-`captureClaudeAgentSdkRun` library entry point. It executes one caller-supplied
-attempt and retains its native stream, hooks, telemetry receipt, workspace,
-assessment mode, capability profile, and structural qualification. Verified
-tasks additionally retain their verifier result. Queue-wide
-study execution remains an operational caller concern. The implementation
-backlog is maintained in a separate planning package. The published Linear
-project is the execution view of that task package. Study
-operations—task curation, model selection, trial counts, human review, and
-partner delivery—are deliberately outside this software repository.
-
-The bounded specification for connecting one frozen queue entry to this capture
-path is [docs/agent-sdk-operational-runner.md](docs/agent-sdk-operational-runner.md);
-`ebo agent-sdk run` implements it as the single-entry operator command, and
-`ebo export create` wraps the existing portable-export library boundary.
-
-Start with the [local operator guide](docs/operator-guide.md) for the complete
-packet-to-Atlas workflow, artifact locations, and failure recovery. Use the
-[extension contracts guide](docs/extension-contracts.md) when adding a harness
-adapter, process/API boundary, structural extractor, rubric, verifier, or
-export policy.
-
-## Integration shape
-
-```text
-EBO TypeScript coordinator
-├── Claude Agent SDK adapter
-│   └── direct TypeScript SDK integration
-├── DeepSeek Harness adapter
-│   └── official TypeScript client over JSON-RPC stdio
-├── OpenHands adapter
-│   └── pinned Agent Server REST/WebSocket API
-├── Codex adapter
-│   └── pinned app-server JSONL protocol over owned stdio
-├── Cursor adapter
-│   └── direct TypeScript SDK with attempt-owned JSONL persistence
-├── Pi adapter
-│   └── direct pinned TypeScript session and extension APIs
-└── uniform event projection
-    └── only after native capture qualification
-```
-
-Native evidence remains authoritative. EBO does not replace harness histories,
-reconstruct a telemetry backend, or force distinct control protocols into a
-universal broker.
-
-## Workflow
-
-1. **Capture and observe:** repository and evidence contracts, task/run
-   orchestration, direct Claude Agent SDK capture, safe export, and corpus access.
-2. **Evaluate and compare:** uniform events, explicit harness adapters,
-   structural and reviewed semantic evaluation, and a local evidence-linked
-   Atlas.
-
-## Development
-
-EBO uses Node.js 24.19.0; `.nvmrc` pins the release. Install dependencies and
-run the checks:
+Requires Node.js **24.19.0** and npm. The package is
+`engineering-behavior-observatory`; its executable is `ebo`.
 
 ```sh
+npm install -g engineering-behavior-observatory
+ebo --help
+```
+
+For a one-off command without a global installation:
+
+```sh
+npm exec --package=engineering-behavior-observatory -- ebo --help
+```
+
+Avoid `npx ebo`: it resolves a different npm package. For source installation
+or a verified release archive, see [the quickstart](docs/guides/quickstart.md).
+
+## What you can do
+
+- Retain messages, tool activity, exposed lifecycle events,
+  resource usage, and workspace outcomes. Observational tasks need no reference
+  solution or pass/fail verifier.
+- Inspect a native record from a normalized event or
+  behavioral assertion. Missing evidence stays explicit.
+- Extract structural facts, request evidence-grounded
+  judgments, record human review, and compare matched conditions.
+- Browse the local Behavior Atlas, connect Grafana, build
+  HTML reports, and create policy-checked portable trajectory archives.
+
+```mermaid
+flowchart LR
+  A["Frozen task + harness"] --> B["Native trajectory + workspace"]
+  B --> C["Capture qualification"]
+  C --> D["Structural facts + cited judgments"]
+  D --> E["Behavior Atlas + human review"]
+  B --> F["Sanitized portable export"]
+```
+
+**Execution completion, capture quality, and task quality are different facts.**
+A completed run is not a claim that the task was solved. Native evidence remains
+authoritative; derived views never replace it.
+
+## Supported harnesses
+
+| Harness | Integration | What EBO retains |
+| :--- | :--- | :--- |
+| <img src="https://github.com/anthropics.png?size=48" width="28" height="28" alt="Anthropic"> **[Claude Agent SDK](docs/harnesses/claude-agent-sdk.md)** | Direct TypeScript SDK · `ebo agent-sdk run` | Native messages, passive lifecycle hooks, session identity, usage, OTLP receipt state, workspace |
+| <img src="https://github.com/openai.png?size=48" width="28" height="28" alt="OpenAI"> **[Codex](docs/harnesses/codex-harness.md)** | Owned app-server process over JSON-RPC stdio · `ebo codex run` | Thread/turn/item records, history readback, usage, independently checked OTLP signals |
+| <img src="https://github.com/cursor.png?size=48" width="28" height="28" alt="Cursor"> **[Cursor](docs/harnesses/cursor-sdk.md)** | Direct TypeScript SDK · `ebo cursor run` | Stream, callbacks, conversation, official JSONL store, terminal and separate billing evidence |
+| <img src="https://github.com/earendil-works.png?size=48" width="28" height="28" alt="Earendil Works"> **[Pi](docs/harnesses/pi-sdk.md)** | Direct TypeScript session/extension APIs · `ebo pi run` | Native session tree, tool/message lifecycle, passive observer, compaction, retries, usage |
+| <img src="https://github.com/OpenHands.png?size=48" width="28" height="28" alt="OpenHands"> **[OpenHands](docs/harnesses/openhands-agent-server.md)** | Agent Server REST/WebSocket · library API | Stream/final event reconciliation, conversation state, exposed hooks, workspace |
+| <img src="https://github.com/deepseek-ai.png?size=48" width="28" height="28" alt="DeepSeek"> **[DeepSeek Harness](docs/harnesses/deepseek-harness.md)** | Official TypeScript JSON-RPC client · library API | Durable session events, lifecycle notifications, selected runtime/plugin composition |
+
+Icons identify the upstream projects or publishers. Support is **capability-specific**:
+not every harness exposes the same hooks, histories, or telemetry.
+[Choose a harness](docs/harnesses/README.md) for prerequisites and limitations.
+
+## Quickstart
+
+Use a source checkout for the bundled no-credentials demo. Node is pinned in
+`.nvmrc`; Git and npm are required.
+
+```sh
+git clone https://github.com/trilogy-group/engineering-behavior-observatory.git
+cd engineering-behavior-observatory
+nvm install
 nvm use
 npm ci
 npm run build
-npm run typecheck
-npm test
-node dist/src/cli.js --help
-node dist/src/cli.js validate tests/fixtures/task-packet.valid.v1.json \
-  test/fixtures/run-bundles/complete/manifest.json
-node dist/src/cli.js task-packet validate <bundle-root> <packet.json>
-node dist/src/cli.js task-packet admit <bundle-root> <packet.json>
-node dist/src/cli.js task-packet freeze <bundle-root> <packet.json>
-node dist/src/cli.js task-packet status <bundle-root> <packet.json>
-node dist/src/cli.js matrix compile <experiment.json> <bundle-root> <queue.json> [--freeze-locator <task-id>=<path>]
-node dist/src/cli.js queue inspect <queue.json>
-node dist/src/cli.js queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
-node dist/src/cli.js agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
-node dist/src/cli.js codex run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
-node dist/src/cli.js cursor run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
-node dist/src/cli.js pi run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
-node dist/src/cli.js export create <run-bundle-root> <policy.json> <export-root>
-node dist/src/cli.js corpus build <corpus-root> <index.jsonl>
-node dist/src/cli.js corpus query <index.jsonl> [--task <id>] [--model <id>] [--harness <id>] [--assessment-mode <observational|verified>]
-node dist/src/cli.js corpus validate <corpus-root> <index.jsonl>
-node dist/src/cli.js corpus pack <approved-export-root> <policy.json> <archive.tar.gz>
-node dist/src/cli.js corpus unpack <archive.tar.gz> <destination-root>
-node dist/src/cli.js comparison check <request.json>
-node dist/src/cli.js aggregate build <request.json> <output.json>
-node dist/src/cli.js calibration sample <sources.json> <criteria.json> <selection.json>
-node dist/src/cli.js calibration packet <selection.json> <output-root>
-node dist/src/cli.js calibration inspect <packet.json> <assertion-id> [event-id]
-node dist/src/cli.js calibration binding <selection.json> <assertion-id> [history.json]
-node dist/src/cli.js calibration import <selection.json> <history.json> <decision.json>
-node dist/src/cli.js calibration adjudicate <selection.json> <history.json> <decision.json>
-node dist/src/cli.js calibration summarize <selection.json> <history.json> <summary.json>
-node dist/src/cli.js assertions validate <run-bundle-root> <assertion.json> [review.json]
-node dist/src/cli.js judge run <run-bundle-root> <observations.json> <request.json> <output-root>
-node dist/src/cli.js observations create <run-bundle-root> <output.json>
-node dist/src/cli.js observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
-# Optional approved OAuth smoke; provide OAuth auth, never API-key overrides.
-unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
-EBO_LIVE_AGENT_SDK_SMOKE=1 node --test --test-name-pattern='approved live Agent SDK smoke' dist/test/capture-qualification.test.js
-# Optional approved OAuth proof of the operational runner; same auth rules.
-EBO_LIVE_AGENT_SDK_RUNNER=1 node --test --test-name-pattern='approved live Agent SDK operational runner' dist/test/agent-sdk-runner.test.js
-# Optional approved Pi SDK smoke; uses ZAI_API_KEY without persisting it.
-EBO_LIVE_PI_SDK_SMOKE=1 node --test --test-name-pattern='approved live Pi SDK smoke' dist/test/pi.test.js
+npm link
+ebo --help
 ```
 
-From a clean Git checkout, `npm run acceptance` is the release gate. It runs the complete deterministic
-suite, verifies local documentation links and pinned fixture digests, and packs
-the npm artifact twice to prove byte-identical output. It writes the package,
-checksum, and current result under `.ebo/releases/0.2.0/`; nothing is published
-or tagged by that command. See [the release audit](release/0.2.0/README.md) and
-[known limitations](release/0.2.0/KNOWN_LIMITATIONS.md).
+`npm link` installs this checkout's `ebo` command on your active Node
+installation's PATH. Rebuild after source changes. Without a global link, use
+`npm run ebo -- <arguments>`. For a packaged installation, see
+[Install EBO](docs/guides/quickstart.md#install-from-a-release-archive).
 
-`captureClaudeAgentSdkRun` is intentionally a library API rather than another
-configuration dialect: callers provide an already-resolved run definition,
-workspace coordinator, Agent SDK configuration, and any mode-appropriate verifier. It does not
-schedule or retry attempts.
+### Explore a trajectory report
 
-`ebo agent-sdk run` executes exactly one persisted queue entry: it
-digest-verifies the frozen task packet and the five `ebo.agent-sdk-config/v1`
-records (model, harness, native-limits, native-tool-policy, and the queue's
-capture profile) before launching the SDK, materializes one disposable
-workspace, preserves an immutable starting baseline, and prints a small JSON
-summary identifying the bundle, assessment mode, terminal state,
-classification, and capture qualification. A task failure, budget stop, or
-captured infrastructure failure is a successfully recorded observation; the
-command returns nonzero only when inputs cannot be qualified, the attempt
-cannot start, or the retained output fails validation. It never iterates the
-queue, retries, or replaces an existing attempt destination. `ebo export
-create` calls `createPortableRunBundleExport` with its policy-bound readback
-and never modifies the restricted source bundle.
+```sh
+node dist/test/atlas-fixture.js .ebo/first-look
+ebo corpus query .ebo/first-look/index.jsonl
+ebo atlas build .ebo/first-look/atlas.json .ebo/first-report
+```
 
-If outcome packaging fails after execution starts, the runner preserves the
-source workspace for recovery and includes `retainedWorkspacePath` in its local
-summary. The summary also reports this path if cleanup fails after successful
-packaging. Capture remains unqualified until valid outcome evidence is available.
-Workspace diffs use an indexed Git tree without creating a commit, avoiding
-background Git maintenance during temporary-repository cleanup.
+Open `.ebo/first-report/index.html` in your browser. This **synthetic demo**
+makes no model calls. It shows evidence drilldown, review states, missing
+evidence, and comparison caveats. Use new output paths when repeating it.
 
-Observational packets are the primary path for open-ended enterprise work.
-They contain no reference solution or verifier. Their `completed` terminal
-means the agent loop ended normally and a final workspace was retained; it is
-not a claim that the stakeholder's request was satisfied. Verified packets are
-an optional benchmark-style mode and preserve verifier-backed pass/task-fail
-semantics.
+### Capture your own task
 
-`ebo validate` checks the supported task-packet, experiment, and run-bundle
-artifact versions. On failure it identifies the artifact, schema version, and
-failing JSON field. The operator guide covers the normalizers, evaluation,
-and Atlas commands built on these contracts.
+Prepare an admitted, frozen task packet and a queue with your harness
+configuration. Then run one selected entry:
 
-Task-packet commands validate externally authored packets, enforce their
-recorded admission decision, persist a digest-based freeze record, and report
-component changes. They do not generate tasks or perform human review.
+```sh
+ebo agent-sdk run study/bundle study/queue.json <run-id> study/runs
+```
 
-Safe evidence export is available through the CLI and library:
-`createPortableRunBundleExport` writes a separate partner/public derivative,
-and `readPortableRunBundleExport` performs the required schema, integrity,
-policy, and secret-scan readback. It does not publish or package a corpus.
+This is the execution step, not a repository-to-task generator.
+[The quickstart](docs/guides/quickstart.md#capture-a-real-task) explains the
+required inputs and links to the preparation and authentication guides.
+Use the returned bundle path to inspect evidence, derive observations, and export.
 
-The corpus index is a deterministic, atomically rebuilt JSONL read model over
-run and export manifests. It records run-cell/trial and attempt identities
-separately, projects assessment mode, terminal, optional verifier, capture, and export facts, and retains
-validation issues instead of silently omitting missing evidence. Native
-manifests remain authoritative; delete and rebuild the index at any time.
-Queries use exact-match flags shown by `ebo --help` and do not index prompt or
-tool bodies.
+## Find your next step
 
-Normalized datasets retain digest-bound native references rather than copied
-source records. Their validator produces adapter/version coverage that keeps
-unmapped native types and unsupported capabilities explicit. `ebo comparison
-check` evaluates one inspectable comparison request and returns `supported`,
-`qualified-with-caveats`, or `unsupported`; declared harness differences remain
-caveats and never become causal claims. The v2 comparison contract adds exact
-measure, manifest, request, and policy bindings for aggregation while the v1
-CLI path remains readable. See
-[docs/normalization-integrity.md](docs/normalization-integrity.md).
+| I want to… | Read |
+| :--- | :--- |
+| Run a task and recover an interrupted attempt | [Operator guide](docs/guides/operator-guide.md) |
+| Inspect or share captured evidence | [Evidence and export](docs/guides/evidence-and-sharing.md) |
+| Understand OTLP versus behavioral evidence | [Telemetry](docs/guides/telemetry.md) |
+| Explore reports and Grafana dashboards | [Behavior Atlas](docs/guides/atlas.md) |
+| Evaluate behavior and compare conditions | [Evaluation workflow](docs/evaluation/README.md) |
+| Add an adapter, extractor, or rubric | [Extension contracts](docs/development/extension-contracts.md) |
+| Look up command syntax or artifact contracts | [Reference](docs/reference/README.md) |
 
-The [comparison and aggregation read model](docs/aggregation.md) scans the
-current corpus and derived evaluation artifacts directly, keeps run, attempt,
-operation, assertion, and reviewed-assertion populations separate, and emits
-explicit denominators, exclusions, caveats, and descriptive claim status. It
-does not infer causality, statistical significance, or a composite ranking.
+## Contribute
 
-The [local human calibration workflow](docs/human-calibration.md) selects
-digest-bound review samples, renders escaped static packets with only the cited
-restricted records and relative links back to native evidence, appends human review and
-adjudication decisions, and reports agreement with explicit populations and
-denominators. It does not host review, assign people, confirm assertions on an
-agent's behalf, or produce comparison aggregates.
+Read [the contributor guide](docs/development/README.md) and `AGENTS.md`.
+The local checks are separate from operating a study:
 
-The [Behavior Atlas](docs/atlas.md) adds reproducible cohort queries, native
-Grafana dashboards, evidence/review drilldown and standalone HTML/print reports.
-`ebo atlas build <request.json> <new-output-root>` freezes a report;
-`ebo atlas serve <request.json>` opens the local query surface. Restricted
-inspection and policy-validated shareable summaries remain separate.
+```sh
+npm run build
+npm run typecheck
+npm test
+git diff --check
+```
 
-Versioned [structural observations](docs/structural-observations.md) ingest
-terminal, capture, workspace, and mode-appropriate verifier outcomes, then
-compute exact native-evidence facts. Logical tool operations use native IDs,
-resource snapshots are not added repeatedly, unrelated order domains stay
-separate, and missing capability is unavailable rather than zero. The CLI reads
-qualified retained Claude Agent SDK, Codex, OpenHands, DeepSeek, Pi, or Cursor bundles or an exact corpus selection and always
-writes derived records outside immutable source evidence.
+Runtime pins, live verification evidence, packaging, and known limitations live
+in the [release records](release/README.md). Study data and credentials stay
+outside the source tree and published package.
 
-Portable archives accept only `ready` or `exported` partner/public trees that
-pass the export pipeline's policy-bound readback and final secret scan.
-Packing follows the export manifest allowlist, so an unlisted sibling file is
-not included. Unpacking applies bounded TAR parsing, requires an exact
-manifest/member match, verifies every digest, and refuses an existing
-destination. No database, service, or archive package is involved.
+## License
 
-The matrix compiler expands any valid experiment into a local, persisted run
-queue. Sequential, seeded-shuffle, and balanced/interleaved policies retain
-the seed and every frozen task, model, harness, configuration, and trial
-identity; they do not start execution or add distributed scheduling.
-
-Source contributors should start with the repository `AGENTS.md` and the
-assigned Linear issue. `WORKFLOW.md`
-contains OpenSymphony orchestration configuration and should not be treated as
-the EBO product specification.
-
-The versioned task-packet and experiment contract surfaces are documented in
-[docs/contracts.md](docs/contracts.md).
-
-Run and attempt lifecycle plus the narrow process-protocol boundary are
-documented in [docs/run-lifecycle.md](docs/run-lifecycle.md).
+EBO is licensed under [Apache-2.0](LICENSE). Third-party SDKs, dependencies,
+and upstream contract material retain their respective licenses and terms.

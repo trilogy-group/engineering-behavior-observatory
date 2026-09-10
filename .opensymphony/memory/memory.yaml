@@ -14,14 +14,14 @@ confidence_threshold: 75
 source_snapshots: hashes
 markdown_indexes: true
 docs:
-  public_root: docs
-  default_visibility: public
+  public_root: .opensymphony/memory/sync-notes
+  default_visibility: private
   deny_private_links: true
 areas:
   adapters:
     title: Adapters
-    docs_target: docs/adapters.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/adapters.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -72,8 +72,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   agent-sdk:
     title: Agent Sdk
-    docs_target: docs/agent-sdk.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/agent-sdk.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -133,8 +133,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   aggregation:
     title: Aggregation
-    docs_target: docs/aggregation.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/aggregation.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -175,8 +175,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   analysis:
     title: Analysis
-    docs_target: docs/analysis.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/analysis.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -216,8 +216,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   atlas:
     title: Atlas
-    docs_target: docs/atlas.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/atlas.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -242,8 +242,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   calibration:
     title: Calibration
-    docs_target: docs/calibration.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/calibration.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -286,8 +286,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   capture:
     title: Capture
-    docs_target: docs/capture.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/capture.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -346,8 +346,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   corpus:
     title: Corpus
-    docs_target: docs/corpus.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/corpus.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -401,8 +401,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   cursor-sdk:
     title: Cursor Sdk
-    docs_target: docs/cursor-sdk.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/cursor-sdk.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -416,8 +416,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   data-contracts:
     title: Data Contracts
-    docs_target: docs/data-contracts.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/data-contracts.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -444,8 +444,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   deepseek-runtime:
     title: Deepseek Runtime
-    docs_target: docs/deepseek-runtime.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/deepseek-runtime.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -495,8 +495,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   documentation:
     title: Documentation
-    docs_target: docs/documentation.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/documentation.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -515,8 +515,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   evaluation:
     title: Evaluation
-    docs_target: docs/evaluation.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/evaluation.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -562,8 +562,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   evidence:
     title: Evidence
-    docs_target: docs/evidence.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/evidence.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -619,8 +619,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   experiments:
     title: Experiments
-    docs_target: docs/experiments.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/experiments.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -645,8 +645,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   export:
     title: Export
-    docs_target: docs/export.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/export.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -701,8 +701,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   hooks:
     title: Hooks
-    docs_target: docs/hooks.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/hooks.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -759,8 +759,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   json-rpc:
     title: Json Rpc
-    docs_target: docs/json-rpc.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/json-rpc.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -809,8 +809,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   llm-judge:
     title: Llm Judge
-    docs_target: docs/llm-judge.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/llm-judge.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -855,8 +855,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   m2-native-agent-sdk-capture:
     title: M2 Native Agent Sdk Capture
-    docs_target: docs/m2-native-agent-sdk-capture.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/m2-native-agent-sdk-capture.md
+    visibility: private
     status: stable
     confidence: 80
     aliases:
@@ -867,8 +867,8 @@ areas:
       - 'M2: Native Agent SDK Capture'
   normalization:
     title: Normalization
-    docs_target: docs/normalization.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/normalization.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -918,8 +918,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   ontology:
     title: Ontology
-    docs_target: docs/ontology.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/ontology.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -966,8 +966,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   openhands-runtime:
     title: Openhands Runtime
-    docs_target: docs/openhands-runtime.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/openhands-runtime.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1016,8 +1016,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   opentelemetry:
     title: Opentelemetry
-    docs_target: docs/opentelemetry.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/opentelemetry.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1074,8 +1074,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   operations:
     title: Operations
-    docs_target: docs/operations.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/operations.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1093,8 +1093,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   outcomes:
     title: Outcomes
-    docs_target: docs/outcomes.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/outcomes.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1150,8 +1150,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   pi-sdk:
     title: Pi Sdk
-    docs_target: docs/pi-sdk.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/pi-sdk.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1164,8 +1164,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   process-protocol:
     title: Process Protocol
-    docs_target: docs/process-protocol.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/process-protocol.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1191,8 +1191,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   provenance:
     title: Provenance
-    docs_target: docs/provenance.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/provenance.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1217,8 +1217,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   quality:
     title: Quality
-    docs_target: docs/quality.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/quality.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1278,8 +1278,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   release:
     title: Release
-    docs_target: docs/release.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/release.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1298,8 +1298,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   reporting:
     title: Reporting
-    docs_target: docs/reporting.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/reporting.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1322,8 +1322,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   repository:
     title: Repository
-    docs_target: docs/repository.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/repository.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1383,8 +1383,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   reproducibility:
     title: Reproducibility
-    docs_target: docs/reproducibility.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/reproducibility.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1402,8 +1402,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   review:
     title: Review
-    docs_target: docs/review.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/review.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1445,8 +1445,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   runner:
     title: Runner
-    docs_target: docs/runner.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/runner.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1502,8 +1502,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   scheduler:
     title: Scheduler
-    docs_target: docs/scheduler.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/scheduler.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1527,8 +1527,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   security:
     title: Security
-    docs_target: docs/security.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/security.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1581,8 +1581,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   sessions:
     title: Sessions
-    docs_target: docs/sessions.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/sessions.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1639,8 +1639,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   structural-analysis:
     title: Structural Analysis
-    docs_target: docs/structural-analysis.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/structural-analysis.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1687,8 +1687,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   task-packets:
     title: Task Packets
-    docs_target: docs/task-packets.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/task-packets.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1716,8 +1716,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   verifiers:
     title: Verifiers
-    docs_target: docs/verifiers.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/verifiers.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
@@ -1741,8 +1741,8 @@ areas:
       - 'M7: Pi And Cursor SDK Integrations'
   workspace:
     title: Workspace
-    docs_target: docs/workspace.md
-    visibility: public
+    docs_target: .opensymphony/memory/sync-notes/workspace.md
+    visibility: private
     status: stable
     confidence: 95
     aliases:
