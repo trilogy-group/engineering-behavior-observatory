@@ -54,6 +54,8 @@ export type CodexAppServerConfiguration = {
   effort: CodexReasoningEffort;
   approvalPolicy: CodexApprovalPolicy;
   sandbox: CodexSandbox;
+  /** Workspace-write tool network access; defaults to true. Other sandbox modes retain their native policy. */
+  networkAccess?: boolean;
   /** Test-only executable prefix; production uses the pinned executable directly. */
   executableArgs?: readonly string[];
   telemetry?: { signals: readonly CodexTelemetrySignal[] };
@@ -211,6 +213,9 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
   requireText(request.prompt, "Codex prompt");
   requireText(request.configuration.executable, "Codex executable");
   if (request.configuration.version !== CODEX_APP_SERVER_VERSION) throw new Error(`Codex capture requires pinned runtime ${CODEX_APP_SERVER_VERSION}.`);
+  if (request.configuration.networkAccess !== undefined && (typeof request.configuration.networkAccess !== "boolean" || request.configuration.sandbox !== "workspace-write")) {
+    throw new Error("Codex networkAccess must be a boolean and requires workspace-write.");
+  }
   const shutdownGraceMs = request.shutdownGraceMs ?? CODEX_DEFAULT_SHUTDOWN_GRACE_MS;
   let abortRequested = request.signal?.aborted ?? false;
   let abortDeadline = abortRequested ? performance.now() + shutdownGraceMs : undefined;
@@ -464,7 +469,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
       config: { model_instructions_file: instructionsPath, model_reasoning_effort: request.configuration.effort,
         mcp_servers: {}, hooks: {}, plugins: {},
         ...(request.configuration.sandbox === "workspace-write" ? { sandbox_workspace_write: {
-          writable_roots: [request.workspacePath], network_access: false, exclude_tmpdir_env_var: true, exclude_slash_tmp: true,
+          writable_roots: [request.workspacePath], network_access: request.configuration.networkAccess ?? true, exclude_tmpdir_env_var: true, exclude_slash_tmp: true,
         } } : {}),
       },
       developerInstructions: "Work only in the supplied workspace. Do not request interactive input or broaden permissions.",
@@ -486,7 +491,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     if (threadStart.approvalPolicy !== request.configuration.approvalPolicy) {
       addGap({ kind: "approval-policy-mismatch", detail: `Requested ${request.configuration.approvalPolicy}; applied ${JSON.stringify(threadStart.approvalPolicy)}.` });
     }
-    if (!sandboxMatches(request.configuration.sandbox, threadStart.sandbox, request.workspacePath, threadStart.cwd)) {
+    if (!sandboxMatches(request.configuration.sandbox, threadStart.sandbox, request.workspacePath, threadStart.cwd, request.configuration.networkAccess ?? true)) {
       addGap({ kind: "sandbox-mismatch", detail: `Requested ${request.configuration.sandbox}; applied ${JSON.stringify(threadStart.sandbox)}.` });
     }
     const started = await sendRequest("turn/start", {
@@ -494,7 +499,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
       input: [{ type: "text", text: request.prompt }],
       cwd: request.workspacePath,
       approvalPolicy: request.configuration.approvalPolicy,
-      sandboxPolicy: turnSandboxPolicy(request.configuration.sandbox, request.workspacePath),
+      sandboxPolicy: turnSandboxPolicy(request.configuration.sandbox, request.workspacePath, request.configuration.networkAccess ?? true),
       model: request.configuration.model,
       effort: request.configuration.effort,
     });
@@ -808,24 +813,24 @@ function responseSourceIdentity(method: string, payload: unknown): string | unde
   return undefined;
 }
 
-function turnSandboxPolicy(sandbox: CodexSandbox, workspace: string): Record<string, unknown> {
+function turnSandboxPolicy(sandbox: CodexSandbox, workspace: string, networkAccess: boolean): Record<string, unknown> {
   if (sandbox === "danger-full-access") return { type: "dangerFullAccess" };
   if (sandbox === "read-only") return { type: "readOnly", networkAccess: false };
   return {
     type: "workspaceWrite",
     writableRoots: [workspace],
-    networkAccess: false,
+    networkAccess,
     excludeTmpdirEnvVar: true,
     excludeSlashTmp: true,
   };
 }
 
-function sandboxMatches(requested: CodexSandbox, applied: unknown, workspace: string, appliedCwd: unknown): boolean {
+function sandboxMatches(requested: CodexSandbox, applied: unknown, workspace: string, appliedCwd: unknown, networkAccess: boolean): boolean {
   if (!isRecord(applied) || appliedCwd !== workspace) return false;
   if (requested === "danger-full-access") return applied.type === "dangerFullAccess";
   if (requested === "read-only") return applied.type === "readOnly" && applied.networkAccess === false;
   return applied.type === "workspaceWrite"
-    && applied.networkAccess === false
+    && applied.networkAccess === networkAccess
     && Array.isArray(applied.writableRoots)
     // Codex 0.153.4 roots are additional to cwd; it removes redundant cwd entries.
     && applied.writableRoots.length <= 1
