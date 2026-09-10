@@ -31,10 +31,11 @@ Harness prerequisites differ:
 | Codex | owned pinned `codex app-server` child | Codex `0.153.4` and existing login; EBO creates an isolated temporary home |
 | OpenHands | Agent Server REST/WebSocket | pinned `1.46.0` server and workspace path visible to both processes |
 | DeepSeek Harness | official TypeScript client over JSON-RPC stdio | digest-pinned runtime composition; the official client owns framing and teardown |
+| Pi SDK | direct pinned TypeScript SDK | digest-pinned provider/resources, credential environment variable, and explicit tool policy |
 
 See [Agent SDK runner](agent-sdk-operational-runner.md),
 [Codex](codex-harness.md), [OpenHands](openhands-agent-server.md), and
-[DeepSeek](deepseek-harness.md) for their exact configuration and version pins.
+[DeepSeek](deepseek-harness.md), and [Pi](pi-sdk.md) for their exact configuration and version pins.
 
 ## Release acceptance
 
@@ -46,7 +47,7 @@ npm ci
 npm run acceptance
 ```
 
-The gate uses deterministic fixtures only. It covers all four current harnesses,
+The gate uses deterministic fixtures only. It covers all five current harnesses,
 both configured judge backends, the current Atlas, security cases, local link
 integrity, fixture digests, and two byte-identical package builds. It writes the
 package, checksum, and current result to `.ebo/releases/0.1.0/` without
@@ -180,11 +181,16 @@ node dist/src/cli.js agent-sdk run \
 node dist/src/cli.js codex run \
   study/bundle study/queue.json <run-id> study/runs \
   --workspace-root study/workspaces
+
+# Or, for a queue compiled with the pinned Pi SDK configuration:
+node dist/src/cli.js pi run \
+  study/bundle study/queue.json <run-id> study/runs \
+  --workspace-root study/workspaces
 ```
 
 OpenHands and DeepSeek are explicit library adapters today; their source-owned
 capture functions are documented in their harness guides. Do not route them
-through the Agent SDK or Codex commands, and do not build a generic broker.
+through the Agent SDK, Codex, or Pi commands, and do not build a generic broker.
 
 The run command prints the bundle path. A captured task failure, budget stop,
 or infrastructure failure may still return a valid observation. Inspect the

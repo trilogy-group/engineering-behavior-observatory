@@ -1,0 +1,1 @@
+{"schemaVersion":"ebo.pi-config/v1","kind":"capture-profile","passiveObserver":true,"includeProviderPayloads":false,"workspaceOutcome":{"excludeDirectoryNames":["node_modules"],"respectGitignore":true,"omitEmptyDirectories":true}}

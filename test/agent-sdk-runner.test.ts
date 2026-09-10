@@ -17,6 +17,7 @@ import {
   assessComparisonEligibility,
   buildCorpusIndex,
   createAgentSdkStructuralObservationSet,
+  createRetainedBehaviorEvidence,
   digestBytes,
   digestMetadata,
   freezeTaskPacket,
@@ -146,6 +147,13 @@ test("runs one frozen Agent SDK entry through capture, export, evaluation, revie
     assert.equal(await main(["export", "create", summary.bundlePath, policyPath, exportRoot], (message) => output.push(message)), 0, output.join(""));
     assert.equal(JSON.parse(readFileSync(join(exportRoot, "manifest.json"), "utf8")).status, "ready");
     await checkRetainedEvaluation(summary.bundlePath, join(fixture.parent, "release-evaluation"));
+
+    const customHarnessManifest = structuredClone(manifest);
+    customHarnessManifest.run.harness.id = "custom-agent-sdk-condition";
+    customHarnessManifest.run.runtime.push({ source: "EBO", name: "custom-agent-sdk-condition", version: customHarnessManifest.run.harness.version });
+    writeFileSync(join(summary.bundlePath, "manifest.json"), JSON.stringify(customHarnessManifest));
+    const retained = await createRetainedBehaviorEvidence(summary.bundlePath);
+    assert.equal(retained.dataset.adapter.harness, "claude-agent-sdk");
   } finally {
     rmSync(fixture.parent, { recursive: true, force: true });
   }
