@@ -799,6 +799,7 @@ function assertRetainedCursorIdentity(manifest: RunManifest, records: readonly C
       || storeCheckpoints.some((record) => record.agentId !== agentId)) {
     throw new Error("Retained Cursor native store identity differs from the owned agent/run/model.");
   }
+  assertCheckpointCompleteness(storeAgents[0]!, storeRuns[0]!, storeCheckpoints, "Retained Cursor native store");
 }
 
 export function normalizeCursorSdkCapture(input: NormalizationInput<CursorNativeRecord>): NormalizationResult {
@@ -1061,6 +1062,32 @@ async function validateStoreFiles(
       || runEvents.some((record) => record.runId !== runId)
       || checkpoints.some((record) => record.agentId !== agentId)) {
     throw new Error("Cursor native store contains evidence outside the owned agent/run.");
+  }
+  assertCheckpointCompleteness(agents[0]!, runs[0]!, checkpoints, "Cursor native store");
+}
+
+function assertCheckpointCompleteness(
+  agent: CursorNativeRecord,
+  run: CursorNativeRecord,
+  checkpoints: readonly CursorNativeRecord[],
+  label: string,
+): void {
+  const reference = (value: unknown, field: string): string | undefined => {
+    if (value === undefined || value === null) return undefined;
+    const record = asRecord(value);
+    if (record?.schemaVersion !== 1 || typeof record.rootBlobId !== "string" || record.rootBlobId.trim() === "") {
+      throw new Error(`${label} ${field} is malformed.`);
+    }
+    return record.rootBlobId;
+  };
+  const required = [
+    reference(agent.latestCheckpoint, "agent latest checkpoint"),
+    reference(run.startCheckpointRef, "run start checkpoint"),
+    reference(run.latestCheckpointRef, "run latest checkpoint"),
+  ].filter((value): value is string => value !== undefined);
+  const retained = new Set(checkpoints.map((checkpoint) => checkpoint.blobId));
+  if (required.some((blobId) => !retained.has(blobId))) {
+    throw new Error(`${label} omits a referenced checkpoint blob.`);
   }
 }
 

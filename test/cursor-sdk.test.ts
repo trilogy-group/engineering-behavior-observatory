@@ -86,6 +86,8 @@ test("runs one frozen Cursor SDK entry through native store, export, observation
 
     const sourceSession = readFileSync(join(summary.bundlePath, "native/session.jsonl"), "utf8");
     assert.match(sourceSession, /hidden delta reasoning/u);
+    assert.match(sourceSession, /hidden step reasoning/u);
+    assert.match(sourceSession, /hidden history reasoning/u);
     assert.doesNotMatch(sourceSession, /mutated after callback/u);
     assert.match(readFileSync(join(summary.bundlePath, "native/store/checkpoints.ndjson"), "utf8"), /dataBase64/u);
 
@@ -94,7 +96,7 @@ test("runs one frozen Cursor SDK entry through native store, export, observation
     await createPortableRunBundleExport({ sourceRoot: summary.bundlePath, destinationRoot: exportRoot, policy });
     await readPortableRunBundleExport(exportRoot, policy, manifest, summary.bundlePath);
     const exported = readdirSync(join(exportRoot, "evidence")).map((name) => readFileSync(join(exportRoot, "evidence", name), "utf8")).join("\n");
-    assert.doesNotMatch(exported, /hidden delta reasoning|hidden history reasoning|dataBase64|AQIDBA==|checkpoint-encryption-secret|fixture-key-not-retained/u);
+    assert.doesNotMatch(exported, /hidden delta reasoning|hidden step reasoning|hidden history reasoning|dataBase64|AQIDBA==|checkpoint-encryption-secret|fixture-key-not-retained/u);
     await checkRetainedEvaluation(summary.bundlePath, join(fixture.parent, "evaluation"));
   } finally {
     if (previousMarker === undefined) delete process.env.EBO_CURSOR_TEST_SECRET;
@@ -377,8 +379,8 @@ test("treats a completed tool envelope with an error result as failure, not muta
   }
 });
 
-test("foreign, oversized, malformed, or model-mismatched native store records make capture unqualified", async () => {
-  for (const behavior of [{ foreignStoreRecords: true }, { oversizedStoreRecord: true }, { malformedStoreRecord: true }, { storeModelMismatch: true }]) {
+test("foreign, oversized, malformed, incomplete, or model-mismatched native store records make capture unqualified", async () => {
+  for (const behavior of [{ foreignStoreRecords: true }, { oversizedStoreRecord: true }, { malformedStoreRecord: true }, { missingCheckpoint: true }, { storeModelMismatch: true }]) {
     const fixture = createCursorFixture();
     try {
       const summary = await runCursorSdkQueueEntry({
@@ -532,6 +534,7 @@ function fakeAgentFactory(behavior: {
   mismatchedModelParams?: boolean;
   storeModelMismatch?: boolean;
   malformedStoreRecord?: boolean;
+  missingCheckpoint?: boolean;
   oversizedDeltaRecord?: boolean;
   oversizedTerminalRecord?: boolean;
 } = {}): CursorSdkAgentFactory {
@@ -569,7 +572,7 @@ function fakeAgentFactory(behavior: {
             const delta = { type: "thinking-delta", text: behavior.oversizedDeltaRecord ? "x".repeat(1_100_000) : "hidden delta reasoning" } as never;
             await sendOptions?.onDelta?.({ update: delta });
             (delta as { text: string }).text = "mutated after callback";
-            await sendOptions?.onStep?.({ step: { type: "assistantMessage", message: { text: "step snapshot" } } });
+            await sendOptions?.onStep?.({ step: { type: "thinkingMessage", message: { text: "hidden step reasoning", thinkingDurationMs: 1 } } as never });
             writeFileSync(join(cwd, "result.txt"), "cursor completed\n");
             const identity = behavior.mismatchedStreamIdentity ? "foreign-agent" : AGENT_ID;
             const messages: SDKMessage[] = [
@@ -589,6 +592,7 @@ function fakeAgentFactory(behavior: {
               status = "finished";
               await store.runs.update({ run: { ...(await store.runs.get({ agentId: AGENT_ID, runId: NATIVE_RUN_ID }))!,
                 status: "finished", updatedAt: 2, endedAt: 2, usage: behavior.omitUsage ? null : result.usage,
+                latestCheckpointRef: { schemaVersion: 1, rootBlobId: "checkpoint-1" },
                 ...(behavior.storeModelMismatch ? { model: { id: MODEL.id, params: [{ id: "thinking", value: "high" }] } } : {}) } });
               await store.runEvents.append({ runId: NATIVE_RUN_ID, eventType: "interaction", payload: { type: "thinking-delta", text: "hidden store reasoning" } });
               await store.checkpoints.create({ agentId: AGENT_ID, blobId: "checkpoint-1", data: new Uint8Array([1, 2, 3, 4]) });
@@ -605,6 +609,10 @@ function fakeAgentFactory(behavior: {
               }
               await store.agents.update({ agent: { ...(await store.agents.get({ agentId: AGENT_ID }))!, status: "idle", activeRunId: null, updatedAt: 2,
                 latestCheckpoint: { schemaVersion: 1, rootBlobId: "checkpoint-1" } } });
+              if (behavior.missingCheckpoint) {
+                const storeRoot = (store as unknown as { rootDir: string }).rootDir;
+                rmSync(join(storeRoot, "checkpoints.ndjson"));
+              }
             } finally {
               resolveDone();
             }
@@ -612,7 +620,7 @@ function fakeAgentFactory(behavior: {
           async wait() { await done; if (behavior.waitError) throw new Error("injected missing terminal"); return result; },
           async conversation(): Promise<ConversationTurn[]> {
             if (behavior.historyError) throw new Error("injected history failure");
-            return [{ type: "thinking", text: "hidden history reasoning" }] as unknown as ConversationTurn[];
+            return [{ type: "thinkingMessage", message: { text: "hidden history reasoning", thinkingDurationMs: 1 } }] as unknown as ConversationTurn[];
           },
           async cancel() { status = "cancelled"; resolveDone(); },
           get status() { return status; },

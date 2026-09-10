@@ -115,7 +115,7 @@ const HIDDEN_FIELDS = new Set([
 ]);
 const CODEX_REASONING_DELTA_METHOD = "item/reasoning/textDelta";
 const CODEX_REASONING_CONTENT_FIELDS = new Set(["content", "delta", "encryptedcontent", "summary", "text"]);
-const CURSOR_REASONING_TYPES = new Set(["thinking", "thinkingdelta", "thinkingcompleted"]);
+const CURSOR_REASONING_TYPES = new Set(["thinking", "thinkingdelta", "thinkingcompleted", "thinkingmessage"]);
 const SECRET_FIELDS = new Set([
   "accesskey",
   "accesstoken",
@@ -589,7 +589,7 @@ function stripCodexReasoning(
       increment(counts, "removed-field");
       continue;
     }
-    if (cursorReasoning && (CODEX_REASONING_CONTENT_FIELDS.has(normalized) || normalized === "thinkingdurationms")) {
+    if (cursorReasoning && (CODEX_REASONING_CONTENT_FIELDS.has(normalized) || normalized === "thinkingdurationms" || normalized === "message")) {
       increment(counts, "removed-field");
       continue;
     }
