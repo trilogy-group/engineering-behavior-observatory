@@ -799,9 +799,9 @@ function resolvePiResources(bundleRoot: string, configuration: PiHarnessConfigur
 function assertSelfContainedPiExtension(source: string, reference: ArtifactReference): void {
   const importSyntax = /\bimport\b/u;
   const commonJs = /\brequire\s*\(/u;
-  const exportList = /\bexport\s*(?:\*|\{)/u;
+  const exportSyntax = /\bexport\b/u;
   const fromSpecifier = /\bfrom\s*["']/u;
-  if (importSyntax.test(source) || commonJs.test(source) || exportList.test(source) && fromSpecifier.test(source)) {
+  if (importSyntax.test(source) || commonJs.test(source) || exportSyntax.test(source) && fromSpecifier.test(source)) {
     throw piConfigError(reference, "must be self-contained and cannot import or require an unpinned dependency graph");
   }
 }
@@ -1018,7 +1018,11 @@ export function qualifyRetainedPiCapture(
     }
     entryIds.add(id);
   }
-  const envelopeSessionIds = capture.records.flatMap(({ record }) => text(record.sessionId) ?? []);
+  const envelopeSessionIds = capture.records.flatMap(({ record }) => {
+    const ids = [text(record.sessionId)];
+    if (record.channel === "observer" && isRecord(record.payload)) ids.push(text(record.payload.sessionId));
+    return ids.filter((id): id is string => id !== undefined);
+  });
   if (envelopeSessionIds.some((id) => id !== sessionId)) throw new Error("Retained Pi stream identity differs from the native session.");
   if (capture.records.some(({ record }) => record.channel === "observer" && record.nativeType === "extension_error")) {
     throw new Error("Retained Pi capture contains a selected extension hook failure.");

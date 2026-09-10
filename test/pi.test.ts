@@ -345,6 +345,23 @@ test("retained Pi readback rejects unsupported versions, identity mismatches, an
     await assert.rejects(createRetainedBehaviorEvidence(summary.bundlePath), /Invalid retained Pi session entry/u);
     writeFileSync(sessionPath, sessionBefore);
     writeFileSync(manifestPath, before);
+
+    const observerPath = join(summary.bundlePath, "pi-observer.jsonl");
+    const observerBefore = readFileSync(observerPath);
+    const observerRecords = readJsonl(observerPath);
+    const observerRecord = observerRecords.find(({ payload }) =>
+      typeof payload === "object" && payload !== null && "sessionId" in payload)!;
+    (observerRecord.payload as Record<string, unknown>).sessionId = "foreign-session";
+    const observerBytes = Buffer.from(`${observerRecords.map((record) => JSON.stringify(record)).join("\n")}\n`);
+    const observerManifest = JSON.parse(before.toString()) as RunManifest;
+    const observerDescriptor = observerManifest.evidence.find(({ id }) => id === "pi-observer")!;
+    observerDescriptor.digest = `sha256:${digestBytes(observerBytes).value}`;
+    observerDescriptor.sizeBytes = observerBytes.length;
+    writeFileSync(observerPath, observerBytes);
+    writeFileSync(manifestPath, JSON.stringify(observerManifest));
+    await assert.rejects(createRetainedBehaviorEvidence(summary.bundlePath), /stream identity differs/u);
+    writeFileSync(observerPath, observerBefore);
+    writeFileSync(manifestPath, before);
   } finally {
     rmSync(fixture.parent, { recursive: true, force: true });
   }
@@ -740,7 +757,7 @@ export default function (pi) {
     const helper = { locator: "resources/helper.mjs", digest: digestBytes(Buffer.alloc(0)) };
     writeRef(helper, helper.locator, Buffer.from("export const value = 1;\n"));
     const extension = { locator: "resources/importing-extension.mjs", digest: digestBytes(Buffer.alloc(0)) };
-    writeRef(extension, extension.locator, Buffer.from('run();import{x}from"./helper.mjs";\nexport default function () {}\n'));
+    writeRef(extension, extension.locator, Buffer.from('export/*comment*/{value}from"./helper.mjs";\nexport default function () {}\n'));
     records.harness.extensions = [extension];
   }
   const modelKey = String(records.model.model).replaceAll(".", "-");
