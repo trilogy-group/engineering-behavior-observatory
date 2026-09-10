@@ -12,6 +12,8 @@ last_memory_sync: 2026-09-09T19:26:41.687989+00:00
 ## Current model
 
 - COE-587 contributed: PR #42: docs(operations): document workflows and extension contracts (merge `c618c0c`)
+- COE-598 contributed: PR #45: feat(pi): add operational SDK harness (merge `6c73097`)
+- COE-599 contributed: PR #44: feat: add operational Cursor SDK capture (merge `b3198e2`)
 
 ## Important invariants
 
@@ -29,9 +31,13 @@ last_memory_sync: 2026-09-09T19:26:41.687989+00:00
 ## Recent changes
 
 - COE-587: Document operator workflows and extension contracts
+- COE-598: Integrate Pi TypeScript SDK with operational capture and behavioral evidence
+- COE-599: Integrate Cursor TypeScript SDK with operational capture and behavioral evidence
 
 ## Source refs
 
 - COE-587
+- COE-598
+- COE-599
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

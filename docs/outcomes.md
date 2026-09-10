@@ -63,6 +63,8 @@ last_memory_sync: 2026-08-31T12:29:52.140383+00:00
 - COE-593: Admit common framework filenames in observational fixtures
 - COE-594: Qualify real package-manager workspaces and trajectory exports
 - COE-597: Complete cross-harness behavioral evaluation and configurable Codex judging
+- COE-598: Integrate Pi TypeScript SDK with operational capture and behavioral evidence
+- COE-599: Integrate Cursor TypeScript SDK with operational capture and behavioral evidence
 
 ## Source refs
 
@@ -96,5 +98,7 @@ last_memory_sync: 2026-08-31T12:29:52.140383+00:00
 - COE-593
 - COE-594
 - COE-597
+- COE-598
+- COE-599
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

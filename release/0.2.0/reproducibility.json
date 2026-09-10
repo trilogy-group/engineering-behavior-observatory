@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "ebo.release-reproducibility/v1",
+  "release": {
+    "name": "engineering-behavior-observatory",
+    "version": "0.2.0"
+  },
+  "runtime": {
+    "node": "24.19.0",
+    "claudeAgentSdk": "0.3.258",
+    "openhandsAgentServer": "1.46.0",
+    "deepseekClient": "0.1.1-rc.2",
+    "deepseekProtocol": "0.1.1-rc.2",
+    "deepseekRuntime": "0.1.1-rc.2",
+    "codexAppServer": "0.153.4",
+    "grafana": "13.2.0",
+    "grafanaInfinity": "4.0.0",
+    "piSdk": "0.85.1",
+    "cursorSdk": "1.0.31"
+  },
+  "commands": [
+    "npm ci",
+    "npm run acceptance"
+  ],
+  "fixtureCoverage": {
+    "agent-sdk": "frozen queue entry through qualified capture, approved export, normalization, configurable judging, review, aggregation, and Atlas",
+    "openhands-agent-server": "pinned REST/WebSocket stream-final reconciliation, workspace/outcome evidence, partial capture, and retained evaluation",
+    "deepseek-harness": "official-client JSON-RPC composition, receipt-to-idle completion, stderr, interruption, shutdown, swaps, and retained evaluation",
+    "codex-app-server": "owned stdio lifecycle, full history, OTLP, interruption/failure, export, and retained evaluation",
+    "acceptance-cases": "seeded ordering, secret scanning, partial attempts, native references, abstention, disputes, denominators, and unsupported comparisons",
+    "pi-sdk": "frozen queue, passive hooks, durable session, partial cleanup, export, retained normalization and evaluation",
+    "cursor-sdk": "frozen queue, official store, callbacks/history, bounded cancellation, export, retained normalization and evaluation"
+  },
+  "determinism": {
+    "stable": [
+      "task, run, attempt, event, assertion, aggregate, and Atlas case identities",
+      "fixture, native-reference, normalized-dataset, source/cohort, archive, and package digests",
+      "seeded queue and review-sample ordering"
+    ],
+    "excluded": [
+      "native and EBO observation timestamps",
+      "lifecycle start/finish timestamps",
+      "provider timing and usage",
+      "temporary workspace and output paths"
+    ]
+  },
+  "fixtures": {
+    "tests/fixtures/task-packet.valid.v1.json": "ac2ef1043c0cc16bf4c21d05c1dc880ca1b4b8cc2f9ea7653328e91f0b0e2681",
+    "test/fixtures/agent-sdk-normalizer/complete.input.json": "7285dee088517e5de38ceda84fc7c58d9303949c7448ab3b5e10a5a2d2ebdfe3",
+    "test/fixtures/agent-sdk-normalizer/complete.expected.jsonl": "d32fa3a013bc179f1673f7e1a89b8a721bb8ddaf63eba5bc8a3f14f1cc148ed8",
+    "contracts/openhands-agent-server-v1.44.1.json": "e7a07977688a0703b15751a8a1ab17f29be45f9fdf438017e0dbcbc49cca37b0",
+    "contracts/openhands-agent-server-v1.46.0.json": "455cdddd2c206cb2f20245c2189b92e773657ec14d651236baa532b2dbadeb28",
+    "test/fixtures/openhands/v1.44.1/streamed-events.json": "d751083ba2ef94c9865117db481cc2f4933772bbbbb6b9fcf60571563715c1ea",
+    "test/fixtures/openhands/v1.44.1/final-events.json": "551db9904e860004d604c923692b5c5d3aaee966220492214c60003d2df415b6",
+    "test/fixtures/deepseek/golden-success.json": "f3867d38169bf0e28f64aba1dd60553f21cf07f41f81b4bad48261e49fa3ca88",
+    "test/fixtures/deepseek/golden-interrupted.json": "79e1f8404df1ee3b562d0bdbc0b2ee712ffc6d5774992b92970814ea815677b7",
+    "test/fixtures/deepseek/compositions/minimal/composition.json": "72fe4368e105f1bad82b7fdf8380e92c9fa689d8985f6ab91f534f0baf3eda02",
+    "contracts/codex-app-server-0.153.4/manifest.json": "e62281ff5e5d1cc71d07763b85e997ccc9ddbad9aa82a469da4181ee4b1890a8",
+    "test/fixtures/codex/legacy-0.150.1.dataset.json": "f71906b009e546afbf3b4e79396f223181382f3b3d8795e9cfcd032398a9d6bf",
+    "test/fixtures/behavior-assertions/abstained.json": "7f1962864f664c794925a67d93074e7b150af0f57c58041a81e062990d641197",
+    "test/fixtures/behavior-assertions/disputed.review.json": "450d3d9efe7feefaf7500b3ad20ab2803b412c7e53b91763125e15a83be87981",
+    "test/fixtures/comparison/exact.json": "cafa68e94b8d50dc308ddcfc2e73aa139c828b4ecd1e1c762bbc51bf1b44501e",
+    "test/fixtures/structural-observations/golden.json": "bad71a3a93524b76c0a2fdbb58e98e1e65be46cae14acf18ac89d9ba76e03e8a",
+    "test/atlas-fixture.ts": "9f03ce9cbcd0e5d3e3a5916866554ceb1c21f1c8712e58529499c1ea499f048d",
+    "test/pi.test.ts": "a00997c5617ca178e19b25b0d483cbdce8ce7c306d4c871557945b31a2e657cf",
+    "test/cursor-sdk.test.ts": "753094f127b11dc392ec2244c9edddabec27aa94347bb6159a292129ed2a2822",
+    "examples/cursor-sdk/README.md": "a2cf481123e7f3deb1c5a682ba208a775c3f91c35e1a6c1a428c517c79692618",
+    "examples/cursor-sdk/capture-profile.json": "d1a5787875daf5523b3783f259b891c256a904cbb10279d5be214af846305a2d",
+    "examples/cursor-sdk/harness.json": "2f1da6f2b17258d0ee59431f687696901ce3692589175d182f3a4bbe8dd4d689",
+    "examples/cursor-sdk/model.json": "ad8f31ff5d2387c02d79226679022358afafc61ba5dda73040e3f754530a230a",
+    "examples/cursor-sdk/native-limits.json": "40fe451f56b0863e79b42f5c85defbce678e1dc90dd248d15c430db176d71511",
+    "examples/cursor-sdk/native-tool-policy.json": "0fef98b36cd39de82914c5b068022c1335dadda24b7d6e7df398b2430e6a16e0"
+  }
+}

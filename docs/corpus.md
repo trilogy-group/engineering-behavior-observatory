@@ -62,6 +62,8 @@ last_memory_sync: 2026-08-31T17:10:33.048954+00:00
 - COE-595: Close M4 capture-finalization and capability-reporting gaps
 - COE-596: Add a Codex app-server harness with native telemetry and observational capture
 - COE-597: Complete cross-harness behavioral evaluation and configurable Codex judging
+- COE-598: Integrate Pi TypeScript SDK with operational capture and behavioral evidence
+- COE-599: Integrate Cursor TypeScript SDK with operational capture and behavioral evidence
 
 ## Source refs
 
@@ -94,5 +96,7 @@ last_memory_sync: 2026-08-31T17:10:33.048954+00:00
 - COE-595
 - COE-596
 - COE-597
+- COE-598
+- COE-599
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

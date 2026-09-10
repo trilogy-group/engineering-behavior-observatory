@@ -64,3 +64,32 @@ EBO_LIVE_PI_SDK_SMOKE=1 node --test \
 ```
 
 Set `ZAI_API_KEY` in the environment. The smoke selects `glm-5.3-flash` and `https://api.z.ai/api/coding/paas/v4` only in its generated test input; neither is a product default.
+
+<!-- BEGIN OPENSYMPHONY MANAGED MEMORY SYNC -->
+
+## Current model
+
+- COE-598 contributed: PR #45: feat(pi): add operational SDK harness (merge `6c73097`)
+
+## Important invariants
+
+- Preserve the behavior described in the recent captured changes unless current code and tests show it has changed.
+- Use capsule source refs to inspect the original PR or Linear issue when context is ambiguous.
+
+## Operational flow
+
+- No generated diagram requested for this sync.
+
+## Known gotchas
+
+- No area-specific gotchas were inferred from the selected memory.
+
+## Recent changes
+
+- COE-598: Integrate Pi TypeScript SDK with operational capture and behavioral evidence
+
+## Source refs
+
+- COE-598
+
+<!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

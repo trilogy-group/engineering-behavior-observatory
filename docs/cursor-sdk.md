@@ -147,3 +147,32 @@ qualification, export/readback, observations, existing judge evidence,
 comparison/aggregation, and Atlas drilldown. It is not proof of live provider
 authentication. A live smoke must use an exact currently available catalog
 model and one bounded synthetic local workspace edit through the same command.
+
+<!-- BEGIN OPENSYMPHONY MANAGED MEMORY SYNC -->
+
+## Current model
+
+- COE-599 contributed: PR #44: feat: add operational Cursor SDK capture (merge `b3198e2`)
+
+## Important invariants
+
+- Preserve the behavior described in the recent captured changes unless current code and tests show it has changed.
+- Use capsule source refs to inspect the original PR or Linear issue when context is ambiguous.
+
+## Operational flow
+
+- No generated diagram requested for this sync.
+
+## Known gotchas
+
+- No area-specific gotchas were inferred from the selected memory.
+
+## Recent changes
+
+- COE-599: Integrate Cursor TypeScript SDK with operational capture and behavioral evidence
+
+## Source refs
+
+- COE-599
+
+<!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

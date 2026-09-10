@@ -40,21 +40,23 @@ The [Cursor TypeScript SDK adapter](docs/cursor-sdk.md) uses the direct pinned
 `@cursor/sdk` local-agent API, an attempt-owned official JSONL store, explicit
 local sandbox/tool policy, and separate stream, callback, history, terminal,
 and billing evidence through `ebo cursor run`.
+
 The [Pi TypeScript SDK adapter](docs/pi-sdk.md) uses the pinned public `0.85.1`
 session, persistence, subscription, and extension APIs directly. It retains one
 native session per attempt and runs a frozen queue entry through `ebo pi run`.
 
-## Release 0.1.0
+## Release 0.2.0
 
 EBO includes native capture, portable export, cross-harness normalization,
 structural observations, configurable semantic judging, human review,
 comparison, aggregation, and the local Behavior Atlas.
 
-The [release notes](release/0.1.0/README.md) describe verification and packaging.
-The [support matrix](release/0.1.0/KNOWN_LIMITATIONS.md) distinguishes live-tested
+The [release notes](release/0.2.0/README.md) describe verification and packaging.
+The [support matrix](release/0.2.0/KNOWN_LIMITATIONS.md) distinguishes live-tested
 routes from deterministic contract coverage. Agent SDK and Codex capture, a
 Codex abstention judgment, and OpenHands and DeepSeek Harness with Z.ai were
-live-tested. Each route's telemetry and completeness limits remain explicit.
+live-tested for 0.1.0. Pi and Cursor SDK file-edit smokes were live-tested for
+0.2.0. Each route's telemetry and completeness limits remain explicit.
 
 Native Agent SDK capture is available through the public
 `captureClaudeAgentSdkRun` library entry point. It executes one caller-supplied
@@ -166,9 +168,9 @@ EBO_LIVE_PI_SDK_SMOKE=1 node --test --test-name-pattern='approved live Pi SDK sm
 From a clean Git checkout, `npm run acceptance` is the release gate. It runs the complete deterministic
 suite, verifies local documentation links and pinned fixture digests, and packs
 the npm artifact twice to prove byte-identical output. It writes the package,
-checksum, and current result under `.ebo/releases/0.1.0/`; nothing is published
-or tagged. See [the release audit](release/0.1.0/README.md) and
-[known limitations](release/0.1.0/KNOWN_LIMITATIONS.md).
+checksum, and current result under `.ebo/releases/0.2.0/`; nothing is published
+or tagged by that command. See [the release audit](release/0.2.0/README.md) and
+[known limitations](release/0.2.0/KNOWN_LIMITATIONS.md).
 
 `captureClaudeAgentSdkRun` is intentionally a library API rather than another
 configuration dialect: callers provide an already-resolved run definition,

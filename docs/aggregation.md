@@ -150,6 +150,8 @@ significance, and the report never emits a composite model ranking.
 - COE-587: Document operator workflows and extension contracts
 - COE-588: Complete release acceptance and reproducibility audit
 - COE-597: Complete cross-harness behavioral evaluation and configurable Codex judging
+- COE-598: Integrate Pi TypeScript SDK with operational capture and behavioral evidence
+- COE-599: Integrate Cursor TypeScript SDK with operational capture and behavioral evidence
 
 ## Source refs
 
@@ -166,5 +168,7 @@ significance, and the report never emits a composite model ranking.
 - COE-587
 - COE-588
 - COE-597
+- COE-598
+- COE-599
 
 <!-- END OPENSYMPHONY MANAGED MEMORY SYNC -->

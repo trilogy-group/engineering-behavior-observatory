@@ -1,6 +1,6 @@
 {
   "name": "engineering-behavior-observatory",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Native engineering-agent evidence capture and observation.",
   "type": "module",
@@ -29,6 +29,7 @@
     "examples/",
     "ontology/",
     "release/0.1.0/",
+    "release/0.2.0/",
     "schemas/",
     "scripts/atlas-grafana.sh"
   ],

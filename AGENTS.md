@@ -27,6 +27,9 @@ or implement beyond the assigned issue.
   native thread/turn terminal identities, retain history separately from
   streamed items, and never attach to a desktop daemon or infer completion from
   process exit.
+- Integrate Pi and Cursor through their pinned public TypeScript
+  SDKs with attempt-owned native persistence, passive observation, and explicit
+  local execution policies. SDK execution is not an OS sandbox.
 - Keep source control protocols separate from EBO's small uniform event
   projection. Each adapter retains its own methods, identities, lifecycle, and
   completion semantics.
