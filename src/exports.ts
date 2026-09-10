@@ -633,7 +633,8 @@ function stripPiReasoning(
   if (kind !== "session") return value;
   if (Array.isArray(value)) return value.map((entry) => stripPiReasoning(entry, kind, counts));
   if (!isRecord(value)) return value;
-  const privateContent = typeof value.type === "string" && PI_PRIVATE_CONTENT_TYPES.has(normalizeFieldName(value.type));
+  const privateContent = value.thought === true
+    || typeof value.type === "string" && PI_PRIVATE_CONTENT_TYPES.has(normalizeFieldName(value.type));
   const output: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
     const normalized = normalizeFieldName(key);
@@ -784,7 +785,7 @@ function valueContainsPiReasoningContent(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(valueContainsPiReasoningContent);
   if (!isRecord(value)) return false;
   if (Object.keys(value).some((key) => PI_PRIVATE_FIELDS.has(normalizeFieldName(key)))) return true;
-  if (typeof value.type === "string" && PI_PRIVATE_CONTENT_TYPES.has(normalizeFieldName(value.type))
+  if ((value.thought === true || typeof value.type === "string" && PI_PRIVATE_CONTENT_TYPES.has(normalizeFieldName(value.type)))
       && Object.keys(value).some((key) => PI_PRIVATE_CONTENT_FIELDS.has(normalizeFieldName(key)))) return true;
   return Object.values(value).some(valueContainsPiReasoningContent);
 }

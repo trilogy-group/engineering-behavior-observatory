@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { cp, lstat, mkdtemp, rm, stat } from "node:fs/promises";
+import { renameSync } from "node:fs";
+import { cp, lstat, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -307,7 +308,9 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
   let sessionExportFailed = false;
   let terminalEvidenceObserved = false;
   let agentSettledObserved = false;
-  let adapterFinalization: Promise<void> = Promise.resolve();
+  let adapterFinalized = true;
+  let adapterFinalizationTimedOut = false;
+  let adapterFinalizationFailure: string | undefined;
   let recorderCloseFailure: string | undefined;
 
   const captureWorkspace = async (context?: VerifierExecutionContext): Promise<CapturedWorkspaceOutcome> => {
@@ -370,8 +373,8 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
         let unsubscribe: (() => void) | undefined;
         let failure: unknown;
         let resolveAdapterFinalized!: () => void;
-        const adapterFinalized = new Promise<void>((resolvePromise) => { resolveAdapterFinalized = resolvePromise; });
-        adapterFinalization = adapterFinalized;
+        const adapterFinalizationPromise = new Promise<void>((resolvePromise) => { resolveAdapterFinalized = resolvePromise; });
+        adapterFinalized = false;
         let signalAbort: Promise<void> | undefined;
         const abortSession = (): void => {
           if (session === undefined || signalAbort !== undefined) return;
@@ -380,7 +383,7 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
         };
         registerShutdown(async () => {
           abortSession();
-          const outcomes = await Promise.allSettled([signalAbort ?? Promise.resolve(), session?.waitForIdle() ?? Promise.resolve(), adapterFinalized]);
+          const outcomes = await Promise.allSettled([signalAbort ?? Promise.resolve(), session?.waitForIdle() ?? Promise.resolve(), adapterFinalizationPromise]);
           const rejected = outcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
           if (rejected !== undefined) throw rejected.reason;
         });
@@ -448,49 +451,59 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
           return { status: "failed", failureClass: "infrastructure", reason: errorMessage(error), evidence: piEvidence(sessionId, session) };
         } finally {
           try {
-            unsubscribe?.();
             if (session !== undefined) {
               await session.waitForIdle().catch(() => undefined);
               let exportFailure: unknown;
-              const nativeSessionPath = session.sessionFile;
-              try {
-                if (nativeSessionPath !== undefined && await nonempty(nativeSessionPath)) {
-                  await cp(nativeSessionPath, join(assembler.bundleRoot, "pi-session.jsonl"), { force: true });
-                } else {
-                  session.exportToJsonl(join(assembler.bundleRoot, "pi-session.jsonl"));
-                  if (options.createSession === undefined) sessionExportFailed = true;
+              if (!adapterFinalizationTimedOut && session.extensionRunner !== undefined) {
+                try {
+                  await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+                } catch (error) {
+                  exportFailure = error;
+                  sessionExportFailed = true;
+                  await observer.record({
+                    channel: "observer",
+                    nativeType: "extension_error",
+                    hook: "session_shutdown",
+                    stage: "extension-error",
+                    payload: { event: "session_shutdown", error: errorMessage(error) },
+                  });
                 }
-                sessionExported = true;
-              } catch (error) {
-                exportFailure = error;
-                sessionExportFailed = true;
-              } finally {
-                if (session.extensionRunner !== undefined) {
-                  try {
-                    await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-                  } catch (error) {
-                    exportFailure ??= error;
-                    sessionExportFailed = true;
-                    await observer.record({
-                      channel: "observer",
-                      nativeType: "extension_error",
-                      hook: "session_shutdown",
-                      stage: "extension-error",
-                      payload: { event: "session_shutdown", error: errorMessage(error) },
-                    });
-                  }
-                }
-                session.dispose();
               }
-              await stream.record({ channel: "adapter", nativeType: "cleanup", sessionId, payload: {
-                disposed: true, promptFailed: failure !== undefined, sessionExported,
-                ...(exportFailure === undefined ? {} : { exportError: errorMessage(exportFailure) }),
-              } });
-              if (sessionExported) await rm(join(assembler.bundleRoot, ".pi-native"), { recursive: true, force: true });
-              if (exportFailure !== undefined) throw exportFailure;
+              unsubscribe?.();
+              const nativeDirectory = join(assembler.bundleRoot, ".pi-native");
+              if (!adapterFinalizationTimedOut) {
+                const pendingSessionPath = join(nativeDirectory, "retained-session.pending.jsonl");
+                try {
+                  await mkdir(nativeDirectory, { recursive: true });
+                  const nativeSessionPath = session.sessionFile;
+                  if (nativeSessionPath !== undefined && await nonempty(nativeSessionPath)) {
+                    await cp(nativeSessionPath, pendingSessionPath, { force: true });
+                  } else {
+                    session.exportToJsonl(pendingSessionPath);
+                    if (options.createSession === undefined) sessionExportFailed = true;
+                  }
+                  if (!adapterFinalizationTimedOut) {
+                    renameSync(pendingSessionPath, join(assembler.bundleRoot, "pi-session.jsonl"));
+                    sessionExported = true;
+                  }
+                } catch (error) {
+                  exportFailure ??= error;
+                  sessionExportFailed = true;
+                }
+              }
+              session.dispose();
+              if (!adapterFinalizationTimedOut) {
+                await stream.record({ channel: "adapter", nativeType: "cleanup", sessionId, payload: {
+                  disposed: true, promptFailed: failure !== undefined, sessionExported,
+                  ...(exportFailure === undefined ? {} : { exportError: errorMessage(exportFailure) }),
+                } });
+                if (sessionExported) await rm(nativeDirectory, { recursive: true, force: true });
+                if (exportFailure !== undefined) throw exportFailure;
+              }
             }
           } finally {
             signal.removeEventListener("abort", abortSession);
+            adapterFinalized = true;
             resolveAdapterFinalized();
           }
         }
@@ -508,7 +521,16 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
       }),
     });
   } finally {
-    await adapterFinalization;
+    if (!adapterFinalized) {
+      adapterFinalizationTimedOut = true;
+      adapterFinalizationFailure = "Pi adapter finalization did not settle within the lifecycle shutdown grace period.";
+      await stream.record({
+        channel: "adapter",
+        nativeType: "capture_error",
+        ...(sessionId === undefined ? {} : { sessionId }),
+        payload: { message: adapterFinalizationFailure },
+      });
+    }
     const closeResults = await Promise.allSettled([stream.close(), observer.close()]);
     const failures = closeResults.flatMap((result) => result.status === "rejected" ? [errorMessage(result.reason)] : []);
     if (failures.length > 0) recorderCloseFailure = `Pi recorder close failed: ${failures.join("; ")}`;
@@ -549,6 +571,9 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
   }] : []), ...(recorderCloseFailure === undefined ? [] : [{
     kind: "session", reason: "not-collected" as const, affects: ["semantic" as const],
     detail: recorderCloseFailure,
+  }]), ...(adapterFinalizationFailure === undefined ? [] : [{
+    kind: "session", reason: "not-collected" as const, affects: ["semantic" as const],
+    detail: adapterFinalizationFailure,
   }])];
   const qualificationOptions = {
     startingWorkspacePath: options.startingWorkspacePath,

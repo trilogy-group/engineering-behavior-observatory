@@ -42,6 +42,7 @@ const HIDDEN_THOUGHT = "private synthetic reasoning that must not export";
 const HIDDEN_REASONING_CONTENT = "private reasoning_content must not export";
 const HIDDEN_THOUGHT_SIGNATURE = "private thought signature must not export";
 const HIDDEN_TEXT_SIGNATURE = "private text signature must not export";
+const HIDDEN_GOOGLE_THOUGHT = "private Google thought must not export";
 const SYNTHETIC_SECRET = "synthetic-api-key-value-123456";
 
 test("runs a frozen observational Pi entry through capture, export, retained evaluation, and Atlas paths", async () => {
@@ -64,6 +65,8 @@ test("runs a frozen observational Pi entry through capture, export, retained eva
     assert.ok(manifest.run.runtime.some(({ name, version }) => name === "pi-coding-agent" && version === PINNED_PI_SDK_VERSION));
     assert.equal(manifest.evidence.filter(({ kind }) => kind === "session").length, 3);
     assert.ok(manifest.evidence.some(({ kind }) => kind === "workspace"));
+    assert.ok(readJsonl(join(summary.bundlePath, "pi-session.jsonl")).some(({ id }) => id === "entry-shutdown"),
+      "native entries persisted by session_shutdown must be retained before history export");
     const composition = readJsonl(join(summary.bundlePath, "pi-events.jsonl")).find(({ nativeType }) => nativeType === "session_created")!.payload as Record<string, any>;
     assert.equal(composition.schemaVersion, "ebo.pi-composition/v1");
     assert.equal(composition.model.queueModelId, "synthetic-model");
@@ -159,6 +162,15 @@ test("snapshots mutable callbacks, preserves source order, and keeps the passive
       if (passiveObserver) {
         const provider = readJsonl(observerPath).find(({ nativeType }) => nativeType === "before_provider_request")!;
         assert.equal(JSON.stringify(provider).includes(HIDDEN_THOUGHT), true);
+        assert.equal(JSON.stringify(provider).includes(HIDDEN_GOOGLE_THOUGHT), true);
+        const exportRoot = join(fixture.parent, "observer-export");
+        const exported = await createPortableRunBundleExport({
+          sourceRoot: summary.bundlePath,
+          destinationRoot: exportRoot,
+          policy: { sharingClass: "partner", maxArtifactBytes: 8 * 1024 * 1024, maxStringBytes: 64 * 1024 },
+        });
+        const portable = exported.artifacts.map(({ relativePath }) => readFileSync(join(exportRoot, relativePath), "utf8")).join("\n");
+        assert.equal(portable.includes(HIDDEN_GOOGLE_THOUGHT), false);
       }
       runs.push({
         workspace: readFileSync(join(summary.bundlePath, "workspace.patch"), "utf8"),
@@ -579,6 +591,39 @@ test("cancellation during session creation is propagated and joined before captu
   }
 });
 
+test("returns a fenced partial bundle when Pi finalization does not settle after cancellation", async () => {
+  const fixture = createPiFixture({ shutdownGraceMs: 50 });
+  const controller = new AbortController();
+  let markPromptStarted!: () => void;
+  const promptStarted = new Promise<void>((resolvePromise) => { markPromptStarted = resolvePromise; });
+  try {
+    const base = fakePiSessionFactory();
+    const createSession: PiSessionFactory = async (input) => {
+      const session = await base.createSession(input);
+      return {
+        ...session,
+        prompt: () => new Promise<void>(() => { markPromptStarted(); }),
+        waitForIdle: () => new Promise<void>(() => undefined),
+        async abort() {},
+      };
+    };
+    const pending = runPiQueueEntry({ ...fixture, signal: controller.signal, createSession });
+    await promptStarted;
+    controller.abort("synthetic timeout");
+    const summary = await Promise.race([
+      pending,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Pi runner exceeded bounded cancellation")), 1_000)),
+    ]);
+    assert.equal(summary.terminal.state, "interrupted");
+    assert.equal(summary.captureQualification, "unqualified");
+    const manifest = readManifest(summary.bundlePath);
+    const report = manifest.evidence.find(({ kind }) => kind === "capture-report")!;
+    assert.match(readFileSync(join(summary.bundlePath, report.relativePath), "utf8"), /adapter finalization did not settle/u);
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
 test("recorder failure prevents a qualified success and still disposes the SDK session", async (t) => {
   const fixture = createPiFixture();
   const factory = fakePiSessionFactory();
@@ -665,6 +710,7 @@ type PiFixture = {
 function createPiFixture(options: {
   includeProviderPayloads?: boolean;
   passiveObserver?: boolean;
+  shutdownGraceMs?: number;
   live?: boolean;
   assessmentMode?: TaskPacket["assessmentMode"];
   configQueueModelId?: string;
@@ -735,6 +781,7 @@ if (value !== "done") process.exitCode = 1;
   records.model.thinkingLevel = options.thinkingLevel ?? records.model.thinkingLevel;
   records.model.reasoning = options.reasoning ?? records.model.reasoning;
   records.model.baseUrl = options.modelBaseUrl ?? records.model.baseUrl;
+  records.limits.shutdownGraceMs = options.shutdownGraceMs ?? records.limits.shutdownGraceMs;
   if (["xhigh", "max"].includes(records.model.thinkingLevel)) {
     records.model.thinkingLevelMap = { [records.model.thinkingLevel]: records.model.thinkingLevel };
   }
@@ -831,12 +878,22 @@ function fakePiSessionFactory(): { createSession: PiSessionFactory; calls(): num
     const session: PiSession = {
       sessionId: SESSION_ID,
       messages: [finalAssistant],
-      extensionRunner: { emit: async () => undefined },
+      extensionRunner: { emit: async (event) => {
+        if (typeof event === "object" && event !== null && "type" in event && event.type === "session_shutdown") {
+          records.push({
+            type: "custom", id: "entry-shutdown", parentId: "entry-assistant", timestamp: "2026-09-09T00:00:00.007Z",
+            customType: "shutdown-state", data: { retained: true },
+          });
+        }
+      } },
       subscribe(listener) { listeners.push(listener); return () => listeners.splice(listeners.indexOf(listener), 1); },
       async prompt() {
         const observerHook = observerHandlers.get("before_provider_request");
         if (observerHook !== undefined) {
-          const providerEvent = { type: "before_provider_request", payload: { type: "thinking_delta", delta: HIDDEN_THOUGHT, apiKey: SYNTHETIC_SECRET } };
+          const providerEvent = { type: "before_provider_request", payload: {
+            type: "thinking_delta", delta: HIDDEN_THOUGHT, apiKey: SYNTHETIC_SECRET,
+            candidates: [{ content: { parts: [{ thought: true, text: HIDDEN_GOOGLE_THOUGHT }] } }],
+          } };
           const before = structuredClone(providerEvent);
           const result = await observerHook(providerEvent, { sessionManager: { getSessionId: () => SESSION_ID } });
           assert.deepEqual(providerEvent, before, "the production observer must not mutate provider input");
