@@ -41,6 +41,11 @@ events can still explain a stop. Keep terminal state, infrastructure failure,
 and capture quality separate. Preserve `retainedWorkspacePath` when outcome
 packaging failed; that path is a recovery location, not qualified evidence.
 
+Capture reports retain packaging exceptions as `workspace-capture-error`
+missing-evidence entries. Inspect the detail before retrying capture against a
+retained workspace. A later successful capture is recovery evidence; it does
+not change the original attempt's recorded failure.
+
 Use a new output destination for derived records and reruns. Do not edit a
 native bundle to make a validator accept it.
 
