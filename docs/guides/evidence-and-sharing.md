@@ -46,6 +46,15 @@ missing-evidence entries. Inspect the detail before retrying capture against a
 retained workspace. A later successful capture is recovery evidence; it does
 not change the original attempt's recorded failure.
 
+Workspace capture tries a patch up to 64 MiB, then falls back to a snapshot
+when the patch is too large or cannot reproduce the tree. Snapshots stream to
+disk with a 1 GiB compressed limit and are extracted to verify the tree digest
+before publication. Snapshot qualification also checks integrity without loading
+the archive into memory. Exceeding the limit leaves explicit missing evidence
+and retains the workspace; it never truncates the archive. These capture limits
+are separate from portable-export limits. Configure known cache-directory
+exclusions before a study rather than dropping files from an existing attempt.
+
 Use a new output destination for derived records and reruns. Do not edit a
 native bundle to make a validator accept it.
 
