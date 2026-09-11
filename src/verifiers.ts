@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, utimes } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, open, readdir, readFile, readlink, realpath, rm, utimes } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
@@ -207,7 +207,7 @@ async function digestWorkspaceEntries(workspacePath: string, includeTimestamps: 
   const metadata = await lstat(root, { bigint: true });
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("Workspace root is not a directory.");
   hash.update(`root\0${metadata.mode & 0o7777n}\0${includeTimestamps ? `${workspaceTimestamp(metadata)}\0` : ""}`);
-  await hashWorkspaceDirectory(root, "", hash, includeTimestamps, signal);
+  await hashWorkspaceDirectory(root, "", hash, includeTimestamps, signal, root);
   return `sha256:${hash.digest("hex")}`;
 }
 
@@ -217,6 +217,7 @@ async function hashWorkspaceDirectory(
   hash: ReturnType<typeof createHash>,
   includeTimestamps: boolean,
   signal?: AbortSignal,
+  root: string = directory,
 ): Promise<void> {
   assertNotAborted(signal);
   const entries = await readdir(directory, { withFileTypes: true });
@@ -225,10 +226,25 @@ async function hashWorkspaceDirectory(
     const path = join(directory, entry.name);
     const relativePath = posix.join(relativeDirectory, entry.name);
     const metadata = await lstat(path, { bigint: true });
-    if (metadata.isSymbolicLink()) throw new Error(`Workspace contains a symbolic link at "${relativePath}".`);
-    if (metadata.isDirectory()) {
+    if (metadata.isSymbolicLink()) {
+      // Preserve link text, never hash the referent through the link. Both its
+      // lexical target and resolved chain must stay in this workspace.
+      const target = await readlink(path);
+      const contained = (candidate: string): boolean => {
+        const rel = relative(root, candidate);
+        return !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
+      };
+      if (isAbsolute(target) || !contained(resolve(dirname(path), target))) {
+        throw new Error(`Workspace symbolic link escapes its root at "${relativePath}".`);
+      }
+      let resolved: string;
+      try { resolved = await realpath(path); }
+      catch { throw new Error(`Workspace symbolic link is dangling or cyclic at "${relativePath}".`); }
+      if (!contained(resolved)) throw new Error(`Workspace symbolic link escapes its root at "${relativePath}".`);
+      hash.update(`symlink\0${relativePath}\0${metadata.mode & 0o7777n}\0${includeTimestamps ? `${workspaceTimestamp(metadata)}\0` : ""}${Buffer.byteLength(target)}\0${target}`);
+    } else if (metadata.isDirectory()) {
       hash.update(`directory\0${relativePath}\0${metadata.mode & 0o7777n}\0${includeTimestamps ? `${workspaceTimestamp(metadata)}\0` : ""}`);
-      await hashWorkspaceDirectory(path, relativePath, hash, includeTimestamps, signal);
+      await hashWorkspaceDirectory(path, relativePath, hash, includeTimestamps, signal, root);
     } else if (metadata.isFile()) {
       if (metadata.nlink > 1n) throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
       const bytes = await readFile(path, { signal });

@@ -172,7 +172,7 @@ test("retains interrupted, verifier-error, and capture/workspace-failure attempt
       writeFileSync(join(start, "result.txt"), "before\n");
       cpSync(start, final, { recursive: true, preserveTimestamps: true });
       writeFileSync(join(final, "result.txt"), "after\n");
-      if (scenario === "workspace-error") symlinkSync("result.txt", join(final, "unsafe-link"));
+      if (scenario === "workspace-error") symlinkSync("../result.txt", join(final, "unsafe-link"));
       const capabilities = probeClaudeAgentSdkCapabilities();
       const definition: RunBundleDefinition = {
         bundleRoot,

@@ -46,6 +46,34 @@ missing-evidence entries. Inspect the detail before retrying capture against a
 retained workspace. A later successful capture is recovery evidence; it does
 not change the original attempt's recorded failure.
 
+When the native run completed but capture failed, recover capture without
+executing the task again. Materialize the same frozen starting workspace, use
+the same capture exclusions, and assemble a separate bundle with byte-identical
+native evidence plus the recovered workspace outcome. Record the original
+manifest digest, recovery time, capture-code identity and qualification beside
+the recovered bundle. Preserve the original failed bundle. A later workspace
+capture cannot prove the retained directory was unchanged since execution ended
+unless a fingerprint was recorded then. Do not count the recovery as another
+model trial or as an independent sample.
+
+Workspace outcomes preserve relative symbolic links whose lexical targets and
+resolved referents stay inside the workspace. Link text is hashed and copied
+verbatim, not replaced by the referent's bytes. Empty-directory omission keeps
+directories referenced by links. Absolute, escaping, dangling and
+cyclic links fail capture. Patch application or snapshot extraction must still
+reproduce the resulting tree digest. This does not relax task-archive admission
+or verifier sandbox rules.
+
+On macOS, snapshot creation disables generated AppleDouble metadata. Snapshot
+verification uses the built-in `/bin/pax` with `COPYFILE_DISABLE=1` so genuine
+`._*` files remain files. macOS tar may otherwise consume them as metadata,
+changing the reconstructed tree. To extract a snapshot for inspection on macOS:
+
+```sh
+mkdir restored
+(cd restored && COPYFILE_DISABLE=1 /bin/pax -rz -p p -f /absolute/path/workspace.tar.gz)
+```
+
 Workspace capture tries a patch up to 64 MiB, then falls back to a snapshot
 when the patch is too large or cannot reproduce the tree. Snapshots stream to
 disk with a 1 GiB compressed limit and are extracted to verify the tree digest

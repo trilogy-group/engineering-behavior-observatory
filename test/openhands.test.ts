@@ -1085,7 +1085,7 @@ test("preserves and reports the source workspace when workspace evidence capture
   writeFileSync(join(start, "result.txt"), "before\n");
   cpSync(start, final, { recursive: true, preserveTimestamps: true });
   writeFileSync(join(final, "result.txt"), "after\n");
-  symlinkSync("result.txt", join(final, "unsafe-link"));
+  symlinkSync("../result.txt", join(final, "unsafe-link"));
   const sessionHook = {
     id: "hook-workspace-capture-failure",
     kind: "HookExecutionEvent",

@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -214,6 +215,95 @@ test("workspace patches reproduce the final content and executable-mode tree dig
     assert.notEqual(await digestWorkspaceTree(fixture.start), captured.treeDigest);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("workspace capture preserves relative framework links in patches and snapshots", async () => {
+  for (const snapshot of [false, true]) {
+    const root = mkdtempSync(join(tmpdir(), "ebo-framework-links-"));
+    try {
+      const fixture = createWorkspaceFixture(root, true);
+      const framework = join(fixture.final, "Engine.framework");
+      mkdirSync(join(framework, "Versions", "A", "Headers"), { recursive: true });
+      writeFileSync(join(framework, "Versions", "A", "Headers", "api.h"), "header\n");
+      symlinkSync("A", join(framework, "Versions", "Current"));
+      symlinkSync("Versions/Current/Headers", join(framework, "Headers"));
+      if (snapshot) chmodSync(join(fixture.final, "changed.txt"), 0o666);
+      const bundleRoot = join(root, "bundle");
+      const assembler = await createRunBundleAssembler(definition(bundleRoot, "links"));
+      const captured = await assembler.captureWorkspaceOutcome({ startPath: fixture.start, finalPath: fixture.final,
+        excludeDirectoryNames: ["node_modules"], respectGitignore: true, omitEmptyDirectories: true });
+      assert.equal(captured.format, snapshot ? "snapshot" : "patch");
+      const applied = join(root, "applied");
+      if (snapshot) {
+        mkdirSync(applied);
+        const result = spawnSync("tar", ["-xzpf", join(bundleRoot, captured.descriptor.relativePath), "-C", applied]);
+        assert.equal(result.status, 0, result.stderr.toString());
+      } else {
+        cpSync(fixture.start, applied, { recursive: true });
+        const result = spawnSync("git", ["apply", "--binary", join(bundleRoot, captured.descriptor.relativePath)], { cwd: applied });
+        assert.equal(result.status, 0, result.stderr.toString());
+      }
+      const restored = snapshot ? join(applied, "workspace") : applied;
+      assert.equal(readlinkSync(join(restored, "Engine.framework", "Headers")), "Versions/Current/Headers");
+      assert.equal(await digestWorkspaceTree(restored), captured.treeDigest);
+      rmSync(join(framework, "Headers"));
+      symlinkSync("Versions/A/Headers", join(framework, "Headers"));
+      assert.notEqual(await digestWorkspaceTree(fixture.final), captured.treeDigest);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
+test("empty-directory omission preserves directories referenced by framework links", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-empty-link-target-"));
+  try {
+    const fixture = createWorkspaceFixture(root);
+    mkdirSync(join(fixture.final, "Versions", "A", "Frameworks"), { recursive: true });
+    symlinkSync("A", join(fixture.final, "Versions", "Current"));
+    symlinkSync("Versions/Current/Frameworks", join(fixture.final, "Frameworks"));
+    const bundleRoot = join(root, "bundle");
+    const assembler = await createRunBundleAssembler(definition(bundleRoot, "empty-link"));
+    const outcome = await assembler.captureWorkspaceOutcome({ startPath: fixture.start, finalPath: fixture.final, omitEmptyDirectories: true });
+    assert.equal(outcome.format, "snapshot");
+    const restored = join(root, "restored"); mkdirSync(restored);
+    const extraction = spawnSync("tar", ["-xzpf", join(bundleRoot, outcome.descriptor.relativePath), "-C", restored]);
+    assert.equal(extraction.status, 0, extraction.stderr.toString());
+    assert(statSync(join(restored, "workspace", "Frameworks")).isDirectory());
+    assert.equal(await digestWorkspaceTree(join(restored, "workspace")), outcome.treeDigest);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("snapshot preserves real AppleDouble files and long archive paths", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-appledouble-"));
+  try {
+    const fixture = createWorkspaceFixture(root);
+    const nested = join(fixture.final, "a".repeat(100), "b".repeat(100), "c".repeat(100));
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(nested, "metadata.json"), "{}\n");
+    // Minimal real AppleDouble record: TextEncoding=utf-8;134217984.
+    writeFileSync(join(nested, "._metadata.json"), Buffer.from("AAUWBwACAABNYWMgT1MgWCAgICAgICAgAAIAAAAJAAAAMgAAAHkAAAACAAAAqwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQVRUUgAAAAAAAACrAAAAnAAAAA8AAAAAAAAAAAAAAAAAAAABAAAAnAAAAA8AABdjb20uYXBwbGUuVGV4dEVuY29kaW5nAAAAdXRmLTg7MTM0MjE3OTg0", "base64"));
+    mkdirSync(join(fixture.final, "empty"));
+    const assembler = await createRunBundleAssembler(definition(join(root, "bundle"), "appledouble"));
+    const outcome = await assembler.captureWorkspaceOutcome({ startPath: fixture.start, finalPath: fixture.final });
+    assert.equal(outcome.format, "snapshot");
+    assert.equal(outcome.treeDigest, await digestWorkspaceTree(fixture.final));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("workspace capture rejects absolute, escaping, dangling and cyclic links", async () => {
+  for (const target of ["/tmp", "../outside", "missing", "link", "hop/file"]) {
+    const root = mkdtempSync(join(tmpdir(), "ebo-unsafe-link-"));
+    try {
+      const fixture = createWorkspaceFixture(root);
+      if (target === "hop/file") {
+        mkdirSync(join(root, "outside"));
+        writeFileSync(join(root, "outside", "file"), "outside\n");
+        symlinkSync("../outside", join(fixture.final, "hop"));
+      }
+      symlinkSync(target, join(fixture.final, "link"));
+      const assembler = await createRunBundleAssembler(definition(join(root, "bundle"), "unsafe-link"));
+      await assert.rejects(assembler.captureWorkspaceOutcome({ startPath: fixture.start, finalPath: fixture.final }), /symbolic link/);
+    } finally { rmSync(root, { recursive: true, force: true }); }
   }
 });
 
