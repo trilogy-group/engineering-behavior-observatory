@@ -184,8 +184,8 @@ export async function readQualifiedRunCapture(bundleRoot: string): Promise<Norma
   const manifest = readManifest(root);
   await assertPersistedStructuralQualification(root, manifest);
   const qualification = await qualifyRunBundle(root);
-  if (!qualification.semanticAnalysisUsable
-      || !["qualified", "qualified-with-gaps"].includes(qualification.status)) {
+  if (!qualification.semanticAnalysisUsable || Object.entries(qualification.dimensions)
+    .some(([dimension, result]) => dimension !== "workspace" && result.status === "unqualified")) {
     const reasons = qualification.reasons.map(({ code }) => code).join(", ") || "unknown qualification failure";
     throw new Error(`Agent SDK normalization requires capture-qualified evidence: ${reasons}.`);
   }
@@ -792,10 +792,13 @@ function assertQualifiedInput(input: NormalizationInput<AgentSdkNativeRecord>): 
     throw new Error("Agent SDK normalization input identity is invalid.");
   }
   const kinds = new Set(input.records.map(({ record }) => record.kind));
-  for (const required of ["session", "hook", "workspace", "manifest"] as const) {
+  for (const required of ["session", "hook", "manifest"] as const) {
     if (!kinds.has(required)) throw new Error(`Capture-qualified Agent SDK input is missing required ${required} evidence.`);
   }
   const assessmentMode = input.records.map(assessmentModeOf).find((value) => value !== undefined);
+  if (assessmentMode !== "observational" && !kinds.has("workspace")) {
+    throw new Error("Capture-qualified verified input is missing required workspace evidence.");
+  }
   if (assessmentMode !== "observational" && !input.records.some(isVerifierRecord)) {
     throw new Error("Capture-qualified verified input is missing required verifier evidence.");
   }
@@ -843,7 +846,8 @@ async function assertPersistedStructuralQualification(root: string, manifest: Ru
     MAX_EVIDENCE_BYTES,
   )));
   const structural = asRecord(report?.structuralQualification);
-  if (structural?.status === "unqualified" || structural?.semanticAnalysisUsable === false) {
+  if (structural?.semanticAnalysisUsable === false
+    || structural?.status === "unqualified" && structural?.semanticAnalysisUsable !== true) {
     throw new Error("Agent SDK normalization rejects the persisted unqualified structural capture report.");
   }
 }

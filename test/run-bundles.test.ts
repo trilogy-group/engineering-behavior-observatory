@@ -290,7 +290,33 @@ test("snapshot preserves real AppleDouble files and long archive paths", async (
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("workspace capture rejects absolute, escaping, dangling and cyclic links", async () => {
+test("workspace capture relocates contained absolute links without modifying the source", async () => {
+  for (const snapshot of [false, true]) {
+    const root = mkdtempSync(join(tmpdir(), "ebo-absolute-links-"));
+    try {
+      const fixture = createWorkspaceFixture(root, true);
+      const target = join(fixture.final, "changed.txt");
+      symlinkSync(target, join(fixture.final, "link"));
+      if (snapshot) chmodSync(target, 0o666);
+      await digestWorkspaceTree(fixture.final);
+      const assembler = await createRunBundleAssembler(definition(join(root, "bundle"), "absolute-link"));
+      const captured = await assembler.captureWorkspaceOutcome({ startPath: fixture.start, finalPath: fixture.final });
+      assert.equal(captured.format, snapshot ? "snapshot" : "patch");
+      assert.equal(readlinkSync(join(fixture.final, "link")), target);
+      const applied = join(root, "restored");
+      cpSync(fixture.start, applied, { recursive: true });
+      const result = snapshot
+        ? spawnSync("tar", ["-xzpf", join(root, "bundle", captured.descriptor.relativePath), "-C", applied])
+        : spawnSync("git", ["apply", "--binary", join(root, "bundle", captured.descriptor.relativePath)], { cwd: applied });
+      assert.equal(result.status, 0, result.stderr.toString());
+      const restored = snapshot ? join(applied, "workspace") : applied;
+      assert.equal(readlinkSync(join(restored, "link")), "changed.txt");
+      assert.equal(await digestWorkspaceTree(restored), captured.treeDigest);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
+test("workspace capture rejects external absolute, escaping, dangling and cyclic links", async () => {
   for (const target of ["/tmp", "../outside", "missing", "link", "hop/file"]) {
     const root = mkdtempSync(join(tmpdir(), "ebo-unsafe-link-"));
     try {

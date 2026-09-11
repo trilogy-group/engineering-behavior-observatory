@@ -234,7 +234,7 @@ async function hashWorkspaceDirectory(
         const rel = relative(root, candidate);
         return !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
       };
-      if (isAbsolute(target) || !contained(resolve(dirname(path), target))) {
+      if (!isAbsolute(target) && !contained(resolve(dirname(path), target))) {
         throw new Error(`Workspace symbolic link escapes its root at "${relativePath}".`);
       }
       let resolved: string;

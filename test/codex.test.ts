@@ -860,8 +860,10 @@ test("keeps native evidence and the source workspace when post-start packaging f
       configuration: fakeConfiguration("success"),
       prompt: "Perform the disposable task.",
     });
-    assert.equal(result.attempt.classification.kind, "infrastructure-failure");
+    assert.equal(result.attempt.classification.kind, "completed");
     assert.equal(result.qualification.status, "unqualified");
+    assert.equal(result.qualification.semanticAnalysisUsable, true);
+    assert.equal(result.manifest.terminal.state, "completed");
     assert.equal(await readFile(join(workspace, "codex-result.txt"), "utf8"), "done\n");
     assert.ok(result.manifest.evidence.some(({ kind }) => kind === "session"));
     assert.equal(result.manifest.evidence.some(({ kind }) => kind === "workspace"), false);

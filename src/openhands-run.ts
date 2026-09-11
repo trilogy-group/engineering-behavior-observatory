@@ -200,7 +200,7 @@ export async function captureOpenHandsAgentServerRun(
       } catch (error) {
         if (workspaceOutcome === undefined) {
           workspaceCaptureError = error instanceof Error ? error.message : String(error);
-          throw error;
+          return; // Preserve native completion and the source for later capture recovery.
         }
       }
       await options.workspace.cleanup?.(context);
@@ -391,7 +391,8 @@ export async function captureOpenHandsAgentServerRun(
   const retainedWorkspacePath = workspace?.status === "ready" && workspaceOutcome === undefined
     ? workspace.path
     : undefined;
-  if (!["qualified", "qualified-with-gaps"].includes(qualification.status)) {
+  if (!qualification.semanticAnalysisUsable || Object.entries(qualification.dimensions)
+    .some(([dimension, result]) => dimension !== "workspace" && result.status === "unqualified")) {
     return {
       attempt,
       manifest,
@@ -405,7 +406,8 @@ export async function captureOpenHandsAgentServerRun(
     await validateUniformEvents(normalized.events, {
       resolve: (reference) => resolvesCaptureReference(capture!, reference),
     });
-    return { attempt, manifest, qualification, capture, normalized };
+    return { attempt, manifest, qualification, capture, normalized,
+      ...(retainedWorkspacePath === undefined ? {} : { retainedWorkspacePath }) };
   } catch (error) {
     return {
       attempt,

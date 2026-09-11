@@ -1159,11 +1159,11 @@ test("preserves and reports the source workspace when workspace evidence capture
     assert.equal(callerCleanupRan, false);
     assert.equal(result.retainedWorkspacePath, final);
     assert.equal(existsSync(join(final, "result.txt")), true);
-    assert.equal(result.attempt.record.cleanup?.status, "failed");
-    assert.equal(result.attempt.classification.kind, "infrastructure-failure");
+    assert.equal(result.attempt.record.cleanup?.status, "completed");
+    assert.equal(result.attempt.classification.kind, "completed");
     assert.equal(result.manifest.terminal.workspaceArtifactId, undefined);
     assert.equal(result.manifest.evidence.some(({ kind }) => kind === "workspace"), false);
-    assert.equal(result.normalized, undefined);
+    assert.ok(result.normalized);
     const reportDescriptor = result.manifest.evidence.find(({ kind }) => kind === "capture-report")!;
     const report = JSON.parse(readFileSync(join(definition.bundleRoot, reportDescriptor.relativePath), "utf8")) as {
       missingEvidence: Array<{ kind: string; detail?: string }>;

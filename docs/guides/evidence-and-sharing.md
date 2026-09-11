@@ -41,6 +41,20 @@ events can still explain a stop. Keep terminal state, infrastructure failure,
 and capture quality separate. Preserve `retainedWorkspacePath` when outcome
 packaging failed; that path is a recovery location, not qualified evidence.
 
+A workspace packaging error does not change a completed observational execution
+into a model or infrastructure failure. EBO omits the unpublishable workspace
+artifact, retains the source for recovery, and records the outcome gap. Native
+events, hooks, and telemetry remain available. Normalization and behavior analysis
+can use qualified semantic evidence even when the workspace dimension is
+unqualified; claims about missing work-product evidence must abstain. Verified
+tasks still require their verifier and workspace binding.
+
+Overall bundle qualification can remain `unqualified` because an outcome is
+missing. Consumers should inspect `semanticAnalysisUsable` and the individual
+qualification dimensions instead of treating that aggregate as a pipeline-wide
+fatal error. Export independently enforces its sanitization and sharing policy;
+successful capture is not permission to share.
+
 Capture reports retain packaging exceptions as `workspace-capture-error`
 missing-evidence entries. Inspect the detail before retrying capture against a
 retained workspace. A later successful capture is recovery evidence; it does
@@ -57,10 +71,13 @@ unless a fingerprint was recorded then. Do not count the recovery as another
 model trial or as an independent sample.
 
 Workspace outcomes preserve relative symbolic links whose lexical targets and
-resolved referents stay inside the workspace. Link text is hashed and copied
-verbatim, not replaced by the referent's bytes. Empty-directory omission keeps
-directories referenced by links. Absolute, escaping, dangling and
-cyclic links fail capture. Patch application or snapshot extraction must still
+resolved referents stay inside the workspace. Contained absolute links are valid:
+the derived capture rewrites them as relative links to their resolved in-workspace
+targets, so the result survives relocation. The source workspace is not changed.
+Relative link text is preserved, not replaced by the referent's bytes.
+Empty-directory omission keeps directories referenced by links. External,
+dangling and cyclic links prevent workspace artifact packaging, not native event
+capture. Patch application or snapshot extraction must still
 reproduce the resulting tree digest. This does not relax task-archive admission
 or verifier sandbox rules.
 

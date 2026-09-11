@@ -159,7 +159,10 @@ export async function captureClaudeAgentSdkRun(
       return workspace;
     },
     cleanup: async (context) => {
-      if (workspace?.status === "ready") await captureWorkspace();
+      // Retain the source on packaging failure; the assembler records the outcome gap.
+      if (workspace?.status === "ready") {
+        try { await captureWorkspace(); } catch { return; }
+      }
       await options.workspace.cleanup?.(context);
     },
   };

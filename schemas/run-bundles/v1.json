@@ -179,7 +179,6 @@
         {
           "if": { "properties": { "state": { "const": "completed" } }, "required": ["state"] },
           "then": {
-            "required": ["workspaceArtifactId"],
             "properties": {
               "failureClass": { "const": "none" },
               "stopReason": { "const": "none" }

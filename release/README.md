@@ -5,6 +5,7 @@ For downloads and published artifacts, see
 
 | Version | Changes and verification | Support boundary |
 | :--- | :--- | :--- |
+| [0.2.6](0.2.6/README.md) | Portable contained absolute links; isolate workspace packaging failures from native completion and semantic analysis | [Known limitations](0.2.6/KNOWN_LIMITATIONS.md) |
 | [0.2.5](0.2.5/README.md) | Preserve contained workspace symlinks and macOS AppleDouble files | [Known limitations](0.2.5/KNOWN_LIMITATIONS.md) |
 | [0.2.4](0.2.4/README.md) | Stream workspace snapshots and integrity checks; support archives up to 1 GiB | [Known limitations](0.2.4/KNOWN_LIMITATIONS.md) |
 | [0.2.3](0.2.3/README.md) | Retain workspace capture errors in partial-bundle reports | [Known limitations](0.2.3/KNOWN_LIMITATIONS.md) |

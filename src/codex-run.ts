@@ -205,7 +205,10 @@ export async function captureCodexAppServerRun(
       return workspace;
     },
     cleanup: async (context) => {
-      if (workspace?.status === "ready") await captureWorkspace();
+      // Packaging gaps must not rewrite native completion or delete recoverable work.
+      if (workspace?.status === "ready") {
+        try { await captureWorkspace(); } catch { return; }
+      }
       await options.workspace.cleanup?.(context);
     },
   };
