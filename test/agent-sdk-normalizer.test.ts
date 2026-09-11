@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -366,7 +366,8 @@ test("produces stable event identities and ordering on repeated normalization", 
   ]);
 });
 
-test("loads a retained bundle only after structural qualification and validates every reference", async () => {
+for (const missingWorkspace of [false, true]) {
+test(`loads qualified semantic evidence with missing workspace=${missingWorkspace} and validates every reference`, async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-agent-sdk-normalizer-"));
   const start = join(root, "start");
   const final = join(root, "final");
@@ -375,6 +376,7 @@ test("loads a retained bundle only after structural qualification and validates 
   writeFileSync(join(start, "result.txt"), "before\n");
   cpSync(start, final, { recursive: true, preserveTimestamps: true });
   writeFileSync(join(final, "result.txt"), "after\n");
+  if (missingWorkspace) symlinkSync("../outside", join(final, "unsafe-link"));
   const capabilities = probeClaudeAgentSdkCapabilities();
   const definition: RunBundleDefinition = {
     bundleRoot,
@@ -418,6 +420,11 @@ test("loads a retained bundle only after structural qualification and validates 
       query,
     });
     assert.ok(captured.qualification.semanticAnalysisUsable);
+    assert.equal(captured.manifest.terminal.state, "completed");
+    if (missingWorkspace) {
+      assert.equal(captured.qualification.dimensions.workspace.status, "unqualified");
+      assert.equal(captured.manifest.evidence.some(({ kind }) => kind === "workspace"), false);
+    }
 
     const manifestPath = join(bundleRoot, "manifest.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
@@ -466,6 +473,7 @@ test("loads a retained bundle only after structural qualification and validates 
     rmSync(root, { recursive: true, force: true });
   }
 });
+}
 
 function readFixture(name: "complete" | "partial" | "beta-span-missing"): NormalizationInput<AgentSdkNativeRecord> {
   if (name !== "beta-span-missing") {

@@ -1,9 +1,9 @@
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { cp, lstat, mkdir, mkdtemp, readdir, realpath, rm, rmdir, utimes, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readdir, readlink, realpath, rm, rmdir, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -493,7 +493,30 @@ async function withWorkspaceOutcomeProjection<T>(
       throw new Error(`Workspace outcome exclusion "${name}" is invalid.`);
     }
   }
-  if (exclusions.length === 0 && options.respectGitignore !== true && options.omitEmptyDirectories !== true) {
+  const absoluteLinks: Array<{ path: string; target: string }> = [];
+  const sourceRoot = await realpath(finalPath);
+  const contained = (path: string): boolean => {
+    const rel = relative(sourceRoot, path);
+    return !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
+  };
+  const collectLinks = async (directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (!exclusions.includes(entry.name)) await collectLinks(path);
+      } else if (entry.isSymbolicLink()) {
+        const target = await readlink(path);
+        if (!isAbsolute(target)) continue;
+        const resolvedTarget = await realpath(path);
+        if (!contained(resolvedTarget)) {
+          throw new Error(`Workspace symbolic link escapes its root at "${relative(sourceRoot, path)}".`);
+        }
+        absoluteLinks.push({ path: relative(sourceRoot, path), target: relative(dirname(path), resolvedTarget) || "." });
+      }
+    }
+  };
+  await collectLinks(sourceRoot);
+  if (absoluteLinks.length === 0 && exclusions.length === 0 && options.respectGitignore !== true && options.omitEmptyDirectories !== true) {
     return use(startPath, finalPath);
   }
   await assertNoWorkspaceHardLinks(finalPath, new Set(exclusions));
@@ -508,6 +531,12 @@ async function withWorkspaceOutcomeProjection<T>(
       filter: async (source) => source === finalPath
         || !await isExcludedWorkspaceDirectory(finalPath, source, exclusions),
     });
+    // Only the derived capture is relocated; native workspace link text is untouched.
+    for (const link of absoluteLinks) {
+      const path = join(projectedPath, link.path);
+      await rm(path);
+      await symlink(link.target, path);
+    }
     if (options.respectGitignore === true) await removeIgnoredWorkspaceEntries(startPath, projectedPath);
     if (options.omitEmptyDirectories === true) await removeEmptyDirectories(projectedPath);
     await restoreProjectedDirectoryTimestamps(finalPath, projectedPath);
