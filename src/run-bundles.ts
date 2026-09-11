@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { cp, lstat, mkdir, mkdtemp, readdir, rm, rmdir, utimes, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readdir, realpath, rm, rmdir, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -502,6 +502,7 @@ async function withWorkspaceOutcomeProjection<T>(
   try {
     await cp(finalPath, projectedPath, {
       recursive: true,
+      verbatimSymlinks: true,
       preserveTimestamps: true,
       force: false,
       filter: async (source) => source === finalPath
@@ -931,7 +932,7 @@ async function workspacePatchApplies(startingWorkspacePath: string, patch: Buffe
   const applied = join(temporaryRoot, "workspace");
   const patchPath = join(temporaryRoot, "workspace.patch");
   try {
-    await cp(resolve(startingWorkspacePath), applied, { recursive: true, preserveTimestamps: true, force: false });
+    await cp(resolve(startingWorkspacePath), applied, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true, force: false });
     if (patch.length > 0) {
       await writeFile(patchPath, patch, { flag: "wx", mode: 0o600 });
       await execFileAsync("git", ["apply", "--check", "--binary", patchPath], { cwd: applied });
@@ -1169,7 +1170,7 @@ async function removeIgnoredWorkspaceEntries(startPath: string, finalPath: strin
   const globalExcludes = join(temporaryRoot, "global-excludes");
   try {
     await writeFile(globalExcludes, "");
-    await cp(startPath, baseline, { recursive: true, preserveTimestamps: true, force: false });
+    await cp(startPath, baseline, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true, force: false });
     await execFileAsync("git", ["init", "--quiet"], { cwd: baseline });
     await execFileAsync("git", ["add", "--force", "--all"], { cwd: baseline });
     for (const relativePath of await ignoredWorkspacePaths(baseline, finalPath, globalExcludes)) {
@@ -1243,11 +1244,26 @@ async function isExcludedWorkspaceDirectory(
   return false;
 }
 
-async function removeEmptyDirectories(directory: string, root: string = directory): Promise<void> {
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (entry.isDirectory()) await removeEmptyDirectories(join(directory, entry.name), root);
+async function removeEmptyDirectories(directory: string, root: string = directory, targets?: Set<string>): Promise<void> {
+  if (targets === undefined) {
+    targets = new Set<string>();
+    async function collect(path: string): Promise<void> {
+      for (const entry of await readdir(path, { withFileTypes: true })) {
+        const child = join(path, entry.name);
+        if (entry.isDirectory()) await collect(child);
+        else if (entry.isSymbolicLink()) {
+          // Omission must not turn a valid link into a dangling one. Invalid
+          // links are rejected later by workspace hashing; no content is read.
+          try { targets!.add(await realpath(child)); } catch { /* validated by hashing */ }
+        }
+      }
+    }
+    await collect(directory);
   }
-  if (directory !== root && (await readdir(directory)).length === 0) await rmdir(directory);
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (entry.isDirectory()) await removeEmptyDirectories(join(directory, entry.name), root, targets);
+  }
+  if (directory !== root && !targets.has(await realpath(directory)) && (await readdir(directory)).length === 0) await rmdir(directory);
 }
 
 async function restoreProjectedDirectoryTimestamps(source: string, projected: string): Promise<void> {
@@ -1270,7 +1286,7 @@ async function workspacePatch(startPath: string, finalPath: string, finalTreeDig
   const applied = join(temporaryRoot, "applied");
   const patchPath = join(temporaryRoot, "workspace.patch");
   try {
-    await cp(startPath, worktree, { recursive: true, preserveTimestamps: true, force: false });
+    await cp(startPath, worktree, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true, force: false });
     await execFileAsync("git", ["init", "--quiet"], { cwd: worktree });
     await execFileAsync("git", ["add", "--force", "--all"], { cwd: worktree });
     // A tree is enough for the diff. A commit can spawn detached maintenance
@@ -1281,7 +1297,7 @@ async function workspacePatch(startPath: string, finalPath: string, finalTreeDig
     }
     for (const entry of await readdir(finalPath)) {
       if (entry === ".git") throw new Error("Workspace patches cannot retain Git administrative state.");
-      await cp(join(finalPath, entry), join(worktree, entry), { recursive: true, preserveTimestamps: true, force: false });
+      await cp(join(finalPath, entry), join(worktree, entry), { recursive: true, verbatimSymlinks: true, preserveTimestamps: true, force: false });
     }
     await execFileAsync("git", ["add", "--force", "--intent-to-add", "--all"], { cwd: worktree });
     let stdout: string;
@@ -1295,12 +1311,14 @@ async function workspacePatch(startPath: string, finalPath: string, finalTreeDig
     }
     const patch = Buffer.from(stdout);
 
-    await cp(startPath, applied, { recursive: true, preserveTimestamps: true, force: false });
+    await cp(startPath, applied, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true, force: false });
     if (patch.length > 0) {
       await writeFile(patchPath, patch, { flag: "wx", mode: 0o600 });
       await execFileAsync("git", ["apply", "--binary", patchPath], { cwd: applied });
     }
-    const appliedTreeDigest = await digestWorkspaceTree(applied);
+    // Git omits empty directories, including legitimate link targets. An
+    // invalid reconstructed tree is a patch limitation, so use the snapshot.
+    const appliedTreeDigest = await digestWorkspaceTree(applied).catch(() => undefined);
     if (appliedTreeDigest !== finalTreeDigest) {
       return undefined;
     }
@@ -1318,8 +1336,8 @@ async function workspaceSnapshot(finalPath: string, finalTreeDigest: DigestStrin
   const extracted = join(temporaryRoot, "extracted");
   try {
     await mkdir(snapshotParent);
-    await cp(finalPath, snapshotRoot, { recursive: true, preserveTimestamps: true, force: false });
-    const child = spawn(TAR_COMMAND, ["-czf", "-", "-C", snapshotParent, "workspace"], { stdio: ["ignore", "pipe", "pipe"] });
+    await cp(finalPath, snapshotRoot, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true, force: false });
+    const child = spawn(TAR_COMMAND, [...(process.platform === "darwin" ? ["--no-mac-metadata"] : []), "-czf", "-", "-C", snapshotParent, "workspace"], { stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
     child.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString("utf8")).slice(-8192); });
     const exited = new Promise<void>((resolveExit, reject) => {
@@ -1339,7 +1357,15 @@ async function workspaceSnapshot(finalPath: string, finalTreeDigest: DigestStrin
       await Promise.allSettled([exited, streamed]);
     }
     await mkdir(extracted, { mode: 0o700 });
-    await execFileAsync(TAR_COMMAND, ["-xzpf", snapshotPath, "-C", extracted]);
+    // macOS libarchive consumes genuine ._* AppleDouble files even when its
+    // metadata flags are disabled. Native pax preserves them with copyfile off.
+    if (process.platform === "darwin") {
+      await execFileAsync("/bin/pax", ["-rz", "-p", "p", "-f", snapshotPath], {
+        cwd: extracted, env: { ...process.env, COPYFILE_DISABLE: "1" },
+      });
+    } else {
+      await execFileAsync(TAR_COMMAND, ["-xzpf", snapshotPath, "-C", extracted]);
+    }
     if (await digestWorkspaceTree(join(extracted, "workspace")) !== finalTreeDigest) {
       throw new Error("Bounded workspace snapshot cannot reproduce the final workspace tree.");
     }
