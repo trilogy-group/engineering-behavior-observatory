@@ -10,6 +10,9 @@ dist/
 *.log
 .DS_Store
 
+# Development specs and other artifacts
+plans/
+
 # Local credentials
 .env
 .env.*
