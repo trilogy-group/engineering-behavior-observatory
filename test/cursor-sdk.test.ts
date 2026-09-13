@@ -150,6 +150,39 @@ test("retains a terminal transport error after native recovery without creating 
   }
 });
 
+test("snapshots cumulative usage without relying on terminal success", async () => {
+  for (const behavior of [{}, { waitError: true }, { terminalError: true }, { cancelledResult: true }, { omitUsage: true }, { usageError: true }]) {
+    const fixture = createCursorFixture();
+    try {
+      const summary = await runCursorSdkQueueEntry({ ...fixture, apiKey: "fixture-key", modelLister: fakeModelLister,
+        agentFactory: fakeAgentFactory(behavior) });
+      const records = readFileSync(join(summary.bundlePath, "native/session.jsonl"), "utf8")
+        .split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      const snapshots = records.filter((record) => record.channel === "usage-snapshot");
+      if (behavior.usageError) {
+        assert.equal(snapshots.length, 0);
+        assert.ok(records.some((record) => record.channel === "error" && record.payload.stage === "usage-snapshot"));
+        assert.equal(summary.captureQualification, "unqualified");
+      } else {
+        assert.equal(snapshots.length, 1);
+        assert.equal(snapshots[0].agentId, AGENT_ID);
+        assert.equal(snapshots[0].runId, NATIVE_RUN_ID);
+        assert.equal(snapshots[0].payload.source, "run.usage");
+        assert.equal(snapshots[0].payload.resourceSemantics, "cumulative");
+        assert.equal(snapshots[0].payload.status, behavior.omitUsage ? "unavailable" : "available");
+        assert.equal(snapshots[0].payload.usage?.totalTokens, behavior.omitUsage ? undefined : 9);
+      }
+      if (behavior.waitError) {
+        assert.equal(summary.classification, "infrastructure-failure");
+        assert.ok(records.some((record) => record.channel === "error" && record.payload.stage === "wait"));
+      }
+      assert.ok(records.some((record) => record.channel === "cleanup" && record.payload.status === "completed"));
+    } finally {
+      rmSync(fixture.parent, { recursive: true, force: true });
+    }
+  }
+});
+
 test("requires an exact caller-selected catalog model before creating an attempt", async () => {
   const fixture = createCursorFixture();
   let creates = 0;
@@ -162,6 +195,36 @@ test("requires an exact caller-selected catalog model before creating an attempt
     }), /not an exact available catalog model/u);
     assert.equal(creates, 0);
     assert.equal(readdirSync(fixture.workspaceRoot).length, 0);
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
+test("snapshots usage when the terminal wait is interrupted", async () => {
+  const fixture = createCursorFixture();
+  const controller = new AbortController();
+  try {
+    const summary = await runCursorSdkQueueEntry({ ...fixture, apiKey: "fixture-key", modelLister: fakeModelLister,
+      signal: controller.signal, agentFactory: async (options) => {
+        const agent = await fakeAgentFactory()(options);
+        const send = agent.send.bind(agent);
+        agent.send = async (...args) => {
+          const run = await send(...args);
+          const wait = run.wait.bind(run);
+          run.wait = async () => {
+            await wait();
+            controller.abort();
+            return await new Promise<RunResult>(() => {});
+          };
+          return run;
+        };
+        return agent;
+      } });
+    assert.equal(summary.classification, "interrupted");
+    const records = readFileSync(join(summary.bundlePath, "native/session.jsonl"), "utf8")
+      .split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    assert.equal(records.filter((record) => record.channel === "terminal").length, 0);
+    assert.equal(records.find((record) => record.channel === "usage-snapshot").payload.usage.totalTokens, 9);
   } finally {
     rmSync(fixture.parent, { recursive: true, force: true });
   }
@@ -570,6 +633,7 @@ function fakeAgentFactory(behavior: {
   cleanupError?: boolean;
   billingError?: boolean;
   omitUsage?: boolean;
+  usageError?: boolean;
   waitError?: boolean;
   terminalError?: boolean;
   cancelledResult?: boolean;
@@ -674,7 +738,10 @@ function fakeAgentFactory(behavior: {
           onDidChangeStatus() { return () => undefined; },
           result: undefined,
           error: undefined,
-          usage: result.usage,
+          get usage() {
+            if (behavior.usageError) throw new Error("injected usage getter failure");
+            return behavior.omitUsage ? undefined : result.usage;
+          },
           durationMs: result.durationMs,
           git: undefined,
           createdAt: 1,

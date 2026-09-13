@@ -123,11 +123,18 @@ cannot produce qualified-complete capture.
 | `run.stream()` | lifecycle, messages, tools, per-turn usage | authoritative message/tool/usage projection |
 | `onDelta` / `onStep` | lower-level deltas, nested updates, step snapshots | retained as overlap evidence; not counted again |
 | `run.wait()` | owned terminal status, duration, cumulative usage | authoritative outcome; cumulative usage is not re-added |
+| `run.usage` | cumulative finalization snapshot, including failed/interrupted runs | retained separately; not added to per-turn totals |
 | `run.conversation()` | durable conversation readback before disposal | retained as history; not counted again |
 | `agent.getUsage()` | eventually consistent billing scope/read time | separate billing evidence; absence does not invalidate semantic capture |
 | `JsonlLocalAgentStore` | agents, runs, run events, checkpoints | authoritative native persistence; not counted again |
 
 Every callback value is JSON-snapshotted at receipt and writes are serialized.
+Finalization reads `run.usage` without waiting for a successful terminal result
+or making another provider request. The `usage-snapshot` record identifies its
+source, cumulative semantics, and availability. An unavailable value is not
+zero. A getter or recorder failure is recorded as a capture gap without
+replacing the original terminal error or skipping cleanup. Abrupt process
+termination cannot guarantee a final snapshot.
 Unknown tool payloads remain in restricted native evidence. Portable export
 recursively removes thinking/reasoning content and checkpoint blob bytes, then
 redacts secrets, local identifiers, paths, and source correlations. Restricted

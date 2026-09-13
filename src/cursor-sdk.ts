@@ -75,7 +75,7 @@ const CURSOR_NATIVE_SCHEMA_VERSION = "ebo.cursor-native-record/v1";
 const MAX_NATIVE_RECORD_BYTES = 16 * 1024 * 1024;
 const STREAM_TYPES = ["assistant", "request", "status", "system", "task", "thinking", "tool_call", "usage", "user"] as const;
 const NATIVE_TYPES = [
-  "configuration", "agent-created", "run-created", "delta", "step", "terminal", "history", "billing", "error", "cleanup",
+  "configuration", "agent-created", "run-created", "delta", "step", "terminal", "history", "billing", "usage-snapshot", "error", "cleanup",
   ...STREAM_TYPES.map((type) => `stream:${type}`),
   "stream:unknown", "store:agent", "store:run", "store:run-event", "store:checkpoint", "store:unknown",
 ] as const;
@@ -582,6 +582,20 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
     }).catch(() => undefined);
   } finally {
     callbacksOpen = false;
+    if (agent !== undefined && run !== undefined) {
+      try {
+        const usage = run.usage;
+        await options.writer.record("usage-snapshot", {
+          source: "run.usage", resourceSemantics: "cumulative", phase: "finalization",
+          status: usage === undefined ? "unavailable" : "available",
+          ...(usage === undefined ? {} : { usage: snapshotJson(usage) }),
+        }, ids(agent, run));
+      } catch (error) {
+        captureError ??= `usage-snapshot: ${errorMessage(error)}`;
+        options.errors.push(`usage-snapshot: ${errorMessage(error)}`);
+        await options.writer.record("error", { stage: "usage-snapshot", message: errorMessage(error) }, ids(agent, run)).catch(() => undefined);
+      }
+    }
     if (agent !== undefined) {
       try {
         await disposeAgent();
@@ -1160,6 +1174,7 @@ function unmappedCursorReason(record: CursorNativeRecord): string {
   if (type === "delta" || type === "step") return "Detailed callback evidence overlaps the authoritative stream projection and remains native.";
   if (type === "history" || type.startsWith("store:")) return "Durable native history remains authoritative evidence and is not counted as a second operation/message source.";
   if (type === "billing") return "Eventually consistent billing readback remains separate from per-turn token observations.";
+  if (type === "usage-snapshot") return "Cumulative run.usage at finalization is retained separately, not added to per-turn token observations.";
   if (type === "stream:thinking") return "Hidden reasoning remains restricted native evidence and is never projected as semantic content.";
   return "Cursor native record is retained explicitly without a supported semantic mapping.";
 }
