@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, constants, copyFileSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, statSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, constants, copyFileSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, rmSync, statSync, writeSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 
 import { digestBytes, digestMetadata } from "../artifacts.js";
@@ -40,6 +40,7 @@ export type HarborVerifierProfile = {
   timeoutSec: number;
   environmentMode: string | null;
   collectCount: number;
+  hasSharedSteps?: boolean;
 };
 
 export type HarborTaskSummary = {
@@ -62,7 +63,8 @@ export type HarborUnsupportedReasonCode =
   | "unsupported-gpu"
   | "unsupported-tpu"
   | "unsupported-mcp-services"
-  | "unsupported-compose-sidecars";
+  | "unsupported-compose-sidecars"
+  | "unsupported-shared-multistep-verifier";
 
 export type HarborTaskInspection = {
   classification: "valid" | "invalid" | "unsupported";
@@ -210,6 +212,9 @@ export async function inspectHarborTask(taskDir: string, options: InspectHarborT
   if (summary.environment.composeServices !== null && summary.environment.composeServices.length > 1) {
     unsupported.push("unsupported-compose-sidecars");
   }
+  if (assessmentMode === "verified" && summary.hasSteps && summary.verifier.hasSharedSteps !== false) {
+    unsupported.push("unsupported-shared-multistep-verifier");
+  }
 
   if (assessmentMode === "verified" && !summary.hasTests && !summary.hasSteps) {
     return {
@@ -321,40 +326,49 @@ export async function snapshotHarborTask(
     return retained;
   }
 
-  const copyDigest = copyTaskTree(taskDir, snapshotRoot);
-  const manifest: HarborSnapshotManifest = {
-    schemaVersion: HARBOR_SNAPSHOT_MANIFEST_SCHEMA_VERSION,
-    taskSourceId: resolution.taskSourceId,
-    harborDigest: resolution.harborDigest,
-    harborName: resolution.harborName,
-    harborVersion: resolution.harborVersion,
-    harborType: resolution.harborType,
-    taskSchemaVersion: resolution.taskSchemaVersion,
-    harborPackageVersion: resolution.harborPackageVersion,
-    pathPolicy: HARBOR_PATH_POLICY_VERSION,
-    snapshotLocator: `${resolution.taskSourceId}/`,
-    sourceLocator: options.sourceLocator ?? null,
-    copyDigest,
-    packaging: { includedFiles: resolution.packaging.includedFiles, excludedFiles: resolution.packaging.excludedFiles },
-    assessmentMode: resolution.assessmentMode,
-  };
-
-  const verified = await resolveHarborTask(snapshotRoot, options);
-  if (verified.harborDigest !== resolution.harborDigest) {
-    throw new Error(`Snapshot identity "${verified.harborDigest}" does not match the resolved identity "${resolution.harborDigest}".`);
-  }
-  if (verified.resolutionDigest.value !== resolution.resolutionDigest.value) {
-    throw new Error("Snapshot resolution differs from the source resolution; the snapshot is not a faithful copy.");
-  }
-
   mkdirSync(resolve(snapshotsRoot), { recursive: true });
-  writeJsonIfAbsent(manifestPath, manifest);
-  const retained = await verifyHarborSnapshot(snapshotsRoot, resolution.taskSourceId, options);
-  if (retained.manifest.copyDigest.value !== manifest.copyDigest.value
-      || retained.manifest.harborDigest !== manifest.harborDigest) {
-    throw new Error("Snapshot manifest changed immediately after publication.");
+  mkdirSync(snapshotRoot);
+  let published = false;
+  try {
+    const copyDigest = copyTaskTree(taskDir, snapshotRoot);
+    const manifest: HarborSnapshotManifest = {
+      schemaVersion: HARBOR_SNAPSHOT_MANIFEST_SCHEMA_VERSION,
+      taskSourceId: resolution.taskSourceId,
+      harborDigest: resolution.harborDigest,
+      harborName: resolution.harborName,
+      harborVersion: resolution.harborVersion,
+      harborType: resolution.harborType,
+      taskSchemaVersion: resolution.taskSchemaVersion,
+      harborPackageVersion: resolution.harborPackageVersion,
+      pathPolicy: HARBOR_PATH_POLICY_VERSION,
+      snapshotLocator: `${resolution.taskSourceId}/`,
+      sourceLocator: options.sourceLocator ?? null,
+      copyDigest,
+      packaging: { includedFiles: resolution.packaging.includedFiles, excludedFiles: resolution.packaging.excludedFiles },
+      assessmentMode: resolution.assessmentMode,
+    };
+
+    const verified = await resolveHarborTask(snapshotRoot, options);
+    if (verified.harborDigest !== resolution.harborDigest) {
+      throw new Error(`Snapshot identity "${verified.harborDigest}" does not match the resolved identity "${resolution.harborDigest}".`);
+    }
+    if (verified.resolutionDigest.value !== resolution.resolutionDigest.value) {
+      throw new Error("Snapshot resolution differs from the source resolution; the snapshot is not a faithful copy.");
+    }
+
+    mkdirSync(resolve(snapshotsRoot), { recursive: true });
+    writeJsonIfAbsent(manifestPath, manifest);
+    published = true;
+    const retained = await verifyHarborSnapshot(snapshotsRoot, resolution.taskSourceId, options);
+    if (retained.manifest.copyDigest.value !== manifest.copyDigest.value
+        || retained.manifest.harborDigest !== manifest.harborDigest) {
+      throw new Error("Snapshot manifest changed immediately after publication.");
+    }
+    return retained;
+  } catch (error) {
+    if (!published) rmSync(snapshotRoot, { recursive: true, force: true });
+    throw error;
   }
-  return retained;
 }
 
 /**
@@ -459,6 +473,7 @@ function describeUnsupported(reasons: readonly HarborUnsupportedReasonCode[]): s
     "unsupported-tpu": "TPU resources are outside the initial execution profile",
     "unsupported-mcp-services": "Arbitrary MCP services are outside the initial execution profile",
     "unsupported-compose-sidecars": "Compose sidecar services are outside the initial execution profile",
+    "unsupported-shared-multistep-verifier": "Verified multi-step tasks require separate verifiers: shared verification leaves hidden tests visible to later candidate steps",
   };
   return `${reasons.map((reason) => labels[reason]).join("; ")}. The task files are preserved unchanged and remain usable by an ordinary Harbor installation.`;
 }
@@ -530,7 +545,7 @@ function digestTree(root: string): Digest {
   paths.sort();
   for (const path of paths) {
     const relativePath = relativePathBetween(root, path);
-    hash.update(`${relativePath}\0${digestFile(path).value}\n`);
+    hash.update(`${relativePath}\0${(statSync(path).mode & 0o111) !== 0 ? "x" : "-"}\0${digestFile(path).value}\n`);
   }
   return { algorithm: "sha256", value: hash.digest("hex") };
 }

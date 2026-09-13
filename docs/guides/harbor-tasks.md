@@ -69,6 +69,13 @@ The host Python extension launches an EBO **TypeScript worker inside Harbor's
 environment**. SDK tools and subprocesses therefore see its actual filesystem.
 Python carries control messages only; it does not capture or normalize sessions.
 
+Verified multi-step tasks require a separate verifier environment for every
+step. Harbor 0.23.0 leaves shared-verifier tests in the agent environment until
+the next verification phase, where a later candidate step could read them.
+EBO rejects that configuration during admission rather than changing the task.
+Single-step shared verification retains its weaker, candidate-modified trust
+boundary; it is not independent grading.
+
 ```sh
 npm run build
 node scripts/build-harbor-runtime.mjs study/config/runtime
@@ -173,6 +180,13 @@ Step-specific fixture identities prevent comparisons from pooling different
 steps as repetitions. Use these ordinary step bundles with the existing
 [evidence/export](evidence-and-sharing.md) and [Behavior Atlas](atlas.md) commands.
 The Harbor trial summary is not itself a native run bundle or a quality score.
+
+Native step bundles capture execution in observational mode, including when
+Harbor verifies the task afterward. The attached Harbor result retains the
+frozen task's assessment mode and original rewards. Corpus indexing reads that
+bound result as `assessmentMode` and keeps the child's mode as
+`captureAssessmentMode`, for both retained bundles and portable exports. EBO
+does not translate Harbor rewards into an invented pass/fail verifier result.
 
 Interrupted attempts retain available files and explicit gaps. If Docker itself
 becomes unreachable, environment cleanup and evidence download can fail; inspect

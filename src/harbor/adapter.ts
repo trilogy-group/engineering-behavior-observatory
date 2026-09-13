@@ -174,7 +174,7 @@ export type HarborInspectResult = {
     buildTimeoutSec: number;
     workdir: string | null;
   };
-  verifier: { timeoutSec: number; environmentMode: string | null; collectCount: number };
+  verifier: { timeoutSec: number; environmentMode: string | null; collectCount: number; hasSharedSteps?: boolean };
   hasSolution: boolean;
   hasTests: boolean;
   multiStepRewardStrategy: "mean" | "final" | null;
@@ -318,6 +318,7 @@ export async function createHarborAdapter(python: AdapterPython = defaultPython)
           workdir: environment.workdir === null || environment.workdir === undefined ? null : String(environment.workdir),
         },
         verifier: {
+          hasSharedSteps: verifier.hasSharedSteps !== false,
           timeoutSec: Number(verifier.timeoutSec ?? 0),
           environmentMode: verifier.environmentMode === null || verifier.environmentMode === undefined ? null : String(verifier.environmentMode),
           collectCount: Number(verifier.collectCount ?? 0),

@@ -74,6 +74,7 @@ def op_inspect(args):
         fail("task-invalid", f"{type(exc).__name__}: {exc}")
 
     config = task.config
+    from harbor.models.task.verifier_mode import task_has_any_shared_verifier
     env = config.environment
     steps = [
         {
@@ -118,6 +119,7 @@ def op_inspect(args):
             "workdir": env.workdir,
         },
         "verifier": {
+            "hasSharedSteps": task.has_steps and task_has_any_shared_verifier(config),
             "timeoutSec": config.verifier.timeout_sec,
             "environmentMode": (
                 config.verifier.environment_mode.value

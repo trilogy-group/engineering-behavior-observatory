@@ -51,6 +51,45 @@ const policy: PortableExportPolicy = {
   maxStringBytes: 8 * 1024,
 };
 
+test("Harbor task assessment is projected separately from bound native capture", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-harbor-corpus-"));
+  try {
+    const source = join(root, "source");
+    cpSync(join(fixtures, "complete"), source, { recursive: true });
+    const path = join(source, "manifest.json");
+    const manifest = JSON.parse(readFileSync(path, "utf8"));
+    const document = {
+      sourceKind: "harbor-task", assessmentMode: "observational",
+      task: { assessmentMode: "observational" },
+      nativeCapture: { runId: manifest.run.id, attemptId: manifest.attempt.id, assessmentMode: manifest.run.assessmentMode ?? "verified" },
+    };
+    const bytes = Buffer.from(JSON.stringify(document));
+    const descriptor = { id: "harbor-result", source: "harbor", kind: "diagnostic", authority: "outcome", mediaType: "text/plain",
+      sharingClass: "restricted", relativePath: "harbor-result.json", sizeBytes: bytes.length,
+      digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}` };
+    manifest.evidence.push(descriptor);
+    writeFileSync(join(source, descriptor.relativePath), bytes);
+    writeFileSync(path, JSON.stringify(manifest));
+    const exported = join(root, "exported");
+    await createPortableRunBundleExport({ sourceRoot: source, destinationRoot: exported, policy });
+    for (const dir of [source, exported]) {
+      const entry = buildCorpusIndex(dir).find(entry => entry.manifestPath === "manifest.json")!;
+      assert.equal(entry.assessmentMode, "observational", JSON.stringify(entry));
+      assert.equal(entry.captureAssessmentMode, "verified");
+      assert.deepEqual(entry.issues, []);
+    }
+    document.nativeCapture.runId = "different-run";
+    const mismatched = Buffer.from(JSON.stringify(document));
+    descriptor.sizeBytes = mismatched.length;
+    descriptor.digest = `sha256:${createHash("sha256").update(mismatched).digest("hex")}`;
+    writeFileSync(join(source, descriptor.relativePath), mismatched);
+    writeFileSync(path, JSON.stringify(manifest));
+    const entry = buildCorpusIndex(source).find(entry => entry.manifestPath === "manifest.json")!;
+    assert.equal(entry.assessmentMode, "verified");
+    assert.ok(entry.issues.some(issue => issue.field === "/evidence/harbor-result"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("builds, queries, and validates a deterministic mixed corpus index", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-corpus-"));
   const corpus = join(root, "corpus");

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { gzipSync as gzipModule } from "node:zlib";
 import { tmpdir } from "node:os";
@@ -213,6 +213,9 @@ test("snapshots are idempotent and tamper-evident", async () => {
   writeFileSync(tail, changed);
   await assert.rejects(() => snapshotHarborTask(taskDir, join(root, "snapshots"), { adapter }), /changed|tamper|different|digest/i);
   writeFileSync(tail, original);
+  chmodSync(tail, 0o755);
+  await assert.rejects(() => snapshotHarborTask(taskDir, join(root, "snapshots"), { adapter }), /changed|tamper|different|digest/i);
+  chmodSync(tail, 0o644 & ~process.umask());
 
   const manifestPath = join(root, "snapshots", `${first.manifest.taskSourceId}.snapshot-manifest.json`);
   const manifestBefore = readFileSync(manifestPath, "utf8");
@@ -227,6 +230,19 @@ test("snapshots are idempotent and tamper-evident", async () => {
 
 /* ------------------------------------ governance ------------------------------------ */
 
+test("a rejected copy does not poison a snapshot retry", async () => {
+  const root = tempRoot("snapshot-retry");
+  const task = writePrototypeTask(root);
+  const adapter = fakeAdapter();
+  symlinkSync("instruction.md", join(task, "z-link"));
+  const snapshots = join(root, "snapshots");
+  await assert.rejects(() => snapshotHarborTask(task, snapshots, { adapter }), /symbolic link/);
+  const id = (await resolveHarborTask(task, { adapter })).taskSourceId;
+  assert.equal(existsSync(join(snapshots, id)), false);
+  rmSync(join(task, "z-link"));
+  assert.equal((await snapshotHarborTask(task, snapshots, { adapter })).manifest.taskSourceId, id);
+});
+
 test("admission includes per-step hidden surfaces", async () => {
   const root = tempRoot("step-visibility");
   const task = writePrototypeTask(root);
@@ -240,6 +256,22 @@ test("admission includes per-step hidden surfaces", async () => {
   const { record } = await prepareHarborAdmission(root, task, { adapter });
   assert.equal(record.visibilityPolicy.verifier, "hidden");
   assert.equal(record.visibilityPolicy.solution, "hidden");
+});
+
+test("verified multi-step admission rejects shared or unknown verifier isolation", async () => {
+  const root = tempRoot("verifier-isolation");
+  const task = writePrototypeTask(root);
+  for (const hasSharedSteps of [true, false, undefined]) {
+    const adapter = fakeAdapter({ verified: true });
+    const inspect = adapter.inspect.bind(adapter);
+    adapter.inspect = async dir => {
+      const value = await inspect(dir);
+      return { ...value, hasSteps: true, verifier: { ...value.verifier, ...(hasSharedSteps === undefined ? {} : { hasSharedSteps }) } };
+    };
+    const result = await inspectHarborTask(task, { adapter, assessmentMode: "verified" });
+    assert.equal(result.classification, hasSharedSteps === false ? "valid" : "unsupported");
+    assert.equal((await inspectHarborTask(task, { adapter, assessmentMode: "observational" })).classification, "valid");
+  }
 });
 
 test("admission workflow: proposal carries no review; review binding is enforced; freeze is once-only", async () => {
@@ -357,6 +389,22 @@ function experimentFor(root: string, taskSourceId: string, execution: Record<str
   };
 }
 
+test("experiment task pins reach frozen identity checks", async () => {
+  const { root, taskSourceId, adapter } = await frozenStudyWithTask();
+  const config = experimentFor(root, taskSourceId, { environmentProfile: "local-fs-test", contextPolicy: "fresh" });
+  const condition = (config.taskSet as Record<string, Record<string, unknown>>).proto!;
+  const compile = () => compileHarborRunQueue(config as never, { studyRoot: root, adapter });
+  const queue = await compile();
+  condition.harborDigest = (queue.entries[0]!.task as { harborDigest: string }).harborDigest;
+  condition.assessmentMode = "observational";
+  await compile();
+  condition.assessmentMode = "verified";
+  await assert.rejects(compile, /assessment/i);
+  condition.assessmentMode = "observational";
+  condition.harborDigest = "0".repeat(64);
+  await assert.rejects(compile, /content changed/);
+});
+
 test("v2 queues compile, validate, and dispatch through the versioned reader", async () => {
   const { root, taskSourceId, adapter } = await frozenStudyWithTask();
   const queue = await compileHarborRunQueue(experimentFor(root, taskSourceId, { environmentProfile: "local-fs-test", contextPolicy: "fresh" }) as never, { studyRoot: root, adapter });
@@ -458,17 +506,20 @@ test("harbor step bundle definitions bind task, model, and harness identities", 
     evidence: { attemptRoot: "/a", harborDir: "/a/harbor", stepsDir: "/a/steps", workspaceDir: "/a/workspace", eboDir: "/a/ebo" },
   } as never;
   const step = { index: 1, name: "default", effectiveInstruction: "i", instructionDigest: digestOf("i"), minReward: null, verifierTimeoutSec: 60 } as never;
-  const definition = harborStepBundleDefinition(prepared, step, "/bundle", {
+  const details = {
     harnessId: "claude-agent-sdk",
     harnessVersion: "1.0.0",
     modelId: "model-a",
     configurationDigests: { model: "m", harness: "h", captureProfile: "c", nativeLimits: "l", nativeToolPolicy: "t" },
-  });
+  };
+  const definition = harborStepBundleDefinition(prepared, step, "/bundle", details);
   assert.equal(definition.run.task.id, "proto");
   assert.equal(definition.run.task.digest, `sha256:${"a".repeat(64)}`);
   assert.equal(definition.run.model.id, "model-a");
   assert.equal(definition.run.harness.id, "claude-agent-sdk");
   assert.match(definition.bundleId, /step-1$/);
+  const differentBudget = { ...(prepared as object), budget: { coordinatorWallClockMs: 120_000 } } as typeof prepared;
+  assert.notEqual(definition.configuration.budgetDigest, harborStepBundleDefinition(differentBudget, step, "/bundle", details).configuration.budgetDigest);
 });
 
 /* ------------------------------------ conversion report ------------------------------------ */

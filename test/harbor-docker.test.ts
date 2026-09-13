@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, copyF
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { createHarborAdapter, prepareHarborAdmission, preAdmissionDigestOf, admitHarborTask, freezeHarborTask, compileHarborRunQueue, runHarborBackedQueueEntry, digestBytes, createRetainedBehaviorEvidence, createPortableRunBundleExport, readPortableRunBundleExport } from "../src/index.js";
+import { buildCorpusIndex, createHarborAdapter, prepareHarborAdmission, preAdmissionDigestOf, admitHarborTask, freezeHarborTask, compileHarborRunQueue, runHarborBackedQueueEntry, digestBytes, createRetainedBehaviorEvidence, createPortableRunBundleExport, readPortableRunBundleExport } from "../src/index.js";
 
 const runtimeArchive = process.env.EBO_HARBOR_RUNTIME;
 test("official Harbor Docker Trial runs native Pi capture, fresh steps and verifier policy", { skip: !runtimeArchive, timeout: 600_000 }, async t => {
@@ -40,6 +40,7 @@ name = "two"
       put(join(task, "instruction.md"), "Work in the existing workspace.");
       for (const name of ["one", "two"]) {
         put(join(task, `steps/${name}/instruction.md`), "Create a text file for this step.");
+        if (mode !== "observational") put(join(task, `steps/${name}/tests/Dockerfile`), "FROM node:24.19.0-bookworm-slim\nCOPY . /tests\n");
         if (mode !== "observational") put(join(task, `steps/${name}/tests/test.sh`), "#!/bin/sh\nset -eu\n" + (mode === "missing" ? "exit 0\n" : `test -f /workspace/step-${name === "one" ? "1" : "2"}.txt\nprintf '${mode === "threshold" ? "0" : "1"}' > /logs/verifier/reward.txt\n`));
       }
       if (mode === "setup-failure") put(join(task, "steps/one/workdir/setup.sh"), "#!/bin/sh\nexit 7\n");
@@ -85,6 +86,12 @@ name = "two"
       const exported = join(root, "portable");
       await createPortableRunBundleExport({ sourceRoot: first, destinationRoot: exported, policy });
       await readPortableRunBundleExport(exported, policy);
+      for (const directory of [first, exported]) {
+        const entry = buildCorpusIndex(directory)[0]!;
+        assert.equal(entry.assessmentMode, assessmentMode);
+        assert.equal(entry.captureAssessmentMode, "observational");
+        assert.deepEqual(entry.issues, []);
+      }
     });
   }
 });

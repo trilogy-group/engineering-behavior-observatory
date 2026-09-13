@@ -58,7 +58,9 @@ export function harborStepBundleDefinition(
     run: {
       id: prepared.run.id,
       trial: { index: prepared.run.trialIndex ?? 1 },
-      assessmentMode: prepared.verifier.requested ? "verified" : "observational",
+      // This child captures execution only. The host attaches Harbor's actual
+      // assessment separately; no dummy verifier runs inside the native loop.
+      assessmentMode: "observational",
       task: { id: prepared.run.taskId, digest: `sha256:${prepared.task.harborDigest.replace(/^sha256:/, "")}` },
       fixture: {
         id: `harbor:${prepared.task.taskSourceId}:step-${step.index}`,

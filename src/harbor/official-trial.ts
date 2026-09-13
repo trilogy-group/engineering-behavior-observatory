@@ -134,9 +134,11 @@ export async function runOfficialHarborTrial(input: {
 async function attachHarborEvidence(bundle: string, content: unknown): Promise<void> {
   const path = join(bundle, "manifest.json");
   const manifest = JSON.parse(await readFile(path, "utf8")) as RunManifest;
-  const bytes = Buffer.from(JSON.stringify(content, null, 2) + "\n");
+  const bytes = Buffer.from(JSON.stringify({ ...(content as object),
+    nativeCapture: { bundleId: manifest.bundleId, runId: manifest.run.id, attemptId: manifest.attempt.id, assessmentMode: manifest.run.assessmentMode },
+  }, null, 2) + "\n");
   await writeFile(join(bundle, "harbor-result.json"), bytes, { flag: "wx", mode: 0o600 });
-  manifest.evidence.push({ id: "harbor-result", source: "harbor", kind: "diagnostic", authority: "outcome", mediaType: "application/json", sharingClass: "restricted", relativePath: "harbor-result.json", digest: `sha256:${digestBytes(bytes).value}`, sizeBytes: bytes.length });
+  manifest.evidence.push({ id: "harbor-result", source: "harbor", kind: "diagnostic", authority: "outcome", mediaType: "text/plain", sharingClass: "restricted", relativePath: "harbor-result.json", digest: `sha256:${digestBytes(bytes).value}`, sizeBytes: bytes.length });
   await writeFile(path, JSON.stringify(manifest, null, 2) + "\n", { mode: 0o600 });
   await chmod(path, 0o600);
 }

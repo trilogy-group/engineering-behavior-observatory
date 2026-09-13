@@ -138,6 +138,13 @@
             },
             "snapshotLocator": {
               "type": "string"
+            },
+            "harborDigest": {
+              "type": "string",
+              "pattern": "^(sha256:)?[a-f0-9]{64}$"
+            },
+            "assessmentMode": {
+              "enum": ["observational", "verified"]
             }
           }
         },
