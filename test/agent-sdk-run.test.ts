@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -172,7 +172,6 @@ test("retains interrupted, verifier-error, and capture/workspace-failure attempt
       writeFileSync(join(start, "result.txt"), "before\n");
       cpSync(start, final, { recursive: true, preserveTimestamps: true });
       writeFileSync(join(final, "result.txt"), "after\n");
-      if (scenario === "workspace-error") symlinkSync("../result.txt", join(final, "unsafe-link"));
       const capabilities = probeClaudeAgentSdkCapabilities();
       const definition: RunBundleDefinition = {
         bundleRoot,
@@ -198,6 +197,7 @@ test("retains interrupted, verifier-error, and capture/workspace-failure attempt
             : assistantMessage();
           if (scenario === "interrupted") controller.abort("fixture interruption");
           else if (scenario !== "capture-failure") yield sdkResult();
+          if (scenario === "workspace-error") rmSync(final, { recursive: true });
         },
       });
       try {
@@ -267,7 +267,7 @@ test("retains interrupted, verifier-error, and capture/workspace-failure attempt
         };
         assert.equal(report.structuralQualification.status, "unqualified");
         if (scenario === "workspace-error") {
-          assert.match(report.missingEvidence.find(({ kind }) => kind === "workspace")?.detail ?? "", /symbolic link/u);
+          assert.match(report.missingEvidence.find(({ kind }) => kind === "workspace")?.detail ?? "", /ENOENT/u);
         }
       } finally {
         rmSync(root, { recursive: true, force: true });

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -376,7 +376,6 @@ test(`loads qualified semantic evidence with missing workspace=${missingWorkspac
   writeFileSync(join(start, "result.txt"), "before\n");
   cpSync(start, final, { recursive: true, preserveTimestamps: true });
   writeFileSync(join(final, "result.txt"), "after\n");
-  if (missingWorkspace) symlinkSync("../outside", join(final, "unsafe-link"));
   const capabilities = probeClaudeAgentSdkCapabilities();
   const definition: RunBundleDefinition = {
     bundleRoot,
@@ -405,6 +404,7 @@ test(`loads qualified semantic evidence with missing workspace=${missingWorkspac
       } as HookInput, undefined, { signal: new AbortController().signal });
       yield assistantMessage();
       yield sdkResult();
+      if (missingWorkspace) rmSync(final, { recursive: true });
     },
   });
 

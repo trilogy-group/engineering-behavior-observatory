@@ -316,7 +316,7 @@ test("workspace capture relocates contained absolute links without modifying the
   }
 });
 
-test("workspace capture rejects external absolute, escaping, dangling and cyclic links", async () => {
+test("workspace capture omits external absolute, escaping, dangling and cyclic links", async () => {
   for (const target of ["/tmp", "../outside", "missing", "link", "hop/file"]) {
     const root = mkdtempSync(join(tmpdir(), "ebo-unsafe-link-"));
     try {
@@ -327,10 +327,45 @@ test("workspace capture rejects external absolute, escaping, dangling and cyclic
         symlinkSync("../outside", join(fixture.final, "hop"));
       }
       symlinkSync(target, join(fixture.final, "link"));
-      const assembler = await createRunBundleAssembler(definition(join(root, "bundle"), "unsafe-link"));
-      await assert.rejects(assembler.captureWorkspaceOutcome({ startPath: fixture.start, finalPath: fixture.final }), /symbolic link/);
+      const def = definition(join(root, "bundle"), "unsafe-link");
+      def.run.assessmentMode = "observational";
+      const assembler = await createRunBundleAssembler(def);
+      const outcome = await assembler.captureWorkspaceOutcome({ startPath: fixture.start, finalPath: fixture.final });
+      assert.ok(outcome.descriptor.sizeBytes);
+      assert.equal(readlinkSync(join(fixture.final, "link")), target);
+      const manifest = await assembler.finalize({ terminal: { state: "completed", failureClass: "none", stopReason: "none" } });
+      const report = JSON.parse(readFileSync(join(root, "bundle", manifest.evidence.find(e => e.kind === "capture-report")!.relativePath), "utf8"));
+      assert.ok(report.missingEvidence.some((e: { kind: string }) => e.kind === "workspace-omission"));
+      assertBundleValid(join(root, "bundle"));
     } finally { rmSync(root, { recursive: true, force: true }); }
   }
+});
+
+test("workspace capture excludes Git state and special files while retaining a verifiable outcome", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-git-omission-"));
+  try {
+    const fixture = createWorkspaceFixture(root, true);
+    mkdirSync(join(fixture.final, ".git"));
+    writeFileSync(join(fixture.final, ".git", "config"), "private Git config");
+    symlinkSync(".git/config", join(fixture.final, "git-config-link"));
+    assert.equal(spawnSync("mkfifo", [join(fixture.final, "pipe")]).status, 0);
+    const def = definition(join(root, "bundle"), "git-omission");
+    def.run.assessmentMode = "observational";
+    const assembler = await createRunBundleAssembler(def);
+    const captured = await assembler.captureWorkspaceOutcome({ startPath: fixture.start, finalPath: fixture.final });
+    assert.equal(captured.format, "patch");
+    const restored = join(root, "restored");
+    cpSync(fixture.start, restored, { recursive: true });
+    assert.equal(spawnSync("git", ["apply", "--binary", join(root, "bundle", captured.descriptor.relativePath)], { cwd: restored }).status, 0);
+    assert.equal(await digestWorkspaceTree(restored), captured.treeDigest);
+    assert.equal(readFileSync(join(fixture.final, ".git", "config"), "utf8"), "private Git config");
+    const manifest = await assembler.finalize({ terminal: { state: "completed", failureClass: "none", stopReason: "none" } });
+    const report = JSON.parse(readFileSync(join(root, "bundle", manifest.evidence.find(e => e.kind === "capture-report")!.relativePath), "utf8"));
+    assert.equal(report.missingEvidence.filter((e: { kind: string }) => e.kind === "workspace-omission").length, 3);
+    const qualification = await qualifyRunBundle(join(root, "bundle"), { startingWorkspacePath: fixture.start });
+    assert.equal(qualification.dimensions.workspace.status, "gap");
+    assertBundleValid(join(root, "bundle"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("workspace outcome excludes declared transient directory names", async () => {
@@ -412,17 +447,18 @@ test("workspace outcome omits empty directories without another projection filte
   }
 });
 
-test("workspace projection rejects hard-linked source evidence before copying it", async () => {
+test("workspace projection omits hard-linked source evidence before copying it", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-run-bundle-projected-hard-link-"));
   try {
     const fixture = createWorkspaceFixture(root);
     linkSync(join(fixture.final, "changed.txt"), join(fixture.final, "linked.txt"));
     const assembler = await createRunBundleAssembler(definition(join(root, "bundle"), "projected-hard-link"));
-    await assert.rejects(assembler.captureWorkspaceOutcome({
+    await assembler.captureWorkspaceOutcome({
       startPath: fixture.start,
       finalPath: fixture.final,
       omitEmptyDirectories: true,
-    }), /hard-linked file/);
+    });
+    assert.equal(statSync(join(fixture.final, "linked.txt")).nlink, 2);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -432,16 +468,15 @@ test("partial capture reports retain the workspace error and a successful retry 
   const root = mkdtempSync(join(tmpdir(), "ebo-workspace-capture-error-"));
   try {
     const fixture = createWorkspaceFixture(root);
-    linkSync(join(fixture.final, "changed.txt"), join(fixture.final, "linked.txt"));
+    const unavailable = join(root, "unavailable");
     for (const recover of [false, true]) {
       const bundleRoot = join(root, recover ? "recovered" : "failed");
       const runDefinition = definition(bundleRoot, recover ? "recovered" : "failed");
       runDefinition.run.assessmentMode = "observational";
       const assembler = await createRunBundleAssembler(runDefinition);
       const options = { startPath: fixture.start, finalPath: fixture.final, omitEmptyDirectories: true };
-      await assert.rejects(assembler.captureWorkspaceOutcome(options), /hard-linked file/);
+      await assert.rejects(assembler.captureWorkspaceOutcome({ ...options, finalPath: unavailable }), /ENOENT/);
       if (recover) {
-        rmSync(join(fixture.final, "linked.txt"));
         await assembler.captureWorkspaceOutcome(options);
       }
       const manifest = await assembler.finalize({ terminal: {
@@ -451,7 +486,7 @@ test("partial capture reports retain the workspace error and a successful retry 
       const report = JSON.parse(readFileSync(join(bundleRoot, manifest.evidence.find(e => e.kind === "capture-report")!.relativePath), "utf8"));
       const errors = report.missingEvidence.filter((e: { kind: string }) => e.kind === "workspace-capture-error");
       assert.equal(errors.length, recover ? 0 : 1);
-      if (!recover) assert.match(errors[0].detail, /hard-linked file/);
+      if (!recover) assert.match(errors[0].detail, /ENOENT/);
       assertBundleValid(bundleRoot);
     }
   } finally {

@@ -74,7 +74,7 @@ test("runs one frozen Agent SDK entry through capture, export, evaluation, revie
     assert.equal(summary.bundlePath, join(fixture.outputRoot, fixture.runId, summary.attemptId));
     assert.deepEqual(summary.terminal, { state: "completed", failureClass: "none", stopReason: "none", workspaceArtifactId: "workspace" });
     assert.equal(summary.classification, "completed");
-    assert.equal(summary.captureQualification, "qualified");
+    assert.equal(summary.captureQualification, "qualified-with-gaps");
     assert.equal(summary.sessionId, SESSION_ID);
     assert.equal(summary.retainedWorkspacePath, undefined);
     assert.deepEqual(readdirSync(fixture.workspaceRoot), [], "successful packaging still cleans up the source workspace");

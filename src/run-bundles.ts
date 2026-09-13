@@ -165,6 +165,7 @@ export type CaptureQualificationReasonCode =
   | "OPTIONAL_BETA_TIMING_UNAVAILABLE"
   | "WORKSPACE_EVIDENCE_MISSING"
   | "WORKSPACE_PATCH_NOT_CHECKED"
+  | "WORKSPACE_ENTRIES_OMITTED"
   | "WORKSPACE_PATCH_UNUSABLE"
   | "VERIFIER_EVIDENCE_MISSING"
   | "VERIFIER_RESULT_ERROR"
@@ -363,7 +364,11 @@ export class RunBundleAssembler {
     whileProjected?: (projectedPath: string, outcome: CapturedWorkspaceOutcome) => Promise<void>,
   ): Promise<CapturedWorkspaceOutcome> {
     this.assertOpen();
-    return withWorkspaceOutcomeProjection(options, async (startPath, capturedPath) => {
+    return withWorkspaceOutcomeProjection(options, async (startPath, capturedPath, omissions) => {
+      this.captureMissing = this.captureMissing.filter(({ kind }) => kind !== "workspace-omission");
+      this.captureMissing.push(...omissions.map((detail): CaptureMissingEvidence => ({
+        kind: "workspace-omission", reason: "policy-restricted", affects: ["outcome"], detail,
+      })));
       const [fingerprint, treeDigest] = await Promise.all([
         digestWorkspace(capturedPath) as Promise<DigestString>,
         digestWorkspaceTree(capturedPath) as Promise<DigestString>,
@@ -483,17 +488,23 @@ export class RunBundleAssembler {
 async function withWorkspaceOutcomeProjection<T>(
   options: Pick<CaptureWorkspaceOutcomeOptions,
     "startPath" | "finalPath" | "excludeDirectoryNames" | "respectGitignore" | "omitEmptyDirectories">,
-  use: (startPath: string, projectedPath: string) => Promise<T>,
+  use: (startPath: string, projectedPath: string, omissions: string[]) => Promise<T>,
 ): Promise<T> {
   const startPath = resolve(options.startPath);
-  const finalPath = resolve(options.finalPath);
-  const exclusions = [...new Set(options.excludeDirectoryNames ?? [])];
+  const finalPath = await realpath(options.finalPath);
+  const exclusions = [...new Set([".git", ...(options.excludeDirectoryNames ?? [])])];
   for (const name of exclusions) {
     if (name.includes("/") || name !== ".git" && !isSafeArtifactRelativePath(name)) {
       throw new Error(`Workspace outcome exclusion "${name}" is invalid.`);
     }
   }
   const absoluteLinks: Array<{ path: string; target: string }> = [];
+  const skipped = new Set<string>();
+  const omissions: string[] = [];
+  const omit = (path: string, reason: string): void => {
+    skipped.add(path);
+    omissions.push(`${relative(finalPath, path)}: ${reason}`);
+  };
   const sourceRoot = await realpath(finalPath);
   const contained = (path: string): boolean => {
     const rel = relative(sourceRoot, path);
@@ -502,24 +513,33 @@ async function withWorkspaceOutcomeProjection<T>(
   const collectLinks = async (directory: string): Promise<void> => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
+      if (entry.name === ".git" || entry.isDirectory() && exclusions.includes(entry.name)) {
+        omit(path, entry.name === ".git" ? "Git administrative state" : "configured directory exclusion");
+        continue;
+      }
       if (entry.isDirectory()) {
-        if (!exclusions.includes(entry.name)) await collectLinks(path);
+        await collectLinks(path);
       } else if (entry.isSymbolicLink()) {
         const target = await readlink(path);
-        if (!isAbsolute(target)) continue;
-        const resolvedTarget = await realpath(path);
-        if (!contained(resolvedTarget)) {
-          throw new Error(`Workspace symbolic link escapes its root at "${relative(sourceRoot, path)}".`);
+        let resolvedTarget: string;
+        try { resolvedTarget = await realpath(path); } catch (error) {
+          if (!["ENOENT", "ELOOP", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+          omit(path, "dangling or cyclic symbolic link");
+          continue;
         }
-        absoluteLinks.push({ path: relative(sourceRoot, path), target: relative(dirname(path), resolvedTarget) || "." });
+        if (!contained(resolvedTarget) || !isAbsolute(target) && !contained(resolve(dirname(path), target))) {
+          omit(path, "external symbolic link");
+          continue;
+        }
+        if (isAbsolute(target)) absoluteLinks.push({ path: relative(sourceRoot, path), target: relative(dirname(path), resolvedTarget) || "." });
+      } else if (!entry.isFile()) {
+        omit(path, "unsupported filesystem entry");
+      } else if ((await lstat(path)).nlink > 1) {
+        omit(path, "hard-linked file");
       }
     }
   };
   await collectLinks(sourceRoot);
-  if (absoluteLinks.length === 0 && exclusions.length === 0 && options.respectGitignore !== true && options.omitEmptyDirectories !== true) {
-    return use(startPath, finalPath);
-  }
-  await assertNoWorkspaceHardLinks(finalPath, new Set(exclusions));
   const filteredRoot = await mkdtemp(join(tmpdir(), "ebo-workspace-filter-"));
   const projectedPath = join(filteredRoot, "workspace");
   try {
@@ -528,8 +548,7 @@ async function withWorkspaceOutcomeProjection<T>(
       verbatimSymlinks: true,
       preserveTimestamps: true,
       force: false,
-      filter: async (source) => source === finalPath
-        || !await isExcludedWorkspaceDirectory(finalPath, source, exclusions),
+      filter: (source) => !skipped.has(source),
     });
     // Only the derived capture is relocated; native workspace link text is untouched.
     for (const link of absoluteLinks) {
@@ -538,9 +557,30 @@ async function withWorkspaceOutcomeProjection<T>(
       await symlink(link.target, path);
     }
     if (options.respectGitignore === true) await removeIgnoredWorkspaceEntries(startPath, projectedPath);
+    // Exclusions can remove targets of otherwise safe links. Prune those links
+    // in the projection only, repeating for chains through a removed link.
+    let removed: boolean;
+    do {
+      removed = false;
+      const prune = async (directory: string): Promise<void> => {
+        for (const entry of await readdir(directory, { withFileTypes: true })) {
+          const path = join(directory, entry.name);
+          if (entry.isDirectory()) await prune(path);
+          else if (entry.isSymbolicLink()) {
+            try { await realpath(path); } catch (error) {
+              if (!["ENOENT", "ELOOP", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+              omissions.push(`${relative(projectedPath, path)}: target omitted from projection`);
+              await rm(path);
+              removed = true;
+            }
+          }
+        }
+      };
+      await prune(projectedPath);
+    } while (removed);
     if (options.omitEmptyDirectories === true) await removeEmptyDirectories(projectedPath);
     await restoreProjectedDirectoryTimestamps(finalPath, projectedPath);
-    return await use(startPath, projectedPath);
+    return await use(startPath, projectedPath, omissions);
   } finally {
     await rm(filteredRoot, { recursive: true, force: true });
   }
@@ -722,6 +762,10 @@ export async function qualifyRunBundle(
 
   if (workspaces.length === 0) {
     addQualificationReason(report, "workspace", "unqualified", "WORKSPACE_EVIDENCE_MISSING", undefined, "No valid workspace outcome is retained.");
+  }
+  if (captureMissingEvidence(captureReport).some(entry => entry.kind === "workspace-omission")) {
+    addQualificationReason(report, "workspace", "gap", "WORKSPACE_ENTRIES_OMITTED", undefined,
+      "Workspace projection excludes entries listed in the capture report.");
   }
   for (const workspace of workspaces.filter(({ descriptor }) => descriptor.mediaType === "text/x-diff")) {
     if (options.startingWorkspacePath === undefined) {
@@ -1210,23 +1254,6 @@ async function removeIgnoredWorkspaceEntries(startPath: string, finalPath: strin
   }
 }
 
-async function assertNoWorkspaceHardLinks(
-  directory: string,
-  exclusions: ReadonlySet<string>,
-  prefix = "",
-): Promise<void> {
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const path = join(directory, entry.name);
-    const relativePath = `${prefix}${entry.name}`;
-    const metadata = await lstat(path, { bigint: true });
-    if (exclusions.has(entry.name) && metadata.isDirectory() && !metadata.isSymbolicLink()) continue;
-    if (metadata.isDirectory() && !metadata.isSymbolicLink()) {
-      await assertNoWorkspaceHardLinks(path, exclusions, `${relativePath}/`);
-    } else if (metadata.isFile() && metadata.nlink > 1n) {
-      throw new Error(`Workspace contains a hard-linked file at "${relativePath}".`);
-    }
-  }
-}
 
 async function ignoredWorkspacePaths(baseline: string, finalPath: string, globalExcludes: string): Promise<string[]> {
   const paths: string[] = [];
@@ -1260,18 +1287,6 @@ async function ignoredWorkspacePaths(baseline: string, finalPath: string, global
   });
 }
 
-async function isExcludedWorkspaceDirectory(
-  root: string,
-  source: string,
-  exclusions: readonly string[],
-): Promise<boolean> {
-  let candidate = root;
-  for (const segment of source.slice(root.length + 1).split(sep)) {
-    candidate = join(candidate, segment);
-    if (exclusions.includes(segment) && (await lstat(candidate)).isDirectory()) return true;
-  }
-  return false;
-}
 
 async function removeEmptyDirectories(directory: string, root: string = directory, targets?: Set<string>): Promise<void> {
   if (targets === undefined) {
@@ -1352,6 +1367,10 @@ async function workspacePatch(startPath: string, finalPath: string, finalTreeDig
       return undefined;
     }
     return patch;
+  } catch (error) {
+    // A Git representation failure need not discard a verifiable snapshot.
+    if (typeof (error as { code?: unknown }).code === "number") return undefined;
+    throw error;
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }

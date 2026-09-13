@@ -40,6 +40,26 @@ See [Agent SDK runner](../reference/agent-sdk-operational-runner.md),
 [DeepSeek](../harnesses/deepseek-harness.md), [Pi](../harnesses/pi-sdk.md), and [Cursor SDK](../harnesses/cursor-sdk.md) for their exact
 configuration and version pins.
 
+## Workspace capture exclusions
+
+Workspace capture uses a derived copy; it never removes entries from the agent's
+workspace. Git administrative entries (`.git`, including files and links),
+configured transient directories, external/dangling/cyclic symlinks, hard-linked
+files, and unsupported entries such as sockets or FIFOs are omitted. Links whose
+targets were excluded are omitted too. Contained absolute links are relocated
+in the copy. External referents are never copied.
+
+Each such omission is recorded with its relative path and reason in the capture
+report as `workspace-omission`. The retained workspace remains usable, with a
+`WORKSPACE_ENTRIES_OMITTED` qualification gap. Routine exclusions and potentially
+important missing files have distinct reasons; review them before judging the
+work product. Starting-fixture Git ignore rules still apply when requested.
+
+If Git cannot represent the outcome, capture falls back to a verified snapshot.
+Unreadable directories, unexpected I/O errors, digest mismatches, and failed
+artifact writes still fail capture. A partial capture is not a complete copy of
+the original workspace.
+
 ## Release acceptance
 
 Run the complete reusable-software gate from a clean checkout before preparing
