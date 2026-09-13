@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile, mkdir, chmod, copyFile } from "node:fs/promises";
 import { constants, openSync, writeSync, closeSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { digestMetadata, digestBytes, assertNoDuplicateJsonKeys } from "../artifacts.js";
+import { StringDecoder } from "node:string_decoder";
+import { digestMetadata, digestBytes, assertNoDuplicateJsonKeys, writeMetadataAtomically, writeArtifactAtomically } from "../artifacts.js";
 import { resolveBundleConfiguration, isSafeArtifactRelativePath, type ArtifactReference } from "../contracts.js";
 import type { RunManifest } from "../run-bundles.js";
 import type { HarborAdapter } from "./adapter.js";
@@ -44,6 +45,7 @@ export async function runOfficialHarborTrial(input: {
   const archive = resolveBundleConfiguration(input.studyRoot, runtime.archive, 2 * 1024 * 1024 * 1024);
   const root = prepared.evidence.attemptRoot;
   await mkdir(prepared.evidence.harborDir, { recursive: true, mode: 0o700 });
+  try {
   const archivePath = join(root, "harbor", "worker-runtime.tgz");
   await copyFile(join(input.studyRoot, runtime.archive.locator), archivePath, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
   await chmod(archivePath, 0o600);
@@ -107,28 +109,42 @@ export async function runOfficialHarborTrial(input: {
       execution: { code: execution.code, interrupted: execution.interrupted },
     }); } catch (error) { qualification = "unqualified"; steps.at(-1)!.joinError = String(error); }
   }
-  const nativeFailure = steps.some(s => s.state !== "completed" && s.state !== "skipped");
+  const nativeFailure = steps.map(s => s.native as HarborStepExecution | null).find(s => s && s.terminal.state !== "completed");
   const skipped = steps.some(s => s.state === "skipped");
   const stepError = result.step_results?.some(s => s.exception_info);
   const reached = steps.some(s => s.native);
   if (!reached || trialLock === null) qualification = "unqualified";
   const terminal: HarborRunSummary["terminal"] = execution.interrupted
     ? { state: "interrupted", failureClass: "none", stopReason: "external" }
-    : result.exception_info || execution.code !== 0 || nativeFailure || stepError || !reached
+    : nativeFailure ? { state: nativeFailure.terminal.state, failureClass: nativeFailure.terminal.failureClass ?? "none", stopReason: nativeFailure.terminal.stopReason ?? "none" }
+    : result.exception_info || execution.code !== 0 || stepError || !reached
       ? { state: "failed", failureClass: "infrastructure", stopReason: "none" }
       : skipped ? { state: "stopped", failureClass: "none", stopReason: "policy" }
       : { state: "completed", failureClass: "none", stopReason: "none" };
   const summary: HarborRunSummary = {
     runId: entry.runId, attemptId, bundlePath: root, taskSourceId: prepared.task.taskSourceId,
     harnessId: entry.harness.id, assessmentMode: prepared.task.assessmentMode,
-    environmentProfile: "docker", terminal, classification: terminal.state === "completed" ? (qualification === "unqualified" ? "capture-incomplete" : "completed") : terminal.state === "stopped" ? "policy-stop" : terminal.state === "interrupted" ? "interrupted" : "infrastructure-failure",
+    environmentProfile: "docker", terminal, classification: execution.interrupted ? "interrupted" : nativeFailure?.classification ?? (terminal.state === "completed" ? (qualification === "unqualified" ? "capture-incomplete" : "completed") : terminal.state === "stopped" ? "policy-stop" : "infrastructure-failure"),
     captureQualification: qualification, completedSteps: steps.filter(s=>s.state === "completed").length,
     skippedSteps: steps.filter(s=>s.state === "skipped" || s.state === "setup-failed").length,
     verifierAggregate: result.verifier_result?.rewards ?? null,
   };
   await mkdir(prepared.evidence.eboDir, { recursive: true });
-  await writeFile(join(prepared.evidence.eboDir, "manifest.json"), JSON.stringify({ schemaVersion: "ebo.harbor-attempt/v1", ...summary, task: prepared.task, steps, harborResult: "harbor/result.json", workerDigest: digestMetadata(runtime) }, null, 2), { flag: "wx", mode: 0o600 });
+  await writeArtifactAtomically(prepared.evidence.eboDir, "manifest.json", Buffer.from(JSON.stringify({ schemaVersion: "ebo.harbor-attempt/v1", ...summary, task: prepared.task, steps, harborResult: "harbor/result.json", workerDigest: digestMetadata(runtime) }, null, 2)), undefined, { overwrite: false });
   return summary;
+  } catch (error) {
+    const summary: HarborRunSummary = {
+      runId: entry.runId, attemptId, bundlePath: root, taskSourceId: prepared.task.taskSourceId,
+      harnessId: entry.harness.id, assessmentMode: prepared.task.assessmentMode, environmentProfile: "docker",
+      terminal: { state: "failed", failureClass: "infrastructure", stopReason: "none" }, classification: "infrastructure-failure",
+      captureQualification: "unqualified", completedSteps: 0, skippedSteps: prepared.steps.length, verifierAggregate: null,
+    };
+    await mkdir(prepared.evidence.eboDir, { recursive: true, mode: 0o700 });
+    await writeMetadataAtomically(prepared.evidence.eboDir, "manifest.json", {
+      schemaVersion: "ebo.harbor-attempt/v1", ...summary, task: prepared.task, steps: [], error: String(error),
+    }, undefined, { overwrite: false });
+    return summary;
+  }
 }
 
 async function attachHarborEvidence(bundle: string, content: unknown): Promise<void> {
@@ -139,11 +155,10 @@ async function attachHarborEvidence(bundle: string, content: unknown): Promise<v
   }, null, 2) + "\n");
   await writeFile(join(bundle, "harbor-result.json"), bytes, { flag: "wx", mode: 0o600 });
   manifest.evidence.push({ id: "harbor-result", source: "harbor", kind: "diagnostic", authority: "outcome", mediaType: "text/plain", sharingClass: "restricted", relativePath: "harbor-result.json", digest: `sha256:${digestBytes(bytes).value}`, sizeBytes: bytes.length });
-  await writeFile(path, JSON.stringify(manifest, null, 2) + "\n", { mode: 0o600 });
-  await chmod(path, 0o600);
+  await writeMetadataAtomically(bundle, "manifest.json", manifest);
 }
 
-async function invokeTrial(python: string, script: string, request: string, signal: AbortSignal | undefined, budget: number): Promise<{ stdout: string; stderr: string; code: number | null; interrupted: boolean }> {
+export async function invokeTrial(python: string, script: string, request: string, signal: AbortSignal | undefined, budget: number): Promise<{ stdout: string; stderr: string; code: number | null; interrupted: boolean }> {
   return new Promise((done) => {
     const out = openSync(join(dirname(script), "result.json"), "wx", 0o600);
     const err = openSync(join(dirname(script), "stderr.log"), "wx", 0o600);
@@ -155,14 +170,32 @@ async function invokeTrial(python: string, script: string, request: string, sign
     };
     const stop = () => { if (interrupted) return; interrupted = true; child.kill("SIGTERM"); force = setTimeout(killGroup, 60_000); };
     const timer = setTimeout(stop, Math.min(budget + 60_000, 2_147_483_647));
-    child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
     signal?.addEventListener("abort", stop, { once: true });
     if (signal?.aborted) stop();
-    child.stdout.on("data", chunk => { try { writeSync(out, chunk); if (stdout.length < 64*1024*1024) stdout += chunk.toString(); else stop(); } catch { stop(); } });
-    child.stderr.on("data", chunk => { try { writeSync(err, chunk); if (stderr.length < 4*1024*1024) stderr += chunk.toString(); } catch { stop(); } });
+    const retain = (fd: number, limit: number, append: (text: string) => void) => {
+      let retained = 0;
+      const decoder = new StringDecoder("utf8");
+      return (chunk: Buffer) => {
+        const bytes = chunk.subarray(0, Math.max(0, limit - retained));
+        try {
+          for (let offset = 0; offset < bytes.length;) {
+            const written = writeSync(fd, bytes, offset, bytes.length - offset);
+            if (written === 0) throw new Error("Harbor evidence write made no progress.");
+            offset += written;
+          }
+          retained += bytes.length;
+          append(decoder.write(bytes));
+          if (bytes.length < chunk.length) stop();
+        } catch { stop(); }
+      };
+    };
+    const retainOut = retain(out, 64 * 1024 * 1024, text => { stdout += text; });
+    const retainErr = retain(err, 4 * 1024 * 1024, text => { stderr += text; });
+    child.stdout.on("data", retainOut);
+    child.stderr.on("data", retainErr);
     let closed = false;
     const cleanup = () => { if (closed) return; closed = true; closeSync(out); closeSync(err); clearTimeout(timer); clearTimeout(force); signal?.removeEventListener("abort", stop); };
-    child.on("error", error => { stderr += String(error); try { writeSync(err, String(error)); } finally { cleanup(); done({ stdout, stderr, code: 1, interrupted }); } });
+    child.on("error", error => { retainErr(Buffer.from(String(error))); cleanup(); done({ stdout, stderr, code: 1, interrupted }); });
     child.on("close", code => { if (interrupted) killGroup(); cleanup(); done({ stdout, stderr, code, interrupted }); });
   });
 }
