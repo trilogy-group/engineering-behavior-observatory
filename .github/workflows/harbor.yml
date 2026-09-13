@@ -1,0 +1,44 @@
+name: Harbor conformance
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - 'src/**'
+      - 'schemas/**'
+      - 'test/**'
+      - 'package*.json'
+      - 'scripts/build-harbor-runtime.mjs'
+      - '.github/workflows/harbor.yml'
+permissions:
+  contents: read
+concurrency:
+  group: harbor-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  docker-trial:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.19.0'
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+      - run: npm ci
+      - run: npm run build && npm run typecheck
+      - run: python -m venv .harbor-venv && .harbor-venv/bin/pip install harbor==0.23.0
+      - name: Native worker and admission regression checks
+        run: node --test dist/test/harbor.test.js dist/test/harbor-worker.test.js
+        env:
+          EBO_HARBOR_PYTHON: '${{ github.workspace }}/.harbor-venv/bin/python'
+      - name: Build the Linux capture runtime
+        run: node scripts/build-harbor-runtime.mjs .ebo/harbor-runtime --fixtures
+      - name: Official Harbor Docker trial, no external model calls
+        run: node --test dist/test/harbor-docker.test.js
+        env:
+          EBO_HARBOR_PYTHON: '${{ github.workspace }}/.harbor-venv/bin/python'
+          EBO_HARBOR_RUNTIME: .ebo/harbor-runtime/worker.tgz

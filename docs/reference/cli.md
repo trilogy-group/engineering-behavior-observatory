@@ -1,5 +1,23 @@
 # CLI reference
 
+## Harbor task studies
+
+See the [Harbor guide](../guides/harbor-tasks.md) for prerequisite installation,
+runtime profiles and the review record. These commands use task schema 1.4 and
+versioned v2 experiment/queue artifacts; existing v1 commands remain unchanged.
+
+```sh
+ebo harbor doctor
+ebo harbor inspect <task-dir>
+ebo harbor prepare <study-root> <task-dir> --mode observational
+ebo harbor admit <study-root> <task-source-id>
+ebo harbor freeze <study-root> <task-source-id>
+ebo harbor status <study-root> <task-source-id>
+ebo harbor compile <study-root> <experiment.json> <queue.json>
+ebo harbor run <study-root> <queue.json> <run-id> <output-root>
+ebo harbor convert-legacy <study-root> <packet-locator> --image <docker-image>
+```
+
 Install `ebo` with [the quickstart](../guides/quickstart.md). `ebo --help`
 prints the current top-level syntax. For a source checkout without `npm link`,
 use `npm run ebo -- <arguments>`.

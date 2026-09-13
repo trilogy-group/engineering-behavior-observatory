@@ -1155,6 +1155,11 @@ function loadValidators(): Map<string, ValidateFunction> {
   ajv.addSchema(readSchema("human-calibration.v1.json"));
   ajv.addSchema(readSchema("aggregation.v1.json"));
   ajv.addSchema(readSchema("deepseek-runtime-composition.v1.schema.json"));
+  ajv.addSchema(readSchema("harbor-admission.v1.schema.json"));
+  ajv.addSchema(readSchema("harbor-review.v1.schema.json"));
+  ajv.addSchema(readSchema("harbor-freeze.v1.schema.json"));
+  ajv.addSchema(readSchema("experiment.v2.schema.json"));
+  ajv.addSchema(readSchema("run-queue.v2.schema.json"));
 
   return new Map([
     ["ebo.task-packet/v1", requiredValidator(ajv, "https://ebo.dev/schemas/task-packet.v1.schema.json")],
@@ -1191,6 +1196,11 @@ function loadValidators(): Map<string, ValidateFunction> {
     ["ebo.aggregation-request/v1", requiredValidator(ajv, "urn:ebo:schema:aggregation:v1#/$defs/request")],
     ["ebo.aggregation-report/v1", requiredValidator(ajv, "urn:ebo:schema:aggregation:v1#/$defs/report")],
     ["ebo.deepseek-runtime-composition/v1", requiredValidator(ajv, "https://ebo.dev/schemas/deepseek-runtime-composition.v1.schema.json")],
+    ["ebo.harbor-admission/v1", requiredValidator(ajv, "https://ebo.dev/schemas/harbor-admission.v1.schema.json")],
+    ["ebo.harbor-review/v1", requiredValidator(ajv, "https://ebo.dev/schemas/harbor-review.v1.schema.json")],
+    ["ebo.harbor-freeze/v1", requiredValidator(ajv, "https://ebo.dev/schemas/harbor-freeze.v1.schema.json")],
+    ["ebo.experiment/v2", requiredValidator(ajv, "https://ebo.dev/schemas/experiment.v2.schema.json")],
+    ["ebo.run-queue/v2", requiredValidator(ajv, "https://ebo.dev/schemas/run-queue.v2.schema.json")],
   ]);
 }
 

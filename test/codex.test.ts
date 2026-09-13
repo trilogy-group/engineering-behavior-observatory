@@ -1,4 +1,21 @@
 import assert from "node:assert/strict";
+import { createCodexHarborExecutor } from "../src/harbor/harnesses.js";
+import { harborStepFixture } from "./harbor-step-helper.js";
+
+test("Harbor Codex wrapper captures native app-server evidence from its exact workspace", async () => {
+  const root = await temporaryRoot();
+  try {
+    const queueFixture = createQueueFixture(root);
+    const queue = JSON.parse(await readFile(queueFixture.queuePath, "utf8"));
+    const input = harborStepFixture(root, "codex-app-server");
+    const result = await createCodexHarborExecutor({ studyRoot: queueFixture.bundleRoot,
+      configuration: { ...queue.entries[0].configuration, captureProfile: queue.captureProfile },
+      probeRuntime: async () => ({ path: process.execPath, version: `codex-cli ${CODEX_APP_SERVER_VERSION}` }), executableArgs: [fixture] })(input);
+    assert.equal(result.terminal.state, "completed");
+    assert.equal(result.qualification, "qualified");
+    assert.equal(result.nativeSessionId, "thread-1");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";

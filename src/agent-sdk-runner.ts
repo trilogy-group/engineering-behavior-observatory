@@ -380,7 +380,7 @@ function validateConfigurationRecord(record: Record<string, unknown>, kind: Agen
   }
 }
 
-function buildSdkConfiguration(
+export function buildSdkConfiguration(
   prompt: string,
   model: AgentSdkModelConfiguration,
   limits: AgentSdkNativeLimitsConfiguration,

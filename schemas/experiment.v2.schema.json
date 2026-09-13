@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ebo.dev/schemas/experiment.v2.schema.json",
+  "title": "EBO experiment v2 (discriminated task sources)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "taskSet",
+    "modelSet",
+    "harnessSet",
+    "trialCount",
+    "coordinatorBudget",
+    "captureProfile",
+    "ordering"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "ebo.experiment/v2"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "taskSet": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/taskSource"
+      }
+    },
+    "modelSet": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "configurationRef"
+        ],
+        "properties": {
+          "configurationRef": {
+            "$ref": "#/$defs/reference"
+          }
+        }
+      }
+    },
+    "harnessSet": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "configurationRef",
+          "nativeLimitsRef",
+          "nativeToolPolicyRef"
+        ],
+        "properties": {
+          "configurationRef": {
+            "$ref": "#/$defs/reference"
+          },
+          "nativeLimitsRef": {
+            "$ref": "#/$defs/reference"
+          },
+          "nativeToolPolicyRef": {
+            "$ref": "#/$defs/reference"
+          }
+        }
+      }
+    },
+    "trialCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000
+    },
+    "coordinatorBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxWallClockMs"
+      ],
+      "properties": {
+        "maxWallClockMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        }
+      }
+    },
+    "captureProfile": {
+      "$ref": "#/$defs/reference"
+    },
+    "ordering": {
+      "$ref": "#/$defs/ordering"
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "environmentProfile": {
+          "enum": [
+            "docker",
+            "local-fs-test"
+          ]
+        },
+        "contextPolicy": {
+          "enum": [
+            "fresh",
+            "resume-requested",
+            "imported-trajectory"
+          ]
+        },
+        "workerRef": {
+          "$ref": "#/$defs/reference"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "taskSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "taskSourceId"
+          ],
+          "properties": {
+            "kind": {
+              "const": "harbor-task"
+            },
+            "taskSourceId": {
+              "type": "string",
+              "pattern": "^harbor-[0-9a-f]{16}$"
+            },
+            "snapshotLocator": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "packetRef"
+          ],
+          "properties": {
+            "kind": {
+              "const": "legacy-task-packet"
+            },
+            "packetRef": {
+              "$ref": "#/$defs/reference"
+            },
+            "freezeLocator": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "locator",
+        "digest"
+      ],
+      "properties": {
+        "locator": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "digest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "sha256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "ordering": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "seed",
+            "strategy"
+          ],
+          "properties": {
+            "seed": {
+              "type": "string",
+              "minLength": 1
+            },
+            "strategy": {
+              "const": "sequential"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "seed",
+            "strategy",
+            "declaredOrder"
+          ],
+          "properties": {
+            "seed": {
+              "type": "string",
+              "minLength": 1
+            },
+            "strategy": {
+              "const": "declared"
+            },
+            "declaredOrder": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "taskIds",
+                "modelIds",
+                "harnessIds"
+              ],
+              "properties": {
+                "taskIds": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "modelIds": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "harnessIds": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ebo.dev/schemas/harbor-admission.v1.schema.json",
+  "title": "EBO Harbor admission envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "taskSourceId", "harborTask", "resolution", "provenance", "sharing", "visibilityPolicy", "controlledPerturbation", "assessmentMode", "preAdmissionDigest", "admissionDigest"],
+  "properties": {
+    "schemaVersion": { "const": "ebo.harbor-admission/v1" },
+    "taskSourceId": { "type": "string", "pattern": "^harbor-[0-9a-f]{16}$" },
+    "harborTask": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "name", "type", "taskSchemaVersion"],
+      "properties": {
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": ["string", "null"] },
+        "type": { "enum": ["local", "git", "package"] },
+        "taskSchemaVersion": { "type": "string", "minLength": 1 }
+      }
+    },
+    "resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["harborPackageVersion", "resolutionDigest", "stepCount", "instructionDigests", "environment", "verifier", "packaging"],
+      "properties": {
+        "harborPackageVersion": { "type": "string", "minLength": 1 },
+        "resolutionDigest": { "$ref": "#/$defs/digest" },
+        "stepCount": { "type": "integer", "minimum": 0 },
+        "instructionDigests": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/digest" } },
+        "environment": { "type": "object" },
+        "verifier": { "type": "object" },
+        "packaging": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["includedFiles", "excludedFiles"],
+          "properties": {
+            "includedFiles": { "type": "array", "items": { "type": "string" } },
+            "excludedFiles": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceLocator"],
+      "properties": {
+        "sourceLocator": { "type": ["string", "null"] },
+        "repositoryUrl": { "type": "string" },
+        "revision": { "type": "string" },
+        "license": { "type": "string" }
+      }
+    },
+    "sharing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification"],
+      "properties": { "classification": { "enum": ["open", "restricted", "internal"] } }
+    },
+    "visibilityPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["solution", "verifier", "reviewInputs"],
+      "properties": {
+        "solution": { "enum": ["hidden", "absent"] },
+        "verifier": { "enum": ["hidden", "absent"] },
+        "reviewInputs": { "const": "hidden" }
+      }
+    },
+    "controlledPerturbation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": { "status": { "const": "not-applied" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reference"],
+          "properties": {
+            "status": { "const": "referenced" },
+            "reference": { "$ref": "#/$defs/reference" }
+          }
+        }
+      ]
+    },
+    "assessmentMode": { "enum": ["observational", "verified"] },
+    "preAdmissionDigest": { "$ref": "#/$defs/digest" },
+    "review": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["reviewedAt", "reviewedBy", "decision", "reviewRecordLocator"],
+      "properties": {
+        "reviewedAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}[Tt]\\d{2}:\\d{2}:\\d{2}" },
+        "reviewedBy": { "type": "string", "minLength": 1 },
+        "decision": { "enum": ["admitted", "rejected"] },
+        "reviewRecordLocator": { "type": "string", "minLength": 1 }
+      }
+    },
+    "admissionDigest": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "digest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "value": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["locator", "digest"],
+      "properties": {
+        "locator": { "type": "string", "minLength": 1 },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    }
+  }
+}

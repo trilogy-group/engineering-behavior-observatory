@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ebo.dev/schemas/harbor-freeze.v1.schema.json",
+  "title": "EBO Harbor freeze record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "taskSourceId", "harborTask", "snapshotLocator", "snapshotCopyDigest", "admissionLocator", "admissionDigest", "resolutionDigest", "assessmentMode", "frozenAt", "freezeDigest"],
+  "properties": {
+    "schemaVersion": { "const": "ebo.harbor-freeze/v1" },
+    "taskSourceId": { "type": "string", "pattern": "^harbor-[0-9a-f]{16}$" },
+    "harborTask": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "name", "type", "taskSchemaVersion"],
+      "properties": {
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": ["string", "null"] },
+        "type": { "enum": ["local", "git", "package"] },
+        "taskSchemaVersion": { "type": "string", "minLength": 1 }
+      }
+    },
+    "snapshotLocator": { "type": "string", "minLength": 1 },
+    "snapshotCopyDigest": { "$ref": "#/$defs/digest" },
+    "admissionLocator": { "type": "string", "minLength": 1 },
+    "admissionDigest": { "$ref": "#/$defs/digest" },
+    "resolutionDigest": { "$ref": "#/$defs/digest" },
+    "assessmentMode": { "enum": ["observational", "verified"] },
+    "frozenAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}[Tt]\\d{2}:\\d{2}:\\d{2}" },
+    "freezeDigest": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "digest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "value": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

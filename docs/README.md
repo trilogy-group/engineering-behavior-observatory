@@ -15,6 +15,8 @@ the `ebo` command is installed as described in the quickstart.
 
 ## Operate and inspect
 
+- [Harbor tasks](guides/harbor-tasks.md): containerized task admission, frozen
+  queues, native SDK workers, verification and legacy conversion.
 - [Evidence and sharing](guides/evidence-and-sharing.md): which files to read,
   how to interpret a partial run, and how to create a portable archive.
 - [Telemetry](guides/telemetry.md): native events versus OTLP, collector receipt,

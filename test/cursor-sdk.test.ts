@@ -38,10 +38,28 @@ import {
 } from "../src/index.js";
 import { checkRetainedEvaluation } from "./retained-evaluation-helper.js";
 import { resolveCursorSdkConfigurationRecord } from "../src/cursor-sdk-runner.js";
+import { createCursorHarborExecutor } from "../src/harbor/harnesses.js";
+import { harborStepFixture } from "./harbor-step-helper.js";
 
 const MODEL: ModelSelection = { id: "cursor-test-model", params: [{ id: "thinking", value: "low" }] };
 const AGENT_ID = "cursor-agent-fixture";
 const NATIVE_RUN_ID = "cursor-run-fixture";
+
+test("Harbor Cursor wrapper retains native retries, usage, session and workspace evidence", async () => {
+  const fixture = createCursorFixture();
+  try {
+    const queue = JSON.parse(readFileSync(fixture.queuePath, "utf8"));
+    const input = harborStepFixture(fixture.parent, "cursor-sdk");
+    const result = await createCursorHarborExecutor({ studyRoot: fixture.bundleRoot,
+      configuration: { ...queue.entries[0].configuration, captureProfile: queue.captureProfile },
+      apiKey: "fixture-only", agentFactory: fakeAgentFactory() })(input);
+    assert.equal(result.terminal.state, "completed");
+    assert.equal(result.qualification, "qualified");
+    assert.equal(result.nativeSessionId, AGENT_ID);
+    const evidence = await createRetainedBehaviorEvidence(input.stepBundleRoot);
+    assert.ok(evidence.dataset.events.length > 0);
+  } finally { rmSync(fixture.parent, { recursive: true, force: true }); }
+});
 
 test("runs one frozen Cursor SDK entry through native store, export, observations, judge evidence, and Atlas", async (t) => {
   const configure = t.mock.method(Cursor, "configure");
