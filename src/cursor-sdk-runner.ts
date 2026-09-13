@@ -159,7 +159,7 @@ export async function runCursorSdkQueueEntry(options: RunCursorSdkQueueEntryOpti
       sandbox: { enabled: toolPolicy.sandbox.enabled },
       settingSources: [],
       autoReview: false,
-      enableAgentRetries: false,
+      enableAgentRetries: toolPolicy.enableAgentRetries,
     },
     maxNativeRecordBytes: limits.maxNativeRecordBytes,
   };
@@ -311,8 +311,8 @@ function validateConfigurationRecord(record: Record<string, unknown>, kind: Curs
       if (!Array.isArray(record.settingSources) || record.settingSources.length !== 0) {
         throw configurationError(reference, "settingSources must be [] so unrelated user/candidate settings are not loaded");
       }
-      if (record.autoReview !== false || record.enableAgentRetries !== false) {
-        throw configurationError(reference, "autoReview and enableAgentRetries must both be false for an observational attempt");
+      if (record.autoReview !== false || record.enableAgentRetries !== true) {
+        throw configurationError(reference, "autoReview must be false and enableAgentRetries must be true for native recovery");
       }
       return;
     case "capture-profile":

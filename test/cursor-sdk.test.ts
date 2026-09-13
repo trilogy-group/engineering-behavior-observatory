@@ -4,6 +4,7 @@ import { gzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { Cursor } from "@cursor/sdk";
 
 import type {
   AgentOptions,
@@ -36,12 +37,14 @@ import {
   type TaskPacket,
 } from "../src/index.js";
 import { checkRetainedEvaluation } from "./retained-evaluation-helper.js";
+import { resolveCursorSdkConfigurationRecord } from "../src/cursor-sdk-runner.js";
 
 const MODEL: ModelSelection = { id: "cursor-test-model", params: [{ id: "thinking", value: "low" }] };
 const AGENT_ID = "cursor-agent-fixture";
 const NATIVE_RUN_ID = "cursor-run-fixture";
 
-test("runs one frozen Cursor SDK entry through native store, export, observations, judge evidence, and Atlas", async () => {
+test("runs one frozen Cursor SDK entry through native store, export, observations, judge evidence, and Atlas", async (t) => {
+  const configure = t.mock.method(Cursor, "configure");
   const fixture = createCursorFixture();
   const previousMarker = process.env.EBO_CURSOR_TEST_SECRET;
   process.env.EBO_CURSOR_TEST_SECRET = "must-not-reach-sdk-child";
@@ -50,7 +53,10 @@ test("runs one frozen Cursor SDK entry through native store, export, observation
       ...fixture,
       apiKey: "fixture-key-not-retained",
       modelLister: fakeModelLister,
-      agentFactory: fakeAgentFactory(),
+      agentFactory: async (options) => {
+        assert.deepEqual(configure.mock.calls.map(({ arguments: args }) => args), [[{ local: { useHttp1ForAgent: true } }]]);
+        return fakeAgentFactory()(options);
+      },
     });
     assert.equal(summary.captureQualification, "qualified");
     assert.equal(summary.classification, "completed");
@@ -85,6 +91,10 @@ test("runs one frozen Cursor SDK entry through native store, export, observation
     assert.equal(buildCorpusIndex(summary.bundlePath)[0]!.harnessId, "cursor-sdk");
 
     const sourceSession = readFileSync(join(summary.bundlePath, "native/session.jsonl"), "utf8");
+    const configuration = sourceSession.split("\n").filter(Boolean).map((line) => JSON.parse(line))
+      .find((record) => record.channel === "configuration").payload;
+    assert.deepEqual(configuration.transport, { useHttp1ForAgent: true });
+    assert.equal(configuration.toolPolicy.enableAgentRetries, true);
     assert.match(sourceSession, /hidden delta reasoning/u);
     assert.match(sourceSession, /hidden step reasoning/u);
     assert.match(sourceSession, /hidden history reasoning/u);
@@ -101,6 +111,41 @@ test("runs one frozen Cursor SDK entry through native store, export, observation
   } finally {
     if (previousMarker === undefined) delete process.env.EBO_CURSOR_TEST_SECRET;
     else process.env.EBO_CURSOR_TEST_SECRET = previousMarker;
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
+test("requires explicit native retries and keeps automatic review disabled", () => {
+  const fixture = createCursorFixture();
+  try {
+    const path = join(fixture.bundleRoot, "configs/tools.json");
+    const policy = JSON.parse(readFileSync(path, "utf8"));
+    for (const overrides of [{ enableAgentRetries: false }, { enableAgentRetries: "true" }, { enableAgentRetries: undefined }, { autoReview: true }]) {
+      const bytes = Buffer.from(JSON.stringify({ ...policy, ...overrides }));
+      writeFileSync(path, bytes);
+      assert.throws(() => resolveCursorSdkConfigurationRecord(fixture.bundleRoot,
+        { locator: "configs/tools.json", digest: digestBytes(bytes) }, "native-tool-policy"), /enableAgentRetries|autoReview/u);
+    }
+  } finally {
+    rmSync(fixture.parent, { recursive: true, force: true });
+  }
+});
+
+test("retains a terminal transport error after native recovery without creating a replacement", async () => {
+  const fixture = createCursorFixture();
+  let creates = 0;
+  try {
+    const summary = await runCursorSdkQueueEntry({
+      ...fixture, apiKey: "fixture-key", modelLister: fakeModelLister,
+      agentFactory: async (options) => { creates += 1; return fakeAgentFactory({ terminalError: true })(options); },
+    });
+    assert.equal(creates, 1);
+    assert.equal(summary.classification, "infrastructure-failure");
+    const records = readFileSync(join(summary.bundlePath, "native/session.jsonl"), "utf8")
+      .split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    assert.equal(records.find((record) => record.channel === "terminal").payload.result.error.message, "NGHTTP2_INTERNAL_ERROR");
+    assert.ok(records.some((record) => record.channel === "stream"));
+  } finally {
     rmSync(fixture.parent, { recursive: true, force: true });
   }
 });
@@ -450,7 +495,7 @@ function createCursorFixture(): Fixture {
     tools: {
       schemaVersion: "ebo.cursor-sdk-config/v1", kind: "native-tool-policy",
       tools: ["read", "edit", "grep", "glob", "ls"], disallowedTools: ["task", "mcp", "webSearch", "webFetch", "shell"],
-      sandbox: { enabled: true }, settingSources: [], autoReview: false, enableAgentRetries: false,
+      sandbox: { enabled: true }, settingSources: [], autoReview: false, enableAgentRetries: true,
     },
     capture: { schemaVersion: "ebo.cursor-sdk-config/v1", kind: "capture-profile", nativeOtlp: "unsupported", workspaceOutcome: { excludeDirectoryNames: ["node_modules"] } },
   };
@@ -526,6 +571,7 @@ function fakeAgentFactory(behavior: {
   billingError?: boolean;
   omitUsage?: boolean;
   waitError?: boolean;
+  terminalError?: boolean;
   cancelledResult?: boolean;
   oversizedStreamRecord?: boolean;
   nestedToolError?: boolean;
@@ -545,7 +591,7 @@ function fakeAgentFactory(behavior: {
     assert.deepEqual(options.local?.settingSources, []);
     assert.deepEqual(options.local?.sandboxOptions, { enabled: true });
     assert.equal(options.local?.autoReview, false);
-    assert.equal(options.local?.enableAgentRetries, false);
+    assert.equal(options.local?.enableAgentRetries, true);
     const store = options.local!.store!;
     const cwd = options.local!.cwd!;
     await store.agents.create({ agent: { agentId: AGENT_ID, cwd, status: "idle", createdAt: 1, updatedAt: 1,
@@ -559,7 +605,8 @@ function fakeAgentFactory(behavior: {
         let resolveDone!: () => void;
         const done = new Promise<void>((resolve) => { resolveDone = resolve; });
         const effectiveModel = behavior.mismatchedModelParams ? { id: MODEL.id, params: [{ id: "thinking", value: "high" }] } : options.model;
-        const result: RunResult = { id: NATIVE_RUN_ID, status: behavior.cancelledResult ? "cancelled" : "finished", model: effectiveModel, durationMs: 17,
+        const result: RunResult = { id: NATIVE_RUN_ID, status: behavior.terminalError ? "error" : behavior.cancelledResult ? "cancelled" : "finished", model: effectiveModel, durationMs: 17,
+          ...(behavior.terminalError ? { error: { message: "NGHTTP2_INTERNAL_ERROR" } } : {}),
           ...(behavior.oversizedTerminalRecord ? { result: "x".repeat(1_100_000) } : {}),
           usage: { inputTokens: 3, outputTokens: 5, cacheReadTokens: 1, cacheWriteTokens: 0, totalTokens: 9, reasoningTokens: 2 } };
         const run: Run = {

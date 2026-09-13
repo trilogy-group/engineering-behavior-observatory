@@ -38,7 +38,21 @@ the following digest-pinned settings for every Cursor queue entry:
   MDM, or plugin settings are not silently loaded;
 - `autoReview: false`, so instrumentation does not add a behavior-changing
   classifier; and
-- `enableAgentRetries: false`, so a retained attempt is not silently replaced.
+- `enableAgentRetries: true`, enabling Cursor's native transport/stall recovery
+  within the owned run. EBO does not add a retry loop or replacement attempt.
+
+Before agent creation, EBO calls
+`Cursor.configure({ local: { useHttp1ForAgent: true } })` to select HTTP/1.1
+for local backend streams. This mitigates the observed `NGHTTP2_INTERNAL_ERROR`;
+it is not a proven root-cause fix. Both settings use the
+[public SDK API](https://cursor.com/docs/sdk/typescript).
+The native `configuration` record retains `transport.useHttp1ForAgent` and
+`toolPolicy.enableAgentRetries`. Terminal errors and partial evidence remain
+retained if native recovery fails; the attempt deadline still applies.
+
+Existing frozen policies with retries disabled are rejected at launch, not
+silently overridden. Prepare new configuration records and a new queue for
+future runs; preserve earlier frozen experiments and captures unchanged.
 
 SDK `1.0.31` treats an ancestor Git checkout as the local project root. EBO
 therefore rejects a materialized workspace nested under another `.git` path
@@ -79,7 +93,7 @@ provider ID containing dots.
 ```
 
 ```json
-{ "schemaVersion": "ebo.cursor-sdk-config/v1", "kind": "native-tool-policy", "tools": ["read", "edit", "grep", "glob", "ls"], "disallowedTools": ["shell", "task", "mcp", "webSearch", "webFetch"], "sandbox": { "enabled": false }, "settingSources": [], "autoReview": false, "enableAgentRetries": false }
+{ "schemaVersion": "ebo.cursor-sdk-config/v1", "kind": "native-tool-policy", "tools": ["read", "edit", "grep", "glob", "ls"], "disallowedTools": ["shell", "task", "mcp", "webSearch", "webFetch"], "sandbox": { "enabled": false }, "settingSources": [], "autoReview": false, "enableAgentRetries": true }
 ```
 
 ```json

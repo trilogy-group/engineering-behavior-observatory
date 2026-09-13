@@ -5,6 +5,7 @@ import { dirname, join, parse, resolve } from "node:path";
 
 import {
   Agent,
+  Cursor,
   JSONL_LOCAL_AGENT_STORE_FILES,
   JsonlLocalAgentStore,
   type AgentOptions,
@@ -90,7 +91,7 @@ export type CursorSdkToolPolicy = {
   sandbox: { enabled: boolean };
   settingSources: readonly [];
   autoReview: false;
-  enableAgentRetries: false;
+  enableAgentRetries: true;
 };
 
 export type CursorSdkCaptureConfiguration = {
@@ -185,6 +186,9 @@ export const CURSOR_SDK_CAPABILITIES: AdapterCapabilityProfile = {
 export async function captureCursorSdkRun(options: CaptureCursorSdkRunOptions): Promise<CaptureCursorSdkRunResult> {
   requireText(options.apiKey, "Cursor API key");
   requireText(options.prompt, "Cursor prompt");
+  if (options.configuration.toolPolicy.enableAgentRetries !== true) {
+    throw new Error("Cursor capture requires enableAgentRetries: true for native recovery.");
+  }
   if (options.definition.run.model.id !== options.configuration.model.id) {
     throw new Error("The declared model must match the Cursor SDK model configuration.");
   }
@@ -434,11 +438,13 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
   });
   try {
     await assertCursorWorkspaceIsolation(options.workspacePath);
+    Cursor.configure({ local: { useHttp1ForAgent: true } });
     await options.writer.record("configuration", {
       sdkVersion: CURSOR_SDK_VERSION,
       runtimeIdentity: { status: "not-exposed", detail: "The public SDK does not expose a separately versioned local agent runtime." },
       model: options.configuration.model,
       toolPolicy: options.configuration.toolPolicy,
+      transport: { useHttp1ForAgent: true },
       workingDirectory: options.workspacePath,
       workingDirectoryPolicy: "isolated-local.cwd",
       environmentKeys: environment.keys,
@@ -456,7 +462,7 @@ async function executeCursorSdk(options: ExecuteCursorSdkOptions): Promise<Harne
         settingSources: [],
         sandboxOptions: { enabled: options.configuration.toolPolicy.sandbox.enabled },
         autoReview: false,
-        enableAgentRetries: false,
+        enableAgentRetries: options.configuration.toolPolicy.enableAgentRetries,
       },
     });
     agent = await abortable(agentPromise, options.signal, "Cursor agent creation", async (lateAgent) => {
