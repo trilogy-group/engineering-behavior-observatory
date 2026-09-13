@@ -452,7 +452,7 @@ function admissionEnvelope(
     },
     sharing: { classification: sharing },
     visibilityPolicy: {
-      solution: resolution.environment && snapshotHas(snapshot, "solution/") ? "hidden" : "absent",
+      solution: snapshotHas(snapshot, "solution/") ? "hidden" : "absent",
       verifier: snapshotHas(snapshot, "tests/") ? "hidden" : "absent",
       reviewInputs: "hidden",
     },
@@ -499,9 +499,8 @@ export function freezeDigestOf(record: HarborFreezeRecord): Digest {
 const HARBOR_SNAPSHOT_MANIFEST_REFERENCE = "ebo.harbor-snapshot-manifest/v1";
 
 function snapshotHas(snapshot: HarborSnapshot, directory: string): boolean {
-  const prefix = `${snapshot.manifest.taskSourceId}/${directory}`;
-  return snapshot.manifest.packaging.includedFiles.some((file) => file.startsWith(directory))
-    || snapshot.manifest.snapshotLocator === prefix;
+  return snapshot.manifest.packaging.includedFiles.some((file) =>
+    file.startsWith(directory) || /^steps\/[^/]+\//.test(file) && file.split("/").slice(2).join("/").startsWith(directory));
 }
 
 function readStudyJson(studyRoot: string, locator: string): unknown {

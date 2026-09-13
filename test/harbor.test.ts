@@ -198,10 +198,21 @@ test("snapshots are idempotent and tamper-evident", async () => {
   mkdirSync(join(taskDir, "a"));
   writeFileSync(join(taskDir, "a", "child.txt"), "nested\n");
   writeFileSync(join(taskDir, "a.txt"), "sibling\n");
+  for (const size of [65_535, 65_536, 65_537]) {
+    const bytes = Buffer.alloc(size, 65);
+    bytes[size - 1] = 66;
+    writeFileSync(join(taskDir, `boundary-${size}.bin`), bytes);
+  }
   const adapter = fakeAdapter();
   const first = await snapshotHarborTask(taskDir, join(root, "snapshots"), { adapter });
   const second = await snapshotHarborTask(taskDir, join(root, "snapshots"), { adapter });
   assert.equal(first.manifest.taskSourceId, second.manifest.taskSourceId);
+  const tail = join(root, "snapshots", first.manifest.taskSourceId, "boundary-65537.bin");
+  const original = readFileSync(tail);
+  const changed = Buffer.from(original); changed[changed.length - 1] = 67;
+  writeFileSync(tail, changed);
+  await assert.rejects(() => snapshotHarborTask(taskDir, join(root, "snapshots"), { adapter }), /changed|tamper|different|digest/i);
+  writeFileSync(tail, original);
 
   const manifestPath = join(root, "snapshots", `${first.manifest.taskSourceId}.snapshot-manifest.json`);
   const manifestBefore = readFileSync(manifestPath, "utf8");
@@ -215,6 +226,21 @@ test("snapshots are idempotent and tamper-evident", async () => {
 });
 
 /* ------------------------------------ governance ------------------------------------ */
+
+test("admission includes per-step hidden surfaces", async () => {
+  const root = tempRoot("step-visibility");
+  const task = writePrototypeTask(root);
+  const adapter = fakeAdapter();
+  const identity = adapter.identity.bind(adapter);
+  adapter.identity = async dir => ({ ...await identity(dir), includedFiles: ["task.toml", "instruction.md", "steps/one/tests/test.sh", "steps/one/solution/solve.sh"] });
+  for (const directory of ["tests", "solution"]) {
+    mkdirSync(join(task, "steps/one", directory), { recursive: true });
+    writeFileSync(join(task, "steps/one", directory, "test.sh"), "true\n");
+  }
+  const { record } = await prepareHarborAdmission(root, task, { adapter });
+  assert.equal(record.visibilityPolicy.verifier, "hidden");
+  assert.equal(record.visibilityPolicy.solution, "hidden");
+});
 
 test("admission workflow: proposal carries no review; review binding is enforced; freeze is once-only", async () => {
   const root = tempRoot("governance");

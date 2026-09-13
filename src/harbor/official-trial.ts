@@ -101,7 +101,7 @@ export async function runOfficialHarborTrial(input: {
     else if (native?.qualification === "qualified-with-gaps" && qualification === "qualified") qualification = "qualified-with-gaps";
     if (native) try { await attachHarborEvidence(join(nativeRoot, String(step.index), "bundle"), {
       sourceKind: "harbor-task", task: prepared.task, environment: prepared.environment,
-      step: { index: step.index, name: step.name }, condition: queue.execution,
+      step: { index: step.index, name: step.name }, condition: queue.execution, coordinatorBudget: prepared.budget,
       trialResult: result, trialLock, assessmentMode: prepared.task.assessmentMode,
       queueCondition: { modelId: entry.modelId, harnessId: entry.harnessId, taskId: entry.taskId, trialIndex: entry.trialIndex },
       execution: { code: execution.code, interrupted: execution.interrupted },
@@ -136,7 +136,7 @@ async function attachHarborEvidence(bundle: string, content: unknown): Promise<v
   const manifest = JSON.parse(await readFile(path, "utf8")) as RunManifest;
   const bytes = Buffer.from(JSON.stringify(content, null, 2) + "\n");
   await writeFile(join(bundle, "harbor-result.json"), bytes, { flag: "wx", mode: 0o600 });
-  manifest.evidence.push({ id: "harbor-result", source: "harbor", kind: "diagnostic", authority: "capture", mediaType: "application/json", sharingClass: "restricted", relativePath: "harbor-result.json", digest: `sha256:${digestBytes(bytes).value}`, sizeBytes: bytes.length });
+  manifest.evidence.push({ id: "harbor-result", source: "harbor", kind: "diagnostic", authority: "outcome", mediaType: "application/json", sharingClass: "restricted", relativePath: "harbor-result.json", digest: `sha256:${digestBytes(bytes).value}`, sizeBytes: bytes.length });
   await writeFile(path, JSON.stringify(manifest, null, 2) + "\n", { mode: 0o600 });
   await chmod(path, 0o600);
 }

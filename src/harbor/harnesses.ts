@@ -72,7 +72,7 @@ export function harborStepBundleDefinition(
     configuration: {
       digest: `sha256:${digestMetadata({ instruction: step.instructionDigest, configuration: details.configurationDigests }).value}`,
       captureProfileDigest: `sha256:${details.configurationDigests.captureProfile}`,
-      budgetDigest: `sha256:${details.configurationDigests.nativeLimits}`,
+      budgetDigest: `sha256:${digestMetadata({ nativeLimits: details.configurationDigests.nativeLimits, coordinator: prepared.budget }).value}`,
       toolPolicyDigest: `sha256:${details.configurationDigests.nativeToolPolicy}`,
     },
   };

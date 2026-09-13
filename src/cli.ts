@@ -1105,7 +1105,7 @@ async function harborDoctor(write: (message: string) => void): Promise<number> {
 }
 
 async function harborPrepare(studyRoot: string, taskDir: string, flags: string[], write: (message: string) => void): Promise<number> {
-  const { prepareHarborAdmission } = await import("./harbor/study.js");
+  const { prepareHarborAdmission, proposedAdmissionLocatorOf } = await import("./harbor/study.js");
   const requestedMode = flagValue(flags, "--mode");
   if (requestedMode !== undefined && requestedMode !== "verified" && requestedMode !== "observational") throw new Error("Unknown assessment mode.");
   const mode = requestedMode ?? "observational";
@@ -1116,7 +1116,7 @@ async function harborPrepare(studyRoot: string, taskDir: string, flags: string[]
   });
   write(`Prepared Harbor admission proposal for ${record.taskSourceId}.\n`);
   write(`Snapshot: frozen/task-snapshots/${record.taskSourceId}\n`);
-  write(`Proposal: governance/admissions/harbor/${record.taskSourceId}.proposal.json (review pending; nothing is admitted yet)\n`);
+  write(`Proposal: ${proposedAdmissionLocatorOf(record.taskSourceId)} (review pending; nothing is admitted yet)\n`);
   write(`Digest: ${record.harborTask.digest}\n`);
   void resolution;
   return 0;

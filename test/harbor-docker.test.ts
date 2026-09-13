@@ -42,7 +42,7 @@ name = "two"
         put(join(task, `steps/${name}/instruction.md`), "Create a text file for this step.");
         if (mode !== "observational") put(join(task, `steps/${name}/tests/test.sh`), "#!/bin/sh\nset -eu\n" + (mode === "missing" ? "exit 0\n" : `test -f /workspace/step-${name === "one" ? "1" : "2"}.txt\nprintf '${mode === "threshold" ? "0" : "1"}' > /logs/verifier/reward.txt\n`));
       }
-      if (mode === "setup-failure") put(join(task, "steps/one/setup.sh"), "#!/bin/sh\nexit 7\n");
+      if (mode === "setup-failure") put(join(task, "steps/one/workdir/setup.sh"), "#!/bin/sh\nexit 7\n");
       const assessmentMode = mode === "observational" ? "observational" : "verified";
       const proposal = await prepareHarborAdmission(study, task, { adapter, assessmentMode });
       const id = proposal.record.taskSourceId;
@@ -63,6 +63,7 @@ name = "two"
       const summary = await runHarborBackedQueueEntry({ studyRoot: study, queuePath, runId: queue.entries[0]!.runId, outputRoot: join(root, "attempts"), adapter });
       t.diagnostic(JSON.stringify(summary));
       const harbor = JSON.parse(readFileSync(join(summary.bundlePath, "harbor/result.json"), "utf8"));
+      t.diagnostic(JSON.stringify(harbor));
       if (mode === "setup-failure") { assert.equal(summary.completedSteps, 0); assert.equal(summary.terminal.state, "failed"); return; }
       assert.equal(summary.completedSteps, mode === "threshold" || mode === "missing" ? 1 : 2);
       assert.equal(harbor.step_results[0].agent_result.metadata.ebo_step, 1);

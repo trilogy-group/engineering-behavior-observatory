@@ -541,7 +541,7 @@ function digestFile(path: string): Digest {
     const hash = createHash("sha256");
     const chunk = Buffer.allocUnsafe(64 * 1024);
     for (;;) {
-      const read = readSync(descriptor, chunk, 0, chunk.length, 0);
+      const read = readSync(descriptor, chunk, 0, chunk.length, null);
       if (read === 0) break;
       hash.update(chunk.subarray(0, read));
       if (read < chunk.length) break;

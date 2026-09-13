@@ -34,7 +34,7 @@ ebo harbor prepare study path/to/task --mode observational
 ```
 
 Preparation returns a content-derived task-source ID and writes a proposal to
-`study/governance/admissions/harbor/<id>.proposal.json`. Review the task,
+`study/governance/admissions/harbor/<id>.proposed.json`. Review the task,
 Docker build context, effective instructions, provenance and sharing policy.
 Create `study/governance/reviews/harbor/<id>.json` using the proposal's
 `preAdmissionDigest` (also available through `preAdmissionDigestOf`):
