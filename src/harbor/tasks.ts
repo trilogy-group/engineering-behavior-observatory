@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, constants, copyFileSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, rmSync, statSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, constants, copyFileSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, rmSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 
-import { digestBytes, digestMetadata } from "../artifacts.js";
+import { digestBytes, digestMetadata, writeMetadataAtomically } from "../artifacts.js";
 import type { AssessmentMode, Digest } from "../contracts.js";
 import { createHarborAdapter, HarborAdapterError, HARBOR_PACKAGE_PIN, type HarborAdapter, type HarborIdentity, type HarborInstruction, type HarborTaskLockJson } from "./adapter.js";
 
@@ -357,7 +357,7 @@ export async function snapshotHarborTask(
     }
 
     mkdirSync(resolve(snapshotsRoot), { recursive: true });
-    writeJsonIfAbsent(manifestPath, manifest);
+    await writeMetadataAtomically(resolve(snapshotsRoot), manifestLocator, manifest, undefined, { overwrite: false });
     published = true;
     const retained = await verifyHarborSnapshot(snapshotsRoot, resolution.taskSourceId, options);
     if (retained.manifest.copyDigest.value !== manifest.copyDigest.value
@@ -571,17 +571,6 @@ function relativePathBetween(root: string, path: string): string {
   const relative = path.split(sep).filter((segment) => segment !== "");
   const rootSegments = resolve(root).split(sep).filter((segment) => segment !== "");
   return relative.slice(rootSegments.length).join("/");
-}
-
-function writeJsonIfAbsent(path: string, value: unknown): void {
-  const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
-  mkdirSync(dirname(path), { recursive: true });
-  const descriptor = openSync(path, "wx", 0o600);
-  try {
-    writeSync(descriptor, bytes);
-  } finally {
-    closeSync(descriptor);
-  }
 }
 
 function readJsonManifest(path: string): HarborSnapshotManifest {

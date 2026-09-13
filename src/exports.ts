@@ -157,6 +157,8 @@ const SECRET_FIELDS = new Set([
 const CORRELATION_FIELDS = new Set(["attemptid", "bundleid", "id", "runid", "sessionid", "traceid", "eborunid", "eboattemptid"]);
 const LOCAL_IDENTIFIER_FIELDS = new Set(["login", "owner", "user", "username"]);
 const TRUNCATABLE_FIELDS = new Set([
+  "exceptionmessage",
+  "exceptiontraceback",
   "body",
   "commandoutput",
   "content",
@@ -1035,7 +1037,7 @@ function assertSupportedPair(kind: RunBundleEvidenceDescriptor["kind"], mediaTyp
     telemetry: ["application/json"],
     workspace: ["text/x-diff"],
     verifier: ["application/json"],
-    diagnostic: ["text/plain"],
+    diagnostic: ["text/plain", "application/json"],
     "capture-report": ["application/json"],
   };
   if (kind === "export-manifest") return;

@@ -62,9 +62,11 @@ test("Harbor task assessment is projected separately from bound native capture",
       sourceKind: "harbor-task", assessmentMode: "observational",
       task: { assessmentMode: "observational" },
       nativeCapture: { runId: manifest.run.id, attemptId: manifest.attempt.id, assessmentMode: manifest.run.assessmentMode ?? "verified" },
+      trialResult: { exception_info: { exception_message: "verbose error ".repeat(2048) } },
     };
     const bytes = Buffer.from(JSON.stringify(document));
-    const descriptor = { id: "harbor-result", source: "harbor", kind: "diagnostic", authority: "outcome", mediaType: "text/plain",
+    assert.ok(bytes.length > policy.maxStringBytes);
+    const descriptor = { id: "harbor-result", source: "harbor", kind: "diagnostic", authority: "outcome", mediaType: "application/json",
       sharingClass: "restricted", relativePath: "harbor-result.json", sizeBytes: bytes.length,
       digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}` };
     manifest.evidence.push(descriptor);
@@ -72,6 +74,11 @@ test("Harbor task assessment is projected separately from bound native capture",
     writeFileSync(path, JSON.stringify(manifest));
     const exported = join(root, "exported");
     await createPortableRunBundleExport({ sourceRoot: source, destinationRoot: exported, policy });
+    const portable = await readPortableRunBundleExport(exported, policy);
+    const retained = portable.artifacts.find(artifact => artifact.id === "harbor-result")!;
+    const sanitized = JSON.parse(readFileSync(join(exported, retained.relativePath), "utf8"));
+    assert.ok(Buffer.byteLength(sanitized.trialResult.exception_info.exception_message) <= policy.maxStringBytes);
+    assert.ok(portable.transformations.some(change => change.artifactId === "harbor-result" && change.action === "truncated"));
     for (const dir of [source, exported]) {
       const entry = buildCorpusIndex(dir).find(entry => entry.manifestPath === "manifest.json")!;
       assert.equal(entry.assessmentMode, "observational", JSON.stringify(entry));
