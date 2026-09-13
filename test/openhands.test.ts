@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -1085,7 +1085,6 @@ test("preserves and reports the source workspace when workspace evidence capture
   writeFileSync(join(start, "result.txt"), "before\n");
   cpSync(start, final, { recursive: true, preserveTimestamps: true });
   writeFileSync(join(final, "result.txt"), "after\n");
-  symlinkSync("../result.txt", join(final, "unsafe-link"));
   const sessionHook = {
     id: "hook-workspace-capture-failure",
     kind: "HookExecutionEvent",
@@ -1129,7 +1128,7 @@ test("preserves and reports the source workspace when workspace evidence capture
   try {
     const result = await captureOpenHandsAgentServerRun({
       definition,
-      startingWorkspacePath: start,
+      startingWorkspacePath: join(root, "missing-start"),
       workspace: {
         setup: async () => ({ status: "ready", path: final, artifactId: "workspace", retained: true }),
         cleanup: async () => {
@@ -1169,7 +1168,7 @@ test("preserves and reports the source workspace when workspace evidence capture
       missingEvidence: Array<{ kind: string; detail?: string }>;
     };
     assert.equal(report.missingEvidence.some(({ kind, detail }) =>
-      kind === "workspace" && /symbolic link/u.test(detail ?? "")), true);
+      kind === "workspace" && /ENOENT/u.test(detail ?? "")), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
