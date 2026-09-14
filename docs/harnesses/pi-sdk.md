@@ -4,6 +4,14 @@ EBO integrates `@earendil-works/pi-coding-agent` `0.85.1` directly through its p
 
 ## Operator command
 
+Model configuration separates `provider` (for example, `fireworks`) from the
+native `model` ID (`accounts/fireworks/models/deepseek-v4p1-flash`). EBO passes
+both unchanged to the SDK; it does not parse the CLI's combined `--model`
+selector. `queueModelId` identifies the experiment condition and accepts
+nonempty identifiers, including slashes and dots. Legacy `ebo pi run` queues
+still require their schema's slug IDs; Harbor configurations can retain native
+model IDs without converting them to slugs.
+
 ```sh
 ebo pi run \
   <bundle-root> <queue.json> <run-id> <output-root> \
