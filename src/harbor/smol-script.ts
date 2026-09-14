@@ -31,6 +31,20 @@ def json_write(path, value):
 def fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
+async def cleanup_owned(name, operation, record):
+    for attempt in range(1, 4):
+        try:
+            await operation()
+            record({'machine': name, 'attempt': attempt, 'state': 'deleted'})
+            return
+        except Exception as exc:
+            if getattr(exc, 'code', None) in {'NOT_FOUND', 'VM_NOT_FOUND'}:
+                record({'machine': name, 'attempt': attempt, 'state': 'already-absent'})
+                return
+            record({'machine': name, 'attempt': attempt, 'state': 'failed', 'error': str(exc)})
+            if attempt == 3: raise
+            await asyncio.sleep(5)
+
 async def boot_identity(machine):
     # SDK read_file assumes ordinary files; procfs reports a synthetic size.
     result = await machine.exec(['cat', '/proc/sys/kernel/random/boot_id'])
@@ -213,7 +227,11 @@ class OwnedSmolEnvironment(SmolEnvironment):
             self.event('cleanup-pending', child=child, reason='Evidence retrieval failed; deletion withheld. SDK process exit may stop this machine; recovery is not guaranteed.')
             return
         try:
-            await super().stop(delete)
+            if delete and child:
+                await cleanup_owned(child, lambda: super(OwnedSmolEnvironment, self).stop(True),
+                    lambda event: self.event('cleanup-attempt', cleanup=event))
+            else:
+                await super().stop(delete)
             self.event('deleted', child=child)
         except BaseException as exc:
             self.event('cleanup-pending', child=child, reason=str(exc))
@@ -325,8 +343,11 @@ async def serve_parents(request):
                 retained = [child for child, state in children.items() if state != 'deleted']
                 if retained: errors.append({'error': 'Children need recovery before parent cleanup', 'children': retained})
                 if drained and not retained:
+                    def record_cleanup(event):
+                        receipt.setdefault('cleanupAttempts', []).append(event)
+                        json_write(root / 'receipt.json', receipt)
                     for machine in reversed(machines):
-                        try: await machine.delete()
+                        try: await cleanup_owned(machine.name, machine.delete, record_cleanup)
                         except Exception as exc: errors.append({'machine': machine.name, 'error': str(exc)})
                 elif not drained: errors.append({'error': 'Active trials did not drain; parents retained for operator cleanup'})
                 receipt.update(state='cleanup-pending' if errors else 'retired', cleanupErrors=errors, stoppedAt=time.time())

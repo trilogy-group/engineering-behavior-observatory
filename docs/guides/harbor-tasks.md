@@ -184,6 +184,12 @@ Use `localSetup` to prepare a private local parent from that image.
 
 ### Private local task preparation
 
+Smol mounts `/tmp` as a RAM-backed filesystem. EBO keeps worker evidence under
+`/var/tmp/ebo-evidence` and sets worker `TMPDIR` to `/var/tmp/ebo-scratch`, so
+baseline copies and temporary Git indexes use disk. Allow space for those copies
+as well as dependencies. Qualify capture with a representative repository before
+a model trial; successful setup alone does not prove enough capture space remains.
+
 Put a repository snapshot and a setup script in the task's `environment/`
 before admission and freezing. For example, with files under `environment/repo/`,
 `environment/setup.sh` can contain:
@@ -246,6 +252,11 @@ ebo harbor run study queue.json <first-run-id> runs
 ebo harbor run study queue.json <second-run-id> runs
 # Then Ctrl-C in terminal A to drain borrowers and delete the owned parents.
 ```
+
+Deletion uses the Smol SDK, with at most three attempts and five seconds between
+failures. Parent receipts retain `cleanupAttempts`; child cleanup events retain
+the same history. Exhausted retries remain `cleanup-pending`. Successful recovery
+does not erase earlier errors or start a replacement model attempt.
 
 The queue selects the harness. One entry creates one attempt, with no replacement
 attempts or EBO retry loop. Each step gets a fresh native conversation and shares

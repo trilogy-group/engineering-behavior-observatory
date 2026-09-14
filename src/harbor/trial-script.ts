@@ -45,8 +45,10 @@ class EboAgent(BaseAgent):
         self.index += 1
         workdir = (await environment.exec('pwd')).stdout.strip()
         if not workdir or workdir == '/': raise ValueError('Harbor task must declare a working directory distinct from /')
-        root = '/tmp/ebo-evidence/' + str(self.index)
-        await environment.exec('mkdir -p ' + shlex.quote(root))
+        root = '/var/tmp/ebo-evidence/' + str(self.index)
+        scratch = '/var/tmp/ebo-scratch'
+        created = await environment.exec('mkdir -p ' + shlex.quote(root) + ' ' + shlex.quote(scratch))
+        if created.return_code: raise RuntimeError('Cannot prepare disk-backed worker evidence and scratch directories')
         payload = json.loads(json.dumps(self.request['workerInput']))
         prepared = payload['prepared']
         # Deliver only this step. Future instructions and verifier gates stay on
@@ -67,6 +69,8 @@ class EboAgent(BaseAgent):
         runtime = self.request['runtime']
         argv = ['/opt/ebo/' + runtime['node'], '/opt/ebo/' + runtime['entrypoint'], root + '/input.json']
         env = {key: os.environ[key] for key in runtime['environmentKeys'] if key in os.environ}
+        # Smol mounts /tmp as tmpfs. Repository copies and Git indexes need disk.
+        env['TMPDIR'] = scratch
         # Expose only the explicitly selected credential/route keys, not the host environment.
         command = ' '.join(shlex.quote(v) for v in argv)
         try:

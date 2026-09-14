@@ -63,6 +63,35 @@ request = {'ownerRoot': str(root), 'queueDigest': 'q', 'taskPath': str(root/'der
     'budgetMs': 30000, 'build': 'test', 'verified': True, 'environmentManifest': manifest}
 
 async def check():
+    runner = object.__new__(e.EboAgent)
+    runner.index = 0
+    runner.deadline = e.time.monotonic() + 60
+    runner.request = {'workerInput': {'prepared': {'steps': [{'index': 1}], 'task': {}, 'evidence': {}}},
+        'runtime': {'node': 'node', 'entrypoint': 'worker.js', 'environmentKeys': []}, 'nativeRoot': str(root/'native')}
+    async def execute(command, **kwargs):
+        if command.startswith('/opt/ebo/node'):
+            assert kwargs['env']['TMPDIR'] == '/var/tmp/ebo-scratch'
+            assert '/var/tmp/ebo-evidence/1/input.json' in command
+        return SimpleNamespace(return_code=0, stdout='/workspace' if command == 'pwd' else '', stderr='')
+    async def download(source, target):
+        assert source == '/var/tmp/ebo-evidence/1'
+        (target/'worker-finished.json').write_text(json.dumps({'terminal': {'state': 'completed'}, 'bundleLocator': 'bundle/manifest.json'}))
+    environment = SimpleNamespace(exec=AsyncMock(side_effect=execute), upload_file=AsyncMock(), download_dir=AsyncMock(side_effect=download))
+    await runner.run('fixture', environment, SimpleNamespace())
+    assert environment.exec.await_count >= 3
+    history = []
+    operation = AsyncMock(side_effect=[RuntimeError('still alive'), None])
+    with patch.object(e.asyncio, 'sleep', new_callable=AsyncMock):
+        await e.cleanup_owned('owned', operation, history.append)
+    assert operation.await_count == 2
+    assert [event['state'] for event in history] == ['failed', 'deleted']
+    history = []
+    operation = AsyncMock(side_effect=RuntimeError('still alive'))
+    with patch.object(e.asyncio, 'sleep', new_callable=AsyncMock):
+        try: await e.cleanup_owned('owned', operation, history.append)
+        except RuntimeError: pass
+        else: raise AssertionError('Cleanup exhaustion must remain an error')
+    assert operation.await_count == 3 and len(history) == 3
     trial = await e.create_trial(request, prepare=True)
     envs = [env async for env, image_binding in e.preparation_environments(trial, binding)]
     assert len(envs) == 3
@@ -148,6 +177,15 @@ async def check():
         events = [json.loads(line) for line in (root/'children.jsonl').read_text().splitlines()]
         assert events[-1]['state'] == 'cleanup-pending'
         assert events[-1]['child'] == 'owned-child'
+        agent.ebo_transfer_failed = False
+        with patch.object(e.SmolEnvironment, 'stop', new_callable=AsyncMock) as stop, patch.object(e.asyncio, 'sleep', new_callable=AsyncMock):
+            stop.side_effect = [RuntimeError('still alive'), None]
+            await agent.stop(True)
+            assert stop.await_count == 2
+        events = [json.loads(line) for line in (root/'children.jsonl').read_text().splitlines()]
+        assert events[-1]['state'] == 'deleted'
+        assert events[-3]['cleanup']['state'] == 'failed'
+        assert events[-2]['cleanup']['state'] == 'deleted'
     assert not e.owner_alive(root)
     agent._network_policy = NetworkPolicy(network_mode=NetworkMode.NO_NETWORK)
     try: e.env_identity(agent)
