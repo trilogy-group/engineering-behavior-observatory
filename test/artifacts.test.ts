@@ -22,6 +22,20 @@ import {
 import { main } from "../src/cli.js";
 
 const repositoryRoot = new URL("../../", import.meta.url);
+test("large capture omission lists retain efficient JSON-object uniqueness", () => {
+  const report = JSON.parse(readFileSync(new URL("test/fixtures/run-bundles/complete/capture-report.json", repositoryRoot), "utf8"));
+  report.qualification = "incomplete";
+  report.capabilities.outcome.status = "missing";
+  report.missingEvidence = Array.from({ length: 108_000 }, (_, i) => ({
+    kind: "workspace-omission", reason: "policy-restricted", affects: ["outcome"], detail: `file-${i}: hard-linked file`,
+  }));
+  const started = performance.now();
+  assert.deepEqual(validateArtifact("capture-report", report), []);
+  assert.ok(performance.now() - started < 10_000, "Large report validation must not use pairwise comparison");
+  const first = report.missingEvidence[0];
+  report.missingEvidence.push({ detail: first.detail, affects: first.affects, reason: first.reason, kind: first.kind });
+  assert.ok(validateArtifact("capture-report", report).some(error => error.field === "/missingEvidence"));
+});
 const fixturePath = (path: string) => new URL(`tests/fixtures/${path}`, repositoryRoot).pathname;
 const runFixturePath = (path: string) => new URL(`test/fixtures/run-bundles/${path}`, repositoryRoot).pathname;
 

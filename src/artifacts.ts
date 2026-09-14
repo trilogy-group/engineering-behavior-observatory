@@ -1142,11 +1142,33 @@ function loadValidators(): Map<string, ValidateFunction> {
   const ajv = new Ajv2020({ allErrors: true, strict: false });
 
   addFormats(ajv);
+  // Preserve JSON Schema object equality without Ajv's quadratic pairwise scan.
+  // Only the large capture-report list uses this equivalent implementation.
+  ajv.addKeyword({ keyword: "eboUniqueItems", type: "array", schemaType: "boolean",
+    validate: (enabled: boolean, items: unknown[]) => {
+      if (!enabled) return true;
+      const seen = new Set<string>();
+      try {
+        for (const item of items) {
+          const key = canonicalizeMetadata(item);
+          if (seen.has(key)) return false;
+          seen.add(key);
+        }
+      } catch { return false; }
+      return true;
+    },
+  });
   ajv.addSchema(readSchema("task-packet.v1.schema.json"));
   ajv.addSchema(readSchema("task-packet-freeze.v1.schema.json"));
   ajv.addSchema(readSchema("experiment.v1.schema.json"));
   ajv.addSchema(readSchema("run-queue.v1.schema.json"));
-  ajv.addSchema(readSchema("run-bundles/v1.json"));
+  const runBundleSchema = readSchema("run-bundles/v1.json") as {
+    $defs: { captureReport: { properties: { missingEvidence: { uniqueItems?: boolean; eboUniqueItems?: boolean } } } };
+  };
+  const missingEvidence = runBundleSchema.$defs.captureReport.properties.missingEvidence;
+  missingEvidence.eboUniqueItems = missingEvidence.uniqueItems;
+  delete missingEvidence.uniqueItems;
+  ajv.addSchema(runBundleSchema);
   ajv.addSchema(readSchema("uniform-events/v1.json"));
   ajv.addSchema(readSchema("normalization-integrity.v1.json"));
   ajv.addSchema(readSchema("structural-observations.v1.json"));

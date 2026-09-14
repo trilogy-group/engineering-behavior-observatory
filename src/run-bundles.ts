@@ -506,6 +506,11 @@ async function withWorkspaceOutcomeProjection<T>(
     omissions.push(`${relative(finalPath, path)}: ${reason}`);
   };
   const sourceRoot = await realpath(finalPath);
+  if (options.respectGitignore === true) {
+    for (const path of await startingWorkspaceIgnoredPaths(startPath, sourceRoot)) {
+      skipped.add(resolve(sourceRoot, path));
+    }
+  }
   const contained = (path: string): boolean => {
     const rel = relative(sourceRoot, path);
     return !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
@@ -513,6 +518,7 @@ async function withWorkspaceOutcomeProjection<T>(
   const collectLinks = async (directory: string): Promise<void> => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
+      if (skipped.has(path)) continue;
       if (entry.name === ".git" || entry.isDirectory() && exclusions.includes(entry.name)) {
         omit(path, entry.name === ".git" ? "Git administrative state" : "configured directory exclusion");
         continue;
@@ -556,7 +562,6 @@ async function withWorkspaceOutcomeProjection<T>(
       await rm(path);
       await symlink(link.target, path);
     }
-    if (options.respectGitignore === true) await removeIgnoredWorkspaceEntries(startPath, projectedPath);
     // Exclusions can remove targets of otherwise safe links. Prune those links
     // in the projection only, repeating for chains through a removed link.
     let removed: boolean;
@@ -1237,7 +1242,7 @@ function runWithNativeReference(run: RunBundleRun, descriptor: RunBundleEvidence
   return { ...structuredClone(run), ...(Object.keys(native).length === 0 ? {} : { native }) };
 }
 
-async function removeIgnoredWorkspaceEntries(startPath: string, finalPath: string): Promise<void> {
+async function startingWorkspaceIgnoredPaths(startPath: string, finalPath: string): Promise<string[]> {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "ebo-workspace-ignore-index-"));
   const baseline = join(temporaryRoot, "baseline");
   const globalExcludes = join(temporaryRoot, "global-excludes");
@@ -1246,9 +1251,7 @@ async function removeIgnoredWorkspaceEntries(startPath: string, finalPath: strin
     await cp(startPath, baseline, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true, force: false });
     await execFileAsync("git", ["init", "--quiet"], { cwd: baseline });
     await execFileAsync("git", ["add", "--force", "--all"], { cwd: baseline });
-    for (const relativePath of await ignoredWorkspacePaths(baseline, finalPath, globalExcludes)) {
-      await rm(join(finalPath, relativePath), { recursive: true, force: true });
-    }
+    return await ignoredWorkspacePaths(baseline, finalPath, globalExcludes);
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
