@@ -15,7 +15,7 @@ concurrency:
   group: harbor-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 jobs:
-  docker-trial:
+  control-contracts:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -30,15 +30,10 @@ jobs:
           python-version: '3.14'
       - run: npm ci
       - run: npm run build && npm run typecheck
-      - run: python -m venv .harbor-venv && .harbor-venv/bin/pip install harbor==0.23.0
+      - run: python -m venv .harbor-venv && .harbor-venv/bin/pip install 'smolmachines[harbor]==1.15.0' harbor==0.22.0 && .harbor-venv/bin/pip check
       - name: Native worker and admission regression checks
-        run: node --test dist/test/harbor.test.js dist/test/harbor-worker.test.js
+        run: node --test dist/test/harbor.test.js dist/test/harbor-worker.test.js dist/test/harbor-trial.test.js dist/test/harbor-smol.test.js
         env:
           EBO_HARBOR_PYTHON: '${{ github.workspace }}/.harbor-venv/bin/python'
-      - name: Build the Linux capture runtime
-        run: node scripts/build-harbor-runtime.mjs .ebo/harbor-runtime --fixtures
-      - name: Official Harbor Docker trial, no external model calls
-        run: node --test dist/test/harbor-docker.test.js
-        env:
-          EBO_HARBOR_PYTHON: '${{ github.workspace }}/.harbor-venv/bin/python'
-          EBO_HARBOR_RUNTIME: .ebo/harbor-runtime/worker.tgz
+      # Live Smol conformance needs the qualified Apple Silicon host and isolated
+      # patched libkrun. This job tests contracts, not virtualization availability.

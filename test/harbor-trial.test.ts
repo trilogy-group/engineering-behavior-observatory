@@ -36,13 +36,14 @@ async function trialFixture() {
   };
   const archive = await ref("worker.tgz", "test archive; not executed");
   const workerRef = await ref("worker.json", JSON.stringify({ schemaVersion: "ebo.harbor-worker-runtime/v1", archive, node: "node", entrypoint: "worker.js", environmentKeys: [] }));
+  const environmentRef = await ref("environment.json", JSON.stringify({ schemaVersion: "ebo.smol-environments/v1", platform: "linux/arm64", runtimeArchiveDigest: archive.digest.value }));
   const config = await ref("config.json", "{}");
   const digest = config.digest;
   const task = { taskSourceId: "task", harborDigest: digest.value, assessmentMode: "observational" as const, snapshotDirectory: root, resolutionDigest: digest };
   const prepared = {
     run: { id: "run", taskId: "task", modelId: "model", harnessId: "pi-sdk" }, task,
     steps: [{ index: 1, name: null, effectiveInstruction: "Do work", instructionDigest: digest, minReward: null, verifierTimeoutSec: 10 }],
-    environment: { profile: "docker" as const, provider: "docker", containerized: true, enforcement: "docker" as const, dockerImage: null, networkMode: "public" },
+    environment: { profile: "smol" as const, provider: "smol", containerized: false, enforcement: "microvm" as const, dockerImage: null, networkMode: "public" },
     verifier: { requested: false, environmentMode: null, timeoutSec: 10, multiStepRewardStrategy: "mean" as const },
     budget: { coordinatorWallClockMs: 5000 },
     evidence: { attemptRoot: attempt, harborDir: join(attempt, "harbor"), stepsDir: join(attempt, "steps"), workspaceDir: join(attempt, "workspace"), eboDir: join(attempt, "ebo") },
@@ -57,7 +58,7 @@ async function trialFixture() {
     schemaVersion: "ebo.run-queue/v2" as const, experimentId: "experiment", experimentDigest: digest, schedulingDigest: digest,
     matrix: { taskIds: ["task"], modelIds: ["model"], harnessIds: ["pi-sdk"], trialCount: 1 }, seed: "test",
     captureProfile: config, coordinatorBudget: { maxWallClockMs: 5000 },
-    ordering: { strategy: "sequential" as const, seed: "test" }, execution: { environmentProfile: "docker" as const, contextPolicy: "fresh" as const, workerRef }, entries: [entry],
+    ordering: { strategy: "sequential" as const, seed: "test" }, execution: { environmentProfile: "smol" as const, contextPolicy: "fresh" as const, workerRef, environmentRef }, entries: [entry],
   };
   return { root, attempt, prepared, entry, queue, studyRoot: root, attemptId: "attempt" };
 }
@@ -72,7 +73,7 @@ test("Harbor staging failure retains an explicit unqualified attempt", async () 
   const saved = JSON.parse(await readFile(join(input.prepared.evidence.eboDir, "manifest.json"), "utf8"));
   assert.equal(saved.attemptId, "attempt");
   assert.match(saved.error, /missing.json/);
-  assert.equal((await stat(join(input.attempt, "harbor/worker-runtime.tgz"))).size, 26);
+  await assert.rejects(stat(join(input.attempt, "harbor/worker-runtime.tgz")), { code: "ENOENT" });
 });
 
 test("Harbor wrapper preserves native terminal and classification through its error envelope", async t => {

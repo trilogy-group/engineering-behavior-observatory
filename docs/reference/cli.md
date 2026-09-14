@@ -14,6 +14,7 @@ ebo harbor admit <study-root> <task-source-id>
 ebo harbor freeze <study-root> <task-source-id>
 ebo harbor status <study-root> <task-source-id>
 ebo harbor compile <study-root> <experiment.json> <queue.json>
+ebo harbor environment serve <study-root> <queue.json>
 ebo harbor run <study-root> <queue.json> <run-id> <output-root>
 ebo harbor convert-legacy <study-root> <packet-locator> --image <docker-image>
 ```

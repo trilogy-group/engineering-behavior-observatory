@@ -33,7 +33,7 @@ export type TaskSourceCondition =
       freezeLocator?: string;
     };
 
-export type HarborExecutionProfile = "docker" | "local-fs-test";
+export type HarborExecutionProfile = "smol" | "docker" | "local-fs-test";
 
 export type ExperimentConfigurationV2 = {
   schemaVersion: typeof HARBOR_EXPERIMENT_SCHEMA_VERSION;
@@ -52,6 +52,7 @@ export type ExperimentConfigurationV2 = {
   execution?: {
     environmentProfile?: HarborExecutionProfile;
     workerRef?: ArtifactReference;
+    environmentRef?: ArtifactReference;
     contextPolicy?: "fresh" | "resume-requested" | "imported-trajectory";
   };
 };
@@ -104,6 +105,7 @@ export type RunQueueV2 = {
   execution: {
     environmentProfile: HarborExecutionProfile;
     workerRef?: ArtifactReference;
+    environmentRef?: ArtifactReference;
     contextPolicy: "fresh" | "resume-requested" | "imported-trajectory";
   };
   matrix: {
@@ -144,7 +146,7 @@ export async function compileHarborRunQueue(
   assertV2Semantics(experiment);
 
   const experimentDigest = digestMetadata(experiment);
-  const environmentProfile = experiment.execution?.environmentProfile ?? "docker";
+  const environmentProfile = experiment.execution?.environmentProfile ?? "smol";
   const contextPolicy = experiment.execution?.contextPolicy ?? "fresh";
   const matrix = {
     taskIds: experiment.ordering.strategy === "declared" ? [...experiment.ordering.declaredOrder.taskIds] : Object.keys(experiment.taskSet).sort(),
@@ -161,6 +163,7 @@ export async function compileHarborRunQueue(
     environmentProfile,
     contextPolicy,
     workerRef: experiment.execution?.workerRef ?? null,
+    ...(experiment.execution?.environmentRef ? { environmentRef: experiment.execution.environmentRef } : {}),
   });
 
   const tasks = new Map<string, RunQueueEntryTask>();
@@ -200,7 +203,7 @@ export async function compileHarborRunQueue(
     schedulingDigest,
     captureProfile: experiment.captureProfile,
     coordinatorBudget: experiment.coordinatorBudget,
-    execution: { environmentProfile, contextPolicy, ...(experiment.execution?.workerRef ? { workerRef: experiment.execution.workerRef } : {}) },
+    execution: { environmentProfile, contextPolicy, ...(experiment.execution?.workerRef ? { workerRef: experiment.execution.workerRef } : {}), ...(experiment.execution?.environmentRef ? { environmentRef: experiment.execution.environmentRef } : {}) },
     matrix,
     seed: experiment.ordering.seed,
     entries,
@@ -236,6 +239,7 @@ export async function validateHarborRunQueue(
     environmentProfile: runQueue.execution.environmentProfile,
     contextPolicy: runQueue.execution.contextPolicy,
     workerRef: runQueue.execution.workerRef ?? null,
+    ...(runQueue.execution.environmentRef ? { environmentRef: runQueue.execution.environmentRef } : {}),
   }))) {
     semantic.push(queueV2Error(artifact, "/schedulingDigest", "Scheduling digest does not match the persisted queue policy."));
   }
@@ -344,7 +348,7 @@ function assertV2Semantics(experiment: ExperimentConfigurationV2): void {
   if (taskCount * modelCount * harnessCount * experiment.trialCount > 100_000) {
     throw new Error("Run matrix exceeds the local queue limit of 100000 entries.");
   }
-  const profiles = new Set(["docker", "local-fs-test"]);
+  const profiles = new Set(["smol", "docker", "local-fs-test"]);
   if (experiment.execution?.environmentProfile !== undefined && !profiles.has(experiment.execution.environmentProfile)) {
     throw new Error(`Unknown environment profile "${experiment.execution.environmentProfile}".`);
   }

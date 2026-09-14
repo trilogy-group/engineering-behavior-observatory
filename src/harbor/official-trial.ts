@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile, writeFile, mkdir, chmod, copyFile } from "node:fs/promises";
-import { constants, openSync, writeSync, closeSync } from "node:fs";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { openSync, writeSync, closeSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { digestMetadata, digestBytes, assertNoDuplicateJsonKeys, writeMetadataAtomically, writeArtifactAtomically } from "../artifacts.js";
@@ -12,6 +12,7 @@ import type { PreparedHarborExecution } from "./execution.js";
 import type { RunQueueV2 } from "./queue.js";
 import type { HarborRunSummary, HarborStepExecution } from "./runner.js";
 import { HARBOR_TRIAL_SCRIPT } from "./trial-script.js";
+import { smolCondition } from "./smol.js";
 
 export type HarborWorkerRuntime = {
   schemaVersion: "ebo.harbor-worker-runtime/v1";
@@ -40,15 +41,13 @@ export async function runOfficialHarborTrial(input: {
   entry: RunQueueV2["entries"][number]; attemptId: string; adapter: HarborAdapter; signal?: AbortSignal;
 }): Promise<HarborRunSummary> {
   const { prepared, entry, queue, attemptId } = input;
-  if (!queue.execution.workerRef) throw new Error("Docker Harbor runs require an execution.workerRef for the pinned Linux capture runtime.");
+  const condition = smolCondition(input.studyRoot, queue);
+  if (!queue.execution.workerRef) throw new Error("Smol Harbor runs require an execution.workerRef for the pinned Linux capture runtime.");
   const runtime = resolveHarborWorkerRuntime(input.studyRoot, queue.execution.workerRef);
   const archive = resolveBundleConfiguration(input.studyRoot, runtime.archive, 2 * 1024 * 1024 * 1024);
   const root = prepared.evidence.attemptRoot;
   await mkdir(prepared.evidence.harborDir, { recursive: true, mode: 0o700 });
   try {
-  const archivePath = join(root, "harbor", "worker-runtime.tgz");
-  await copyFile(join(input.studyRoot, runtime.archive.locator), archivePath, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
-  await chmod(archivePath, 0o600);
   const configuration = { ...entry.configuration, captureProfile: queue.captureProfile };
   const refs = [...Object.values(configuration), ...(runtime.resources ?? [])];
   const configurationFiles: Array<{ hostPath: string; locator: string }> = [];
@@ -64,10 +63,11 @@ export async function runOfficialHarborTrial(input: {
   const script = join(prepared.evidence.harborDir, "ebo_harbor_" + createHash("sha256").update(HARBOR_TRIAL_SCRIPT).digest("hex").slice(0,16) + ".py");
   await writeFile(script, HARBOR_TRIAL_SCRIPT, { flag: "wx", mode: 0o600 });
   const request = {
+    ...condition, smolEvents: join(root, "harbor", "smol-events.jsonl"),
     taskPath: prepared.task.snapshotDirectory, attemptId, trialsDir: join(root, "harbor", "trials"),
     model: entry.modelId, verified: prepared.verifier.requested, budgetMs: prepared.budget.coordinatorWallClockMs,
-    build: "ebo-harbor-v1", nativeRoot,
-    runtime: { ...runtime, archivePath, archiveDigest: digestBytes(archive).value }, configurationFiles,
+    build: "ebo-harbor-smol-v1", nativeRoot,
+    runtime: { ...runtime, archiveDigest: digestBytes(archive).value }, configurationFiles,
     workerInput: { prepared, configuration, configurationRoot: "/tmp/ebo-worker/config" },
   };
   const requestPath = join(prepared.evidence.harborDir, "request.json");
@@ -83,8 +83,17 @@ export async function runOfficialHarborTrial(input: {
   } catch { result = { exception_info: "Harbor returned no valid terminal result; retained stdout/stderr are authoritative." }; }
   let trialLock: unknown = null;
   try { trialLock = JSON.parse(await readFile(join(root, "harbor/trials", attemptId, "lock.json"), "utf8")); } catch { /* Explicitly absent on pre-Trial failure. */ }
+  const smolEvidence: Record<string, unknown> = { condition };
+  for (const name of ["preparation.json", "task-transformation.json", "smol-events.jsonl"]) {
+    try {
+      const text = await readFile(join(root, "harbor", name), "utf8");
+      smolEvidence[name] = name.endsWith("jsonl") ? text.trim().split("\n").filter(Boolean).map(line => JSON.parse(line)) : JSON.parse(text);
+    } catch { smolEvidence[name] = null; }
+  }
   const steps: Array<Record<string, unknown>> = [];
   let qualification: "qualified" | "qualified-with-gaps" | "unqualified" = resultValid ? "qualified" : "unqualified";
+  if (Object.values(smolEvidence).some(value => value === null)) qualification = "unqualified";
+  if (Array.isArray(smolEvidence["smol-events.jsonl"]) && smolEvidence["smol-events.jsonl"].some((event: { state?: string }) => event.state === "cleanup-pending") && qualification === "qualified") qualification = "qualified-with-gaps";
   for (const step of prepared.steps) {
     let native: HarborStepExecution | undefined;
     try {
@@ -107,6 +116,7 @@ export async function runOfficialHarborTrial(input: {
       trialResult: result, trialLock, assessmentMode: prepared.task.assessmentMode,
       queueCondition: { modelId: entry.modelId, harnessId: entry.harnessId, taskId: entry.taskId, trialIndex: entry.trialIndex },
       execution: { code: execution.code, interrupted: execution.interrupted },
+      smol: smolEvidence,
     }); } catch (error) { qualification = "unqualified"; steps.at(-1)!.joinError = String(error); }
   }
   const nativeFailure = steps.map(s => s.native as HarborStepExecution | null).find(s => s && s.terminal.state !== "completed");
@@ -124,7 +134,7 @@ export async function runOfficialHarborTrial(input: {
   const summary: HarborRunSummary = {
     runId: entry.runId, attemptId, bundlePath: root, taskSourceId: prepared.task.taskSourceId,
     harnessId: entry.harness.id, assessmentMode: prepared.task.assessmentMode,
-    environmentProfile: "docker", terminal, classification: execution.interrupted ? "interrupted" : nativeFailure?.classification ?? (terminal.state === "completed" ? (qualification === "unqualified" ? "capture-incomplete" : "completed") : terminal.state === "stopped" ? "policy-stop" : "infrastructure-failure"),
+    environmentProfile: prepared.environment.profile, terminal, classification: execution.interrupted ? "interrupted" : nativeFailure?.classification ?? (terminal.state === "completed" ? (qualification === "unqualified" ? "capture-incomplete" : "completed") : terminal.state === "stopped" ? "policy-stop" : "infrastructure-failure"),
     captureQualification: qualification, completedSteps: steps.filter(s=>s.state === "completed").length,
     skippedSteps: steps.filter(s=>s.state === "skipped" || s.state === "setup-failed").length,
     verifierAggregate: result.verifier_result?.rewards ?? null,
@@ -135,7 +145,7 @@ export async function runOfficialHarborTrial(input: {
   } catch (error) {
     const summary: HarborRunSummary = {
       runId: entry.runId, attemptId, bundlePath: root, taskSourceId: prepared.task.taskSourceId,
-      harnessId: entry.harness.id, assessmentMode: prepared.task.assessmentMode, environmentProfile: "docker",
+      harnessId: entry.harness.id, assessmentMode: prepared.task.assessmentMode, environmentProfile: prepared.environment.profile,
       terminal: { state: "failed", failureClass: "infrastructure", stopReason: "none" }, classification: "infrastructure-failure",
       captureQualification: "unqualified", completedSteps: 0, skippedSteps: prepared.steps.length, verifierAggregate: null,
     };

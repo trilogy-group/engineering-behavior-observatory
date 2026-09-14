@@ -30,7 +30,7 @@ export type PreparedHarborExecution = {
     profile: HarborExecutionProfile;
     provider: string;
     containerized: boolean;
-    enforcement: "docker" | "none";
+    enforcement: "microvm" | "docker" | "none";
     dockerImage: string | null;
     networkMode: string;
   };
@@ -160,9 +160,9 @@ async function finishPreparation(
     }),
     environment: {
       profile: execution.profile,
-      provider: execution.profile === "docker" ? "harbor-docker" : "ebo-local-fs-test",
+      provider: execution.profile === "smol" ? "smol.harbor:SmolEnvironment" : execution.profile === "docker" ? "harbor-docker" : "ebo-local-fs-test",
       containerized: execution.profile === "docker",
-      enforcement: execution.profile === "docker" ? "docker" : "none",
+      enforcement: execution.profile === "smol" ? "microvm" : execution.profile === "docker" ? "docker" : "none",
       dockerImage: resolution.environment.dockerImage,
       networkMode: resolution.environment.networkMode,
     },

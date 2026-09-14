@@ -57,12 +57,16 @@
       "properties": {
         "environmentProfile": {
           "enum": [
+            "smol",
             "docker",
             "local-fs-test"
           ]
         },
         "contextPolicy": {
           "const": "fresh"
+        },
+        "environmentRef": {
+          "$ref": "#/$defs/reference"
         },
         "workerRef": {
           "$ref": "#/$defs/reference"

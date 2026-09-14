@@ -105,7 +105,7 @@ evidence, and comparison caveats. Use new output paths when repeating it.
 
 ### Capture your own task
 
-For new containerized studies, use [Harbor tasks](docs/guides/harbor-tasks.md).
+For new isolated studies, see the [Harbor/Smol integration](docs/guides/harbor-tasks.md) under qualification.
 Harbor owns the task environment and steps; EBO captures the selected native
 harness inside that environment. Existing packet-based studies keep the workflow below.
 

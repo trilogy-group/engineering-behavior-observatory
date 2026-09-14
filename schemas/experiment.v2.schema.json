@@ -101,6 +101,7 @@
       "properties": {
         "environmentProfile": {
           "enum": [
+            "smol",
             "docker",
             "local-fs-test"
           ]
@@ -111,6 +112,9 @@
             "resume-requested",
             "imported-trajectory"
           ]
+        },
+        "environmentRef": {
+          "$ref": "#/$defs/reference"
         },
         "workerRef": {
           "$ref": "#/$defs/reference"

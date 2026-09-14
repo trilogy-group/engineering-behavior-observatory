@@ -72,7 +72,7 @@ function fakeAdapter(options: { dockerAvailable?: boolean; verified?: boolean } 
   const inspectCache = new Map<string, HarborInspectResult>();
   return {
     async version(): Promise<HarborVersionInfo> {
-      return { harborVersion: "0.23.0", defaultTaskSchemaVersion: "1.4", pythonVersion: "3-test" };
+      return { harborVersion: "0.22.0", defaultTaskSchemaVersion: "1.4", pythonVersion: "3-test" };
     },
     async inspect(dir: string): Promise<HarborInspectResult> {
       const cached = inspectCache.get(dir);
@@ -484,7 +484,7 @@ test("the trial runner refuses the host-only preparation profile", async () => {
  const queue = await compileHarborRunQueue(experimentFor(root, taskSourceId, { environmentProfile: "local-fs-test", contextPolicy: "fresh" }) as never, { studyRoot: root, adapter });
  const queuePath = join(root, "queue.json");
  writeFileSync(queuePath, JSON.stringify(queue));
- await assert.rejects(runHarborBackedQueueEntry({ studyRoot: root, queuePath, runId: queue.entries[0]!.runId, outputRoot: join(root,"out"), adapter }), /requires Docker/);
+ await assert.rejects(runHarborBackedQueueEntry({ studyRoot: root, queuePath, runId: queue.entries[0]!.runId, outputRoot: join(root,"out"), adapter }), /requires an explicitly compiled smol/);
 });
 
 /* ------------------------------------ step bundle definition ------------------------------------ */
@@ -655,7 +655,7 @@ test("the pinned Harbor adapter reports its version and docker availability hone
     return;
   }
   const version = await adapter.version();
-  assert.equal(version.harborVersion, "0.23.0");
+  assert.equal(version.harborVersion, "0.22.0");
   const preflight = await adapter.dockerPreflight();
   // Either outcome is honest; both must be explicit.
   assert.equal(typeof preflight.available, "boolean");

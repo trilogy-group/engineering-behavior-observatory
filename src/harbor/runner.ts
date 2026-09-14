@@ -90,7 +90,7 @@ export async function runHarborBackedQueueEntry(options: RunHarborQueueEntryOpti
   });
 
 
-  if (prepared.environment.profile !== "docker") throw new Error("Harbor trial execution requires Docker; local-fs-test is preparation-only.");
+  if (prepared.environment.profile !== "smol") throw new Error("Harbor execution now requires an explicitly compiled smol profile; Docker queues are not reinterpreted and local-fs-test is preparation-only.");
   prepared.run.attemptId = attemptId;
   return runOfficialHarborTrial({ studyRoot: options.studyRoot, prepared, queue, entry, attemptId, adapter, signal: options.signal });
 }

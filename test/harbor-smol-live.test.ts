@@ -3,15 +3,16 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, copyF
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
+import { spawn } from "node:child_process";
 import { buildCorpusIndex, createHarborAdapter, prepareHarborAdmission, preAdmissionDigestOf, admitHarborTask, freezeHarborTask, compileHarborRunQueue, runHarborBackedQueueEntry, digestBytes, createRetainedBehaviorEvidence, createPortableRunBundleExport, readPortableRunBundleExport } from "../src/index.js";
 
 const runtimeArchive = process.env.EBO_HARBOR_RUNTIME;
-test("official Harbor Docker Trial runs native Pi capture, fresh steps and verifier policy", { skip: !runtimeArchive, timeout: 600_000 }, async t => {
+const image = process.env.EBO_SMOL_IMAGE;
+test("official Harbor Smol Trial runs native Pi capture, fresh steps and verifier policy", { skip: !runtimeArchive || !image, timeout: 900_000 }, async t => {
   const adapter = await createHarborAdapter();
-  assert.equal((await adapter.dockerPreflight()).available, true);
   for (const mode of ["observational", "verified", "threshold", "missing", "setup-failure"] as const) {
-    await t.test(mode, async () => {
-      const root = mkdtempSync(join(tmpdir(), "ebo-harbor-docker-"));
+    await t.test(mode, async sub => {
+      const root = mkdtempSync(join(tmpdir(), "ebo-harbor-smol-"));
       t.diagnostic("Retained conformance evidence: " + root);
       const study = join(root, "study"), task = join(root, "task");
       const put = (path: string, bytes: string | Buffer) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, bytes); };
@@ -55,13 +56,38 @@ name = "two"
       mkdirSync(join(study, "config"), { recursive: true });
       copyFileSync(runtimeArchive!, join(study, archive.locator), constants.COPYFILE_FICLONE | constants.COPYFILE_EXCL);
       const workerRef = ref("worker.json", { schemaVersion: "ebo.harbor-worker-runtime/v1", archive, node: "node", entrypoint: "dist/test/harbor-provider-worker.js", environmentKeys: [] });
-      const queue = await compileHarborRunQueue({ schemaVersion: "ebo.experiment/v2", id: "docker-conformance", taskSet: { task: { kind: "harbor-task", taskSourceId: id } },
+      const build = JSON.parse(readFileSync(join(dirname(runtimeArchive!), "image-build.json"), "utf8"));
+      const binding = { image, recipeDigest: build.recipeDigest, baseImageDigest: build.baseImageDigest };
+      const environmentRef = ref("environments.json", { schemaVersion: "ebo.smol-environments/v1", platform: "linux/arm64",
+        runtimeArchiveDigest: archive.digest.value, libkrunSha256: process.env.EBO_SMOL_LIBKRUN_SHA256,
+        tasks: { [id]: { agent: binding, graders: { one: binding, two: binding } } } });
+      const queue = await compileHarborRunQueue({ schemaVersion: "ebo.experiment/v2", id: "smol-conformance", taskSet: { task: { kind: "harbor-task", taskSourceId: id } },
         modelSet: { "synthetic-model": { configurationRef: ref("model.json", configs.model) } },
         harnessSet: { "pi-sdk": { configurationRef: ref("harness.json", configs.harness), nativeLimitsRef: ref("limits.json", configs.limits), nativeToolPolicyRef: ref("tools.json", configs.tools) } },
-        captureProfile: ref("capture.json", configs.capture), trialCount: 1, coordinatorBudget: { maxWallClockMs: 120_000 }, ordering: { strategy: "sequential", seed: "conformance" }, execution: { environmentProfile: "docker", contextPolicy: "fresh", workerRef },
+        captureProfile: ref("capture.json", configs.capture), trialCount: mode === "observational" ? 2 : 1, coordinatorBudget: { maxWallClockMs: 120_000 }, ordering: { strategy: "sequential", seed: "conformance" }, execution: { environmentProfile: "smol", contextPolicy: "fresh", workerRef, environmentRef },
       }, { studyRoot: study, adapter });
       const queuePath = join(root, "queue.json"); put(queuePath, JSON.stringify(queue));
+      const owner = spawn(process.execPath, [resolve('dist/src/cli.js'), 'harbor', 'environment', 'serve', study, queuePath], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const exited = new Promise<number | null>(done => owner.once('close', done));
+      let diagnostics = '';
+      owner.stderr.on('data', chunk => { diagnostics += chunk.toString(); });
+      sub.after(async () => { owner.kill('SIGTERM'); assert.equal(await exited, 0, diagnostics); });
+      await new Promise<void>((done, fail) => {
+        const timer = setTimeout(() => fail(new Error('Preparation readiness timeout: ' + diagnostics)), 180_000);
+        let output = '';
+        owner.stdout.on('data', chunk => { output += chunk.toString(); if (output.includes('"state": "ready"')) { clearTimeout(timer); done(); } });
+        owner.once('close', code => { clearTimeout(timer); fail(new Error('Owner exited ' + code + ': ' + diagnostics)); });
+      });
       const summary = await runHarborBackedQueueEntry({ studyRoot: study, queuePath, runId: queue.entries[0]!.runId, outputRoot: join(root, "attempts"), adapter });
+      if (mode === "observational") {
+        const second = await runHarborBackedQueueEntry({ studyRoot: study, queuePath, runId: queue.entries[1]!.runId, outputRoot: join(root, "attempts"), adapter });
+        assert.equal(second.terminal.state, 'completed');
+        const events = (path: string) => readFileSync(join(path, 'harbor/smol-events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+        const firstBranch = events(summary.bundlePath).find(e => e.state === 'branch-ready');
+        const secondBranch = events(second.bundlePath).find(e => e.state === 'branch-ready');
+        assert.equal(firstBranch.parent, secondBranch.parent);
+        assert.notEqual(firstBranch.child, secondBranch.child);
+      }
       t.diagnostic(JSON.stringify(summary));
       const harbor = JSON.parse(readFileSync(join(summary.bundlePath, "harbor/result.json"), "utf8"));
       t.diagnostic(JSON.stringify(harbor));

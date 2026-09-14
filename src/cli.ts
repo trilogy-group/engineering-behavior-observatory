@@ -66,7 +66,7 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo matrix compile <experiment.json> <bundle-root> <queue.json> [--freeze-locator <task-id>=<path>]
        ebo queue inspect <queue.json>
        ebo queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
-       ebo harbor <inspect|prepare|admit|freeze|status|doctor|compile|convert-legacy|run> ...
+       ebo harbor <inspect|prepare|admit|freeze|status|doctor|compile|convert-legacy|environment|run> ...
        ebo agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
        ebo codex run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
        ebo cursor run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
@@ -1003,6 +1003,7 @@ const harborUsage = `Usage: ebo harbor inspect <task-dir>
        ebo harbor freeze <study-root> <task-source-id>
        ebo harbor status <study-root> <task-source-id>
        ebo harbor doctor
+       ebo harbor environment serve <study-root> <queue.json>
        ebo harbor compile <study-root> <experiment.json> <queue.json>
        ebo harbor convert-legacy <study-root> <packet-locator> [--destination <dir>] [--image <image>] [--freeze <locator>]
        ebo harbor run <study-root> <queue.json> <run-id> <output-root> [--attempt-id <id>]
@@ -1012,6 +1013,11 @@ async function runHarborCommand(args: string[], write: (message: string) => void
   const command = args[0];
   try {
     switch (command) {
+      case "environment": {
+        if (args.length !== 4 || args[1] !== "serve") throw new Error("Usage: ebo harbor environment serve <study-root> <queue.json>");
+        const { serveSmolEnvironments } = await import("./harbor/smol.js");
+        return await serveSmolEnvironments(args[2]!, args[3]!);
+      }
       case "--help": write(harborUsage); return 0;
       case undefined: {
         write(harborUsage);
@@ -1092,12 +1098,14 @@ async function harborDoctor(write: (message: string) => void): Promise<number> {
     const version = await adapter.version();
     write(`Harbor package: ${version.harborVersion} (task schema ${version.defaultTaskSchemaVersion})\n`);
     write(`Python interpreter: ${version.pythonVersion}\n`);
-    const preflight = await adapter.dockerPreflight();
-    write(`Docker daemon: ${preflight.available ? "available" : `unavailable (${preflight.reason ?? "unknown reason"})`}\n`);
-    if (!preflight.available) {
-      write("Docker-gated integration evidence cannot be produced in this environment; those gates stay unexecuted and are never reported as passed.\n");
-    }
-    return preflight.available ? 0 : 1;
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const { python } = await adapter.describePrerequisites();
+    const { stdout } = await promisify(execFile)(python, ["-c", "import importlib.metadata as m,os,platform,hashlib,json; from pathlib import Path; p=Path(os.environ.get('SMOLVM_LIB_DIR',''))/'libkrun.dylib'; print(json.dumps({'smol':m.version('smolmachines'),'host':platform.system()+'/'+platform.machine(),'libkrunSha256':hashlib.sha256(p.read_bytes()).hexdigest() if p.is_absolute() and p.is_file() else None}))"], { timeout: 15_000, maxBuffer: 64 * 1024 });
+    const info = JSON.parse(stdout) as { smol: string; host: string; libkrunSha256: string | null };
+    write(`Smol SDK: ${info.smol}; host: ${info.host}; isolated libkrun SHA-256: ${info.libkrunSha256 ?? "missing"}\n`);
+    write("This checks installation only. Environment preparation verifies the frozen library/image bindings; live conformance is separate.\n");
+    return info.smol === "1.15.0" && info.host === "Darwin/arm64" && info.libkrunSha256 !== null ? 0 : 1;
   } catch (error) {
     write(`${error instanceof Error ? error.message : "Harbor adapter is unavailable."}\n`);
     return 1;
