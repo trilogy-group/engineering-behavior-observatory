@@ -1245,7 +1245,7 @@ function validatePiConfiguration(record: Record<string, unknown>, kind: PiConfig
     keys(record, ["schemaVersion", "kind", "provider", "queueModelId", "model", "api", "baseUrl", "apiKeyEnv", "thinkingLevel", "thinkingLevelMap", "reasoning", "input", "contextWindow", "maxTokens", "cost"],
       ["provider", "queueModelId", "model", "api", "baseUrl", "apiKeyEnv", "thinkingLevel", "reasoning", "input", "contextWindow", "maxTokens", "cost"], reference);
     requiredText(record.provider, "provider", reference); requiredText(record.model, "model", reference);
-    if (typeof record.queueModelId !== "string" || !/^[a-z0-9][a-z0-9-]*$/u.test(record.queueModelId)) throw piConfigError(reference, "queueModelId is invalid");
+    requiredText(record.queueModelId, "queueModelId", reference);
     if (!(PI_APIS as readonly unknown[]).includes(record.api)) throw piConfigError(reference, "api is unsupported");
     assertHttpUrl(record.baseUrl, reference);
     if (typeof record.apiKeyEnv !== "string" || !ENVIRONMENT_NAME_PATTERN.test(record.apiKeyEnv)) throw piConfigError(reference, "apiKeyEnv is invalid");

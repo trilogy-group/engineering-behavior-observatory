@@ -24,6 +24,7 @@ import {
   JsonlEvidenceWriter,
   readPortableRunBundleExport,
   runPiQueueEntry,
+  resolvePiConfigurationRecord,
   validateCorpusIndex,
   writeRunQueue,
   PI_HARNESS,
@@ -422,6 +423,22 @@ test("tool child-process environment is allowlisted and cannot expose provider c
     PATH: "/bin", HOME: "/home/fixture",
   });
   assert.throws(() => filterPiToolEnvironment({ ZAI_API_KEY: SYNTHETIC_SECRET }, new Set(["ZAI_API_KEY"]), "ZAI_API_KEY"), /must not expose/u);
+});
+
+test("Pi model configuration preserves provider-qualified identifiers and rejects missing identities", () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-pi-model-id-"));
+  try {
+    const model = JSON.parse(readFileSync("test/fixtures/pi/configs/model.json", "utf8"));
+    for (const id of ["accounts/fireworks/models/deepseek-v4p1-flash", "fireworks/accounts/fireworks/models/deepseek-v4p1-flash", "GLM-5.3", "", "  ", null, 42]) {
+      const bytes = Buffer.from(JSON.stringify({ ...model, queueModelId: id }));
+      writeFileSync(join(root, "model.json"), bytes);
+      const resolve = () => resolvePiConfigurationRecord(root, { locator: "model.json", digest: digestBytes(bytes) }, "model");
+      if (typeof id === "string" && id.trim()) assert.equal(resolve().queueModelId, id);
+      else assert.throws(resolve, /queueModelId must be nonempty/u);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("rejects mismatched queue model identity and silently clamped thinking configuration", async () => {
