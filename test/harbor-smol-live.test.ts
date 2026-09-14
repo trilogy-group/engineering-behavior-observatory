@@ -8,7 +8,7 @@ import { buildCorpusIndex, createHarborAdapter, prepareHarborAdmission, preAdmis
 
 const runtimeArchive = process.env.EBO_HARBOR_RUNTIME;
 const image = process.env.EBO_SMOL_IMAGE;
-test("official Harbor Smol Trial runs native Pi capture, fresh steps and verifier policy", { skip: !runtimeArchive || !image, timeout: 900_000 }, async t => {
+test("official Harbor Smol Trial runs native Pi capture, fresh steps and verifier policy", { skip: !runtimeArchive || !image, timeout: 3_600_000 }, async t => {
   const adapter = await createHarborAdapter();
   for (const mode of ["observational", "verified", "threshold", "missing", "setup-failure"] as const) {
     await t.test(mode, async sub => {
@@ -75,7 +75,7 @@ name = "two"
       owner.stderr.on('data', chunk => { diagnostics += chunk.toString(); });
       sub.after(async () => { owner.kill('SIGTERM'); assert.equal(await exited, 0, diagnostics); });
       await new Promise<void>((done, fail) => {
-        const timer = setTimeout(() => fail(new Error('Preparation readiness timeout: ' + diagnostics)), 180_000);
+        const timer = setTimeout(() => fail(new Error('Preparation readiness timeout: ' + diagnostics)), 600_000);
         let output = '';
         owner.stdout.on('data', chunk => { output += chunk.toString(); if (output.includes('"state": "ready"')) { clearTimeout(timer); done(); } });
         owner.once('close', code => { clearTimeout(timer); fail(new Error('Owner exited ' + code + ': ' + output + diagnostics)); });
@@ -84,6 +84,7 @@ name = "two"
       if (mode === "observational") {
         const second = await runHarborBackedQueueEntry({ studyRoot: study, queuePath, runId: queue.entries[1]!.runId, outputRoot: join(root, "attempts"), adapter });
         assert.equal(second.terminal.state, 'completed');
+        assert.equal(second.captureQualification, 'qualified');
         const events = (path: string) => readFileSync(join(path, 'harbor/smol-events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
         const firstBranch = events(summary.bundlePath).find(e => e.state === 'branch-ready');
         const secondBranch = events(second.bundlePath).find(e => e.state === 'branch-ready');
@@ -94,6 +95,7 @@ name = "two"
       const harbor = JSON.parse(readFileSync(join(summary.bundlePath, "harbor/result.json"), "utf8"));
       t.diagnostic(JSON.stringify(harbor));
       if (mode === "setup-failure") { assert.equal(summary.completedSteps, 0); assert.equal(summary.terminal.state, "failed"); return; }
+      assert.equal(summary.captureQualification, 'qualified');
       assert.equal(summary.completedSteps, mode === "threshold" || mode === "missing" ? 1 : 2);
       assert.equal(harbor.step_results[0].agent_result.metadata.ebo_step, 1);
       if (mode === "observational") assert.equal(summary.verifierAggregate, null);

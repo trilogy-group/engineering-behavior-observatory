@@ -38,7 +38,7 @@ if (base || image) {
   const config = JSON.parse(inspected.stdout)[0].Config;
   const user = config.User || 'root';
   if (/[\r\n]/.test(user)) throw new Error('Invalid base image USER');
-  const recipe = `FROM ${base}\nUSER root\nCOPY worker.tgz /tmp/ebo-runtime.tgz\nRUN mkdir -p /opt/ebo && tar -xzf /tmp/ebo-runtime.tgz -C /opt/ebo && rm /tmp/ebo-runtime.tgz && echo ${archiveDigest} > /opt/ebo/runtime.sha256\nUSER ${user}\n`;
+  const recipe = `FROM ${base}\nUSER root\nRUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/* && git --version\nCOPY worker.tgz /tmp/ebo-runtime.tgz\nRUN mkdir -p /opt/ebo && tar -xzf /tmp/ebo-runtime.tgz -C /opt/ebo && rm /tmp/ebo-runtime.tgz && echo ${archiveDigest} > /opt/ebo/runtime.sha256\nUSER ${user}\n`;
   const built = spawnSync('docker', ['build', '--platform', 'linux/arm64', '-t', image, '-f', '-', destination], { input: recipe, encoding: 'utf8', stdio: ['pipe', 'inherit', 'inherit'] });
   if (built.status !== 0) throw new Error('Execution image build failed');
   writeFileSync(resolve(destination, 'image-build.json'), JSON.stringify({ platform: 'linux/arm64', image,

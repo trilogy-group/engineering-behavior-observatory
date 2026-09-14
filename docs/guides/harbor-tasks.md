@@ -89,7 +89,7 @@ node scripts/build-harbor-runtime.mjs study/config/runtime \
   --image <registry/ebo-runtime:tag>
 ```
 
-The builder installs Linux dependencies in Node 24.19.0/bookworm and produces
+The builder installs Linux dependencies, Git and CA certificates in Node 24.19.0/bookworm and produces
 `worker.tgz` and a local execution image with the pack at `/opt/ebo`. It records
 the build recipe, original startup settings and archive digest in `image-build.json`.
 Publishing is a separate, explicit `docker push <registry/ebo-runtime:tag>`
@@ -98,6 +98,9 @@ or a daemon-local tag, in the environment bindings. Keep the pack outside the ta
 The reusable runtime image must have compatible Linux
 architecture, glibc and the system tools needed by its harness. A macOS runtime
 or Alpine/musl image is not interchangeable with this archive.
+Git is required for workspace evidence, even when the task starts from an archive
+without a `.git` directory. Live conformance checks capture qualification as well
+as execution completion.
 
 Save a runtime profile in the study and reference it by its SHA-256 digest:
 
