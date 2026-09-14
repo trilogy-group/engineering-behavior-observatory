@@ -102,7 +102,9 @@ async def create_trial(request, prepare=False, request_path=None):
                 'ebo_prepare': prepare, 'ebo_events': request.get('smolEvents'),
                 'ebo_runtime': {'smol': SMOL_VERSION, 'harbor': HARBOR_VERSION,
                     'build': request['build'], 'libkrun': request['environmentManifest']['libkrunSha256'],
-                    'pack': request['environmentManifest']['runtimeArchiveDigest']}}},
+                    'taskSourceId': request['taskSourceId'],
+                    'pack': request['environmentManifest']['runtimeArchiveDigest'],
+                    'preparation': fingerprint(request['environmentManifest'])}}},
         'verifier': {'disable': not request['verified']},
     })
     return await Trial.create(config)
@@ -125,6 +127,7 @@ async def main(request_path):
             raise ValueError('Preparation binding/runtime changed or owner is draining')
         json_write(Path(request_path).parent / 'preparation.json', receipt)
         target = Path(request_path).parent / 'execution-task'
+        request['taskSourceId'] = request['workerInput']['prepared']['task']['taskSourceId']
         transformation = derive_task(request['taskPath'], target,
             request['environmentManifest']['tasks'][request['workerInput']['prepared']['task']['taskSourceId']], request['verified'])
         request['taskPath'] = str(target)

@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { assertNoDuplicateJsonKeys, digestMetadata } from "../artifacts.js";
 import { resolveBundleConfiguration } from "../contracts.js";
 import { createHarborAdapter } from "./adapter.js";
+import { harborStudyPaths } from "./study.js";
 import { readHarborRunQueue, type RunQueueV2 } from "./queue.js";
 import { HARBOR_TRIAL_SCRIPT } from "./trial-script.js";
 import { resolveHarborWorkerRuntime } from "./official-trial.js";
@@ -35,7 +36,7 @@ export async function serveSmolEnvironments(studyRoot: string, queuePath: string
   for (const entry of queue.entries) {
     if (entry.task.kind !== "harbor-task") throw new Error("Smol preparation requires Harbor task entries.");
     tasks.set(entry.task.taskSourceId, { id: entry.task.taskSourceId,
-      path: join(resolve(studyRoot), entry.task.snapshotLocator), verified: entry.task.assessmentMode === "verified" });
+      path: join(harborStudyPaths(studyRoot).snapshotsRoot, entry.task.snapshotLocator), verified: entry.task.assessmentMode === "verified" });
   }
   await mkdir(condition.ownerRoot, { recursive: true, mode: 0o700 });
   const script = join(condition.ownerRoot, `ebo_smol_${digestMetadata(HARBOR_TRIAL_SCRIPT).value.slice(0, 16)}.py`);

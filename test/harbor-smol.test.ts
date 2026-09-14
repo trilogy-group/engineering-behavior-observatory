@@ -58,16 +58,51 @@ assert derived.config.steps[0].min_reward == .5
 assert derived.config.multi_step_reward_strategy.value == 'final'
 assert derived.config.steps[0].verifier.environment.docker_image == image['image']
 assert derived.config.environment.docker_image == image['image']
-request = {'ownerRoot': str(root), 'queueDigest': 'q', 'taskPath': str(root/'derived'),
+request = {'ownerRoot': str(root), 'queueDigest': 'q', 'taskPath': str(root/'derived'), 'taskSourceId': 'task',
     'attemptId': 'prepare', 'trialsDir': str(root/'trials'), 'model': 'fixture',
     'budgetMs': 30000, 'build': 'test', 'verified': True, 'environmentManifest': manifest}
 
 async def check():
     trial = await e.create_trial(request, prepare=True)
-    envs = [env async for env in e.preparation_environments(trial)]
+    envs = [env async for env, image_binding in e.preparation_environments(trial, binding)]
     assert len(envs) == 3
     assert [e.env_identity(env)['role'] for env in envs] == ['agent', 'grader', 'grader']
+    assert [e.env_identity(env)['context'] for env in envs] == ['environment', 'steps/one/tests', 'steps/two/tests']
     agent = envs[0]
+    with patch.object(e.SmolEnvironment, '_upload_environment_dir_after_start', new_callable=AsyncMock) as upload:
+        agent.ebo_context_prepared = True
+        await agent._upload_environment_dir_after_start()
+        upload.assert_not_called()
+        agent.ebo_context_prepared = False
+        await agent._upload_environment_dir_after_start()
+        upload.assert_awaited_once()
+    context = agent.environment_dir
+    (context/'setup.sh').write_text('cp private.txt /workspace/private.txt\n')
+    (context/'private.txt').write_text('local-only fixture')
+    machine = SimpleNamespace(exec=AsyncMock(return_value=SimpleNamespace(exit_code=0, stdout='prepared', stderr='')))
+    setup_record = root/'setup-result.json'
+    with patch.object(agent, 'upload_dir', new_callable=AsyncMock) as upload:
+        await e.prepare_local_context(agent, machine, {**image, 'localSetup':'setup.sh'}, setup_record, 30)
+        upload.assert_awaited_once_with(context.resolve(), '/tmp/ebo-parent-setup')
+        assert machine.exec.await_args_list[0].args[1].env is None
+        assert json.loads(setup_record.read_text())['exitCode'] == 0
+        assert agent._machine is None
+        machine.exec.return_value.exit_code = 7
+        try: await e.prepare_local_context(agent, machine, {**image, 'localSetup':'setup.sh'}, setup_record, 30)
+        except RuntimeError as exc: assert 'setup failed' in str(exc)
+        else: raise AssertionError('Failed setup must not produce a parent')
+        assert json.loads(setup_record.read_text())['exitCode'] == 7
+        assert agent._machine is None
+        (context/'escape.sh').symlink_to(root/'ebo_runtime.py')
+        try: await e.prepare_local_context(agent, machine, {**image, 'localSetup':'escape.sh'}, setup_record, 30)
+        except ValueError as exc: assert 'escapes' in str(exc)
+        else: raise AssertionError('Setup must stay inside the admitted context')
+        (context/'escape.sh').unlink()
+    for invalid in ('../setup.sh', '/tmp/setup.sh', ''):
+        bad = {**manifest, 'tasks': {'task': {'agent': {**image, 'localSetup': invalid}}}}
+        try: e.validate_environment_manifest(bad)
+        except ValueError: pass
+        else: raise AssertionError('Invalid setup path accepted')
     try: await agent.start(False)
     except RuntimeError as exc: assert 'inspection' in str(exc)
     else: raise AssertionError('Preparation must not execute')
@@ -123,4 +158,51 @@ print('Harbor 0.22 model/Smol 1.15 boundary: passed')
 `], { cwd: root, encoding: "utf8", timeout: 30_000 });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stdout, /boundary: passed/);
+});
+
+test("local Smol preparation stays private and both branches inherit an unchanged parent", {
+  skip: !python || process.env.EBO_SMOL_LOCAL_SETUP_TEST !== "1", timeout: 240_000,
+}, () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-smol-local-setup-"));
+  writeFileSync(join(root, "ebo_runtime.py"), HARBOR_TRIAL_SCRIPT);
+  const result = spawnSync(python!, ["-c", String.raw`
+import asyncio, json, uuid
+from pathlib import Path
+import ebo_runtime as e
+from smol import ResourceSpec
+from harbor.models.task.config import EnvironmentConfig, NetworkPolicy, NetworkMode
+from harbor.models.trial.paths import TrialPaths
+
+async def check():
+    root = Path.cwd()
+    context = root/'environment'
+    context.mkdir()
+    (context/'private.txt').write_text('private-' + uuid.uuid4().hex)
+    (context/'setup.sh').write_text('mkdir -p /workspace; cp private.txt /workspace/private.txt\n')
+    paths = TrialPaths(root/'trial')
+    paths.mkdir()
+    env = e.SmolEnvironment(environment_dir=context, environment_name='local-preparation',
+        session_id='check', trial_paths=paths, task_env_config=EnvironmentConfig(
+            docker_image='alpine:3.22', workdir='/tmp', cpus=1, memory_mb=512),
+        network_policy=NetworkPolicy(network_mode=NetworkMode.PUBLIC), target='local', auto_checkpoint=False)
+    parent = await e.AsyncMachine.create(e.MachineConfig(name='ebo-private-setup-'+uuid.uuid4().hex[:10],
+        image='alpine:3.22', branchable=True, workdir='/tmp',
+        resources=ResourceSpec(cpus=1, memory_mb=512, storage_gb=1, network=True)), e.ConnectOptions(target='local'))
+    try:
+        await e.prepare_local_context(env, parent, {'localSetup':'setup.sh'}, root/'setup.json', 30)
+        original = (context/'private.txt').read_text()
+        for index in range(2):
+            child = await parent.branch(parent.name+'-'+str(index))
+            try:
+                assert (await child.read_file('/workspace/private.txt')).decode() == original
+                assert (await child.exec(['sh','-c','test ! -e /tmp/ebo-parent-setup'])).exit_code == 0
+                await child.write_file('/workspace/private.txt', b'child mutation')
+            finally: await child.delete()
+        assert (await parent.read_file('/workspace/private.txt')).decode() == original
+        print('Local preparation: two isolated branches, unchanged parent, no task publication')
+    finally: await parent.delete()
+asyncio.run(check())
+`], { cwd: root, encoding: "utf8", timeout: 230_000 });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /two isolated branches/);
 });

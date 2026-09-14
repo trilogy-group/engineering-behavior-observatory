@@ -38,6 +38,8 @@ ${mode === "threshold" || mode === "missing" ? "min_reward = 0.5" : ""}
 name = "two"
 `);
       put(join(task, "environment/Dockerfile"), "FROM node:24.19.0-bookworm-slim\nRUN mkdir /workspace\nWORKDIR /workspace\n");
+      put(join(task, "environment/private-fixture.txt"), "Only uploaded locally, never part of the runtime image.\n");
+      put(join(task, "environment/setup.sh"), "#!/bin/sh\nset -eu\ncp private-fixture.txt /workspace/private-fixture.txt\n");
       put(join(task, "instruction.md"), "Work in the existing workspace.");
       for (const name of ["one", "two"]) {
         put(join(task, `steps/${name}/instruction.md`), "Create a text file for this step.");
@@ -60,7 +62,7 @@ name = "two"
       const binding = { image, recipeDigest: build.recipeDigest, baseImageDigest: build.baseImageDigest };
       const environmentRef = ref("environments.json", { schemaVersion: "ebo.smol-environments/v1", platform: "linux/arm64",
         runtimeArchiveDigest: archive.digest.value, libkrunSha256: process.env.EBO_SMOL_LIBKRUN_SHA256,
-        tasks: { [id]: { agent: binding, graders: { one: binding, two: binding } } } });
+        tasks: { [id]: { agent: { ...binding, localSetup: 'setup.sh' }, graders: { one: binding, two: binding } } } });
       const queue = await compileHarborRunQueue({ schemaVersion: "ebo.experiment/v2", id: "smol-conformance", taskSet: { task: { kind: "harbor-task", taskSourceId: id } },
         modelSet: { "synthetic-model": { configurationRef: ref("model.json", configs.model) } },
         harnessSet: { "pi-sdk": { configurationRef: ref("harness.json", configs.harness), nativeLimitsRef: ref("limits.json", configs.limits), nativeToolPolicyRef: ref("tools.json", configs.tools) } },
@@ -76,7 +78,7 @@ name = "two"
         const timer = setTimeout(() => fail(new Error('Preparation readiness timeout: ' + diagnostics)), 180_000);
         let output = '';
         owner.stdout.on('data', chunk => { output += chunk.toString(); if (output.includes('"state": "ready"')) { clearTimeout(timer); done(); } });
-        owner.once('close', code => { clearTimeout(timer); fail(new Error('Owner exited ' + code + ': ' + diagnostics)); });
+        owner.once('close', code => { clearTimeout(timer); fail(new Error('Owner exited ' + code + ': ' + output + diagnostics)); });
       });
       const summary = await runHarborBackedQueueEntry({ studyRoot: study, queuePath, runId: queue.entries[0]!.runId, outputRoot: join(root, "attempts"), adapter });
       if (mode === "observational") {

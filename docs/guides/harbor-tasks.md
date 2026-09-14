@@ -29,8 +29,8 @@ readable but must be explicitly recompiled as new Smol conditions to run.
 ## Prepare, review and freeze
 
 An ordinary Harbor task has `task.toml`, `instruction.md` and `environment/`.
-Use task schema **1.4**. A Dockerfile must set a working directory such as
-`/workspace`; the agent changes that directory inside the container, not a
+Use task schema **1.4**. Declare `environment.workdir`, such as
+`/workspace`; the agent changes that directory inside the local VM, not a
 lookalike host copy. Multi-step tasks use `[[steps]]` and
 `steps/<name>/instruction.md`. Harbor composes shared and per-step instructions.
 
@@ -85,17 +85,17 @@ boundary; it is not independent grading.
 ```sh
 npm run build
 node scripts/build-harbor-runtime.mjs study/config/runtime \
-  --base <task-base-image@sha256:platform-digest> \
-  --image <registry/execution-image:tag>
+  --base <public-runtime-base@sha256:platform-digest> \
+  --image <registry/ebo-runtime:tag>
 ```
 
 The builder installs Linux dependencies in Node 24.19.0/bookworm and produces
 `worker.tgz` and a local execution image with the pack at `/opt/ebo`. It records
 the build recipe, original startup settings and archive digest in `image-build.json`.
-Publishing is a separate, explicit `docker push <registry/execution-image:tag>`
+Publishing is a separate, explicit `docker push <registry/ebo-runtime:tag>`
 operation. Use the resulting **linux/arm64 manifest digest**, not an index digest
 or a daemon-local tag, in the environment bindings. Keep the pack outside the task.
-The task image must have compatible Linux
+The reusable runtime image must have compatible Linux
 architecture, glibc and the system tools needed by its harness. A macOS runtime
 or Alpine/musl image is not interchangeable with this archive.
 
@@ -127,8 +127,8 @@ configuration files at `/tmp/ebo-worker/config/<locator>`.
 | OpenHands | Pinned Agent Server started inside the task container | Loopback REST/WebSocket, same working directory |
 
 The generic archive includes EBO's npm dependencies, not external Codex,
-DeepSeek or OpenHands executables. Install those in the task's runtime image or
-a pinned operator runtime. For OpenHands, an image entrypoint can start the
+DeepSeek or OpenHands executables. Install those in the reusable runtime image or
+through frozen local setup. For OpenHands, an image entrypoint can start the
 server before executing Harbor's command; do not point it at a host server.
 Native configuration and version checks still apply. Runtime availability is
 separate from capture support; deterministic coverage is not provider entitlement.
@@ -156,8 +156,8 @@ Claude collector receipts that have not been independently checked.
 Save a `config/environments.json` manifest. Keys under `tasks` are the frozen
 task-source IDs; grader keys are step names, or `single` for a single-step task.
 Each image binding records `image`, `baseImageDigest` and `recipeDigest` from
-its preparation. Build grader images from their resolved tests context without
-putting tests or solutions in the agent image.
+the reusable runtime build. Task code does not need to enter a registry.
+Use `localSetup` to prepare a private local parent from that image.
 
 ```json
 {
@@ -168,9 +168,10 @@ putting tests or solutions in the agent image.
   "tasks": {
     "<task-source-id>": {
       "agent": {
-        "image": "<registry/execution-image@sha256:platform-digest>",
+        "image": "<registry/ebo-runtime@sha256:platform-digest>",
         "baseImageDigest": "<base image SHA-256>",
-        "recipeDigest": "<build recipe SHA-256>"
+        "recipeDigest": "<build recipe SHA-256>",
+        "localSetup": "setup.sh"
       },
       "graders": {}
     }
@@ -178,7 +179,49 @@ putting tests or solutions in the agent image.
 }
 ```
 
-Reference that file by digest in the execution policy:
+### Private local task preparation
+
+Put a repository snapshot and a setup script in the task's `environment/`
+before admission and freezing. For example, with files under `environment/repo/`,
+`environment/setup.sh` can contain:
+
+```sh
+set -eu
+cp -R repo/. /workspace/
+cd /workspace
+npm ci --ignore-scripts
+```
+
+Choose dependency-install flags appropriate to the repository. Pin dependencies
+and include required setup inputs in the frozen context. A snapshot avoids
+needing repository credentials in the VM; if fetching public sources instead,
+pin their revisions explicitly.
+
+`localSetup` is relative to the role's frozen environment context. The owner
+uploads that context locally and runs the script with `sh -eu`, with the
+uploaded context as its working directory. It creates the declared task workdir
+first. Setup runs once per parent, before any attempt branches; failure prevents
+that parent from becoming ready. The temporary context is removed after success.
+The setup exit code, output and script digest are retained as local evidence.
+No Dockerfile instructions are interpreted or translated into shell commands.
+When switching from a task-built image, explicitly move its installation/copy
+steps into this script and review the new frozen task.
+
+Separate grader bindings may use their own `localSetup`, relative to Harbor's
+resolved grader build context. The agent receives only `environment/`, never
+the task root, hidden solutions, or separate grader tests. Harbor's per-step
+setup still runs in each attempt at its normal stage.
+
+The public image contains runtime software only. Repository files, prepared
+parents, branch disks and trajectories stay on this computer. Registry privacy
+is relevant only if you choose a private runtime base; authenticated private
+image pulls are not yet qualified with the pinned Smol SDK. Never put credentials
+in frozen contexts, setup scripts or parent state. Harness credentials and
+attempt configuration enter after branching through the worker profile.
+Setup commands have the declared public egress, so their network activity must
+also respect the repository's sharing policy.
+
+Reference the environment manifest by digest in the execution policy:
 
 ```json
 {

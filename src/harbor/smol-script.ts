@@ -5,7 +5,7 @@ import importlib.metadata
 import platform
 import shutil
 import uuid
-from smol import AsyncMachine, MachineConfig, ConnectOptions
+from smol import AsyncMachine, MachineConfig, ConnectOptions, ExecOptions
 from smol.harbor import SmolEnvironment, _checkpoint
 from harbor.models.task.task import Task
 from harbor.models.task.verifier_mode import resolve_effective_verifier_env_config
@@ -68,6 +68,32 @@ def validate_environment_manifest(manifest):
             for key in ('recipeDigest', 'baseImageDigest'):
                 if not re.fullmatch('[0-9a-f]{64}', image[key]):
                     raise ValueError('Image preparation must record ' + key)
+            setup = image.get('localSetup')
+            if setup is not None and (not isinstance(setup, str) or not setup or
+                    Path(setup).is_absolute() or '..' in Path(setup).parts):
+                raise ValueError('localSetup must be a relative script inside the frozen environment context')
+
+async def prepare_local_context(env, machine, binding, evidence, timeout_seconds):
+    setup = binding.get('localSetup')
+    if setup is None: return
+    context = env.environment_dir.resolve()
+    script = (context / setup).resolve()
+    if not script.is_relative_to(context) or not script.is_file():
+        raise ValueError('localSetup is missing or escapes the frozen environment context')
+    # Only this role's context is uploaded: never the task root or hidden solution.
+    guest = '/tmp/ebo-parent-setup'
+    env._machine = machine
+    try:
+        await env.upload_dir(context, guest)
+        result = await machine.exec(['sh', '-eu', guest + '/' + setup],
+            ExecOptions(workdir=guest, timeout=max(1, int(timeout_seconds))))
+        json_write(evidence, {'script': setup, 'scriptDigest': hashlib.sha256(script.read_bytes()).hexdigest(),
+            'exitCode': result.exit_code, 'stdout': result.stdout, 'stderr': result.stderr})
+        if result.exit_code: raise RuntimeError('Local parent setup failed; see ' + str(evidence))
+        result = await machine.exec(['rm', '-rf', guest])
+        if result.exit_code: raise RuntimeError('Cannot remove local preparation context')
+    finally:
+        env._machine = None
 
 def derive_task(source, target, binding, verified):
     # Materialize only an execution product; never edit an admitted snapshot.
@@ -113,7 +139,8 @@ def env_identity(env):
     if env.network_policy.network_mode.value != 'public':
         raise ValueError('This isolated patched runtime currently qualifies public egress only; no-network image import and allowlist networking require separate conformance. Policy is never broadened.')
     role = 'agent' if env.environment_dir.name == 'environment' else 'grader'
-    return {'role': role, 'environmentId': env.environment_id, 'configuration': config,
+    context = str(Path('steps', env.environment_dir.parent.name, 'tests')) if env.environment_dir.parent.parent.name == 'steps' else env.environment_dir.name
+    return {'role': role, 'context': context, 'environmentId': env.environment_id, 'configuration': config,
             'runtime': env.ebo_runtime,
             'network': env.network_policy.model_dump(mode='json')}
 
@@ -122,6 +149,7 @@ class OwnedSmolEnvironment(SmolEnvironment):
         self.ebo_owner, self.ebo_queue = ebo_owner, ebo_queue
         self.ebo_prepare, self.ebo_events = ebo_prepare, ebo_events
         self.ebo_transfer_failed = False
+        self.ebo_context_prepared = False
         self.ebo_runtime = ebo_runtime
         super().__init__(*args, target='local', auto_checkpoint=False, fork_batch_window_ms=0, **kwargs)
 
@@ -147,6 +175,7 @@ class OwnedSmolEnvironment(SmolEnvironment):
         key = fingerprint(identity)
         parent = receipt['parents'].get(key)
         if parent is None: raise ValueError('Missing exact Smol parent binding; cold fallback is forbidden')
+        self.ebo_context_prepared = parent.get('localSetup') is not None
         machine = await AsyncMachine.connect(parent['machine'], ConnectOptions(target='local'))
         if await machine.state() != 'running':
             raise ValueError('Smol parent is not running; stopped parents are not warm preparation')
@@ -165,6 +194,11 @@ class OwnedSmolEnvironment(SmolEnvironment):
             raise
         self.event('branch-ready', parent=parent['machine'], child=self._machine.name,
                    durationSeconds=time.monotonic()-started, fingerprint=key)
+
+    async def _upload_environment_dir_after_start(self):
+        # Local setup already materialized this context before branching.
+        if not self.ebo_context_prepared:
+            await super()._upload_environment_dir_after_start()
 
     async def download_dir(self, source_path, target_path):
         try:
@@ -185,8 +219,8 @@ class OwnedSmolEnvironment(SmolEnvironment):
             self.event('cleanup-pending', child=child, reason=str(exc))
             raise
 
-async def preparation_environments(trial):
-    yield trial.agent_environment
+async def preparation_environments(trial, binding):
+    yield trial.agent_environment, binding['agent']
     if trial.config.verifier.disable: return
     for step in trial.task.config.steps or [None]:
         env_config = resolve_effective_verifier_env_config(trial.task.config, step)
@@ -198,7 +232,7 @@ async def preparation_environments(trial):
             trial_paths=trial.paths, task_env_config=env_config,
             network_policy=plan.verifier_env_baseline, phase_network_policies=[plan.verifier_phase])
         trial._validate_separate_verifier_env_policies(env, plan=plan)
-        yield env
+        yield env, binding['graders'][step.name if step else 'single']
 
 async def serve_parents(request):
     root = Path(request['ownerRoot'])
@@ -230,25 +264,30 @@ async def serve_parents(request):
                 target = work / task['id']
                 derive_task(task['path'], target, manifest['tasks'][task['id']], task['verified'])
                 trial_request = {**request, 'taskPath': str(target), 'attemptId': 'prepare-' + task['id'],
+                    'taskSourceId': task['id'],
                     'verified': task['verified'], 'trialsDir': str(work / 'trials')}
                 trial = await create_trial(trial_request, prepare=True)
-                async for env in preparation_environments(trial):
+                async for env, binding in preparation_environments(trial, manifest['tasks'][task['id']]):
                     identity = env_identity(env)
                     key = fingerprint(identity)
                     if key in receipt['parents']: continue
                     if stop.is_set(): raise RuntimeError('Preparation interrupted')
-                    # No candidate or warm-up command. Preserve the image's startup behavior.
+                    # Boot a task-free image, then prepare private files locally.
                     start = time.monotonic()
                     machine = await AsyncMachine.create(MachineConfig(
                         name='ebo-parent-' + session[:8] + '-' + key[:10],
                         image=env.task_env_config.docker_image, branchable=True, persistent=True,
-                        resources=env._resource_spec(), workdir=env.task_env_config.workdir,
+                        resources=env._resource_spec(), workdir='/',
                         ready_timeout_seconds=90), ConnectOptions(target='local'))
                     machines.append(machine)
+                    result = await machine.exec(['mkdir', '-p', env.task_env_config.workdir])
+                    if result.exit_code: raise RuntimeError('Cannot create task workdir')
                     if identity['role'] == 'agent':
                         marker = await machine.read_file('/opt/ebo/runtime.sha256')
                         if marker.decode().strip() != manifest['runtimeArchiveDigest']:
                             raise ValueError('Prepared image has the wrong /opt/ebo runtime pack')
+                    setup_evidence = work / (key + '-setup.json')
+                    await prepare_local_context(env, machine, binding, setup_evidence, request['budgetMs'] / 1000)
                     checkpoint = {'machine': machine.name, 'resources': {
                         'cpus': env._effective_cpus, 'memory_mb': env._effective_memory_mb,
                         'storage_mb': env._effective_storage_mb, 'gpus': env._effective_gpus},
@@ -257,7 +296,8 @@ async def serve_parents(request):
                     checkpoint['resources'] = {k: v for k, v in checkpoint['resources'].items() if v is not None}
                     boot_id = await boot_identity(machine)
                     receipt['parents'][key] = {'machine': machine.name, 'checkpoint': checkpoint, 'bootId': boot_id,
-                        'identity': identity, 'preparationSeconds': time.monotonic()-start}
+                        'identity': identity, 'localSetup': json.loads(setup_evidence.read_text()) if setup_evidence.exists() else None,
+                        'preparationSeconds': time.monotonic()-start}
                     json_write(root / 'receipt.json', receipt)
             receipt['state'] = 'ready'
             json_write(root / 'receipt.json', receipt)

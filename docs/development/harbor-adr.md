@@ -39,6 +39,15 @@ git diff --check
 
 The PR workflow checks the pinned Python model/provider contracts and native
 worker tests. It does not claim VM qualification on a hosted Linux runner.
+The local-preparation gate uses a public Alpine image and uploads a unique
+fixture locally, then checks two isolated branches and an unchanged parent:
+
+```sh
+EBO_HARBOR_PYTHON="$PWD/.harbor-venv/bin/python" \
+SMOLVM_LIB_DIR="/path/to/isolated-patched-libraries" \
+EBO_SMOL_LOCAL_SETUP_TEST=1 node --test dist/test/harbor-smol.test.js
+```
+
 The live gate needs an approved registry-accessible arm64 execution image:
 
 ```sh
@@ -69,6 +78,13 @@ The image and runtime manifest is part of the experiment digest. Volatile parent
 names are not. Harbor's parsed models produce an image-bound execution copy;
 instructions, setup, verifier order and rewards remain Harbor-owned. The original
 task digest and derived digest are both retained.
+
+Runtime publication is independent of task preparation. A binding may select a
+frozen local setup script; the owner transfers only that role's build context
+into a local parent, executes setup and retains its result before allowing
+branches. The manifest identity includes this choice. Public images need contain
+no repository or task data. Per-step setup remains Harbor-owned, and worker
+credentials are injected only into attempt children.
 
 The disk-capacity patch passes the direct and separate-process Smol branching
 gate. Public-egress image-backed execution still needs its full live gate.
