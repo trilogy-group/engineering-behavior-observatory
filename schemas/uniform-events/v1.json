@@ -205,7 +205,7 @@
             "parent": { "$ref": "#/$defs/eventIdentity" },
             "known": {
               "type": "array",
-              "maxItems": 4096,
+              "maxItems": 131072,
               "items": {
                 "type": "object",
                 "additionalProperties": false,

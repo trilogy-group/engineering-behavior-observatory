@@ -26,8 +26,8 @@ test("Atlas mixed fixture preserves exact cohort populations, decisions and nati
     assert.equal(view.report.comparisons[0]!.claimStatus, "unavailable");
     assert.equal(view.cases.filter(({ review }) => review === "confirmed").length, 2);
     assert.equal(view.cases[0]!.harnessVersion, source.input.corpusEntries[0]!.harnessVersion);
-    assert.ok(atlasBehaviorRows(view).some(({ assessment, numerator, denominator }) => assessment === "constructive" && numerator === 1 && denominator === 1));
-    assert.ok(atlasBehaviorRows(view).some(({ assessment, numerator, denominator }) => assessment === "adverse" && numerator === 1 && denominator === 1));
+    assert.ok(atlasBehaviorRows(view).some(({ assessment, numerator, denominator }) => assessment === "constructive" && numerator === 2 && denominator === 3));
+    assert.ok(atlasBehaviorRows(view).some(({ assessment, numerator, denominator }) => assessment === "adverse" && numerator === 1 && denominator === 2));
     for (const item of view.cases) {
       for (const citation of item.citations) {
         assert.equal((citation.normalizedEvent as { id: string }).id, citation.eventId);
@@ -43,7 +43,17 @@ test("Atlas mixed fixture preserves exact cohort populations, decisions and nati
     assert.deepEqual(filtered.report.groups, exact.groups);
     assert.notEqual(filtered.cohortDigest, view.cohortDigest);
     assert.equal((await queryAtlas(source, { q: "not in fixture" })).report.sourcePopulation.selectedAttempts, 0);
-    assert.equal((await queryAtlas(source, { review: "proposed" })).cases[0]!.decisions.length, 0);
+    const proposed = await queryAtlas(source, { review: "proposed" });
+    assert.equal(proposed.cases[0]!.decisions.length, 0);
+    const modelRows = atlasBehaviorRows(proposed);
+    assert.ok(modelRows.some(({ numerator, denominator }) => numerator === 1 && denominator === 1));
+    assert.ok(modelRows.every(({ unit }) => unit === "judge-assessed-attempt-dimension"));
+    for (const review of ["disputed", "rejected"]) {
+      const reviewed = await queryAtlas(source, { review });
+      assert.ok(atlasBehaviorRows(reviewed).some(({ numerator, denominator }) => numerator === 1 && denominator === 1));
+      assert.equal(reviewed.cases[0]!.review, review, "model distribution must not rewrite human review");
+    }
+    assert.ok(atlasBehaviorRows(await queryAtlas(source, { review: "abstained" })).every(({ denominator }) => denominator === 0));
     assert.equal((await queryAtlas(source, { trial: "3" })).report.sourcePopulation.selectedAttempts, 2);
     source.aggregation.selectedAttemptPolicy = "latest-attempt-per-run";
     const latest = await queryAtlas(source, { review: "abstained" });

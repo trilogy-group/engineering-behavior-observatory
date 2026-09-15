@@ -66,6 +66,7 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo matrix compile <experiment.json> <bundle-root> <queue.json> [--freeze-locator <task-id>=<path>]
        ebo queue inspect <queue.json>
        ebo queue validate <queue.json> [experiment.json] [--bundle-root <bundle-root>]
+       ebo harbor <inspect|prepare|admit|freeze|status|doctor|compile|convert-legacy|environment|run> ...
        ebo agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
        ebo codex run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
        ebo cursor run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
@@ -84,6 +85,7 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
        ebo assertions validate <run-bundle-root> <assertion.json> [review.json]
        ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root>
+       ebo judge batch <batch.json>
        ebo calibration sample <sources.json> <criteria.json> <selection.json>
        ebo calibration packet <selection.json> <output-root>
        ebo calibration inspect <packet.json> <assertion-id> [event-id]
@@ -110,6 +112,10 @@ export function main(
 
   if (args[0] === "task-packet") {
     return runTaskPacketCommand(args.slice(1), write);
+  }
+
+  if (args[0] === "harbor") {
+    return runHarborCommand(args.slice(1), write);
   }
 
   if ((args[0] === "matrix" && args[1] === "compile") || args[0] === "compile") {
@@ -232,6 +238,47 @@ export function main(
       write(`${errorMessage(error)}\n`);
       return 1;
     }
+  }
+
+  if (args[0] === "judge" && args[1] === "batch") {
+    return (async () => {
+      let interrupted = false;
+      const stop = (): void => { interrupted = true; };
+      process.on("SIGINT", stop);
+      process.on("SIGTERM", stop);
+      try {
+        if (args.length !== 3) throw new Error("Usage: ebo judge batch <batch.json>");
+        const manifest = readJson(args[2]!) as { jobs?: unknown };
+        if (!manifest || typeof manifest !== "object" || Object.keys(manifest).some((key) => key !== "jobs")
+            || !Array.isArray(manifest.jobs) || manifest.jobs.length === 0 || manifest.jobs.length > 256) {
+          throw new Error("Judge batch requires jobs: an array of 1 through 256 jobs.");
+        }
+        const keys = ["bundleRoot", "observations", "request", "outputRoot"] as const;
+        const outputs = new Set<string>();
+        const jobs = manifest.jobs.map((job: unknown) => {
+          if (!job || typeof job !== "object" || Array.isArray(job)
+              || Object.keys(job).length !== keys.length || keys.some((key) => typeof (job as Record<string, unknown>)[key] !== "string"
+                || !(job as Record<string, string>)[key]!.trim())) throw new Error("Invalid judge batch job.");
+          const paths = keys.map((key) => resolve(dirname(resolve(args[2]!)), (job as Record<string, string>)[key]!));
+          if (outputs.has(paths[3]!) || existsSync(paths[3]!)) throw new Error("Judge batch output roots must be distinct and new.");
+          outputs.add(paths[3]!);
+          return paths;
+        });
+        // Sequential, fail-fast composition of the existing runner: no hidden retries.
+        for (const paths of jobs) {
+          if (interrupted) return 1;
+          const code = await main(["judge", "run", ...paths], write, dependencies);
+          if (code !== 0) return code;
+        }
+        return interrupted ? 1 : 0;
+      } catch (error) {
+        write(`${errorMessage(error)}\n`);
+        return 1;
+      } finally {
+        process.off("SIGINT", stop);
+        process.off("SIGTERM", stop);
+      }
+    })();
   }
 
   if (args[0] === "judge" && args[1] === "run") {
@@ -989,6 +1036,204 @@ function runTaskPacketCommand(
     write(`${error instanceof Error ? error.message : "Task packet command failed."}\n`);
     return 1;
   }
+}
+
+
+const harborUsage = `Usage: ebo harbor inspect <task-dir>
+       ebo harbor prepare <study-root> <task-dir> [--mode verified|observational] [--source-locator <locator>]
+       ebo harbor admit <study-root> <task-source-id>
+       ebo harbor freeze <study-root> <task-source-id>
+       ebo harbor status <study-root> <task-source-id>
+       ebo harbor doctor
+       ebo harbor environment serve <study-root> <queue.json>
+       ebo harbor compile <study-root> <experiment.json> <queue.json>
+       ebo harbor convert-legacy <study-root> <packet-locator> [--destination <dir>] [--image <image>] [--freeze <locator>]
+       ebo harbor run <study-root> <queue.json> <run-id> <output-root> [--attempt-id <id>]
+`;
+
+async function runHarborCommand(args: string[], write: (message: string) => void): Promise<number> {
+  const command = args[0];
+  try {
+    switch (command) {
+      case "environment": {
+        if (args.length !== 4 || args[1] !== "serve") throw new Error("Usage: ebo harbor environment serve <study-root> <queue.json>");
+        const { serveSmolEnvironments } = await import("./harbor/smol.js");
+        return await serveSmolEnvironments(args[2]!, args[3]!);
+      }
+      case "--help": write(harborUsage); return 0;
+      case undefined: {
+        write(harborUsage);
+        return 1;
+      }
+      case "inspect": {
+        if (args[1] === undefined) {
+          write("Usage: ebo harbor inspect <task-dir>\n");
+          return 1;
+        }
+        return await harborInspect(args[1], write);
+      }
+      case "compile": {
+        if (args.length !== 4) throw new Error("Usage: ebo harbor compile <study-root> <experiment.json> <queue.json>");
+        const { compileHarborRunQueue } = await import("./harbor/queue.js");
+        const { writeFile } = await import("node:fs/promises");
+        const queue = await compileHarborRunQueue(readJson(args[2]!) as never, { studyRoot: args[1]! });
+        await writeFile(args[3]!, JSON.stringify(queue, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+        write(JSON.stringify({ queuePath: args[3], entries: queue.entries.map(e => ({ runId: e.runId, task: e.taskId, harness: e.harnessId, model: e.modelId })) }) + "\n");
+        return 0;
+      }
+      case "doctor": {
+        return await harborDoctor(write);
+      }
+      case "prepare": {
+        if (args[1] === undefined || args[2] === undefined) {
+          write("Usage: ebo harbor prepare <study-root> <task-dir> [--mode verified|observational] [--source-locator <locator>]\n");
+          return 1;
+        }
+        return await harborPrepare(args[1], args[2], args.slice(3), write);
+      }
+      case "admit":
+      case "freeze":
+      case "status": {
+        if (args[1] === undefined || args[2] === undefined) {
+          write(`Usage: ebo harbor ${command} <study-root> <task-source-id>\n`);
+          return 1;
+        }
+        return await harborGovernance(command, args[1], args[2], write);
+      }
+      case "convert-legacy": {
+        if (args[1] === undefined || args[2] === undefined) {
+          write("Usage: ebo harbor convert-legacy <study-root> <packet-locator> [--destination <dir>] [--image <image>] [--freeze <locator>]\n");
+          return 1;
+        }
+        return await harborConvertLegacy(args[1], args[2], args.slice(3), write);
+      }
+      case "run": {
+        return await harborRun(args.slice(1), write);
+      }
+      default: {
+        write(`Unknown harbor command "${command}".\n${harborUsage}`);
+        return 1;
+      }
+    }
+  } catch (error) {
+    write(`${error instanceof Error ? error.message : "Harbor command failed."}\n`);
+    return 1;
+  }
+}
+
+function flagValue(flags: string[], name: string): string | undefined {
+  const index = flags.indexOf(name);
+  return index === -1 ? undefined : flags[index + 1];
+}
+
+async function harborInspect(taskDir: string, write: (message: string) => void): Promise<number> {
+  const { inspectHarborTask } = await import("./harbor/tasks.js");
+  const inspection = await inspectHarborTask(taskDir);
+  write(JSON.stringify(inspection) + "\n");
+  return inspection.classification === "valid" ? 0 : 1;
+}
+
+async function harborDoctor(write: (message: string) => void): Promise<number> {
+  const { createHarborAdapter } = await import("./harbor/adapter.js");
+  try {
+    const adapter = await createHarborAdapter();
+    const version = await adapter.version();
+    write(`Harbor package: ${version.harborVersion} (task schema ${version.defaultTaskSchemaVersion})\n`);
+    write(`Python interpreter: ${version.pythonVersion}\n`);
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const { python } = await adapter.describePrerequisites();
+    const { stdout } = await promisify(execFile)(python, ["-c", "import importlib.metadata as m,os,platform,hashlib,json; from pathlib import Path; p=Path(os.environ.get('SMOLVM_LIB_DIR',''))/'libkrun.dylib'; print(json.dumps({'smol':m.version('smolmachines'),'host':platform.system()+'/'+platform.machine(),'libkrunSha256':hashlib.sha256(p.read_bytes()).hexdigest() if p.is_absolute() and p.is_file() else None}))"], { timeout: 15_000, maxBuffer: 64 * 1024 });
+    const info = JSON.parse(stdout) as { smol: string; host: string; libkrunSha256: string | null };
+    write(`Smol SDK: ${info.smol}; host: ${info.host}; isolated libkrun SHA-256: ${info.libkrunSha256 ?? "missing"}\n`);
+    write("This checks installation only. Environment preparation verifies the frozen library/image bindings; live conformance is separate.\n");
+    return info.smol === "1.15.0" && info.host === "Darwin/arm64" && info.libkrunSha256 !== null ? 0 : 1;
+  } catch (error) {
+    write(`${error instanceof Error ? error.message : "Harbor adapter is unavailable."}\n`);
+    return 1;
+  }
+}
+
+async function harborPrepare(studyRoot: string, taskDir: string, flags: string[], write: (message: string) => void): Promise<number> {
+  const { prepareHarborAdmission, proposedAdmissionLocatorOf } = await import("./harbor/study.js");
+  const requestedMode = flagValue(flags, "--mode");
+  if (requestedMode !== undefined && requestedMode !== "verified" && requestedMode !== "observational") throw new Error("Unknown assessment mode.");
+  const mode = requestedMode ?? "observational";
+  const sourceLocator = flagValue(flags, "--source-locator");
+  const { record, resolution } = await prepareHarborAdmission(studyRoot, taskDir, {
+    assessmentMode: mode,
+    ...(sourceLocator === undefined ? {} : { provenance: { sourceLocator } }),
+  });
+  write(`Prepared Harbor admission proposal for ${record.taskSourceId}.\n`);
+  write(`Snapshot: frozen/task-snapshots/${record.taskSourceId}\n`);
+  write(`Proposal: ${proposedAdmissionLocatorOf(record.taskSourceId)} (review pending; nothing is admitted yet)\n`);
+  write(`Digest: ${record.harborTask.digest}\n`);
+  void resolution;
+  return 0;
+}
+
+async function harborGovernance(command: string, studyRoot: string, taskSourceId: string, write: (message: string) => void): Promise<number> {
+  const { admitHarborTask, freezeHarborTask, statusHarborTask } = await import("./harbor/study.js");
+  if (command === "admit") {
+    const record = await admitHarborTask(studyRoot, taskSourceId);
+    write(`Admitted Harbor task ${record.taskSourceId} (review by ${record.review?.reviewedBy ?? "unknown"}); admission digest ${record.admissionDigest.algorithm}:${record.admissionDigest.value}.\n`);
+    return 0;
+  }
+  if (command === "freeze") {
+    const record = await freezeHarborTask(studyRoot, taskSourceId);
+    write(`Froze Harbor task ${record.taskSourceId}; freeze digest ${record.freezeDigest.algorithm}:${record.freezeDigest.value}.\n`);
+    return 0;
+  }
+  const status = await statusHarborTask(studyRoot, taskSourceId);
+  write(`Harbor task status: ${status.status}\n`);
+  for (const mismatch of status.mismatches) write(`Mismatch: ${mismatch}\n`);
+  for (const error of status.errors) write(`Error: ${error.message}\n`);
+  return status.status === "frozen" ? 0 : 1;
+}
+
+async function harborConvertLegacy(studyRoot: string, packetLocator: string, flags: string[], write: (message: string) => void): Promise<number> {
+  const { convertLegacyTaskPacket } = await import("./harbor/convert.js");
+  const destination = flagValue(flags, "--destination");
+  const { report } = await convertLegacyTaskPacket({
+    studyRoot,
+    packetLocator,
+    ...(destination === undefined ? {} : { destinationRoot: destination }),
+    environmentImage: flagValue(flags, "--image"),
+    freezeLocator: flagValue(flags, "--freeze"),
+  });
+  write(`Converted legacy packet ${report.packetId} into Harbor task directory ${report.taskDirectory}.\n`);
+  for (const mapping of report.mappings) {
+    write(`  ${mapping.source} -> ${mapping.target}: ${mapping.status}${mapping.note === undefined ? "" : ` (${mapping.note})`}\n`);
+  }
+  for (const warning of report.warnings) write(`Warning: ${warning}\n`);
+  write("Continue with: ebo harbor prepare <study-root> <task-dir>\n");
+  return 0;
+}
+
+async function harborRun(args: string[], write: (message: string) => void): Promise<number> {
+  const [studyRoot, queuePath, runId, outputRoot] = args;
+  const flags = args.slice(4);
+  const attemptId = flagValue(flags, "--attempt-id");
+  if (studyRoot === undefined || queuePath === undefined || runId === undefined || outputRoot === undefined) {
+    write("Usage: ebo harbor run <study-root> <queue.json> <run-id> <output-root> [--attempt-id <id>]\n");
+    return 1;
+  }
+  const { runHarborBackedQueueEntry } = await import("./harbor/runner.js");
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  process.on("SIGINT", abort); process.on("SIGTERM", abort);
+  try {
+  const summary = await runHarborBackedQueueEntry({
+    signal: controller.signal,
+    studyRoot,
+    queuePath,
+    runId,
+    outputRoot,
+    ...(attemptId === undefined ? {} : { attemptId }),
+  });
+  write(JSON.stringify(summary) + "\n");
+  return summary.terminal.state === "completed" ? 0 : 1;
+  } finally { process.off("SIGINT", abort); process.off("SIGTERM", abort); }
 }
 
 function isDirectExecution(entryPath = process.argv[1]): boolean {

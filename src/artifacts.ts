@@ -1142,11 +1142,33 @@ function loadValidators(): Map<string, ValidateFunction> {
   const ajv = new Ajv2020({ allErrors: true, strict: false });
 
   addFormats(ajv);
+  // Preserve JSON Schema object equality without Ajv's quadratic pairwise scan.
+  // Only the large capture-report list uses this equivalent implementation.
+  ajv.addKeyword({ keyword: "eboUniqueItems", type: "array", schemaType: "boolean",
+    validate: (enabled: boolean, items: unknown[]) => {
+      if (!enabled) return true;
+      const seen = new Set<string>();
+      try {
+        for (const item of items) {
+          const key = canonicalizeMetadata(item);
+          if (seen.has(key)) return false;
+          seen.add(key);
+        }
+      } catch { return false; }
+      return true;
+    },
+  });
   ajv.addSchema(readSchema("task-packet.v1.schema.json"));
   ajv.addSchema(readSchema("task-packet-freeze.v1.schema.json"));
   ajv.addSchema(readSchema("experiment.v1.schema.json"));
   ajv.addSchema(readSchema("run-queue.v1.schema.json"));
-  ajv.addSchema(readSchema("run-bundles/v1.json"));
+  const runBundleSchema = readSchema("run-bundles/v1.json") as {
+    $defs: { captureReport: { properties: { missingEvidence: { uniqueItems?: boolean; eboUniqueItems?: boolean } } } };
+  };
+  const missingEvidence = runBundleSchema.$defs.captureReport.properties.missingEvidence;
+  missingEvidence.eboUniqueItems = missingEvidence.uniqueItems;
+  delete missingEvidence.uniqueItems;
+  ajv.addSchema(runBundleSchema);
   ajv.addSchema(readSchema("uniform-events/v1.json"));
   ajv.addSchema(readSchema("normalization-integrity.v1.json"));
   ajv.addSchema(readSchema("structural-observations.v1.json"));
@@ -1155,6 +1177,11 @@ function loadValidators(): Map<string, ValidateFunction> {
   ajv.addSchema(readSchema("human-calibration.v1.json"));
   ajv.addSchema(readSchema("aggregation.v1.json"));
   ajv.addSchema(readSchema("deepseek-runtime-composition.v1.schema.json"));
+  ajv.addSchema(readSchema("harbor-admission.v1.schema.json"));
+  ajv.addSchema(readSchema("harbor-review.v1.schema.json"));
+  ajv.addSchema(readSchema("harbor-freeze.v1.schema.json"));
+  ajv.addSchema(readSchema("experiment.v2.schema.json"));
+  ajv.addSchema(readSchema("run-queue.v2.schema.json"));
 
   return new Map([
     ["ebo.task-packet/v1", requiredValidator(ajv, "https://ebo.dev/schemas/task-packet.v1.schema.json")],
@@ -1191,6 +1218,11 @@ function loadValidators(): Map<string, ValidateFunction> {
     ["ebo.aggregation-request/v1", requiredValidator(ajv, "urn:ebo:schema:aggregation:v1#/$defs/request")],
     ["ebo.aggregation-report/v1", requiredValidator(ajv, "urn:ebo:schema:aggregation:v1#/$defs/report")],
     ["ebo.deepseek-runtime-composition/v1", requiredValidator(ajv, "https://ebo.dev/schemas/deepseek-runtime-composition.v1.schema.json")],
+    ["ebo.harbor-admission/v1", requiredValidator(ajv, "https://ebo.dev/schemas/harbor-admission.v1.schema.json")],
+    ["ebo.harbor-review/v1", requiredValidator(ajv, "https://ebo.dev/schemas/harbor-review.v1.schema.json")],
+    ["ebo.harbor-freeze/v1", requiredValidator(ajv, "https://ebo.dev/schemas/harbor-freeze.v1.schema.json")],
+    ["ebo.experiment/v2", requiredValidator(ajv, "https://ebo.dev/schemas/experiment.v2.schema.json")],
+    ["ebo.run-queue/v2", requiredValidator(ajv, "https://ebo.dev/schemas/run-queue.v2.schema.json")],
   ]);
 }
 

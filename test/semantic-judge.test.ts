@@ -45,7 +45,7 @@ test("request schema admits exactly the supported backend combinations", () => {
   ]) assert.ok(validateArtifact("request", invalid).length > 0, JSON.stringify(invalid));
 });
 
-test("judge CLI SIGINT retains interruption and reaps its owned native child", async () => {
+for (const mode of ["run", "batch"] as const) test(`judge ${mode} CLI SIGINT retains interruption and reaps its owned native child`, async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-judge-cli-interrupt-"));
   let cli: ReturnType<typeof spawn> | undefined;
   try {
@@ -62,7 +62,10 @@ test("judge CLI SIGINT retains interruption and reaps its owned native child", a
     const output = join(root, "judge-output");
     writeFileSync(join(root, "observations.json"), JSON.stringify(observations));
     writeFileSync(join(root, "request.json"), JSON.stringify(request));
-    cli = spawn(process.execPath, ["dist/src/cli.js", "judge", "run", bundleRoot, join(root, "observations.json"), join(root, "request.json"), output], { stdio: "ignore" });
+    const batchPath = join(root, "batch.json");
+    const job = { bundleRoot, observations: "observations.json", request: "request.json", outputRoot: output };
+    writeFileSync(batchPath, JSON.stringify({ jobs: [job, { ...job, outputRoot: "never-started" }] }));
+    cli = spawn(process.execPath, ["dist/src/cli.js", "judge", ...(mode === "batch" ? ["batch", batchPath] : ["run", bundleRoot, join(root, "observations.json"), join(root, "request.json"), output])], { stdio: "ignore" });
     const exit = once(cli, "exit");
     const deadline = Date.now() + 10000;
     while (!existsSync(`${executable}.ready`) && cli.exitCode === null && Date.now() < deadline) await delay(20);
@@ -75,6 +78,7 @@ test("judge CLI SIGINT retains interruption and reaps its owned native child", a
     assert.equal(failure.parse.kind, "interrupted");
     assert.ok(failure.rawResponse);
     assert.equal(existsSync(join(output, "assertion.json")), false);
+    assert.equal(existsSync(join(root, "never-started")), false);
     assert.throws(() => process.kill(pid, 0), /ESRCH/u);
     request.rubric.instructions = "MALFORMED_OUTPUT_FIXTURE";
     request.limits.maxOutputChars = 256;
@@ -410,6 +414,21 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
     ), 0);
     assert.match(cliOutput, /"status":"proposed"/u);
     assert.equal(existsSync(join(root, "cli", "assertion.json")), true);
+    const batchPath = join(root, "batch.json");
+    const job = { bundleRoot, observations: "observations.json", request: "request.json", outputRoot: "batch-a" };
+    writeFileSync(batchPath, JSON.stringify({ jobs: [job, { ...job, outputRoot: "batch-b" }] }));
+    assert.equal(await main(["judge", "batch", batchPath], () => undefined,
+      { semanticJudgeBackend: completed(assessed) }), 0);
+    for (const name of ["batch-a", "batch-b"]) assert.equal(existsSync(join(root, name, "assertion.json")), true);
+    assert.equal(await main(["judge", "batch", batchPath], () => undefined), 1, "existing results are never overwritten");
+    for (const jobs of [[], [{ ...job, outputRoot: "unused", surprise: true }], [{ ...job, outputRoot: "unused" }, { ...job, outputRoot: "unused" }]]) {
+      writeFileSync(batchPath, JSON.stringify({ jobs }));
+      assert.equal(await main(["judge", "batch", batchPath], () => undefined), 1);
+      assert.equal(existsSync(join(root, "unused")), false);
+    }
+    writeFileSync(batchPath, JSON.stringify({ jobs: [{ ...job, request: "missing.json", outputRoot: "failed-first" }, { ...job, outputRoot: "never-started" }] }));
+    assert.equal(await main(["judge", "batch", batchPath], () => undefined), 1);
+    assert.equal(existsSync(join(root, "never-started")), false, "batch stops after failure");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

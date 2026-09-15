@@ -49,7 +49,8 @@ or implement beyond the assigned issue.
   study execution, and partner delivery are operations that consume EBO. Do not
   hard-code them into the product.
 - Structural extractors report exact facts only. Semantic claims require cited
-  evidence, an alternative explanation, abstention, and human calibration.
+  evidence, an alternative explanation, and the ability to abstain. LLM-as-judge
+  is the primary evaluation path; human calibration is optional and recorded separately.
 - Export fails closed on unknown sharing classification and excludes secrets,
   environment values, local identifiers, and hidden reasoning.
 - Do not build a custom telemetry backend, graph database, distributed runner,

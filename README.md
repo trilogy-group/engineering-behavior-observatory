@@ -37,8 +37,9 @@ or a verified release archive, see [the quickstart](docs/guides/quickstart.md).
   solution or pass/fail verifier.
 - Inspect a native record from a normalized event or
   behavioral assertion. Missing evidence stays explicit.
-- Extract structural facts, request evidence-grounded
-  judgments, record human review, and compare matched conditions.
+- Extract structural facts and run evidence-grounded
+  [LLM-as-judge evaluations](docs/guides/behavioral-evaluation.md), then compare
+  matched conditions. Add human review when the experiment calls for it.
 - Browse the local Behavior Atlas, connect Grafana, build
   HTML reports, and create policy-checked portable trajectory archives.
 
@@ -104,6 +105,10 @@ makes no model calls. It shows evidence drilldown, review states, missing
 evidence, and comparison caveats. Use new output paths when repeating it.
 
 ### Capture your own task
+
+For new isolated studies, see the [Harbor/Smol integration](docs/guides/harbor-tasks.md) under qualification.
+Harbor owns the task environment and steps; EBO captures the selected native
+harness inside that environment. Existing packet-based studies keep the workflow below.
 
 Prepare an admitted, frozen task packet and a queue with your harness
 configuration. Then run one selected entry:

@@ -76,7 +76,7 @@ export type BehaviorAggregate = {
   behavior: BehaviorAssertion["behavior"];
   rubric: BehaviorAssertion["rubric"];
   evaluator: BehaviorAssertion["evaluator"];
-  population: "confirmed-attempt-dimension";
+  population: "confirmed-attempt-dimension" | "judge-assessed-attempt-dimension";
   assessments: ReadonlyArray<{
     assessment: "constructive" | "adverse" | "mixed" | "context-dependent";
     measurement: AggregateMeasurement;
@@ -255,21 +255,20 @@ function behaviorAggregates(selected: readonly Attempt[], assertions: ReadonlyMa
     };
     for (const attempt of selected) {
       const candidates = values.filter((assertion) => attemptKey(assertion) === attemptKey(attempt));
-      const confirmed = candidates.filter((assertion) => assertion.judgment.disposition === "assessed"
-        && outcome(assertion).outcome === "confirmed" && !outcome(assertion).disputed);
-      const judgments = new Set(confirmed.flatMap(({ judgment }) => judgment.disposition === "assessed" ? [judgment.assessment] : []));
+      const assessed = candidates.filter((assertion) => assertion.judgment.disposition === "assessed");
+      const judgments = new Set(assessed.flatMap(({ judgment }) => judgment.disposition === "assessed" ? [judgment.assessment] : []));
       if (judgments.size === 1) {
         assessments.push([...judgments][0]!);
-        for (const assertion of confirmed) included.add(assertionKey(assertion));
-      } else exclusions.push(judgments.size > 1 ? "conflicting-confirmed-reruns" : candidates.length === 0 ? "dimension-assertion-missing" : "no-confirmed-assessment");
+        for (const assertion of assessed) included.add(assertionKey(assertion));
+      } else exclusions.push(judgments.size > 1 ? "conflicting-judge-reruns" : candidates.length === 0 ? "dimension-assertion-missing" : "no-assessed-judgment");
     }
     return {
       behavior: structuredClone(first.behavior), rubric: structuredClone(first.rubric), evaluator: structuredClone(first.evaluator),
-      population: "confirmed-attempt-dimension" as const,
+      population: "judge-assessed-attempt-dimension" as const,
       assessments: (["constructive", "adverse", "mixed", "context-dependent"] as const).map((assessment) => ({
         assessment,
         measurement: rateMetric(assessment, "attempt", assessments.filter((value) => value === assessment).length,
-          assessments.length, "confirmed-attempt-dimension", exclusionCounts(exclusions, "attempt-dimension")).measurement,
+          assessments.length, "judge-assessed-attempt-dimension", exclusionCounts(exclusions, "attempt-dimension")).measurement,
       })),
       assertions: values.map((assertion) => ({ runId: assertion.runId, attemptId: assertion.attemptId, id: assertion.id,
         digest: metadataDigest(assertion), reviewOutcome: outcome(assertion).outcome, disputed: outcome(assertion).disputed,

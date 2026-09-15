@@ -1,4 +1,21 @@
 import assert from "node:assert/strict";
+import { createClaudeAgentSdkHarborExecutor } from "../src/harbor/harnesses.js";
+import { harborStepFixture } from "./harbor-step-helper.js";
+
+test("Harbor Claude wrapper retains SDK messages, hook evidence and workspace changes", async () => {
+  const fixture = createRunnerFixture({ assessmentMode: "observational" });
+  try {
+    const queue = JSON.parse(readFileSync(fixture.queuePath, "utf8"));
+    const input = harborStepFixture(fixture.parent, "claude-agent-sdk");
+    const fake = fakeQuery({ resultContent: "done\n" });
+    const result = await createClaudeAgentSdkHarborExecutor({ studyRoot: fixture.bundleRoot,
+      configuration: { ...queue.entries[0].configuration, captureProfile: queue.captureProfile }, query: fake.query as never })(input);
+    assert.equal(result.terminal.state, "completed");
+    assert.equal(result.qualification, "qualified-with-gaps", "fixture has no OTLP receiver receipt");
+    assert.equal(fake.calls(), 1);
+    assert.equal(readFileSync(join(input.workspacePath, "result.txt"), "utf8"), "done\n");
+  } finally { rmSync(fixture.parent, { recursive: true, force: true }); }
+});
 import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { createServer } from "node:http";

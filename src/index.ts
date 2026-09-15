@@ -1,4 +1,5 @@
 export { main } from "./cli.js";
+export * from "./harbor/index.js";
 export {
   assertUniqueArtifactIdentities,
   canonicalizeMetadata,

@@ -1,5 +1,24 @@
 # CLI reference
 
+## Harbor task studies
+
+See the [Harbor guide](../guides/harbor-tasks.md) for prerequisite installation,
+runtime profiles and the review record. These commands use task schema 1.4 and
+versioned v2 experiment/queue artifacts; existing v1 commands remain unchanged.
+
+```sh
+ebo harbor doctor
+ebo harbor inspect <task-dir>
+ebo harbor prepare <study-root> <task-dir> --mode observational
+ebo harbor admit <study-root> <task-source-id>
+ebo harbor freeze <study-root> <task-source-id>
+ebo harbor status <study-root> <task-source-id>
+ebo harbor compile <study-root> <experiment.json> <queue.json>
+ebo harbor environment serve <study-root> <queue.json>
+ebo harbor run <study-root> <queue.json> <run-id> <output-root>
+ebo harbor convert-legacy <study-root> <packet-locator> --image <docker-image>
+```
+
 Install `ebo` with [the quickstart](../guides/quickstart.md). `ebo --help`
 prints the current top-level syntax. For a source checkout without `npm link`,
 use `npm run ebo -- <arguments>`.
@@ -66,9 +85,14 @@ ebo observations create <run-bundle-root> <output.json>
 ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
 ebo assertions validate <run-bundle-root> <assertion.json> [review.json]
 ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root>
+ebo judge batch <batch.json>
 ```
 
-## Record human review
+`judge batch` runs a declared list of jobs sequentially and stops on failure.
+See the [behavioral evaluation runbook](../guides/behavioral-evaluation.md).
+Model judging is the default evaluation path; the evaluator remains explicitly configured.
+
+## Record optional human review
 
 Select evidence and build static review packets. Import human-authored decisions; these commands do not manufacture reviewer identities or judgments.
 

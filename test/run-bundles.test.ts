@@ -385,6 +385,7 @@ test("workspace outcome excludes declared transient directory names", async () =
     writeFileSync(join(fixture.final, ".gitignore"), "ignored.bin\nnew-outcome.txt\n");
     mkdirSync(join(fixture.final, "generated"));
     writeFileSync(join(fixture.final, "generated", "cache.txt"), "generated\n");
+    linkSync(join(fixture.final, "generated", "cache.txt"), join(fixture.final, "generated", "cache-link.txt"));
     writeFileSync(join(fixture.final, "new-outcome.txt"), "must remain observable\n");
     if (process.platform !== "win32") {
       writeFileSync(join(fixture.final, "node_modules\\result.txt"), "backslash is not a POSIX separator\n");
@@ -420,6 +421,10 @@ test("workspace outcome excludes declared transient directory names", async () =
     assert.match(patch, /diff --git a\/legitimate\/coverage b\/legitimate\/coverage/u);
     assert.match(patch, /diff --git a\/ignored\.bin b\/ignored\.bin[\s\S]*deleted file mode/u);
     assert.doesNotMatch(patch, /node_modules\/|coverage\/summary|generated\/cache/u);
+    const manifest = assembler.currentManifest();
+    const reportPath = manifest.evidence.find(entry => entry.kind === "capture-report")!.relativePath;
+    const report = JSON.parse(readFileSync(join(bundleRoot, reportPath), "utf8"));
+    assert.ok(!report.missingEvidence.some((entry: { detail?: string }) => entry.detail?.includes("generated/")));
   } finally {
     for (const [name, value] of gitConfiguration) {
       if (value === undefined) delete process.env[name];

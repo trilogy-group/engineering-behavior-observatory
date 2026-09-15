@@ -80,12 +80,14 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
     assert.equal(behavior.assessments.find((value) => value.assessment === assessment)!.measurement.rate, 1);
     assert.equal(behavior.assertions[0]!.included, true);
     const unreviewed = await aggregateEvaluation({ ...input, calibrations: [] }, policy);
-    assert.equal(unreviewed.groups[0]!.behaviors![0]!.assessments[0]!.measurement.status, "unavailable");
+    assert.equal(unreviewed.groups[0]!.behaviors![0]!.assessments[0]!.measurement.status, "available");
+    assert.equal(unreviewed.groups[0]!.behaviors![0]!.population, "judge-assessed-attempt-dimension");
     const disputedHistory = structuredClone(history);
     disputedHistory.decisions[0]!.state = "disputed";
     const disputed = await aggregateEvaluation({ ...input, calibrations: [{ selection, history: disputedHistory }] }, policy);
-    assert.equal(disputed.groups[0]!.behaviors![0]!.assertions[0]!.included, false);
-    assert.equal(disputed.groups[0]!.behaviors![0]!.assessments[0]!.measurement.denominator.value, 0);
+    assert.equal(disputed.groups[0]!.behaviors![0]!.assertions[0]!.included, true);
+    assert.equal(disputed.groups[0]!.behaviors![0]!.assertions[0]!.disputed, true);
+    assert.equal(disputed.groups[0]!.behaviors![0]!.assessments[0]!.measurement.denominator.value, 1);
     reports.push(report);
   }
   assert.notDeepEqual(reports[0]!.groups, reports[1]!.groups);
@@ -115,7 +117,7 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
     assert.equal(report.groups[0]!.behaviors!.length, 2);
     const original = report.groups[0]!.behaviors!.find(({ rubric }) => rubric.version === "1.0.0")!;
     assert.equal(original.assessments[0]!.measurement.denominator.value, conflict ? 0 : 1);
-    if (conflict) assert.equal(original.assessments[0]!.measurement.exclusions[0]!.reason, "conflicting-confirmed-reruns");
+    if (conflict) assert.equal(original.assessments[0]!.measurement.exclusions[0]!.reason, "conflicting-judge-reruns");
   }
   assert.deepEqual(readFileSync(join(bundleRoot, "manifest.json")), before);
   if (["codex-app-server", "openhands-agent-server", "deepseek-harness"].includes(evidence.dataset.adapter.harness)) {

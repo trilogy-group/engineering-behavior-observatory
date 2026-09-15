@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { createDeepSeekHarborExecutor } from "../src/harbor/harnesses.js";
+import { harborStepFixture } from "./harbor-step-helper.js";
 
 import {
   assertAdapterContract,
@@ -31,6 +33,38 @@ import {
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const fixtureRoot = join(repositoryRoot, "test/fixtures/deepseek");
 const SHA = (value: string): `sha256:${string}` => `sha256:${value.repeat(64).slice(0, 64)}`;
+
+test("Harbor DeepSeek wrapper qualifies official-client session and workspace evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-harbor-deepseek-"));
+  try {
+    const input = harborStepFixture(root, "deepseek-harness");
+    const composition = fixtureComposition("minimal", input.workspacePath);
+    const ref = { locator: "fixture.json", digest: digestBytes(Buffer.from("fixture")) };
+    const result = await createDeepSeekHarborExecutor({ configuration: { model: ref, harness: ref, nativeLimits: ref, nativeToolPolicy: ref, captureProfile: ref },
+      native: configuration(composition, "success") })(input);
+    assert.equal(result.terminal.state, "completed", JSON.stringify(result) + readFileSync(join(input.stepBundleRoot, "attempt.json"), "utf8"));
+    assert.equal(result.qualification, "qualified");
+    assert.equal(result.nativeSessionId, "harbor-attempt-step-1");
+    assert.ok((await createRetainedBehaviorEvidence(input.stepBundleRoot)).dataset.events.length > 0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Harbor DeepSeek retains native completion when workspace capture fails", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-harbor-deepseek-missing-workspace-"));
+  try {
+    const input = harborStepFixture(root, "deepseek-harness");
+    input.startingWorkspacePath = join(root, "missing-baseline");
+    const composition = fixtureComposition("minimal", input.workspacePath);
+    const ref = { locator: "fixture.json", digest: digestBytes(Buffer.from("fixture")) };
+    const result = await createDeepSeekHarborExecutor({ configuration: { model: ref, harness: ref, nativeLimits: ref, nativeToolPolicy: ref, captureProfile: ref },
+      native: configuration(composition, "success") })(input);
+    assert.equal(result.terminal.state, "completed");
+    assert.notEqual(result.qualification, "qualified");
+    const manifest = JSON.parse(readFileSync(join(input.stepBundleRoot, "manifest.json"), "utf8"));
+    assert.equal(manifest.terminal.workspaceArtifactId, undefined);
+    assert.ok(manifest.evidence.some((e: { id: string }) => e.id === "deepseek-session"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test("records a controlled official-client run and normalizes only native-linked facts", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-adapter-"));

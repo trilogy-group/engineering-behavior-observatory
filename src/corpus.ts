@@ -58,6 +58,8 @@ export type CorpusIndexEntry = {
   harnessVersion?: string;
   harnessConfigurationDigest?: DigestString;
   assessmentMode?: string;
+  /** Native child capture can be observational while Harbor verifies the task. */
+  captureAssessmentMode?: string;
   configurationDigest?: DigestString;
   captureProfileDigest?: DigestString;
   budgetDigest?: DigestString;
@@ -389,6 +391,22 @@ function projectEvidence(
   entry.verifierStatuses.sort();
   entry.captureArtifactIds.sort();
   entry.exportArtifactIds.sort();
+  const harbor = descriptors.filter(isRecord).filter(d => d.id === "harbor-result" && d.kind === "diagnostic");
+  if (harbor.length === 1) {
+    const document = readDescriptorJson(root, harbor[0]!, entry.issues);
+    const native = isRecord(document) && isRecord(document.nativeCapture) ? document.nativeCapture : undefined;
+    const task = isRecord(document) && isRecord(document.task) ? document.task : undefined;
+    if (isRecord(document) && document.sourceKind === "harbor-task"
+        && ["observational", "verified"].includes(String(document.assessmentMode))
+        && task?.assessmentMode === document.assessmentMode
+        && native?.runId === entry.runId && native?.attemptId === entry.attemptId
+        && native?.assessmentMode === entry.assessmentMode) {
+      entry.captureAssessmentMode = entry.assessmentMode;
+      entry.assessmentMode = String(document.assessmentMode);
+    } else {
+      entry.issues.push({ field: "/evidence/harbor-result", message: "Harbor assessment does not bind to this native capture." });
+    }
+  }
 }
 
 function readDescriptorJson(
@@ -570,7 +588,7 @@ function assertCorpusIndexEntry(value: unknown, line: number): asserts value is 
     value.bundleId, value.runId, value.trialId, value.attemptId, value.retryOf, value.taskId, value.fixtureId,
     value.modelProvider, value.modelId, value.harnessId, value.harnessVersion, value.assessmentMode, value.terminalState,
     value.failureClass, value.stopReason, value.verifierLocator, value.captureQualification, value.exportStatus,
-    value.sharingClass,
+    value.sharingClass, value.captureAssessmentMode,
   ];
   if (value.schemaVersion !== INDEX_SCHEMA_VERSION
       || !["run", "export", "unknown"].includes(String(value.manifestKind))

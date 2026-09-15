@@ -23,14 +23,20 @@ flowchart TD
 | :--- | :--- | :--- |
 | 1. Establish what is observable | [Uniform events](uniform-events.md), [integrity gates](normalization-integrity.md) | Source-bound events, unmapped records, capability coverage |
 | 2. Extract exact facts | [Structural observations](structural-observations.md) | Counts, resource observations, explicit denominators and missing values |
-| 3. Ask a behavioral question | [Assertions](behavior-assertions.md), [semantic judge](semantic-judge.md) | Cited proposal or abstention for one rubric dimension |
-| 4. Review the interpretation | [Human calibration](human-calibration.md) | Human-authored decisions and agreement populations |
+| 3. Evaluate behavior with an LLM judge | [Assertions](behavior-assertions.md), [semantic judge](semantic-judge.md), [batch runbook](../guides/behavioral-evaluation.md) | Evidence-grounded model assessment or abstention |
+| Optional: human-intervention experiment | [Human calibration](human-calibration.md) | Separately attributed human decisions and agreement populations |
 | 5. Compare declared conditions | [Aggregation](aggregation.md) | Descriptive distributions, matched differences, exclusions and caveats |
 | 6. Explore or report | [Behavior Atlas](../guides/atlas.md) | Local drilldown and reproducible report |
 
 The judge backend is independent of the evaluated harness: choose the Claude
 Agent SDK or native Codex backend explicitly. EBO retains the evaluator, rubric,
 evidence selection, limits, and configuration identity.
+
+The default evaluation workflow is capture, qualify, extract, LLM judge,
+aggregate, and Atlas. Add human review when the experiment specifies it;
+it is not a gate on model assessments. Capture-only operation remains useful
+without invoking an evaluator. Atlas consumes saved judgments rather than
+launching a judge implicitly.
 
 ## Keep three questions separate
 

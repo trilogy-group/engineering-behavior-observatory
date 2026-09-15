@@ -17,6 +17,11 @@ roots or judge identities differ.
 
 ## Request
 
+LLM-as-judge is the primary behavioral evaluation mechanism. Human review is
+optional and separate; `proposed` records are completed model judgments awaiting
+optional adjudication. Atlas includes assessed judgments without human confirmation.
+Use the [batch runbook](../guides/behavioral-evaluation.md) for multiple dimensions or runs.
+
 The request is caller-owned configuration; EBO does not select a study model
 or retry a judgment:
 

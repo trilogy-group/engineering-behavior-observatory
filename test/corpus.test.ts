@@ -51,6 +51,52 @@ const policy: PortableExportPolicy = {
   maxStringBytes: 8 * 1024,
 };
 
+test("Harbor task assessment is projected separately from bound native capture", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-harbor-corpus-"));
+  try {
+    const source = join(root, "source");
+    cpSync(join(fixtures, "complete"), source, { recursive: true });
+    const path = join(source, "manifest.json");
+    const manifest = JSON.parse(readFileSync(path, "utf8"));
+    const document = {
+      sourceKind: "harbor-task", assessmentMode: "observational",
+      task: { assessmentMode: "observational" },
+      nativeCapture: { runId: manifest.run.id, attemptId: manifest.attempt.id, assessmentMode: manifest.run.assessmentMode ?? "verified" },
+      trialResult: { exception_info: { exception_message: "verbose error ".repeat(2048) } },
+    };
+    const bytes = Buffer.from(JSON.stringify(document));
+    assert.ok(bytes.length > policy.maxStringBytes);
+    const descriptor = { id: "harbor-result", source: "harbor", kind: "diagnostic", authority: "outcome", mediaType: "application/json",
+      sharingClass: "restricted", relativePath: "harbor-result.json", sizeBytes: bytes.length,
+      digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}` };
+    manifest.evidence.push(descriptor);
+    writeFileSync(join(source, descriptor.relativePath), bytes);
+    writeFileSync(path, JSON.stringify(manifest));
+    const exported = join(root, "exported");
+    await createPortableRunBundleExport({ sourceRoot: source, destinationRoot: exported, policy });
+    const portable = await readPortableRunBundleExport(exported, policy);
+    const retained = portable.artifacts.find(artifact => artifact.id === "harbor-result")!;
+    const sanitized = JSON.parse(readFileSync(join(exported, retained.relativePath), "utf8"));
+    assert.ok(Buffer.byteLength(sanitized.trialResult.exception_info.exception_message) <= policy.maxStringBytes);
+    assert.ok(portable.transformations.some(change => change.artifactId === "harbor-result" && change.action === "truncated"));
+    for (const dir of [source, exported]) {
+      const entry = buildCorpusIndex(dir).find(entry => entry.manifestPath === "manifest.json")!;
+      assert.equal(entry.assessmentMode, "observational", JSON.stringify(entry));
+      assert.equal(entry.captureAssessmentMode, "verified");
+      assert.deepEqual(entry.issues, []);
+    }
+    document.nativeCapture.runId = "different-run";
+    const mismatched = Buffer.from(JSON.stringify(document));
+    descriptor.sizeBytes = mismatched.length;
+    descriptor.digest = `sha256:${createHash("sha256").update(mismatched).digest("hex")}`;
+    writeFileSync(join(source, descriptor.relativePath), mismatched);
+    writeFileSync(path, JSON.stringify(manifest));
+    const entry = buildCorpusIndex(source).find(entry => entry.manifestPath === "manifest.json")!;
+    assert.equal(entry.assessmentMode, "verified");
+    assert.ok(entry.issues.some(issue => issue.field === "/evidence/harbor-result"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("builds, queries, and validates a deterministic mixed corpus index", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-corpus-"));
   const corpus = join(root, "corpus");

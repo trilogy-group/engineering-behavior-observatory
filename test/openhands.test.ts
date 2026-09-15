@@ -5,6 +5,43 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { openHandsCapabilityProfile } from "../src/openhands.js";
+import { createOpenHandsHarborExecutor } from "../src/harbor/harnesses.js";
+import { digestBytes } from "../src/artifacts.js";
+import { harborStepFixture } from "./harbor-step-helper.js";
+
+test("Harbor OpenHands wrapper binds its conversation to the actual workspace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-harbor-openhands-"));
+  try {
+    const input = harborStepFixture(root, "openhands-agent-server");
+    const message = { id: "message-1", kind: "MessageEvent", source: "agent", timestamp: "2026-09-13T00:00:00Z", llm_message: { role: "assistant", content: [{ type: "text", text: "done" }] } };
+    const hook = { id: "hook-1", kind: "HookExecutionEvent", source: "hook", timestamp: "2026-09-13T00:00:01Z", hook_event_type: "SessionEnd", hook_command: "echo done", success: true, exit_code: 0 };
+    const fetch: typeof globalThis.fetch = async (request, init) => {
+      const url = String(request);
+      if (url.endsWith("/server_info")) return json({ version: OPENHANDS_AGENT_SERVER_VERSION, sdk_version: OPENHANDS_AGENT_SERVER_VERSION, tools_version: OPENHANDS_AGENT_SERVER_VERSION });
+      if (url.endsWith("/api/conversations") && init?.method === "POST") {
+        assert.equal(JSON.parse(String(init.body)).workspace.working_dir, input.workspacePath);
+        return json({ id: "conversation-1", workspace: { type: "local", working_dir: input.workspacePath } }, 201);
+      }
+      if (url.endsWith("/events") && init?.method === "POST") {
+        assert.equal(JSON.parse(String(init.body)).content[0].text, input.step.effectiveInstruction);
+        return json({ success: true });
+      }
+      if (url.includes("/events/search")) return json({ items: [message, hook], next_page_id: null });
+      if (init?.method === "DELETE") return json({ success: true });
+      return json({ id: "conversation-1", execution_status: "finished", workspace: { type: "local", working_dir: input.workspacePath } });
+    };
+    const ref = { locator: "fixture.json", digest: digestBytes(Buffer.from("fixture")) };
+    const result = await createOpenHandsHarborExecutor({ configuration: { model: ref, harness: ref, nativeLimits: ref, nativeToolPolicy: ref, captureProfile: ref }, provider: "test", version: OPENHANDS_AGENT_SERVER_VERSION,
+      native: { model: "test/model", baseUrl: "http://127.0.0.1:8000", startConversation: { agent: { kind: "Agent", llm: { model: "test/model" } } }, message: {}, fetch, pollIntervalMs: 1,
+        webSocket: url => { const socket = new FakeWebSocket(url); queueMicrotask(() => { socket.open(); socket.message(message); socket.message(hook); }); return socket; },
+      } })(input);
+    assert.equal(result.terminal.state, "completed");
+    const manifest = JSON.parse(readFileSync(join(input.stepBundleRoot, "manifest.json"), "utf8"));
+    const reportPath = manifest.evidence.find((e: {kind:string}) => e.kind === "capture-report").relativePath;
+    assert.equal(result.qualification, "qualified-with-gaps", readFileSync(join(input.stepBundleRoot, reportPath), "utf8"));
+    assert.equal(result.nativeSessionId, "conversation-1");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test("retained OpenHands profiles preserve historical runtime identities", () => {
   assert.equal(openHandsCapabilityProfile("1.44.1").adapterId, "openhands-agent-server-v1.44.1");

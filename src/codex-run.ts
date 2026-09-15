@@ -501,7 +501,7 @@ export function resolveCodexConfigurationRecord<Kind extends CodexConfigurationK
   return value as CodexConfigurationByKind[Kind];
 }
 
-async function probeCodexRuntime(executable: string): Promise<{ path: string; version: string }> {
+export async function probeCodexRuntime(executable: string): Promise<{ path: string; version: string }> {
   if (!isAbsolute(executable)) throw new Error("Codex harness executable must be an absolute path.");
   const path = await realpath(executable);
   const { stdout } = await execFileAsync(path, ["--version"], { encoding: "utf8", timeout: 5_000 });

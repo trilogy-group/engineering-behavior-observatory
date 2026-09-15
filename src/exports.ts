@@ -157,6 +157,8 @@ const SECRET_FIELDS = new Set([
 const CORRELATION_FIELDS = new Set(["attemptid", "bundleid", "id", "runid", "sessionid", "traceid", "eborunid", "eboattemptid"]);
 const LOCAL_IDENTIFIER_FIELDS = new Set(["login", "owner", "user", "username"]);
 const TRUNCATABLE_FIELDS = new Set([
+  "exceptionmessage",
+  "exceptiontraceback",
   "body",
   "commandoutput",
   "content",
@@ -926,7 +928,7 @@ async function validateSourceReferences(
   const sourceById = new Map(source.evidence.map((descriptor) => [descriptor.id, descriptor]));
   if (manifest.sourceManifestDigest === undefined) throw new Error("Portable export omits its source-manifest digest.");
   for (const artifact of manifest.artifacts) {
-    if (artifact.kind === "diagnostic") {
+    if (artifact.kind === "diagnostic" && artifact.diagnosticSource !== undefined) {
       const verifier = artifact.diagnosticSource === undefined
         ? undefined
         : sourceById.get(artifact.diagnosticSource.verifierId);
@@ -998,9 +1000,8 @@ function validatePortableDiagnosticReferences(
       referencedDiagnostics.add(sidecar.id);
     }
   }
-  for (const diagnostic of manifest.artifacts.filter(({ kind }) => kind === "diagnostic")) {
-    if (diagnostic.diagnosticSource === undefined
-        || artifactsById.get(diagnostic.diagnosticSource.verifierId)?.kind !== "verifier"
+  for (const diagnostic of manifest.artifacts.filter(({ kind, diagnosticSource }) => kind === "diagnostic" && diagnosticSource !== undefined)) {
+    if (artifactsById.get(diagnostic.diagnosticSource!.verifierId)?.kind !== "verifier"
         || !referencedDiagnostics.has(diagnostic.id)) {
       throw new Error(`Portable diagnostic ${diagnostic.id} is not referenced by its verifier.`);
     }
@@ -1036,7 +1037,7 @@ function assertSupportedPair(kind: RunBundleEvidenceDescriptor["kind"], mediaTyp
     telemetry: ["application/json"],
     workspace: ["text/x-diff"],
     verifier: ["application/json"],
-    diagnostic: ["text/plain"],
+    diagnostic: ["text/plain", "application/json"],
     "capture-report": ["application/json"],
   };
   if (kind === "export-manifest") return;
