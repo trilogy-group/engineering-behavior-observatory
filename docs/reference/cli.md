@@ -85,9 +85,14 @@ ebo observations create <run-bundle-root> <output.json>
 ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
 ebo assertions validate <run-bundle-root> <assertion.json> [review.json]
 ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root>
+ebo judge batch <batch.json>
 ```
 
-## Record human review
+`judge batch` runs a declared list of jobs sequentially and stops on failure.
+See the [behavioral evaluation runbook](../guides/behavioral-evaluation.md).
+Model judging is the default evaluation path; the evaluator remains explicitly configured.
+
+## Record optional human review
 
 Select evidence and build static review packets. Import human-authored decisions; these commands do not manufacture reviewer identities or judgments.
 

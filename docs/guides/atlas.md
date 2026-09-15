@@ -1,5 +1,10 @@
 # Behavior Atlas
 
+The default behavior charts summarize LLM-as-judge assessments. Human review
+is optional and shown separately. Run the [evaluation workflow](behavioral-evaluation.md)
+before building an Atlas: capture and structural extraction alone do not create
+semantic judgments. `proposed` means no human adjudication, not no evaluation.
+
 The Atlas combines native Grafana dashboards, a local evidence workbench and a
 standalone HTML research report. It consumes the [aggregation request](../evaluation/aggregation.md)
 and revalidates corpus, structural observations, assertion citations, human

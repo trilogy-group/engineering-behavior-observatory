@@ -37,8 +37,9 @@ or a verified release archive, see [the quickstart](docs/guides/quickstart.md).
   solution or pass/fail verifier.
 - Inspect a native record from a normalized event or
   behavioral assertion. Missing evidence stays explicit.
-- Extract structural facts, request evidence-grounded
-  judgments, record human review, and compare matched conditions.
+- Extract structural facts and run evidence-grounded
+  [LLM-as-judge evaluations](docs/guides/behavioral-evaluation.md), then compare
+  matched conditions. Add human review when the experiment calls for it.
 - Browse the local Behavior Atlas, connect Grafana, build
   HTML reports, and create policy-checked portable trajectory archives.
 

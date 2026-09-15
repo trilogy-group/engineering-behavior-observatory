@@ -179,7 +179,7 @@
             "configurationDigest": {"type":"string","pattern":"^sha256:[a-f0-9]{64}$"}
           }
         },
-        "population": {"const":"confirmed-attempt-dimension"},
+        "population": {"enum":["confirmed-attempt-dimension","judge-assessed-attempt-dimension"]},
         "assessments": {
           "type": "array",
           "minItems": 4,

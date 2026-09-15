@@ -42,7 +42,9 @@ The [evaluation reading path](evaluation/README.md) explains how the parts fit:
 - [Structural observations](evaluation/structural-observations.md)
 - [Behavior assertions](evaluation/behavior-assertions.md) and
   [semantic judging](evaluation/semantic-judge.md)
-- [Human calibration](evaluation/human-calibration.md)
+- [Run behavioral evaluation](guides/behavioral-evaluation.md): model-only
+  batches, explicit evidence selection, aggregation, and Atlas
+- [Optional human calibration](evaluation/human-calibration.md)
 - [Comparison and aggregation](evaluation/aggregation.md)
 
 ## Build and look things up

@@ -26,10 +26,11 @@ dangling events or native records, and stale digests fail closed.
 Its states are `proposed`, `confirmed`, `disputed`, `rejected`, and
 `insufficient-evidence`. Proposed records cannot carry a reviewer; all other
 states require an explicitly identified human reviewer and rationale. The
-library derives confirmed aggregation eligibility only after revalidating the
-assertion against its dataset and native resolver, and then finding a valid
-`confirmed` review of a non-abstaining assertion. A judge assertion cannot set
-human confirmation itself.
+library validates human confirmation against the assertion and its native
+evidence. Human review is optional: model-assessment distributions include
+assessed assertions independently of review status. `proposed` denotes an
+assessment without human adjudication, not a missing evaluation. A judge
+assertion cannot set human confirmation itself.
 
 The callable validator accepts any `ebo.normalized-dataset/v1` and its
 source-specific native resolver. The current CLI rebuilds and validates the

@@ -76,8 +76,10 @@ test("preserves large native source relation sets while retaining a finite bound
   target.relations.known = events.slice(0, -1).map(({ id }) => ({ kind: "caused-by", eventId: id }));
   await validateUniformEvents(events, { resolve: () => true });
   assert.equal(target.relations.known.length, 119);
-  target.relations.known = Array.from({ length: 4097 }, () => ({ kind: "caused-by", eventId: events[0]!.id }));
-  await assert.rejects(validateUniformEvents(events, { resolve: () => true }), /4096/);
+  target.relations.known = Array.from({ length: 131072 }, () => ({ kind: "caused-by", eventId: events[0]!.id }));
+  await validateUniformEvents(events, { resolve: () => true });
+  target.relations.known = [...target.relations.known, { kind: "caused-by", eventId: events[0]!.id }];
+  await assert.rejects(validateUniformEvents(events, { resolve: () => true }), /131072/);
 });
 
 test("rejects unresolved native and content references", async () => {

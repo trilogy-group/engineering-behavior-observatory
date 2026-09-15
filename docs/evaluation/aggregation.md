@@ -1,7 +1,7 @@
 # Comparison and aggregation
 
 `ebo aggregate build` creates a deterministic local read model from a current
-corpus index, structural observations, proposed behavior assertions, human
+corpus index, structural observations, model behavior assessments, optional human
 calibration lineage, and per-measure comparison eligibility reports. It reads
 JSON/JSONL directly and writes one derived JSON document outside the source
 corpus; it does not alter retained bundles.
@@ -20,10 +20,7 @@ The request uses paths relative to `request.json`:
     "corpusIndex": "corpus-index.jsonl",
     "observationSets": [{ "bundleRoot": "corpus/run-a", "path": "derived/observations/run-a.json" }],
     "assertions": [{ "bundleRoot": "corpus/run-a", "path": "derived/assertions/assertion-a.json" }],
-    "calibrations": [{
-      "selection": "derived/review/selection.json",
-      "history": "derived/review/history.json"
-    }]
+    "calibrations": []
   },
   "groupBy": ["task", "model", "harness"],
   "selectedAttemptPolicy": "all-attempts",
@@ -62,10 +59,12 @@ and context-dependent distributions separately from review agreement. A
 partition names the exact vocabulary/category/dimension, rubric id/version,
 and evaluator identity/version/configuration digest. Missing legacy evaluator
 configuration stays a separate partition. Its denominator is distinct
-confirmed attempt-dimensions, not judge calls: agreeing confirmed reruns count
-once and conflicting confirmed reruns exclude that attempt. Disputed,
-unreviewed, rejected, and abstained assertions cannot contribute; assertion
+judge-assessed attempt-dimensions, not judge calls: agreeing reruns count
+once and conflicting reruns exclude that attempt. Abstentions cannot contribute.
+Human review is optional: unreviewed, disputed, and rejected assessments remain
+model judgments in this population, not human-endorsed findings. Assertion
 references expose review outcome and inclusion alongside run/attempt/digest.
+Older confirmed-only reports retain their original population label when read.
 An empty denominator is unavailable. These distributions remain descriptive.
 
 Corpus indexing prefers `structuralQualification.status` over legacy

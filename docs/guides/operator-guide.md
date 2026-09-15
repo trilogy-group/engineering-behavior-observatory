@@ -311,7 +311,8 @@ common history.
 
 ### 7. Evaluate with a caller-selected judge
 
-Judging is optional. The request selects a behavior dimension, rubric, exact
+LLM-as-judge is the default behavioral evaluation path. Capture-only studies
+can stop before this step. The request selects a behavior dimension, rubric, exact
 evidence IDs, limits, blinding, and either the Claude Agent SDK or Codex
 app-server backend. EBO does not choose the evaluator or fall back between
 providers.
@@ -326,11 +327,17 @@ ebo assertions validate \
   study/judgments/<judgment-id>/assertion.json
 ```
 
-The output is a proposal or abstention, never a human-confirmed label. See
+The output is an evidence-grounded model assessment or abstention. The
+`proposed` status means human adjudication has not occurred, not that the
+evaluation is incomplete. For repeated runs or multiple dimensions, use
+`ebo judge batch` and the [model-only evaluation runbook](behavioral-evaluation.md). See
 [the semantic judge guide](../evaluation/semantic-judge.md) for the two backend shapes and
 safe environment policy.
 
-### 8. Review without fabricating human decisions
+### 8. Optional human review
+
+Use this step only when the experiment calls for human intervention or
+calibration. Otherwise proceed to aggregation with `sources.calibrations: []`.
 
 Selection and packet generation are deterministic. A human reads the local
 packet and authors a decision file. EBO validates/imports that supplied

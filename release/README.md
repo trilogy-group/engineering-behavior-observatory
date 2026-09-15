@@ -5,6 +5,7 @@ For downloads and published artifacts, see
 
 | Version | Changes and verification | Support boundary |
 | :--- | :--- | :--- |
+| [1.0.0](1.0.0/README.md) | Harbor task migration, Smol execution, model-first behavioral evaluation and batch judging | [Known limitations](1.0.0/KNOWN_LIMITATIONS.md) |
 | [0.2.9](0.2.9/README.md) | Preserve workspace evidence with recorded exclusions and snapshot fallback | [Known limitations](0.2.9/KNOWN_LIMITATIONS.md) |
 | [0.2.8](0.2.8/README.md) | Retain Cursor cumulative usage during failure and interruption | [Known limitations](0.2.8/KNOWN_LIMITATIONS.md) |
 | [0.2.7](0.2.7/README.md) | Cursor native transport/stall recovery and recorded HTTP/1.1 settings | [Known limitations](0.2.7/KNOWN_LIMITATIONS.md) |

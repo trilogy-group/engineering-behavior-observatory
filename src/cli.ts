@@ -85,6 +85,7 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
        ebo assertions validate <run-bundle-root> <assertion.json> [review.json]
        ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root>
+       ebo judge batch <batch.json>
        ebo calibration sample <sources.json> <criteria.json> <selection.json>
        ebo calibration packet <selection.json> <output-root>
        ebo calibration inspect <packet.json> <assertion-id> [event-id]
@@ -237,6 +238,47 @@ export function main(
       write(`${errorMessage(error)}\n`);
       return 1;
     }
+  }
+
+  if (args[0] === "judge" && args[1] === "batch") {
+    return (async () => {
+      let interrupted = false;
+      const stop = (): void => { interrupted = true; };
+      process.on("SIGINT", stop);
+      process.on("SIGTERM", stop);
+      try {
+        if (args.length !== 3) throw new Error("Usage: ebo judge batch <batch.json>");
+        const manifest = readJson(args[2]!) as { jobs?: unknown };
+        if (!manifest || typeof manifest !== "object" || Object.keys(manifest).some((key) => key !== "jobs")
+            || !Array.isArray(manifest.jobs) || manifest.jobs.length === 0 || manifest.jobs.length > 256) {
+          throw new Error("Judge batch requires jobs: an array of 1 through 256 jobs.");
+        }
+        const keys = ["bundleRoot", "observations", "request", "outputRoot"] as const;
+        const outputs = new Set<string>();
+        const jobs = manifest.jobs.map((job: unknown) => {
+          if (!job || typeof job !== "object" || Array.isArray(job)
+              || Object.keys(job).length !== keys.length || keys.some((key) => typeof (job as Record<string, unknown>)[key] !== "string"
+                || !(job as Record<string, string>)[key]!.trim())) throw new Error("Invalid judge batch job.");
+          const paths = keys.map((key) => resolve(dirname(resolve(args[2]!)), (job as Record<string, string>)[key]!));
+          if (outputs.has(paths[3]!) || existsSync(paths[3]!)) throw new Error("Judge batch output roots must be distinct and new.");
+          outputs.add(paths[3]!);
+          return paths;
+        });
+        // Sequential, fail-fast composition of the existing runner: no hidden retries.
+        for (const paths of jobs) {
+          if (interrupted) return 1;
+          const code = await main(["judge", "run", ...paths], write, dependencies);
+          if (code !== 0) return code;
+        }
+        return interrupted ? 1 : 0;
+      } catch (error) {
+        write(`${errorMessage(error)}\n`);
+        return 1;
+      } finally {
+        process.off("SIGINT", stop);
+        process.off("SIGTERM", stop);
+      }
+    })();
   }
 
   if (args[0] === "judge" && args[1] === "run") {
