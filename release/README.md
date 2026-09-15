@@ -5,6 +5,7 @@ For downloads and published artifacts, see
 
 | Version | Changes and verification | Support boundary |
 | :--- | :--- | :--- |
+| [1.0.1](1.0.1/README.md) | Clarify released Harbor installation and optional human review; reconcile release records | [Support boundary](1.0.0/KNOWN_LIMITATIONS.md) |
 | [1.0.0](1.0.0/README.md) | Harbor task migration, Smol execution, model-first behavioral evaluation and batch judging | [Known limitations](1.0.0/KNOWN_LIMITATIONS.md) |
 | [0.2.10](0.2.10/README.md) | Accept native Pi model identifiers | [Known limitations](0.2.9/KNOWN_LIMITATIONS.md) |
 | [0.2.9](0.2.9/README.md) | Preserve workspace evidence with recorded exclusions and snapshot fallback | [Known limitations](0.2.9/KNOWN_LIMITATIONS.md) |

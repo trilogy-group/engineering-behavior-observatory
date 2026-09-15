@@ -7,8 +7,9 @@ Existing task-packet/v1 studies and their commands remain readable and unchanged
 
 ## Install the control runtime
 
-Use the source checkout until this feature is released. EBO still runs on Node
-24.19.0. Install the separate control runtime with Python 3.14:
+The Harbor commands ship in EBO 1.x through the npm package. EBO runs on Node
+24.19.0. npm does not install the host virtualization stack. Install the
+separate control runtime with Python 3.14:
 
 ```sh
 python3 -m venv .harbor-venv

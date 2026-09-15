@@ -48,7 +48,8 @@ flowchart LR
   A["Frozen task + harness"] --> B["Native trajectory + workspace"]
   B --> C["Capture qualification"]
   C --> D["Structural facts + cited judgments"]
-  D --> E["Behavior Atlas + human review"]
+  D --> E["Behavior Atlas"]
+  D -. "Optional experiment step" .-> G["Human review / calibration"]
   B --> F["Sanitized portable export"]
 ```
 
@@ -106,9 +107,13 @@ evidence, and comparison caveats. Use new output paths when repeating it.
 
 ### Capture your own task
 
-For new isolated studies, see the [Harbor/Smol integration](docs/guides/harbor-tasks.md) under qualification.
+For new isolated studies, use the [Harbor task workflow](docs/guides/harbor-tasks.md),
+available in EBO 1.x. Tasks run in local Smol VMs using a pinned guest runtime;
+task preparation and private repository setup stay local. Install the separate
+host virtualization prerequisites described in the guide before running a task.
 Harbor owns the task environment and steps; EBO captures the selected native
-harness inside that environment. Existing packet-based studies keep the workflow below.
+harness inside that environment. Existing packet-based studies remain supported
+and keep the workflow below.
 
 Prepare an admitted, frozen task packet and a queue with your harness
 configuration. Then run one selected entry:

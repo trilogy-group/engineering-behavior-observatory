@@ -108,6 +108,15 @@ dry-run targets before syncing and do not restore generated blocks or title-only
 pages under `docs/`. Author public guidance from current code and verified
 behavior, preserving the separate capture and evaluation boundaries.
 
+## Release ordering
+
+Reconcile release work with develop, merge into main, and push both branches
+before creating the version tag on main and staging npm. Verify that the tag
+and packaged source match the intended main commit. Never tag a feature branch
+as a completed release. Preserve published tags and artifacts; use a patch
+release for subsequent corrections. Skip repeated test gates when explicitly
+instructed by the user.
+
 ## Code Review Rules
 
 Review evidence loss, invented normalization, unsafe export, overwritten partial
