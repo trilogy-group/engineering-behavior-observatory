@@ -1,0 +1,32 @@
+# pi-ai DeepSeek Harness route: xAI (Response API alternative)
+#
+# Loaded as a Cordis patch by the DeepSeek runtime composition. The route is
+# addressed as provider `xai`; the composition's route.model selects the model.
+- id: hmr
+  disabled: true
+- id: session-title-llm
+  disabled: true
+- id: approval
+  config:
+    policy: never
+- id: permission
+  config:
+    defaultPreset: ebo-workspace
+    presets:
+      ebo-workspace:
+        sandbox: workspace-write
+        approval: never
+- id: llm-pi-ai
+  config:
+    providers:
+      xai:
+        apiKeyEnv: XAI_API_KEY
+        api: openai-completions
+        baseURL: https://api.x.ai/v1
+        models:
+          - id: grok-4.7
+            contextWindow: 500000
+            maxTokens: 32768
+- insert:
+    - id: jsonrpc
+      name: '@deepseek-ai/dsh-sdk-jsonrpc-server'

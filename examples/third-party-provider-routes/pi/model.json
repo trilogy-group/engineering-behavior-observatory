@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "ebo.pi-config/v1",
+  "kind": "model",
+  "provider": "xai",
+  "queueModelId": "grok-4.7",
+  "model": "grok-4.7",
+  "api": "openai-completions",
+  "baseUrl": "https://api.x.ai/v1",
+  "apiKeyEnv": "XAI_API_KEY",
+  "thinkingLevel": "high",
+  "reasoning": true,
+  "input": ["text"],
+  "contextWindow": 500000,
+  "maxTokens": 32768,
+  "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+}

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "ebo.codex-config/v1",
+  "kind": "model",
+  "provider": "xai",
+  "model": "grok-4.7",
+  "effort": "high",
+  "credentialEnv": "XAI_API_KEY",
+  "config": {
+    "model_context_window": 1050000,
+    "model_auto_compact_token_limit": 900000,
+    "model_providers": {
+      "xai": {
+        "name": "xAI",
+        "base_url": "https://api.x.ai/v1",
+        "wire_api": "responses",
+        "env_key": "XAI_API_KEY"
+      }
+    }
+  }
+}

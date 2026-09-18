@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "ebo.codex-config/v1",
+  "kind": "harness",
+  "adapter": "codex-app-server",
+  "executable": "/path/to/codex",
+  "version": "0.153.4",
+  "contractDigest": "sha256:e5f798fd1343c539f01fedea0e8a84a43c080fcca4615c80eb04a5edab4f7d0a",
+  "arguments": [
+    "-c", "features.multi_agent=false",
+    "-c", "features.multi_agent_v2=false",
+    "-c", "features.apps=false",
+    "-c", "features.enable_mcp_apps=false",
+    "-c", "features.plugins=false",
+    "-c", "features.remote_compaction_v2=false",
+    "-c", "web_search=disabled"
+  ]
+}
