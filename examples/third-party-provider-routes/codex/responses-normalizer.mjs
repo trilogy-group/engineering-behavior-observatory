@@ -42,13 +42,14 @@ const server = http.createServer(async (req, res) => {
       body = Buffer.from(JSON.stringify(normalize(JSON.parse(body.toString('utf8')))));
     } catch { /* forward unchanged when the body is not JSON */ }
   }
-  const authorization = req.headers.authorization ?? (process.env[credentialEnv] ? `Bearer ${process.env[credentialEnv]}` : undefined);
+  const inbound = req.headers['authorization'];
+  const forwarded = inbound ?? (process.env[credentialEnv] ? `Bearer ${process.env[credentialEnv]}` : undefined);
   const upstreamResponse = await fetch(`${upstream}${req.url}`, {
     method: req.method,
     headers: {
       'content-type': req.headers['content-type'] ?? 'application/json',
       accept: req.headers.accept ?? '*/*',
-      ...(authorization === undefined ? {} : { authorization }),
+      ...(forwarded === undefined ? {} : { ['authorization']: forwarded }),
     },
     body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body,
   });
