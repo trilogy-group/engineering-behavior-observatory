@@ -20,6 +20,17 @@ export SMOLVM_LIB_DIR="/absolute/path/to/isolated-patched-libraries"
 ebo harbor doctor
 ```
 
+Keep the virtual environment and the patched libraries in a durable location,
+not under `/tmp`. Temporary-directory cleanup can remove a venv's `pyvenv.cfg`
+without removing its packages, after which the interpreter silently stops
+resolving the environment and every Harbor command fails with a misleading
+"No Python interpreter with harbor==0.22.0 was found". Point
+`EBO_HARBOR_PYTHON` at a path that survives reboots and long unattended runs.
+
+A frozen task whose snapshot fails content verification reports
+`Harbor task status: changed`. Confirm `EBO_HARBOR_PYTHON` and `SMOLVM_LIB_DIR`
+are exported before assuming the snapshot actually changed.
+
 The current runtime profile targets Apple Silicon macOS with the isolated
 libkrun disk-capacity patch. The environment manifest pins that library's
 SHA-256. Do not replace system libraries. Smol 1.16 and Harbor 0.23 are deferred.
