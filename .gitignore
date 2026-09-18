@@ -1,9 +1,3 @@
-.opensymphony*
-!.opensymphony/
-.opensymphony/*
-!.opensymphony/memory/
-.opensymphony/memory/*
-!.opensymphony/memory/memory.yaml
 
 node_modules/
 dist/
@@ -27,3 +21,9 @@ credentials/
 /workspaces/
 /run-bundles/
 /exports/
+.opensymphony*
+!.opensymphony/
+.opensymphony/*
+!.opensymphony/memory/
+.opensymphony/memory/*
+!.opensymphony/memory/memory.yaml

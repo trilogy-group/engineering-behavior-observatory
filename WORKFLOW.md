@@ -219,7 +219,7 @@ Target branch: `develop`
 
 ## Automated AI PR review
 
-Active review provider: `codex`
+Active review provider: `openhands`
 
 <!-- Set by `opensymphony init`; valid values: `openhands`, `codex`, `none`.
      openhands = OpenHands PR Review plugin via GitHub Actions (pay-per-token,
@@ -243,7 +243,7 @@ only the commits since the prior scan. A completed clean review for the current
 head ends automated review: Codex 👍 or an explicit no-issues result counts as
 clean when the feedback sweep finds no unresolved actionable item; 👀 means only
 that review is still running. Never re-trigger a clean unchanged head, request a
-scan while the previous scan is still running, or request a ninth automated scan.
+scan while the previous scan is running, or request a ninth automated scan.
 An exact-commit local review is read-only and covers only the named commit
 against its parent or parents; record its command and result in the workpad and
 do not post another automated-review trigger.
@@ -257,7 +257,7 @@ matches the active provider:
   error on removal.
 - `codex`: post a top-level PR comment whose entire body is exactly
   `@codex review` (`gh pr comment <pr> --body '@codex review'`). Codex reacts
-  with 👀 and posts a fresh full review.
+  with 👀 and posts a fresh review.
 - `none`: skip re-trigger steps; only human and CI feedback apply.
 
 Never re-trigger at PR creation time for either provider: the initial review
@@ -267,8 +267,9 @@ runs automatically when the PR is opened (`pull_request.opened` for
 Codex guardrails (mandatory whenever the active provider is `codex`):
 
 - The re-trigger phrase must be exactly `@codex review` with no other text.
-  Mentioning `@codex` with anything else starts a cloud task outside this
-  review workflow and is prohibited.
+  Mentioning `@codex` with anything else starts a Codex cloud task that bills
+  against general Codex usage limits (not the separate code-review pool) and
+  operates outside this orchestration.
 - Never ask Codex to fix, implement, or push changes. All code changes happen
   in this orchestrated workspace through the normal implementation flow; the
   review bot only reviews.
@@ -287,7 +288,7 @@ When a ticket has an attached PR, run this protocol before moving to `Human Revi
    - Top-level PR comments (`gh pr view --comments`).
    - Inline review comments (`gh api repos/<owner>/<repo>/pulls/<pr>/comments`).
    - Review summaries/states (`gh pr view --json reviews`).
-3. Treat every P0/P1 feedback item and any P2 that demonstrates an acceptance-criteria failure, evidence loss or corruption, secret leakage, or a stated trust-boundary violation as blocking until one of these is true:
+3. Treat every actionable feedback item (human or bot), including Linear issue comments and inline PR review comments, as blocking until one of these is true:
    - code/test/docs updated to address it, or
    - explicit, justified pushback is recorded in the originating feedback channel.
 4. **Respond to inline review comments IN THE SAME THREAD** (required):
@@ -322,19 +323,18 @@ When a ticket has an attached PR, run this protocol before moving to `Human Revi
 6. For the current scan, batch accepted findings into one remediation push,
    re-run validation, reply in the originating threads, and wait for checks.
    Do not request a review merely because a push occurred.
-7. Record explicit pushback for non-blocking or out-of-scope P2 findings; do not expand the issue to satisfy them.
-8. Record the completed scan and reviewed head SHA in the workpad review ledger.
-9. If the completed scan is clean for the current head and no actionable
+7. Record the completed scan and reviewed head SHA in the workpad review ledger.
+8. If the completed scan is clean for the current head and no actionable
    feedback remains, end automated review. Do not re-trigger it.
-10. If findings caused remediation changes, and fewer than eight full scans have
-    completed, re-trigger one full review using `Automated AI PR review`, then
-    repeat this sweep for the new head.
+9. If findings caused remediation changes, and fewer than eight full scans have
+   completed, re-trigger one full review using `Automated AI PR review`, then
+   repeat this sweep for the new head.
    - Do **not** re-trigger at PR creation; the automatic review is scan 1.
    - Never have more than one requested scan running at a time.
-11. After scan 8, do not request another automated review. If scan 8 produces
-    accepted fixes, batch and validate them once, then run an exact-commit local
-    review of those final remediation commits. Address valid blocking findings
-    locally and repeat exact-commit review as needed; never start scan 9.
+10. After scan 8, do not request another automated review. If scan 8 produces
+   accepted fixes, batch and validate them once, then run an exact-commit local
+   review of those final remediation commits. Address valid blocking findings
+   locally and repeat exact-commit review as needed; never start scan 9.
 
 ## Blocked-access escape hatch (required behavior)
 
