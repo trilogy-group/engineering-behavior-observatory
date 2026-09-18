@@ -55,9 +55,21 @@ const ATTEMPT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 export type CodexModelConfiguration = {
   schemaVersion: typeof CODEX_CONFIG_SCHEMA_VERSION;
   kind: "model";
-  provider: "openai";
+  /** Codex provider route id; `openai` is the built-in, others are configured via `config`. */
+  provider: string;
   model: string;
   effort: CodexReasoningEffort;
+  /**
+   * Extra Codex config keys merged beneath EBO's fixed thread config. Use this
+   * to declare third-party providers and model capacity, e.g.
+   * `{ model_context_window: 1050000, model_auto_compact_token_limit: 900000,
+   *    web_search: "disabled", features: { multi_agent: false },
+   *    model_providers: { xai: { name: "xAI", base_url: "https://api.x.ai/v1",
+   *    wire_api: "responses", env_key: "XAI_API_KEY" } } }`.
+   */
+  config?: Record<string, unknown>;
+  /** Environment variable copied into the isolated Codex child for `env_key` auth. */
+  credentialEnv?: string;
 };
 
 export type CodexHarnessConfiguration = {
@@ -67,6 +79,8 @@ export type CodexHarnessConfiguration = {
   executable: string;
   version: typeof CODEX_APP_SERVER_VERSION;
   contractDigest: `sha256:${string}`;
+  /** Codex app-server config overrides, e.g. `["-c", "features.multi_agent=false"]`. */
+  arguments?: readonly string[];
 };
 
 export type CodexNativeLimitsConfiguration = {
@@ -422,6 +436,9 @@ export async function runCodexQueueEntry(options: RunCodexQueueEntryOptions): Pr
         provider: model.provider,
         model: model.model,
         effort: model.effort,
+        ...(model.config === undefined ? {} : { config: model.config }),
+        ...(model.credentialEnv === undefined ? {} : { credentialEnv: model.credentialEnv }),
+        ...(harness.arguments === undefined ? {} : { configArgs: harness.arguments }),
         approvalPolicy: toolPolicy.approvalPolicy,
         sandbox: toolPolicy.sandbox,
         ...(toolPolicy.networkAccess === undefined ? {} : { networkAccess: toolPolicy.networkAccess }),
@@ -510,16 +527,22 @@ export async function probeCodexRuntime(executable: string): Promise<{ path: str
 
 function validateConfiguration(record: Record<string, unknown>, kind: CodexConfigurationKind, reference: ArtifactReference): void {
   if (kind === "model") {
-    keys(record, ["schemaVersion", "kind", "provider", "model", "effort"], ["provider", "model", "effort"], reference);
-    if (record.provider !== "openai") throw configError(reference, "provider must be openai");
+    keys(record, ["schemaVersion", "kind", "provider", "model", "effort", "config", "credentialEnv"], ["provider", "model", "effort"], reference);
+    requiredText(record.provider, "provider", reference);
     requiredText(record.model, "model", reference);
     if (!["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(String(record.effort))) throw configError(reference, "effort is invalid");
+    if (record.config !== undefined && !isRecord(record.config)) throw configError(reference, "config must be an object");
+    if (record.credentialEnv !== undefined && (typeof record.credentialEnv !== "string" || !/^[A-Z][A-Z0-9_]*$/.test(record.credentialEnv))) throw configError(reference, "credentialEnv must be an environment variable name");
   } else if (kind === "harness") {
-    keys(record, ["schemaVersion", "kind", "adapter", "executable", "version", "contractDigest"], ["adapter", "executable", "version", "contractDigest"], reference);
+    keys(record, ["schemaVersion", "kind", "adapter", "executable", "version", "contractDigest", "arguments"], ["adapter", "executable", "version", "contractDigest"], reference);
     if (record.adapter !== CODEX_HARNESS || record.version !== CODEX_APP_SERVER_VERSION) throw configError(reference, "adapter or version is not pinned");
     requiredText(record.executable, "executable", reference);
     if (!isAbsolute(record.executable as string)) throw configError(reference, "executable must be absolute");
     if (record.contractDigest !== CODEX_CONTRACT_DIGEST) throw configError(reference, `contractDigest must be ${CODEX_CONTRACT_DIGEST}`);
+    if (record.arguments !== undefined && (!Array.isArray(record.arguments) || record.arguments.length === 0
+        || record.arguments.some((item) => typeof item !== "string" || item.trim() === "" || item.length > 4096 || item.includes("\u0000")))) {
+      throw configError(reference, "arguments must be a non-empty list of argument strings");
+    }
   } else if (kind === "native-limits") {
     keys(record, ["schemaVersion", "kind", "shutdownGraceMs"], [], reference);
     if (record.shutdownGraceMs !== undefined && (!Number.isSafeInteger(record.shutdownGraceMs) || (record.shutdownGraceMs as number) < 1)) throw configError(reference, "shutdownGraceMs must be positive");

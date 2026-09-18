@@ -49,9 +49,23 @@ export type CodexTelemetrySignal = "logs" | "traces" | "metrics";
 export type CodexAppServerConfiguration = {
   executable: string;
   version: typeof CODEX_APP_SERVER_VERSION;
-  provider: "openai";
+  provider: string;
   model: string;
   effort: CodexReasoningEffort;
+  /**
+   * Extra Codex config keys merged beneath EBO's fixed thread config, letting a
+   * third-party provider route (`model_providers`, `model_context_window`, …)
+   * be declared without an EBO code change.
+   */
+  config?: Record<string, unknown>;
+  /** Environment variable copied into the isolated child for a third-party `env_key`. */
+  credentialEnv?: string;
+  /**
+   * Codex config overrides passed to the `app-server` subcommand (after
+   * `app-server`). Required for launch-level config such as `features.*` and
+   * `web_search`, which the thread `config` bag does not apply.
+   */
+  configArgs?: readonly string[];
   approvalPolicy: CodexApprovalPolicy;
   sandbox: CodexSandbox;
   /** Workspace-write tool network access; defaults to true. Other sandbox modes retain their native policy. */
@@ -82,7 +96,7 @@ export type CodexTelemetryEvidence = {
   };
   effectiveConfiguration: {
     model: string;
-    provider: "openai";
+    provider: string;
     effort: CodexReasoningEffort;
     approvalPolicy: CodexApprovalPolicy;
     sandbox: CodexSandbox;
@@ -236,13 +250,18 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
   try {
     isolatedCodexHome = await mkdtemp(join(tmpdir(), "ebo-codex-home-"));
     await writeFile(join(isolatedCodexHome, "instructions.md"), "Work only in the supplied workspace. Do not request interactive input or broaden permissions.\n", { mode: 0o600 });
-    const authSource = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json");
-    try {
-      await lstat(authSource);
-      await symlink(authSource, join(isolatedCodexHome, "auth.json"));
-      localLoginReference = "available";
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    // A third-party provider authenticates with its own entrypoint credential.
+    // Sharing the ChatGPT login would switch Codex back to account auth and
+    // mount that account's connector apps as unsupported namespace tools.
+    if (request.configuration.credentialEnv === undefined) {
+      const authSource = join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json");
+      try {
+        await lstat(authSource);
+        await symlink(authSource, join(isolatedCodexHome, "auth.json"));
+        localLoginReference = "available";
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
     }
   } catch (error) {
     request.signal?.removeEventListener("abort", abortListener);
@@ -250,7 +269,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     throw error;
   }
   const instructionsPath = join(isolatedCodexHome, "instructions.md");
-  const environment = isolatedEnvironment(isolatedCodexHome);
+  const environment = isolatedEnvironment(isolatedCodexHome, request.configuration.credentialEnv);
   const gaps: CodexCaptureGap[] = [];
   const addGap = (gap: CodexCaptureGap): void => recordCaptureGap(gaps, gap);
   let threadId: string | undefined;
@@ -290,6 +309,7 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
         "--listen",
         "stdio://",
         "--strict-config",
+        ...(request.configuration.configArgs ?? []),
         ...telemetry.configArgs,
       ],
       cwd: request.workspacePath,
@@ -460,13 +480,15 @@ export async function captureCodexAppServer(request: CodexAppServerCaptureReques
     await sendNotification("initialized" satisfies ClientNotification["method"]);
     threadStart = await sendRequest("thread/start", {
       model: request.configuration.model,
+      modelProvider: request.configuration.provider,
       cwd: request.workspacePath,
       approvalPolicy: request.configuration.approvalPolicy,
       sandbox: request.configuration.sandbox,
       serviceName: "ebo",
       ephemeral: false,
       historyMode: "legacy",
-      config: { model_instructions_file: instructionsPath, model_reasoning_effort: request.configuration.effort,
+      config: { ...(request.configuration.config ?? {}),
+        model_instructions_file: instructionsPath, model_reasoning_effort: request.configuration.effort,
         mcp_servers: {}, hooks: {}, plugins: {},
         ...(request.configuration.sandbox === "workspace-write" ? { sandbox_workspace_write: {
           writable_roots: [request.workspacePath], network_access: request.configuration.networkAccess ?? true, exclude_tmpdir_env_var: true, exclude_slash_tmp: true,
@@ -905,7 +927,7 @@ type OtlpReceiver = {
     executable: string;
     version: string;
     model: string;
-    provider: "openai";
+    provider: string;
     effort: CodexReasoningEffort;
     approvalPolicy: CodexApprovalPolicy;
     sandbox: CodexSandbox;
@@ -1118,10 +1140,16 @@ function numberRecord(value: unknown): Partial<TokenUsageBreakdown> | undefined 
   return Object.fromEntries(entries) as Partial<TokenUsageBreakdown>;
 }
 
-function isolatedEnvironment(codexHome: string): NodeJS.ProcessEnv {
+function isolatedEnvironment(codexHome: string, credentialEnv?: string): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = { CODEX_HOME: codexHome, HOME: codexHome };
   for (const key of ["PATH", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "NO_COLOR", "USER", "LOGNAME", "SHELL"] as const) {
     if (process.env[key] !== undefined) environment[key] = process.env[key];
+  }
+  if (credentialEnv !== undefined) {
+    if (!/^[A-Z][A-Z0-9_]*$/.test(credentialEnv)) throw new Error("Codex credentialEnv must be an environment variable name.");
+    const value = process.env[credentialEnv];
+    if (value === undefined) throw new Error(`Codex credentialEnv ${credentialEnv} is not set for the selected provider route.`);
+    environment[credentialEnv] = value;
   }
   return environment;
 }

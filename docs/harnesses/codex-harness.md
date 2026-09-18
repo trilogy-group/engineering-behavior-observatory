@@ -67,6 +67,64 @@ the actual provider model and effort. A minimal observational configuration is:
 { "schemaVersion": "ebo.codex-config/v1", "kind": "capture-profile", "telemetrySignals": ["logs", "traces", "metrics"], "workspaceOutcome": { "excludeDirectoryNames": ["node_modules"] } }
 ```
 
+### Third-party providers and model capacity
+
+Codex is not limited to the built-in `openai` route. Set `provider` to any
+Codex provider id, declare the route in the model record's `config`, forward its
+credential with `credentialEnv`, and pass launch-level config with the harness
+record's `arguments`. EBO merges `config` beneath its own fixed thread settings
+(`model_instructions_file`, reasoning effort, sandbox policy), passes the
+provider as `modelProvider`, and still verifies the applied provider, model, and
+effort from the native response.
+
+```json
+{
+  "schemaVersion": "ebo.codex-config/v1", "kind": "model",
+  "provider": "xai", "model": "grok-4.7", "effort": "high",
+  "credentialEnv": "XAI_API_KEY",
+  "config": {
+    "model_context_window": 1050000,
+    "model_auto_compact_token_limit": 900000,
+    "model_providers": {
+      "xai": { "name": "xAI", "base_url": "https://api.x.ai/v1", "wire_api": "responses", "env_key": "XAI_API_KEY" }
+    }
+  }
+}
+```
+
+```json
+{
+  "schemaVersion": "ebo.codex-config/v1", "kind": "harness",
+  "adapter": "codex-app-server", "executable": "/path/to/codex",
+  "version": "0.153.4", "contractDigest": "sha256:…",
+  "arguments": [
+    "-c", "features.multi_agent=false",
+    "-c", "features.apps=false",
+    "-c", "web_search=disabled"
+  ]
+}
+```
+
+See `examples/codex-third-party-provider/` for a complete sanitized set.
+
+`credentialEnv` is copied into the isolated Codex child; the adapter no longer
+symlinks the ChatGPT `auth.json` for such a route, so provider auth and any
+account connector apps stay out. `arguments` are placed after the `app-server`
+subcommand, where Codex reads launch-level config (`features.*`, `web_search`)
+that the thread `config` bag does not apply. `model_context_window` and
+`model_auto_compact_token_limit` raise the effective window for models the
+installed Codex catalog does not describe.
+
+Codex 0.153.4 supports only `wire_api = "responses"`; the former `chat` wire API
+is rejected at load. A Responses provider must therefore accept Codex's tool and
+reasoning item shapes. In a tested xAI route, Codex requested
+`include: ["reasoning.encrypted_content"]` with `store: false`, and xAI rejected
+the round-tripped reasoning item (`Could not decode the compaction blob`),
+ending the turn `failed` even when the agent had completed its work. Disabling
+`features.apps` and `features.multi_agent` is required to remove `namespace`
+tools that non-OpenAI Responses endpoints reject. Treat a third-party Codex
+route as experimental until its Responses interop is verified end to end.
+
 Each record is referenced by the existing experiment/queue contract. After task
 admission, freeze, and matrix compilation, execute exactly one entry:
 

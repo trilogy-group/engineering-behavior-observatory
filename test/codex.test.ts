@@ -113,6 +113,28 @@ test("validates digest-pinned network policy before launching", async () => {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("accepts a third-party provider route and its capacity config", async () => {
+  const root = await temporaryRoot();
+  try {
+    const bytes = Buffer.from(JSON.stringify({ schemaVersion: "ebo.codex-config/v1", kind: "model", provider: "xai", model: "grok-4.7", effort: "high", credentialEnv: "XAI_API_KEY",
+      config: { model_context_window: 1050000, model_auto_compact_token_limit: 900000, web_search: "disabled", features: { multi_agent: false },
+        model_providers: { xai: { name: "xAI", base_url: "https://api.x.ai/v1", wire_api: "responses", env_key: "XAI_API_KEY" } } } }));
+    await writeFile(join(root, "model.json"), bytes);
+    const record = resolveCodexConfigurationRecord(root, { locator: "model.json", digest: digestBytes(bytes) }, "model");
+    assert.equal(record.provider, "xai");
+    assert.equal(record.credentialEnv, "XAI_API_KEY");
+    assert.equal(record.config?.model_context_window, 1050000);
+
+    const bad = Buffer.from(JSON.stringify({ schemaVersion: "ebo.codex-config/v1", kind: "model", provider: "xai", model: "grok-4.7", effort: "high", config: "not-an-object" }));
+    await writeFile(join(root, "bad.json"), bad);
+    assert.throws(() => resolveCodexConfigurationRecord(root, { locator: "bad.json", digest: digestBytes(bad) }, "model"), /config must be an object/);
+
+    const badEnv = Buffer.from(JSON.stringify({ schemaVersion: "ebo.codex-config/v1", kind: "model", provider: "xai", model: "grok-4.7", effort: "high", credentialEnv: "not-a-name" }));
+    await writeFile(join(root, "bad-env.json"), badEnv);
+    assert.throws(() => resolveCodexConfigurationRecord(root, { locator: "bad-env.json", digest: digestBytes(badEnv) }, "model"), /credentialEnv/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("retained 0.150.1 evidence keeps its original normalized dataset", async () => {
   const root = resolve("test/fixtures/codex/legacy-0.150.1");
   const before = await readFile(join(root, "manifest.json"));
