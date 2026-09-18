@@ -8,7 +8,7 @@ the experiment's model/harness/etc. fields.
 
 | Harness | File | Notes |
 | :--- | :--- | :--- |
-| Codex | [`codex/model.json`](codex/model.json), [`codex/harness.json`](codex/harness.json) | Responses API provider, `env_key` credential, launch config |
+| Codex | [`codex/model.json`](codex/model.json), [`codex/harness.json`](codex/harness.json), [`codex/responses-normalizer.mjs`](codex/responses-normalizer.mjs) | Responses API provider, `env_key` credential, launch config, optional wire shim |
 | Pi | [`pi/model.json`](pi/model.json) | OpenAI-completions route registered by name |
 | DeepSeek | [`deepseek/xai.cordis.patch.yml`](deepseek/xai.cordis.patch.yml), [`deepseek/model.json`](deepseek/model.json) | Cordis provider patch |
 
@@ -31,6 +31,10 @@ only the variable named by `credentialEnv`; the Pi and DeepSeek records name
   removes the hosted search tool.
 - With `credentialEnv` set, the adapter does not symlink the ChatGPT
   `auth.json`, so account connector apps stay out of the request.
+- Some Responses providers reject Codex's replayed reasoning item when its
+  optional `content` is serialized as JSON `null` (xAI: `Could not decode the
+  compaction blob`). `codex/responses-normalizer.mjs` is a one-field,
+  operator-side shim for that strictness; prefer it over patching the adapter.
 
 These routes are experimental. Verify a provider's Responses interop end to end
 before trusting a comparison; see

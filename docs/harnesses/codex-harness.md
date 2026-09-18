@@ -117,13 +117,25 @@ installed Codex catalog does not describe.
 
 Codex 0.153.4 supports only `wire_api = "responses"`; the former `chat` wire API
 is rejected at load. A Responses provider must therefore accept Codex's tool and
-reasoning item shapes. In a tested xAI route, Codex requested
-`include: ["reasoning.encrypted_content"]` with `store: false`, and xAI rejected
-the round-tripped reasoning item (`Could not decode the compaction blob`),
-ending the turn `failed` even when the agent had completed its work. Disabling
-`features.apps` and `features.multi_agent` is required to remove `namespace`
-tools that non-OpenAI Responses endpoints reject. Treat a third-party Codex
-route as experimental until its Responses interop is verified end to end.
+reasoning item shapes. Disabling `features.apps` and `features.multi_agent` is
+required to remove `namespace` tools that non-OpenAI Responses endpoints reject,
+and `web_search=disabled` removes the hosted search tool.
+
+Codex runs the route statelessly (`store: false`) and requests encrypted
+reasoning (`include: ["reasoning.encrypted_content"]`), then replays the prior
+reasoning item. Against xAI this failed with
+`400 invalid-argument: Could not decode the compaction blob`. A wire differential
+localized it to a single field: Codex serializes the reasoning item's optional
+`content` as JSON `null`, and xAI's deserializer rejects `null` there while
+accepting the field omitted, `[]`, or a list. The encrypted blob itself replays
+fine when that field is absent.
+
+`examples/third-party-provider-routes/codex/responses-normalizer.mjs` is a
+minimal operator-side shim that removes only that null field and forwards the
+rest unchanged; through it the Codex harness completes a real agentic tool-call
+turn against `grok-4.7`. Treat a third-party Codex route as experimental until
+its Responses interop is verified end to end, and prefer a request normalizer
+over editing EBO's Codex adapter around one provider's strictness.
 
 Each record is referenced by the existing experiment/queue contract. After task
 admission, freeze, and matrix compilation, execute exactly one entry:
