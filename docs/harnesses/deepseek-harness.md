@@ -106,6 +106,13 @@ The capability report keeps these current protocol limitations explicit:
 - native spans: available, unsupported, or not checked according to the named
   telemetry composition.
 
+`activityTimeoutMs` is an inactivity window: it restarts on every retained
+notification and fires only when the runtime goes quiet. It is not a total-turn
+budget, so a long but continuously streaming turn is not truncated at a fixed
+duration. A supplied context `budgetMs` remains an overall cap layered on top of
+the window and is never extended by activity. When it fires, the run stops with
+`stopReason: budget` and retains the delivered partial stream.
+
 The official client owns graceful `shutdown`, stdin EOF, SIGTERM, and SIGKILL
 escalation. An interruption, activity timeout, transport exit, or protocol
 failure closes through that same ladder. Delivered notifications and stderr

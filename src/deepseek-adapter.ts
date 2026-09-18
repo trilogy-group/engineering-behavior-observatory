@@ -337,8 +337,14 @@ export async function executeDeepSeekHarness(
     messageId = await client.prompt(configuration.sessionId, contentBlocks);
     await capture.record({ kind: "response", method: "session/prompt", sessionId: configuration.sessionId, sourceIdentity: messageId, payload: { messageId } });
 
-    const deadline = Date.now() + (configuration.activityTimeoutMs ?? context.budgetMs ?? 60_000);
+    // activityTimeoutMs is an inactivity window: it restarts on every retained
+    // notification and only fires when the runtime goes quiet. A supplied
+    // context budget remains an overall cap and is never extended by activity.
+    const inactivityMs = configuration.activityTimeoutMs ?? context.budgetMs ?? 60_000;
+    const totalDeadline = context.budgetMs === undefined ? undefined : Date.now() + context.budgetMs;
     while (idleSequence === undefined) {
+      const inactivityDeadline = Date.now() + inactivityMs;
+      const deadline = totalDeadline === undefined ? inactivityDeadline : Math.min(inactivityDeadline, totalDeadline);
       await retainNotification(await nextNotification(subscription, context.signal, deadline));
     }
     status = "completed";

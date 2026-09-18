@@ -449,6 +449,25 @@ test("times out through official close while preserving the delivered partial st
   }
 });
 
+test("treats activityTimeoutMs as an inactivity window that resets on activity", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-activity-"));
+  const composition = fixtureComposition("minimal");
+  const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
+  try {
+    const options = configuration(composition, "spaced");
+    // Total 75 ms exceeds the window; every 15 ms gap stays inside it.
+    options.activityTimeoutMs = 40;
+    const execution = await executeDeepSeekHarness(harnessContext(undefined, undefined, undefined, composition.workspaceCwd), options, capture);
+    await capture.close();
+    const report = execution.evidence as DeepSeekCaptureReport;
+    assert.equal(execution.status, "completed");
+    assert.ok(report.records.some((record) => record.method === "session.event"));
+  } finally {
+    await capture.close().catch(() => undefined);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("fails a contaminated protocol runtime and retains only redacted stderr diagnostics", async () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-contaminated-"));
   const composition = fixtureComposition("minimal");
@@ -635,7 +654,7 @@ function harnessContext(
 
 function configuration(
   composition: DeepSeekRuntimeComposition,
-  scenario: "success" | "interrupt" | "contaminated" | "slow-initialize",
+  scenario: "success" | "interrupt" | "contaminated" | "slow-initialize" | "spaced",
   secret = "",
 ): DeepSeekHarnessConfiguration {
   return {

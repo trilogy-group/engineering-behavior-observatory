@@ -27,6 +27,17 @@ lines.on("line", (line) => {
     const sessionId = request.params.sessionId;
     const messageId = "message-fixture-1";
     respond(request.id, { messageId });
+    if (scenario === "spaced") {
+      // Activity every 15 ms, total 75 ms, ending in idle. Each gap stays under
+      // the exercise's activity window while the total exceeds it.
+      const emitAt = (delayMs, seq, type, data, extra) => setTimeout(() => emitEvent(sessionId, seq, type, data, extra), delayMs);
+      emitAt(15, 1, "turn/start", { turn: 1 });
+      emitAt(30, 2, "agent/inbox/spliced", { inserted: [{ id: messageId }] });
+      emitAt(45, 3, "assistant/chunk", { turn: 1, step: 1, chunk: { type: "text", text: "working" } });
+      emitAt(60, 4, "turn/end", { turn: 1, reason: { kind: "completed" } });
+      setTimeout(() => notify("session.status", { sessionId, status: "idle" }), 75);
+      return;
+    }
     notify("session.status", { sessionId, status: "running" });
     emitEvent(sessionId, 1, "turn/start", { turn: 1 });
     emitEvent(sessionId, 2, "agent/inbox/spliced", { inserted: [{ id: messageId }] });
