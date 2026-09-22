@@ -101,7 +101,12 @@ export async function auditBehaviorAssertion(bundleRoot: string, assertion: Beha
       assertNoDuplicateJsonKeys(text);
       const raw = JSON.parse(text);
       result.response = raw;
-      Object.assign(result, parseJevResponse(raw), { status: "completed" });
+      const parsed = parseJevResponse(raw);
+      result.choice = parsed.choice;
+      result.confidence = parsed.confidence;
+      result.probabilities = parsed.probabilities;
+      result.usage = parsed.usage;
+      result.status = "completed";
     } catch (error) {
       result.error = String(error).replaceAll(apiKey, "[REDACTED]").slice(0, 4096);
     } finally { result.durationMs = Math.round(performance.now() - start); }
