@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { writeArtifactAtomically } from "./artifacts.js";
 import {
   captureOpenHandsAgentServer,
@@ -38,6 +39,15 @@ export type CaptureOpenHandsAgentServerVerifier = (
   workspacePath: string,
 ) => VerifierResult | Promise<VerifierResult>;
 
+/** Starts the pinned Agent Server before the conversation when EBO owns its lifecycle. */
+export type OpenHandsServerLaunch = {
+  /** Absolute path to the pinned Agent Server inside the attempt environment. */
+  command: string;
+  /** Defaults to a loopback host and the port taken from `baseUrl`. */
+  args?: readonly string[];
+  readinessTimeoutMs?: number;
+};
+
 export type OpenHandsAgentServerRunConfiguration = Omit<
   OpenHandsCaptureRequest,
   "runId" | "attemptId" | "startConversation" | "signal" | "onRecord"
@@ -45,6 +55,9 @@ export type OpenHandsAgentServerRunConfiguration = Omit<
   model: string;
   startConversation: Record<string, unknown>;
   serverWorkspacePath?: string;
+  serverLaunch?: OpenHandsServerLaunch;
+  /** Environment variable supplying the conversation `agent.llm.api_key`, kept out of the config record. */
+  credentialEnv?: string;
 };
 
 export type CaptureOpenHandsAgentServerRunOptions = {
@@ -71,6 +84,61 @@ export type CaptureOpenHandsAgentServerRunResult = {
   normalizationError?: string;
   retainedWorkspacePath?: string;
 };
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Resolve the conversation credential from the environment instead of the digest-pinned record. */
+export function withOpenHandsCredential(startConversation: Record<string, unknown>, credentialEnv?: string): Record<string, unknown> {
+  if (credentialEnv === undefined) return startConversation;
+  if (!/^[A-Z][A-Z0-9_]*$/.test(credentialEnv)) throw new Error("OpenHands credentialEnv must be an environment variable name.");
+  const value = process.env[credentialEnv];
+  if (value === undefined) throw new Error(`OpenHands credentialEnv ${credentialEnv} is not set for the selected route.`);
+  const clone = structuredClone(startConversation);
+  const agent = isPlainObject(clone.agent) ? clone.agent : undefined;
+  const llm = agent !== undefined && isPlainObject(agent.llm) ? agent.llm : undefined;
+  if (llm === undefined) throw new Error("OpenHands startConversation.agent.llm is required to bind a credential.");
+  if (llm.api_key === undefined) llm.api_key = value;
+  return clone;
+}
+
+/** Start the pinned Agent Server when configured and wait until it reports the pinned version. */
+async function startOpenHandsServerIfConfigured(
+  configuration: OpenHandsAgentServerRunConfiguration,
+): Promise<(() => Promise<void>) | undefined> {
+  const launch = configuration.serverLaunch;
+  if (launch === undefined) return undefined;
+  if (typeof launch.command !== "string" || launch.command.trim() === "") throw new Error("OpenHands serverLaunch.command is required.");
+  const baseUrl = new URL(configuration.baseUrl);
+  const args = launch.args ?? ["--host", baseUrl.hostname, "--port", baseUrl.port === "" ? "80" : baseUrl.port];
+  const child = spawn(launch.command, [...args], { stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr?.on("data", (chunk: Buffer) => { stderr = `${stderr}${chunk.toString()}`.slice(-4096); });
+  const readinessTimeoutMs = launch.readinessTimeoutMs ?? 120_000;
+  const deadline = Date.now() + readinessTimeoutMs;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new Error(`OpenHands server exited during startup (${child.exitCode}): ${stderr.slice(-500)}`);
+    try {
+      const response = await fetch(new URL("/server_info", baseUrl));
+      if (response.ok) {
+        const info = await response.json() as { version?: unknown };
+        if (info.version === OPENHANDS_AGENT_SERVER_VERSION) {
+          return async () => {
+            if (child.exitCode !== null) return;
+            child.kill("SIGTERM");
+            const stopDeadline = Date.now() + 5_000;
+            while (Date.now() < stopDeadline && child.exitCode === null) await new Promise((resolve) => setTimeout(resolve, 100));
+            if (child.exitCode === null) child.kill("SIGKILL");
+          };
+        }
+      }
+    } catch { /* server not up yet */ }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  child.kill("SIGKILL");
+  throw new Error(`OpenHands server did not report ${OPENHANDS_AGENT_SERVER_VERSION} within ${readinessTimeoutMs} ms: ${stderr.slice(-500)}`);
+}
 
 /** Execute and retain one caller-configured OpenHands Agent Server attempt. */
 export async function captureOpenHandsAgentServerRun(
@@ -111,6 +179,7 @@ export async function captureOpenHandsAgentServerRun(
     ".git",
     ...(options.workspaceOutcomeExcludedDirectoryNames ?? []).filter((name) => name !== ".git"),
   ])];
+  const startConversation = withOpenHandsCredential(options.configuration.startConversation, options.configuration.credentialEnv);
   const qualificationOptions = {
     startingWorkspacePath: options.startingWorkspacePath,
     workspaceOutcomeExcludedDirectoryNames,
@@ -227,8 +296,11 @@ export async function captureOpenHandsAgentServerRun(
       if (workspace?.status !== "ready" || workspace.path === undefined) {
         throw new Error("OpenHands run requires a ready workspace path.");
       }
-      const { serverWorkspacePath, ...configuration } = options.configuration;
+      const { serverWorkspacePath, serverLaunch, credentialEnv, ...configuration } = options.configuration;
+      void serverLaunch; void credentialEnv;
+      const stopServer = await startOpenHandsServerIfConfigured(options.configuration);
       registerShutdown(async () => {
+        await stopServer?.();
         if (progressiveSessionId === undefined) return;
         await cleanupOpenHandsConversation(configuration, progressiveSessionId, options.shutdownGraceMs ?? 250);
       });
@@ -247,12 +319,13 @@ export async function captureOpenHandsAgentServerRun(
             });
           },
           startConversation: {
-            ...options.configuration.startConversation,
+            ...startConversation,
             workspace: { type: "local", working_dir: serverWorkspacePath ?? workspace.path },
           },
         });
       } finally {
         captureSettled = true;
+        await stopServer?.();
       }
       if (capture.captureError !== undefined) {
         return {

@@ -62,6 +62,20 @@ import {
   type RunBundleDefinition,
   type OpenHandsWebSocket,
 } from "../src/index.js";
+import { withOpenHandsCredential } from "../src/openhands-run.js";
+
+test("binds the OpenHands conversation credential from the environment", () => {
+  process.env.EBO_TEST_OPENHANDS_CONVERSATION_KEY = "kv-123";
+  try {
+    const bound = withOpenHandsCredential({ agent: { kind: "Agent", llm: { model: "openai/grok-4.7" } } }, "EBO_TEST_OPENHANDS_CONVERSATION_KEY");
+    const llm = (bound.agent as { llm: { api_key?: unknown } }).llm;
+    assert.equal(llm.api_key, "kv-123");
+    assert.throws(() => withOpenHandsCredential({ agent: { llm: {} } }, "EBO_TEST_OPENHANDS_MISSING_KEY"), /is not set/);
+    assert.throws(() => withOpenHandsCredential({ agent: { llm: {} } }, "not-a-name"), /environment variable name/);
+  } finally {
+    delete process.env.EBO_TEST_OPENHANDS_CONVERSATION_KEY;
+  }
+});
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const SHA = (value: string): `sha256:${string}` => `sha256:${value.repeat(64).slice(0, 64)}`;
