@@ -1,3 +1,4 @@
+import { shadowDigest, validateShadowArtifact, validateShadowBinding, validateShadowReview, type ShadowAudit, type ShadowReview } from "./shadow-audit.js";
 import { createServer, type Server } from "node:http";
 import { statSync } from "node:fs";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
@@ -25,6 +26,7 @@ export type AtlasRequest = {
   title: string;
   operatorNarrative?: string;
   reviewPackets?: readonly string[];
+  shadowAudits?: ReadonlyArray<{ audit: string; reviews?: readonly string[] }>;
   traces?: ReadonlyArray<{ runId: string; attemptId: string; traceId: string; originalStart: string; replayStart?: string }>;
   grafanaUrl?: string;
   atlasUrl?: string;
@@ -39,6 +41,7 @@ export type AtlasCase = {
   citations: ReadonlyArray<{ eventId: string; nativeReference: unknown; normalizedEvent: unknown; nativeRecord: unknown }>;
   trace?: { href: string; originalStart: string; replayStart?: string };
   retryOf?: string;
+  shadow?: ReadonlyArray<{ audit: ShadowAudit; reviews: readonly ShadowReview[] }>;
 };
 export type AtlasView = {
   schemaVersion: "ebo.atlas-view/v1"; title: string; mode: "restricted-local-only" | "partner" | "public";
@@ -61,7 +64,7 @@ const attemptKey = (value: { runId?: string; attemptId?: string }) => `${value.r
 
 export async function loadAtlas(requestPath: string): Promise<AtlasSource> {
   const request = readJson(requestPath) as AtlasRequest;
-  exactKeys(request, ["schemaVersion", "aggregationRequest", "title", "operatorNarrative", "reviewPackets", "traces", "grafanaUrl", "atlasUrl", "tempoDatasourceUid", "sharing"]);
+  exactKeys(request, ["schemaVersion", "aggregationRequest", "title", "operatorNarrative", "reviewPackets", "shadowAudits", "traces", "grafanaUrl", "atlasUrl", "tempoDatasourceUid", "sharing"]);
   if (request.schemaVersion !== "ebo.atlas-request/v1" || typeof request.title !== "string" || !request.title.trim() || typeof request.aggregationRequest !== "string") throw new Error("Invalid or incompatible Atlas request.");
   if (request.operatorNarrative !== undefined && typeof request.operatorNarrative !== "string") throw new Error("Operator narrative must be text.");
   if (request.grafanaUrl !== undefined) localUrl(request.grafanaUrl);
@@ -79,6 +82,16 @@ export async function loadAtlas(requestPath: string): Promise<AtlasSource> {
   for (const path of request.reviewPackets ?? []) {
     if (typeof path !== "string" || !statSync(resolve(base, path), { throwIfNoEntry: false })?.isFile()) throw new Error("Configured human review packet is unavailable.");
   }
+  if (request.shadowAudits !== undefined && !Array.isArray(request.shadowAudits)) throw new Error("Invalid Atlas shadow audit sources.");
+  const shadow = (request.shadowAudits ?? []).map((entry) => {
+    exactKeys(entry, ["audit", "reviews"]);
+    const audit = readJson(resolve(base, entry.audit)) as ShadowAudit;
+    validateShadowArtifact(audit);
+    const reviews: ShadowReview[] = (entry.reviews ?? []).map((path: string) => readJson(resolve(base, path)) as ShadowReview);
+    reviews.forEach((review) => validateShadowReview(audit, review));
+    if (new Set(reviews.map(({ claimId }) => claimId)).size !== reviews.length) throw new Error("Choose one explicit shadow resolution per claim.");
+    return { audit, reviews };
+  });
   const aggregationPath = resolve(base, request.aggregationRequest);
   const aggregation = readArtifact<AggregationRequest>(aggregationPath);
   const aggregateBase = dirname(aggregationPath);
@@ -114,11 +127,13 @@ export async function loadAtlas(requestPath: string): Promise<AtlasSource> {
       const assertionDigest = digest(assertion);
       if (seenAssertions.has(assertionDigest)) continue;
       seenAssertions.add(assertionDigest);
+      const ownShadow = shadow.filter(({ audit }) => audit.assertionDigest === assertionDigest);
       const reviews = input.calibrations.flatMap(({ selection, history }) => selection.candidates.filter(({ assertion: binding }) => binding.id === assertion.id && binding.digest === assertionDigest).map((candidate) => ({ candidate, history })));
       const latest = reviews[0];
       const outcome = latest ? effectiveReviewOutcome(latest.candidate, latest.history.decisions) : assertion.judgment.disposition === "abstained" ? "judge-abstained" : "unreviewed";
       const review = latest && isDisputedReviewOutcome(latest.candidate, latest.history.decisions) ? "disputed" : ({ "judge-abstained": "abstained", unreviewed: "proposed", unresolved: "insufficient-evidence", confirmed: "confirmed", rejected: "rejected" } as const)[outcome];
       const evidence = await createRetainedBehaviorEvidence(bundleRoot);
+      ownShadow.forEach(({ audit }) => validateShadowBinding(audit, assertion, evidence.capture));
       const citations = assertion.judgment.citations.map((citation) => {
         const normalizedEvent = evidence.dataset.events.find(({ id }) => id === citation.eventId);
         const native = evidence.capture.records.find(({ reference }) => canonicalizeMetadata(reference) === canonicalizeMetadata(citation.nativeReference));
@@ -126,10 +141,11 @@ export async function loadAtlas(requestPath: string): Promise<AtlasSource> {
         return { ...citation, normalizedEvent: displaySafe(normalizedEvent), nativeRecord: displaySafe(evidence.dataset.adapter.harness === "claude-agent-sdk" ? (native.record as AgentSdkNativeRecord).document : native.record) };
       });
       const decisions = [...new Map(reviews.flatMap(({ history }) => history.decisions.filter(({ assertion: binding }) => binding.id === assertion.id && binding.digest === assertionDigest)).map((decision) => [digest(decision), decision])).values()];
-      cases.push({ ...context, key: assertionDigest.slice(7), assertion: displaySafe(assertion) as BehaviorAssertion, assertionDigest, category: assertion.behavior.categoryId, assessment: assertion.judgment.disposition === "assessed" ? assertion.judgment.assessment : "abstained", review, decisions: displaySafe(decisions) as ReviewDecision[], citations, ...(trace ? { trace } : {}) });
+      cases.push({ ...context, key: assertionDigest.slice(7), assertion: displaySafe(assertion) as BehaviorAssertion, assertionDigest, ...(ownShadow.length ? { shadow: displaySafe(ownShadow) as typeof ownShadow } : {}), category: assertion.behavior.categoryId, assessment: assertion.judgment.disposition === "assessed" ? assertion.judgment.assessment : "abstained", review, decisions: displaySafe(decisions) as ReviewDecision[], citations, ...(trace ? { trace } : {}) });
     }
   }
-  return { request, aggregation, input, corpusRoot, requestPath: resolve(requestPath), cases, sourceDigest: digest({ request, lineage: validated.sourceLineage }) };
+  if (shadow.some(({ audit }) => !seenAssertions.has(audit.assertionDigest))) throw new Error("Atlas shadow audit has no matching validated assertion.");
+  return { request, aggregation, input, corpusRoot, requestPath: resolve(requestPath), cases, sourceDigest: digest({ request, lineage: validated.sourceLineage, shadow: shadow.map(shadowDigest) }) };
 }
 
 export async function queryAtlas(source: AtlasSource, filters: AtlasFilters = {}): Promise<AtlasView> {

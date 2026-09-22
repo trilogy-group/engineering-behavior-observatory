@@ -654,7 +654,7 @@ function harnessContext(
 
 function configuration(
   composition: DeepSeekRuntimeComposition,
-  scenario: "success" | "interrupt" | "contaminated" | "slow-initialize" | "spaced",
+  scenario: "success" | "interrupt" | "contaminated" | "slow-initialize" | "spaced" | "terminal-error",
   secret = "",
 ): DeepSeekHarnessConfiguration {
   return {
@@ -736,3 +736,18 @@ class FailingNotificationCapture extends DeepSeekNativeCapture {
   }
 }
 import { checkRetainedEvaluation } from "./retained-evaluation-helper.js";
+
+test("native terminal error remains a failed task with complete capture", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-terminal-"));
+  const composition = fixtureComposition("minimal");
+  const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
+  try {
+    const execution = await executeDeepSeekHarness(harnessContext(undefined, undefined, undefined, composition.workspaceCwd), configuration(composition, "terminal-error"), capture);
+    await capture.close();
+    assert.equal(execution.status, "failed");
+    const report = execution.evidence as DeepSeekCaptureReport;
+    assert.equal(report.status, "failed");
+    assert.match(JSON.stringify(report), /Capacity exhausted/);
+    assert.equal(qualifiedDeepSeekCapture("run", "attempt", report).qualification, "qualified");
+  } finally { await capture.close(); rmSync(root, { recursive: true, force: true }); }
+});

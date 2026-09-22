@@ -558,7 +558,7 @@ function sanitizeValue(
   }
   if (!isRecord(value)) return value;
   const sourceFieldCount = Object.keys(value).length;
-  const output: Record<string, unknown> = {};
+  const output: Record<string, unknown> = Object.create(null);
   for (const [key, entry] of Object.entries(value)) {
     if (HIDDEN_FIELDS.has(normalizeFieldName(key))) {
       increment(counts, "removed-field");
@@ -594,12 +594,12 @@ function stripCodexReasoning(
   if (kind !== "session") return value;
   if (Array.isArray(value)) return value.map((entry) => stripCodexReasoning(entry, kind, counts));
   if (!isRecord(value)) return value;
-  const reasoningItem = value.type === "reasoning";
+  const reasoningItem = value.type === "reasoning" || value.channel === "analysis";
   const reasoningDelta = value.method === CODEX_REASONING_DELTA_METHOD;
   const cursorReasoning = typeof value.type === "string" && CURSOR_REASONING_TYPES.has(normalizeFieldName(value.type));
   const cursorCheckpoint = typeof value.agentId === "string" && typeof value.blobId === "string" && typeof value.dataBase64 === "string";
   const payloadContainsReasoning = containsCodexReasoning(value.payload);
-  const output: Record<string, unknown> = {};
+  const output: Record<string, unknown> = Object.create(null);
   for (const [key, entry] of Object.entries(value)) {
     const normalized = normalizeFieldName(key);
     if (reasoningItem && key !== "type" && key !== "id") {
@@ -631,6 +631,11 @@ function stripCodexReasoning(
   return output;
 }
 
+/** Reasoning-free derived projection without changing source identities or paths. */
+export function visibleEvidence(value: unknown): unknown {
+  return stripNativeReasoning(value, "session", new Map());
+}
+
 function stripNativeReasoning(
   value: unknown,
   kind: PortableKind | undefined,
@@ -649,10 +654,10 @@ function stripPiReasoning(
   if (!isRecord(value)) return value;
   const privateContent = value.thought === true
     || typeof value.type === "string" && PI_PRIVATE_CONTENT_TYPES.has(normalizeFieldName(value.type));
-  const output: Record<string, unknown> = {};
+  const output: Record<string, unknown> = Object.create(null);
   for (const [key, entry] of Object.entries(value)) {
     const normalized = normalizeFieldName(key);
-    if (PI_PRIVATE_FIELDS.has(normalized) || privateContent && PI_PRIVATE_CONTENT_FIELDS.has(normalized)) {
+    if (HIDDEN_FIELDS.has(normalized) || PI_PRIVATE_FIELDS.has(normalized) || privateContent && PI_PRIVATE_CONTENT_FIELDS.has(normalized)) {
       increment(counts, "removed-field");
       continue;
     }
@@ -668,7 +673,7 @@ function stripCodexReasoningEnvelope(
 ): unknown {
   if (Array.isArray(value)) return value.map((entry) => stripCodexReasoningEnvelope(entry, kind, counts));
   if (!isRecord(value)) return value;
-  const output: Record<string, unknown> = {};
+  const output: Record<string, unknown> = Object.create(null);
   for (const [key, entry] of Object.entries(value)) {
     if (CODEX_REASONING_CONTENT_FIELDS.has(normalizeFieldName(key))) {
       increment(counts, "removed-field");

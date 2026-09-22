@@ -42,6 +42,7 @@ export async function runCodexSemanticJudge(prompt: string, request: SemanticJud
   let threadId: string | undefined;
   let turnId: string | undefined;
   const frames: unknown[] = [];
+  let terminalDiagnostic: string | undefined;
   let chars = 0;
   let responseChars = 0;
   let modelOutput = "";
@@ -169,7 +170,8 @@ export async function runCodexSemanticJudge(prompt: string, request: SemanticJud
     if (typeof turnId !== "string") throw new Error("Codex judge returned no turn identity.");
     const result = await Promise.race([terminal, exited]);
     remaining();
-    if (result.status !== "completed") throw new Error(`Codex judge terminal status: ${String(result.status)}.`);
+    terminalDiagnostic = JSON.stringify({ status: result.status, error: result.error ?? null }).slice(0, 4096);
+    if (result.status !== "completed") throw new Error(`Codex judge terminal: ${terminalDiagnostic}`);
     const response = [...messages.values()].at(-1);
     if (response === undefined || response.length > request.limits.maxOutputChars) throw new Error("Codex judge response is missing or exceeds maxOutputChars.");
     assertNoDuplicateJsonKeys(response);
@@ -179,7 +181,7 @@ export async function runCodexSemanticJudge(prompt: string, request: SemanticJud
   } catch (error) {
     timedOut ||= performance.now() >= deadline;
     return { status: "failed", kind: timedOut ? "timeout" : interrupted ? "interrupted" : "provider",
-      message: timedOut ? "Codex judge exceeded maxWallClockMs." : interrupted ? "Codex judge was interrupted." : String(error), rawModelResponse: modelEvidence(), raw: { frames, threadId, turnId } };
+      message: timedOut ? "Codex judge exceeded maxWallClockMs." : interrupted ? "Codex judge was interrupted." : String(error), rawModelResponse: modelEvidence(), raw: { diagnostic: terminalDiagnostic, frames, threadId, turnId } };
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", abort);

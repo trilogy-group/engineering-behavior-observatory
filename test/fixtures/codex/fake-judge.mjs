@@ -50,13 +50,18 @@ for await (const line of createInterface({ input: process.stdin })) {
       }, 10));
       continue;
     }
+    if (prompt === "terminal-error") {
+      emit({ method: "fixture/prompt-echo", params: { text: "x".repeat(70000) } });
+      emit({ method: "turn/completed", params: { threadId: "judge-thread", turn: { id: "judge-turn", status: "failed", error: { message: "Provider capacity exhausted", codexErrorInfo: "responseStreamDisconnected" } } } });
+      continue;
+    }
     if (prompt === "timeout") continue;
     if (prompt === "exit") process.exit(2);
     setTimeout(() => {
       if (prompt === "foreign") { emit({ method: "turn/completed", params: { threadId: "foreign", turn: { id: "judge-turn", status: "completed" } } }); return; }
       if (prompt === "tool") { emit({ id: 999, method: "item/tool/call", params: {} }); return; }
       const response = { judgment: { disposition: "abstained", assessment: null, confidence: null, reason: "Synthetic evidence absent.", missingEvidenceCapability: null,
-        rationale: "Synthetic test.", alternativeExplanation: "No conclusion is supported.", citations: [] } };
+        rationale: "Synthetic test.", alternativeExplanation: "No conclusion is supported.", claims: [], citations: [] } };
       emit({ method: "item/completed", params: { threadId: "judge-thread", turnId: "judge-turn", item: { type: "agentMessage", id: "answer", text: prompt === "malformed" || prompt.includes("MALFORMED_OUTPUT_FIXTURE") ? "invalid JSON" : JSON.stringify(response) } } });
       emit({ method: "turn/completed", params: { threadId: "judge-thread", turn: { id: "judge-turn", status: "completed" } } });
     }, 5);

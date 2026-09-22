@@ -1,3 +1,4 @@
+import { evidenceWorkspaces } from "./evidence-projection.js";
 import { readFileSync } from "node:fs";
 import { createRetainedBehaviorEvidence } from "./retained-evidence.js";
 
@@ -40,6 +41,11 @@ export type BehaviorCitation = {
   nativeReference: NativeEvidenceReference;
 };
 
+export type BehaviorClaim = {
+  id: string; text: string; citations: readonly BehaviorCitation[];
+  workspace: string | null;
+};
+
 type AssessedJudgment = {
   disposition: "assessed";
   assessment: "constructive" | "adverse" | "mixed" | "context-dependent";
@@ -47,6 +53,7 @@ type AssessedJudgment = {
   rationale: string;
   alternativeExplanation: string;
   citations: readonly BehaviorCitation[];
+  claims?: readonly BehaviorClaim[];
 };
 
 type AbstainedJudgment = {
@@ -56,6 +63,7 @@ type AbstainedJudgment = {
   rationale: string;
   alternativeExplanation: string;
   citations: readonly BehaviorCitation[];
+  claims?: readonly BehaviorClaim[];
 };
 
 export type BehaviorAssertion = {
@@ -97,6 +105,7 @@ export async function validateBehaviorAssertion(
   dataset: NormalizedDataset,
   resolver: NativeEvidenceResolver,
   vocabulary: BehaviorVocabulary = DEFAULT_BEHAVIOR_VOCABULARY,
+  capture?: NormalizationInput<unknown>,
 ): Promise<readonly ResolvedBehaviorCitation[]> {
   assertValid("behavior assertion", assertion);
   assertVocabulary(vocabulary);
@@ -140,6 +149,17 @@ export async function validateBehaviorAssertion(
     }
     resolved.push({ ...structuredClone(citation), resolution });
   }
+  validateClaimCitations(assertion);
+  for (const claim of assertion.judgment.claims ?? []) {
+    if (claim.workspace === null) continue;
+    const scopes = claim.citations.flatMap(({ nativeReference }) => {
+      const native = capture?.records.find(({ reference }) => referenceKey(reference) === referenceKey(nativeReference));
+      return native ? evidenceWorkspaces(native.record) : [];
+    });
+    if (!scopes.includes(claim.workspace) || scopes.some((scope) => scope !== claim.workspace)) {
+      throw new Error("Atomic claim workspace lacks an unambiguous explicit cited native cwd binding; use null for unknown scope.");
+    }
+  }
   return resolved;
 }
 
@@ -158,8 +178,9 @@ export async function isConfirmedBehaviorAssertion(
   resolver: NativeEvidenceResolver,
   review?: BehaviorReview,
   vocabulary: BehaviorVocabulary = DEFAULT_BEHAVIOR_VOCABULARY,
+  capture?: NormalizationInput<unknown>,
 ): Promise<boolean> {
-  await validateBehaviorAssertion(assertion, dataset, resolver, vocabulary);
+  await validateBehaviorAssertion(assertion, dataset, resolver, vocabulary, capture);
   if (review === undefined) return false;
   validateBehaviorReview(assertion, review);
   return assertion.judgment.disposition === "assessed" && review.state === "confirmed";
@@ -170,8 +191,8 @@ export async function validateAgentSdkBehaviorAssertion(
   assertion: BehaviorAssertion,
   review?: BehaviorReview,
 ): Promise<readonly ResolvedBehaviorCitation[]> {
-  const { dataset, resolver } = await createAgentSdkBehaviorEvidence(bundleRoot);
-  const citations = await validateBehaviorAssertion(assertion, dataset, resolver);
+  const { dataset, resolver, capture } = await createAgentSdkBehaviorEvidence(bundleRoot);
+  const citations = await validateBehaviorAssertion(assertion, dataset, resolver, undefined, capture);
   if (review !== undefined) validateBehaviorReview(assertion, review);
   return citations;
 }
@@ -193,8 +214,8 @@ export async function createAgentSdkBehaviorEvidence(bundleRoot: string): Promis
 }
 
 export async function validateRetainedBehaviorAssertion(bundleRoot: string, assertion: BehaviorAssertion, review?: BehaviorReview): Promise<readonly ResolvedBehaviorCitation[]> {
-  const { dataset, resolver } = await createRetainedBehaviorEvidence(bundleRoot);
-  const citations = await validateBehaviorAssertion(assertion, dataset, resolver);
+  const { dataset, resolver, capture } = await createRetainedBehaviorEvidence(bundleRoot);
+  const citations = await validateBehaviorAssertion(assertion, dataset, resolver, undefined, capture);
   if (review !== undefined) validateBehaviorReview(assertion, review);
   return citations;
 }
@@ -265,4 +286,17 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+export function validateClaimCitations(assertion: BehaviorAssertion): void {
+  const seen = new Set<string>();
+  const citations = new Set(assertion.judgment.citations.map(canonicalizeMetadata));
+  for (const claim of assertion.judgment.claims ?? []) {
+    if (seen.has(claim.id)) throw new Error("Atomic claim IDs must be unique.");
+    seen.add(claim.id);
+    const own = claim.citations.map(canonicalizeMetadata);
+    if (new Set(own).size !== own.length || own.some((citation) => !citations.has(citation))) {
+      throw new Error("Atomic claim citations must be unique and exactly match assertion citations.");
+    }
+  }
 }

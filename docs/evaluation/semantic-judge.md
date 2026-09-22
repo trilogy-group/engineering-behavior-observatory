@@ -191,3 +191,27 @@ EBO_NATIVE_CODEX_CONTRACT=1 node --test dist/test/codex-judge.test.js
 EBO_LIVE_CODEX_JUDGE_SMOKE=1 EBO_LIVE_CODEX_JUDGE_MODEL='<existing-route>' \
   node --test --test-name-pattern='approved existing-auth' dist/test/codex-judge.test.js
 ```
+
+## Atomic claims and evidence projection
+
+Prompt version `1.1.0` requires assessed responses to include at least one atomic
+factual claim in `judgment.claims`. Each claim has an `id`, `text`, `citations`, and
+`workspace` (an exact explicitly cited native cwd or `null` when unknown).
+Claim IDs are unique and claim citations must exactly match assertion citations.
+An explicit workspace must be unambiguously bound to cited native cwd fields.
+Legacy v1 assertions without claims remain readable.
+
+Rationale and alternative explanations remain separate from factual claims.
+Claims must name the relevant component, revision and command in their text when
+those distinctions matter. Relative paths, a different checkout's test run, and
+absence from a selected sample cannot establish the submitted workspace's state.
+The cwd check establishes an explicit native binding; it cannot prove that a shell
+command did not change directories internally or independently validate prose.
+
+The judge sees a reasoning-free projection. Long strings retain marked head and
+tail excerpts so terminal test summaries survive; short exit-code and cwd metadata
+remain intact where the record fits. Structurally oversized records use a marked
+excerpt. Native captures and citation digests remain unchanged. Codex judge failure
+records preserve terminal provider details even when frame retention is exhausted.
+
+Use [Jev shadow audits](shadow-audit.md) to check claim support independently.

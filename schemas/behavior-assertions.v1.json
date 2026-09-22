@@ -85,6 +85,40 @@
         "nativeReference": { "$ref": "urn:ebo:schema:uniform-events:v1#/$defs/nativeReference" }
       }
     },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "text",
+        "citations",
+        "workspace"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "text": {
+          "$ref": "#/$defs/text"
+        },
+        "citations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/citation"
+          }
+        },
+        "workspace": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      }
+    },
     "assessedJudgment": {
       "type": "object",
       "additionalProperties": false,
@@ -103,6 +137,7 @@
         },
         "rationale": { "$ref": "#/$defs/text" },
         "alternativeExplanation": { "$ref": "#/$defs/text" },
+        "claims": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/claim" } },
         "citations": {
           "type": "array",
           "minItems": 1,
@@ -124,6 +159,7 @@
         },
         "rationale": { "$ref": "#/$defs/text" },
         "alternativeExplanation": { "$ref": "#/$defs/text" },
+        "claims": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/claim" } },
         "citations": {
           "type": "array",
           "maxItems": 256,

@@ -77,7 +77,7 @@ lines.on("line", (line) => {
     });
     if (scenario === "interrupt") return;
     emitEvent(sessionId, 18, "plugin/private", { privateFact: "retained-only" }, { ignorable: true });
-    emitEvent(sessionId, 19, "turn/end", { turn: 1, reason: { kind: "completed" } });
+    emitEvent(sessionId, 19, "turn/end", { turn: 1, reason: scenario === "terminal-error" ? { kind: "error", error: { code: "PI_AI_ERROR", message: "Capacity exhausted" } } : { kind: "completed" } });
     notify("session.status", { sessionId, status: "idle" });
     return;
   }
