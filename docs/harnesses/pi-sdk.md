@@ -1,6 +1,6 @@
 # Pi TypeScript SDK harness
 
-EBO integrates `@earendil-works/pi-coding-agent` `0.85.1` directly through its public TypeScript SDK. `ebo pi run` executes one caller-selected frozen queue entry; it does not add RPC, ACP, a Pi fork, or another scheduler.
+EBO integrates `@earendil-works/pi-coding-agent` `0.87.1` directly through its public TypeScript SDK. `ebo pi run` executes one caller-selected frozen queue entry; it does not add RPC, ACP, a Pi fork, or another scheduler.
 
 ## Operator command
 
@@ -52,7 +52,7 @@ On timeout or cancellation EBO calls the public `session.abort()` API, waits for
 | provider usage | available | native assistant-message usage; treated as per-message increments |
 | permissions | unsupported | no distinct selected public-SDK permission-decision record |
 | delegation/child histories | unsupported | one owned Pi session per attempt; no branching/resume UI |
-| native OTLP receipt | unsupported | no verified native Pi `0.85.1` OTLP receipt surface |
+| native OTLP receipt | unsupported | no verified native Pi SDK OTLP receipt surface |
 | isolation | limited | local SDK execution is not an OS sandbox |
 
 ## Validation

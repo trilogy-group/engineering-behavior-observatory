@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createInterface } from "node:readline";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-if (process.argv.includes("--version")) { console.log("codex-cli 0.153.4"); process.exit(0); }
+if (process.argv.includes("--version")) { console.log("codex-cli __CODEX_VERSION__"); process.exit(0); }
 if (process.argv.includes("--bundled")) { console.log(JSON.stringify({ models: [{ slug: "fixture", apply_patch_tool_type: "freeform" }] })); process.exit(0); }
 assert.equal(process.env.OTEL_EXPORTER_OTLP_ENDPOINT, undefined);
 assert.equal(process.env.ANTHROPIC_API_KEY, undefined);

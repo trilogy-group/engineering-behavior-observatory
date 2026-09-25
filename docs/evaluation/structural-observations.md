@@ -1,7 +1,7 @@
 # Outcome ingestion and structural observations
 
 Retained native loading accepts the implemented source versions: OpenHands
-1.44.1/1.46.0, DeepSeek SDK 0.1.1-rc.2, and Codex 0.150.1/0.153.4. Unsupported versions
+1.44.1/1.46.0, DeepSeek SDK 0.1.7-rc.2, and Codex 0.150.1/0.153.4/0.157.0. Unsupported versions
 fail explicitly rather than receiving a different adapter's provenance.
 Completed Codex bundles require exactly one matching owned native terminal to
 report completion; duplicate owned terminals reject. Qualified failed/partial

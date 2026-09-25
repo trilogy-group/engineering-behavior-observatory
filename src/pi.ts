@@ -66,7 +66,7 @@ import { cleanupWorkspace, materializeWorkspace } from "./workspaces.js";
 export const PI_HARNESS = "pi-sdk";
 export const PI_CONFIG_SCHEMA_VERSION = "ebo.pi-config/v1";
 export const PI_ADAPTER_VERSION = "1.0.0";
-export const PINNED_PI_SDK_VERSION = "0.85.1";
+export const PINNED_PI_SDK_VERSION = "0.87.1";
 
 const ATTEMPT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -561,7 +561,7 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
 
   const missingEvidence: CaptureMissingEvidence[] = [{
     kind: "telemetry", reason: "unsupported", affects: ["timing-resource"],
-    detail: "Pi 0.85.1 has no verified native OTLP receipt surface in this integration.",
+    detail: "The SDK has no verified native OTLP receipt surface in this integration.",
   }, ...(attempt.terminal.state === "completed" && terminalEvidenceObserved ? [] : [{
     kind: "session", reason: "not-emitted" as const, affects: ["semantic" as const],
     detail: "Pi did not retain a completed assistant terminal after the owned prompt.",

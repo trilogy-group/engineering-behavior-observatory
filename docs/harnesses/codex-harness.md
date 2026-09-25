@@ -6,7 +6,7 @@ Agent SDK remains EBO's primary Anthropic capture path. Codex native protocol
 records remain authoritative, OTLP is separately retained timing/resource
 evidence, and uniform events are a digest-checked projection after capture.
 
-The baseline is `codex-cli 0.153.4`. EBO rejects a different executable
+The supported runtime is `codex-cli 0.157.0`. EBO rejects a different executable
 version, starts a new child for each attempt, and never connects to the desktop
 daemon or changes `~/.codex/config.toml`.
 
@@ -23,7 +23,7 @@ names, never their values.
 
 ## Generated contract
 
-[`contracts/codex-app-server-0.153.4/manifest.json`](../../contracts/codex-app-server-0.153.4/manifest.json)
+[`contracts/codex-app-server-0.157.0/manifest.json`](../../contracts/codex-app-server-0.157.0/manifest.json)
 pins the generated root digests and the small schema/type subset used by the
 adapter and its fixtures. Regenerate the source contracts with the pinned CLI:
 
@@ -36,9 +36,11 @@ The adapter uses the stable initialize/thread/turn lifecycle, plus generated
 leaf contracts for initialized, `thread/read`, `turn/interrupt`, and token usage.
 Unknown notifications are retained unchanged and listed as unmapped.
 
-The 0.153.4 refresh preserves the unchanged RPC, approval, sandbox, interruption
-and usage contracts. Initialization moved into the generated `v1` schema
-directory. The retained subset also includes thread/turn start parameters.
+The 0.157.0 generated contract preserves the RPC, approval, sandbox, interruption,
+and usage fields used by EBO. Initialization lives in the generated `v1` schema
+directory. The generated subset also includes thread/turn start parameters; the
+current schema adds optional Daybreak and multimodal input fields that EBO leaves
+under native protocol ownership.
 New captures explicitly select legacy history; paginated or summary-only
 readback is retained with a gap instead of being claimed as complete history.
 The pinned runtime treats `writableRoots` as additional to the effective `cwd`
@@ -50,7 +52,7 @@ match the explicit turn policy.
 Existing 0.150.1 bundles remain readable through their original normalization
 profile and dataset identity. The legacy contract snapshot stays checked in;
 a captured synthetic 0.150.1 bundle and its pre-upgrade normalized dataset test
-exact readback. New captures use the 0.153.4 profile. Frozen run configurations
+exact readback. New captures use the 0.157.0 profile. Frozen run configurations
 for the older executable are not rewritten: new execution requires fresh
 configuration references carrying the new runtime version and contract digest.
 
@@ -61,7 +63,7 @@ the actual provider model and effort. A minimal observational configuration is:
 
 ```json
 { "schemaVersion": "ebo.codex-config/v1", "kind": "model", "provider": "openai", "model": "gpt-5.6-sol", "effort": "high" }
-{ "schemaVersion": "ebo.codex-config/v1", "kind": "harness", "adapter": "codex-app-server", "executable": "/opt/homebrew/bin/codex", "version": "0.153.4", "contractDigest": "sha256:e5f798fd1343c539f01fedea0e8a84a43c080fcca4615c80eb04a5edab4f7d0a" }
+{ "schemaVersion": "ebo.codex-config/v1", "kind": "harness", "adapter": "codex-app-server", "executable": "/opt/homebrew/bin/codex", "version": "0.157.0", "contractDigest": "sha256:dae22897ba9e48d9f3a8f65c4353f2a62b4c24be31bd9893f7cd8e1c7601076c" }
 { "schemaVersion": "ebo.codex-config/v1", "kind": "native-limits", "shutdownGraceMs": 2000 }
 { "schemaVersion": "ebo.codex-config/v1", "kind": "native-tool-policy", "approvalPolicy": "never", "sandbox": "workspace-write", "networkAccess": true }
 { "schemaVersion": "ebo.codex-config/v1", "kind": "capture-profile", "telemetrySignals": ["logs", "traces", "metrics"], "workspaceOutcome": { "excludeDirectoryNames": ["node_modules"] } }
@@ -96,7 +98,7 @@ effort from the native response.
 {
   "schemaVersion": "ebo.codex-config/v1", "kind": "harness",
   "adapter": "codex-app-server", "executable": "/path/to/codex",
-  "version": "0.153.4", "contractDigest": "sha256:…",
+  "version": "0.157.0", "contractDigest": "sha256:…",
   "arguments": [
     "-c", "features.multi_agent=false",
     "-c", "features.apps=false",
@@ -115,7 +117,7 @@ that the thread `config` bag does not apply. `model_context_window` and
 `model_auto_compact_token_limit` raise the effective window for models the
 installed Codex catalog does not describe.
 
-Codex 0.153.4 supports only `wire_api = "responses"`; the former `chat` wire API
+Codex supports only `wire_api = "responses"`; the former `chat` wire API
 is rejected at load. A Responses provider must therefore accept Codex's tool and
 reasoning item shapes. Disabling `features.apps` and `features.multi_agent` is
 required to remove `namespace` tools that non-OpenAI Responses endpoints reject,
@@ -185,7 +187,7 @@ EBO_LIVE_CODEX_CAPTURE_SMOKE=1 EBO_LIVE_CODEX_CAPTURE_MODEL='<existing-route>' \
   node --test --test-name-pattern='approved existing-auth' dist/test/codex.test.js
 ```
 
-The 0.153.4 validation created the exact synthetic file, retained full legacy
+The earlier 0.153.4 validation created the exact synthetic file, retained full legacy
 history, and reported no capture gaps. Logs and traces arrived; metrics did not
 arrive within the bounded run and remained `missing`, not a fabricated receipt.
 

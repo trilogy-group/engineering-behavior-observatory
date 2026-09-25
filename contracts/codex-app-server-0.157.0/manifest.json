@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "ebo.codex-app-server-contract/v1",
+  "codexCliVersion": "0.157.0",
+  "generation": {
+    "typescript": "codex app-server generate-ts --experimental --out <temporary-directory>",
+    "jsonSchema": "codex app-server generate-json-schema --experimental --out <temporary-directory>"
+  },
+  "generatedRoots": {
+    "typescriptIndexSha256": "708f1f7d6cc4d06255b5630758fd1976610f2ca731c50798b6c42c58f1163e1f",
+    "v2SchemaBundleSha256": "dae22897ba9e48d9f3a8f65c4353f2a62b4c24be31bd9893f7cd8e1c7601076c"
+  },
+  "files": {
+    "types/ClientNotification.ts": "96692c191ff9ac32c2688b46a0a04f23d15646937adc352f2adcc8211c6d17a0",
+    "types/AskForApproval.ts": "81dd17defd9a7fd4785346d3ce54c14243353b43174c7417827210cbd3ef3c52",
+    "types/SandboxMode.ts": "8a59381e04efa84f9001e5c24444ee26fccf8f9e10bcfb02d2f6a24e85898843",
+    "types/ThreadReadParams.ts": "c24743cb5655b4c71a853a2a290412d78e1a27e0278f2a0cde9bd9d9b78118a8",
+    "types/TokenUsageBreakdown.ts": "e983f21175fdfdf1a239e26cd8916e1cb765bc0cb7904e2bd9cc83ffe325c8a7",
+    "types/TurnInterruptParams.ts": "643034c3d25c23c7700236d4d1ff16286565786d48148e85b0c4761fe46d3804",
+    "schema/JSONRPCMessage.json": "6da4cc373a7ccd01f5608ad4496eeb4d44b6a9b0d3158e85ed66b59f3c0b5114",
+    "schema/v1/InitializeParams.json": "b55124e7c0f36a1789396daa5578217a92be67f053903696236686e59f6f212e",
+    "schema/v2/ThreadReadParams.json": "dfe040c6ac71d30795b8be3f3ff232e66f362a37f883b491e5d1ea367f470db4",
+    "schema/v2/ThreadTokenUsageUpdatedNotification.json": "aba4f6c7e4a19b2b842c08ee793b57000c07dafd57b922ad0d8e7c76609108c2",
+    "schema/v2/TurnInterruptParams.json": "6dff382dae73d1dbc58406ed045605f647e7a49660e2540fbd2c6c24d60c5f2b",
+    "schema/v2/ThreadStartParams.json": "80a40a7fac15b4bf70efb7f893fb353acc0a0d30c68f54aee4f01923deca85de",
+    "schema/v2/TurnStartParams.json": "07771223642e1b61bd9aac0069fc0f98143a1c047724ca02c7ceb13653442738"
+  }
+}

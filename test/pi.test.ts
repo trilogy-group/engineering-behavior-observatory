@@ -785,7 +785,7 @@ if (value !== "done") process.exitCode = 1;
       thinkingLevel: "off", reasoning: false, input: ["text"], contextWindow: 100_000, maxTokens: 4096,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     } : fixtureConfiguration("model"),
-    harness: fixtureConfiguration("harness"),
+    harness: { ...fixtureConfiguration("harness"), version: PINNED_PI_SDK_VERSION } as Record<string, any>,
     limits: options.live ? { schemaVersion: "ebo.pi-config/v1", kind: "native-limits", shutdownGraceMs: 1000, maxRetries: 1, retryBaseDelayMs: 1000, providerTimeoutMs: 60_000 } : fixtureConfiguration("limits"),
     tools: options.live ? { schemaVersion: "ebo.pi-config/v1", kind: "native-tool-policy", tools: ["read", "write"], environmentAllowlist: ["PATH", "HOME", "TMPDIR"] } : fixtureConfiguration("tools"),
     capture: {

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { chmodSync, cpSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import test from "node:test";
+import { CODEX_APP_SERVER_VERSION } from "../src/codex.js";
 import { runCodexSemanticJudge } from "../src/codex-judge.js";
 import type { SemanticJudgeRequest } from "../src/semantic-judge.js";
 
@@ -26,6 +27,7 @@ test("native judge isolates ambient state, retains failures, matches owned turns
   const root = mkdtempSync(join(tmpdir(), "ebo-judge-test-"));
   const executable = join(root, "codex");
   cpSync(resolve("test/fixtures/codex/fake-judge.mjs"), executable);
+  writeFileSync(executable, readFileSync(executable, "utf8").replace("__CODEX_VERSION__", CODEX_APP_SERVER_VERSION));
   chmodSync(executable, 0o700);
   const saved = { ...process.env };
   process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://must-not-connect.invalid";

@@ -29,7 +29,7 @@ Harness prerequisites differ:
 | Harness | Runtime boundary | Operator prerequisite |
 |---|---|---|
 | Claude Agent SDK | direct pinned TypeScript SDK | an existing approved authenticated route; optional OTLP receiver |
-| Codex | owned pinned `codex app-server` child | Codex `0.153.4` and existing login; EBO creates an isolated temporary home |
+| Codex | owned pinned `codex app-server` child | Codex `0.157.0` and existing login; EBO creates an isolated temporary home |
 | OpenHands | Agent Server REST/WebSocket | pinned `1.46.0` server and workspace path visible to both processes |
 | DeepSeek Harness | official TypeScript client over JSON-RPC stdio | digest-pinned runtime composition; the official client owns framing and teardown |
 | Cursor SDK | direct pinned TypeScript SDK with official JSONL store | `CURSOR_API_KEY`, an exact current catalog model, and explicit local sandbox/tool policy |

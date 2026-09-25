@@ -55,6 +55,7 @@ for (const mode of ["run", "batch"] as const) test(`judge ${mode} CLI SIGINT ret
     const request = judgeRequest(evidence.dataset.events[0]!.id, observations.observations[0]!.id);
     const executable = join(root, "native-judge.mjs");
     cpSync(join(process.cwd(), "test/fixtures/codex/fake-judge.mjs"), executable);
+    writeFileSync(executable, readFileSync(executable, "utf8").replace("__CODEX_VERSION__", CODEX_APP_SERVER_VERSION));
     chmodSync(executable, 0o700);
     request.evaluator = { backend: "codex-app-server", executable, provider: "openai", model: "fixture", effort: "low" };
     request.rubric.instructions = "CLI_INTERRUPT_FIXTURE";

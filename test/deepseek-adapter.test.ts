@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createDeepSeekHarborExecutor } from "../src/harbor/harnesses.js";
@@ -31,6 +32,7 @@ import {
 } from "../src/index.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
+const require = createRequire(import.meta.url);
 const fixtureRoot = join(repositoryRoot, "test/fixtures/deepseek");
 const SHA = (value: string): `sha256:${string}` => `sha256:${value.repeat(64).slice(0, 64)}`;
 
@@ -593,8 +595,12 @@ test("swaps named compositions by configuration and reports explicit protocol an
     result: deepSeekCapabilities(minimal).promptResult,
   }, { negotiation: "unsupported", cancellation: "unsupported", close: "unsupported", result: "unsupported" });
   const packageDocument = JSON.parse(readFileSync(join(repositoryRoot, "package.json"), "utf8")) as { dependencies: Record<string, string> };
-  assert.equal(packageDocument.dependencies["@deepseek-ai/dsh-sdk-client"], "0.1.1-rc.2");
-  assert.equal(packageDocument.dependencies["@deepseek-ai/dsh-sdk-protocol"], "0.1.1-rc.2");
+  const clientPackage = require("@deepseek-ai/dsh-sdk-client/package.json") as { version: string };
+  const protocolPackage = require("@deepseek-ai/dsh-sdk-protocol/package.json") as { version: string };
+  assert.equal(packageDocument.dependencies["@deepseek-ai/dsh-sdk-client"], clientPackage.version);
+  assert.equal(packageDocument.dependencies["@deepseek-ai/dsh-sdk-protocol"], protocolPackage.version);
+  assert.equal(minimal.runtime.clientVersion, clientPackage.version);
+  assert.equal(minimal.runtime.protocolVersion, protocolPackage.version);
   assert.equal(minimal.patches.length, 2);
   assert.ok(minimal.patches.every(({ digest }) => digest.startsWith("sha256:")));
   assert.equal(minimal.launch.runtimeArtifact.locator, minimal.launch.args[0]);

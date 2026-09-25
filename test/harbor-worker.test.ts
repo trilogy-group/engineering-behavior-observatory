@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { AddressInfo } from "node:net";
-import { digestBytes, createRetainedBehaviorEvidence } from "../src/index.js";
+import { digestBytes, createRetainedBehaviorEvidence, PINNED_PI_SDK_VERSION } from "../src/index.js";
 import { runHarborWorker, type HarborWorkerInput } from "../src/harbor/worker.js";
 import { startProvider } from "./harbor-provider-worker.js";
 
@@ -33,6 +33,7 @@ test("worker uses the real Pi SDK, captures evidence and drains without a Harbor
   for (const [key, file] of Object.entries({ model: "model", harness: "harness", nativeLimits: "limits", nativeToolPolicy: "tools", captureProfile: "capture" })) {
    const value = JSON.parse(readFileSync(join(process.cwd(), "test/fixtures/pi/configs", file + ".json"), "utf8"));
    if (key === "model") value.baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+   if (key === "harness") value.version = PINNED_PI_SDK_VERSION;
    const bytes = Buffer.from(JSON.stringify(value));
    writeFileSync(join(config, file + ".json"), bytes);
    input.configuration[key as keyof typeof input.configuration] = { locator: file + ".json", digest: digestBytes(bytes) };

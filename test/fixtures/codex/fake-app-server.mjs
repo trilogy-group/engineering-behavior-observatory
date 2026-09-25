@@ -114,7 +114,7 @@ lines.on("line", async (line) => {
     return;
   }
   if (message.method === "initialize") {
-    send({ id: message.id, result: { userAgent: "codex_cli_rs/0.153.4", codexHome: "/redacted", platformFamily: "unix", platformOs: "linux" } });
+    send({ id: message.id, result: { userAgent: `codex_cli_rs/${process.argv.find((arg) => arg.startsWith("--codex-version="))?.slice("--codex-version=".length) ?? "fixture"}`, codexHome: "/redacted", platformFamily: "unix", platformOs: "linux" } });
   } else if (message.method === "thread/start") {
     const networkAccess = message.params.config?.sandbox_workspace_write?.network_access ?? false;
     send({ id: message.id, result: {

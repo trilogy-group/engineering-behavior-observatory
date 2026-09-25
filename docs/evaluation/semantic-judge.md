@@ -100,7 +100,7 @@ For the native Codex backend, set `evaluator.backend` to `codex-app-server`,
 `provider` to `openai`, and supply `model` and `effort`. The optional
 `executable` selects the installed `codex` executable (default: PATH). Relative
 paths resolve against the caller's working directory before isolation; its version
-must be `0.153.4`. Set `maxTurns` to `1` and omit `maxBudgetUsd`: this backend
+must match the supported pinned Codex runtime. Set `maxTurns` to `1` and omit `maxBudgetUsd`: this backend
 does not support USD budget enforcement. No automatic provider fallback occurs.
 Backend selection is independent of the evaluated harness.
 Both request and retained judgment validation enforce backend-specific provider,

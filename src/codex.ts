@@ -4,12 +4,12 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 
-import type { ClientNotification } from "../contracts/codex-app-server-0.153.4/types/ClientNotification.js";
-import type { AskForApproval } from "../contracts/codex-app-server-0.153.4/types/AskForApproval.js";
-import type { SandboxMode } from "../contracts/codex-app-server-0.153.4/types/SandboxMode.js";
-import type { ThreadReadParams } from "../contracts/codex-app-server-0.153.4/types/ThreadReadParams.js";
-import type { TokenUsageBreakdown } from "../contracts/codex-app-server-0.153.4/types/TokenUsageBreakdown.js";
-import type { TurnInterruptParams } from "../contracts/codex-app-server-0.153.4/types/TurnInterruptParams.js";
+import type { ClientNotification } from "../contracts/codex-app-server-0.157.0/types/ClientNotification.js";
+import type { AskForApproval } from "../contracts/codex-app-server-0.157.0/types/AskForApproval.js";
+import type { SandboxMode } from "../contracts/codex-app-server-0.157.0/types/SandboxMode.js";
+import type { ThreadReadParams } from "../contracts/codex-app-server-0.157.0/types/ThreadReadParams.js";
+import type { TokenUsageBreakdown } from "../contracts/codex-app-server-0.157.0/types/TokenUsageBreakdown.js";
+import type { TurnInterruptParams } from "../contracts/codex-app-server-0.157.0/types/TurnInterruptParams.js";
 
 import {
   spawnProtocolProcess,
@@ -36,7 +36,7 @@ import {
   type UniformEvent,
 } from "./uniform-events.js";
 
-export const CODEX_APP_SERVER_VERSION = "0.153.4";
+export const CODEX_APP_SERVER_VERSION = "0.157.0";
 export const CODEX_ADAPTER_VERSION = "0.1.0";
 export const CODEX_HARNESS = "codex-app-server";
 export const CODEX_DEFAULT_SHUTDOWN_GRACE_MS = 2_000;
@@ -198,9 +198,14 @@ const CODEX_0_150_1_CAPABILITIES = {
   },
 } as const satisfies AdapterCapabilityProfile;
 
-export const CODEX_APP_SERVER_CAPABILITIES = {
+const CODEX_0_153_4_CAPABILITIES = {
   ...CODEX_0_150_1_CAPABILITIES,
   adapterId: "ebo-codex-app-server-v0.153.4",
+} as const satisfies AdapterCapabilityProfile;
+
+export const CODEX_APP_SERVER_CAPABILITIES = {
+  ...CODEX_0_153_4_CAPABILITIES,
+  adapterId: `ebo-codex-app-server-v${CODEX_APP_SERVER_VERSION}`,
 } as const satisfies AdapterCapabilityProfile;
 
 export function createCodexHarnessAdapter(): HarnessAdapter<CodexAppServerCaptureRequest, ProtocolObservation> {
@@ -646,12 +651,13 @@ export async function describeAndValidateCodexDataset(
   capture: QualifiedNativeCapture<ProtocolObservation>,
   runtimeVersion = (capture as Partial<CodexAppServerCapture>).telemetry?.runtime?.version ?? CODEX_APP_SERVER_VERSION,
 ): Promise<{ dataset: NormalizedDataset; coverage: AdapterCoverageReport }> {
-  if (runtimeVersion !== CODEX_APP_SERVER_VERSION && runtimeVersion !== "0.150.1") throw new Error(`Unsupported retained Codex runtime ${runtimeVersion}.`);
+  if (runtimeVersion !== CODEX_APP_SERVER_VERSION && runtimeVersion !== "0.153.4" && runtimeVersion !== "0.150.1") throw new Error(`Unsupported retained Codex runtime ${runtimeVersion}.`);
   const normalization = await normalizeCodexCapture(capture);
   const dataset = describeNormalizedDataset({
     capture,
     normalization,
-    capabilityProfile: runtimeVersion === "0.150.1" ? CODEX_0_150_1_CAPABILITIES : CODEX_APP_SERVER_CAPABILITIES,
+    capabilityProfile: runtimeVersion === "0.150.1" ? CODEX_0_150_1_CAPABILITIES
+      : runtimeVersion === "0.153.4" ? CODEX_0_153_4_CAPABILITIES : CODEX_APP_SERVER_CAPABILITIES,
     adapterVersion: CODEX_ADAPTER_VERSION,
     nativeType: codexNativeType,
   });
@@ -854,7 +860,7 @@ function sandboxMatches(requested: CodexSandbox, applied: unknown, workspace: st
   return applied.type === "workspaceWrite"
     && applied.networkAccess === networkAccess
     && Array.isArray(applied.writableRoots)
-    // Codex 0.153.4 roots are additional to cwd; it removes redundant cwd entries.
+    // The runtime treats writableRoots as additional to cwd and removes redundant cwd entries.
     && applied.writableRoots.length <= 1
     && applied.writableRoots.every((root) => root === workspace)
     && applied.excludeTmpdirEnvVar === true

@@ -26,7 +26,7 @@ import type {
   UniformEventFamily,
 } from "./uniform-events.js";
 
-export const DEEPSEEK_SDK_VERSION = "0.1.1-rc.2";
+export const DEEPSEEK_SDK_VERSION = "0.1.7-rc.2";
 export const DEEPSEEK_ADAPTER_ID = "deepseek-harness-sdk";
 export const DEEPSEEK_HARNESS_ID = "deepseek-harness";
 
@@ -647,9 +647,11 @@ export function createDeepSeekHarnessAdapter(): HarnessAdapter<DeepSeekAdapterRe
 function clientOptions(configuration: DeepSeekHarnessConfiguration): HarnessClientOptions {
   const composition = configuration.composition;
   return {
-    command: composition.launch.command,
-    args: [...composition.launch.args],
-    cwd: composition.launch.processCwd,
+    dshBin: composition.launch.runtimeArtifact.locator,
+    profile: composition.launch.profile,
+    patches: composition.patches.map(({ locator }) => locator),
+    processCwd: composition.launch.processCwd,
+    ...(composition.launch.dshHome === undefined ? {} : { dshHome: composition.launch.dshHome }),
     env: {
       ...structuredClone(configuration.env),
       ...(composition.launch.dshHome === undefined ? {} : { DSH_HOME: composition.launch.dshHome }),

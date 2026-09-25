@@ -22,7 +22,7 @@ only the variable named by `credentialEnv`; the Pi and DeepSeek records name
 
 ## Codex specifics
 
-- Codex 0.153.4 supports only `wire_api = "responses"`. A provider must accept
+- Codex supports only `wire_api = "responses"`. A provider must accept
   Codex's tool and reasoning item shapes.
 - Launch-level config (`features.*`, `web_search`) belongs in the harness
   record's `arguments`; the thread `config` bag does not apply it.

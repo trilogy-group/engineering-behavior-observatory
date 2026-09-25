@@ -62,7 +62,7 @@ import {
 } from "../src/index.js";
 
 const fixture = resolve("test/fixtures/codex/fake-app-server.mjs");
-const contractRoot = resolve("contracts/codex-app-server-0.153.4");
+const contractRoot = resolve("contracts/codex-app-server-0.157.0");
 const reasoningSentinel = "EBO_RAW_REASONING_SENTINEL";
 
 for (const networkAccess of [undefined, true, false]) {
@@ -147,8 +147,8 @@ test("retained 0.150.1 evidence keeps its original normalized dataset", async ()
 
 test("new capture rejects the older runtime declaration before launching", async () => {
   await assert.rejects(captureCodexAppServer({ runId: "fixture", attemptId: "fixture", workspacePath: tmpdir(), evidencePath: tmpdir(), prompt: "fixture",
-    configuration: { ...fakeConfiguration("success"), version: "0.150.1" as typeof CODEX_APP_SERVER_VERSION },
-  }), /requires pinned runtime 0\.153\.4/u);
+    configuration: { ...fakeConfiguration("success"), version: "unsupported" as typeof CODEX_APP_SERVER_VERSION },
+  }), new RegExp(`requires pinned runtime ${CODEX_APP_SERVER_VERSION.replaceAll(".", "\\.")}`, "u"));
 });
 
 for (const mode of ["sandbox-implicit-cwd", "sandbox-cwd-mismatch"]) {
@@ -173,7 +173,7 @@ for (const mode of ["history-paginated", "history-summary", "history-not-loaded"
   });
 }
 
-test("approved existing-auth 0.153.4 native capture smoke", { skip: process.env.EBO_LIVE_CODEX_CAPTURE_SMOKE !== "1" }, async (context) => {
+test("approved existing-auth native capture smoke", { skip: process.env.EBO_LIVE_CODEX_CAPTURE_SMOKE !== "1" }, async (context) => {
   const model = process.env.EBO_LIVE_CODEX_CAPTURE_MODEL;
   assert.ok(model, "Supply an existing authenticated model route.");
   const root = await temporaryRoot();
@@ -191,7 +191,7 @@ test("approved existing-auth 0.153.4 native capture smoke", { skip: process.env.
     assert.equal(capture.gaps.some(({ kind }) => kind === "history-mismatch" || kind === "history-mode-mismatch" || kind === "history-readback"), false, JSON.stringify(capture.gaps));
     assert.equal(capture.gaps.some(({ kind }) => kind === "effort-mismatch" || kind === "sandbox-mismatch"), false, JSON.stringify(capture.gaps));
     const { dataset } = await describeAndValidateCodexDataset(capture);
-    assert.equal(dataset.adapter.id, "ebo-codex-app-server-v0.153.4");
+    assert.equal(dataset.adapter.id, `ebo-codex-app-server-v${CODEX_APP_SERVER_VERSION}`);
     context.diagnostic(JSON.stringify({ runtime: capture.telemetry.runtime.version, terminal: capture.terminalStatus, events: dataset.events.length,
       receipt: capture.telemetry.telemetry.receipt, gaps: capture.gaps }));
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -911,7 +911,7 @@ test("keeps native evidence and the source workspace when post-start packaging f
   }
 });
 
-test("pins the generated contract subset and validates representative 0.153.4 fixtures", async () => {
+test("pins the generated contract subset and validates representative current fixtures", async () => {
   const manifest = JSON.parse(await readFile(join(contractRoot, "manifest.json"), "utf8")) as {
     codexCliVersion: string;
     files: Record<string, string>;
@@ -936,9 +936,9 @@ test("pins the generated contract subset and validates representative 0.153.4 fi
     },
   }), true);
   const start = ajv.compile(JSON.parse(await readFile(join(contractRoot, "schema/v2/ThreadStartParams.json"), "utf8")));
-  assert.equal(start({ model: "fixture", historyMode: "legacy", environments: [] }), true);
+  assert.equal(start({ model: "fixture", historyMode: "legacy", environments: [], daybreakEnabled: true }), true);
   const turn = ajv.compile(JSON.parse(await readFile(join(contractRoot, "schema/v2/TurnStartParams.json"), "utf8")));
-  assert.equal(turn({ threadId: "thread-1", input: [{ type: "text", text: "fixture", text_elements: [] }], environments: [], outputSchema: { type: "object" } }), true);
+  assert.equal(turn({ threadId: "thread-1", input: [{ type: "text", text: "fixture", text_elements: [] }, { type: "image", fileId: "file-fixture" }], environments: [], outputSchema: { type: "object" } }), true);
 });
 
 test("runs one frozen observational queue entry and passes export, corpus, and archive readback", async () => {
@@ -953,7 +953,7 @@ test("runs one frozen observational queue entry and passes export, corpus, and a
       outputRoot: join(corpusRoot, "runs"),
       workspaceRoot: join(fixtureRoot, "workspaces"),
       probeRuntime: async () => ({ path: process.execPath, version: `codex-cli ${CODEX_APP_SERVER_VERSION}` }),
-      executableArgs: [fixture],
+      executableArgs: [fixture, `--codex-version=${CODEX_APP_SERVER_VERSION}`],
     });
     assert.equal(summary.assessmentMode, "observational");
     assert.equal(summary.classification, "completed");
@@ -990,7 +990,7 @@ test("keeps Codex reasoning restricted while removing every portable representat
       outputRoot,
       workspaceRoot: join(root, "workspaces"),
       probeRuntime: async () => ({ path: process.execPath, version: `codex-cli ${CODEX_APP_SERVER_VERSION}` }),
-      executableArgs: [fixture, "--mode=reasoning-evidence"],
+      executableArgs: [fixture, "--mode=reasoning-evidence", `--codex-version=${CODEX_APP_SERVER_VERSION}`],
     });
     const restrictedSession = await readFile(join(summary.bundlePath, "session.jsonl"), "utf8");
     assert.ok(restrictedSession.includes(reasoningSentinel));
@@ -1015,7 +1015,7 @@ test("CLI signals interrupt and finalize the detached Codex child", async () => 
   const root = await temporaryRoot();
   try {
     const executable = join(root, "fake-codex.mjs");
-    writeFileSync(executable, `#!/usr/bin/env node\nif (process.argv.includes("--version")) console.log("codex-cli ${CODEX_APP_SERVER_VERSION}");\nelse { process.argv.push("--mode=ignore-all-interrupts"); await import(${JSON.stringify(pathToFileURL(fixture).href)}); }\n`, { mode: 0o700 });
+    writeFileSync(executable, `#!/usr/bin/env node\nif (process.argv.includes("--version")) console.log("codex-cli ${CODEX_APP_SERVER_VERSION}");\nelse { process.argv.push("--mode=ignore-all-interrupts", "--codex-version=${CODEX_APP_SERVER_VERSION}"); await import(${JSON.stringify(pathToFileURL(fixture).href)}); }\n`, { mode: 0o700 });
     const queueFixture = createQueueFixture(root, executable);
     const outputRoot = join(root, "cli-runs");
     const child = spawn(process.execPath, [
@@ -1082,7 +1082,7 @@ async function runFake(
 function fakeConfiguration(mode: string): CodexAppServerConfiguration {
   return {
     executable: process.execPath,
-    executableArgs: [fixture, `--mode=${mode}`],
+    executableArgs: [fixture, `--mode=${mode}`, `--codex-version=${CODEX_APP_SERVER_VERSION}`],
     version: CODEX_APP_SERVER_VERSION,
     provider: "openai",
     model: "gpt-5.6-sol",
