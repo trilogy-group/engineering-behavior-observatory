@@ -44,3 +44,5 @@ ebo assertions validate <run-bundle-root> <assertion.json> [review.json]
 This command validates contracts and evidence only. It does not run a judge,
 change review state, adjudicate a dispute, aggregate results, or build an
 Atlas.
+
+Atomic claims and explicit workspace binding are described in the [semantic judge contract](semantic-judge.md#atomic-claims-and-evidence-projection). Optional [Jev audits](shadow-audit.md) retain a separate claim review record.

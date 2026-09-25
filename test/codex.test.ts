@@ -829,7 +829,7 @@ test("retained auth failure without an owned turn supports observations and abst
     const judgment = await runRetainedSemanticJudge({ bundleRoot: definition.bundleRoot, observations, request, outputRoot,
       backend: { id: "codex-app-server", version: CODEX_APP_SERVER_VERSION, run: async () => ({ status: "completed", raw: { synthetic: true }, response: { judgment: {
         disposition: "abstained", assessment: null, confidence: null, reason: "No completed turn.", missingEvidenceCapability: null,
-        rationale: "Synthetic fixture.", alternativeExplanation: "No behavioral claim.", citations: [] } } }) } });
+        rationale: "Synthetic fixture.", alternativeExplanation: "No behavioral claim.", claims: [], citations: [] } } }) } });
     assert.equal(judgment.status, "proposed");
     assert.equal(await main(["assertions", "validate", definition.bundleRoot, join(outputRoot, "assertion.json")], () => undefined), 0);
     assert.deepEqual(await readFile(join(definition.bundleRoot, "manifest.json")), before);

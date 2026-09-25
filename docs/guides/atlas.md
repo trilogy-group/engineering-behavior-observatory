@@ -147,3 +147,7 @@ The generator injects synthetic capture streams and fixture review decisions;
 it never calls a model or labels real research. It covers opposite assessments,
 confirmed/disputed/rejected/proposed/abstained/unavailable states, a retry,
 missing observations, an unsupported comparison and hostile text.
+
+## Jev claim audits
+
+Add `shadowAudits: [{audit: "audit.json", reviews: ["review.json"]}]` to the Atlas request to display advisory outcomes and explicit resolutions beside cited evidence. Bindings are validated against the exact assertion digest. These records do not change behavioral scores or human calibration. See the [audit and holdout workflow](../evaluation/shadow-audit.md).

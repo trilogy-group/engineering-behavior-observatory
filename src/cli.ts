@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { auditBehaviorAssertion, shadowDigest, summarizeShadow, validateShadowReview, writeShadowArtifact, type ShadowAudit, type ShadowReview, type ShadowSelection } from "./shadow-audit.js";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
@@ -86,6 +87,10 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo assertions validate <run-bundle-root> <assertion.json> [review.json]
        ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root>
        ebo judge batch <batch.json>
+       ebo shadow run <run-bundle-root> <assertion.json> <audit.json>
+       ebo shadow review <audit.json> <review.json> <retained-review.json>
+       ebo shadow select <sources.json> <selection.json>
+       ebo shadow summarize <sources.json> <summary.json>
        ebo calibration sample <sources.json> <criteria.json> <selection.json>
        ebo calibration packet <selection.json> <output-root>
        ebo calibration inspect <packet.json> <assertion-id> [event-id]
@@ -186,6 +191,8 @@ export function main(
   if (args[0] === "aggregate" && args[1] === "build") {
     return runAggregationCommand(args.slice(2), write);
   }
+
+  if (args[0] === "shadow") return runShadowCommand(args.slice(1), write);
 
   if (args[0] === "atlas") {
     return (async () => {
@@ -1255,4 +1262,50 @@ if (isDirectExecution()) {
     process.stderr.write(`${errorMessage(error)}\n`);
     process.exitCode = 1;
   });
+}
+
+async function runShadowCommand(args: string[], write: (message: string) => void): Promise<number> {
+  try {
+    const [command, first, second, third] = args;
+    if (command === "run" && args.length === 4) {
+      assertCalibrationDestination([first], third);
+      if (existsSync(third)) throw new Error("Shadow output already exists; use a new path.");
+      const controller = new AbortController(); const abort = () => controller.abort();
+      process.on("SIGINT", abort); process.on("SIGTERM", abort);
+      let audit: ShadowAudit;
+      try { audit = await auditBehaviorAssertion(first, readJson(second) as BehaviorAssertion, { signal: controller.signal }); }
+      finally { process.off("SIGINT", abort); process.off("SIGTERM", abort); }
+      writeShadowArtifact(third, audit, [first]);
+      write(`Jev audit: ${audit.results.filter(({ status }) => status === "completed").length}/${audit.results.length} completed; advisory only.\n`);
+      return audit.results.some(({ status }) => status === "failed") ? 1 : 0;
+    }
+    if (command === "review" && args.length === 4) {
+      const audit = readJson(first) as ShadowAudit; const review = readJson(second) as ShadowReview;
+      validateShadowReview(audit, review); writeShadowArtifact(third, review);
+    } else if (command === "select" && args.length === 3) {
+      const source = readJson(first) as { population: ShadowSelection["population"]; sources: Array<{ bundleRoot: string; assertion: string; task: string; harness: string }> };
+      if (!Array.isArray(source.sources) || source.sources.length === 0 || source.sources.length > 4096) throw new Error("Invalid shadow selection sources.");
+      const base = dirname(resolve(first)); const roots: string[] = [];
+      const members = [];
+      for (const entry of source.sources) {
+        const root = resolve(base, entry.bundleRoot); roots.push(root);
+        const assertion = readJson(resolve(base, entry.assertion)) as BehaviorAssertion;
+        await validateRetainedBehaviorAssertion(root, assertion);
+        if (!assertion.judgment.claims?.length) throw new Error("Selection requires explicit atomic claims.");
+        const manifest = readJson(resolve(root, "manifest.json")) as { run: { task: { id: string }; harness: { id: string } } };
+        if (entry.task !== manifest.run.task.id || entry.harness !== manifest.run.harness.id) throw new Error("Selection task/harness must match the retained manifest.");
+        members.push({ assertionDigest: shadowDigest(assertion), task: entry.task, harness: entry.harness });
+      }
+      if (new Set(members.map(({ assertionDigest }) => assertionDigest)).size !== members.length) throw new Error("Duplicate selection assertion.");
+      writeShadowArtifact(second, { schemaVersion: "ebo.shadow-selection/v1", population: source.population, createdAt: new Date().toISOString(), members }, roots);
+    } else if (command === "summarize" && args.length === 3) {
+      const source = readJson(first) as { selection: string; audits: string[]; reviews: string[] };
+      const base = dirname(resolve(first));
+      if (!Array.isArray(source.audits) || !Array.isArray(source.reviews)) throw new Error("Invalid shadow summary sources.");
+      const summary = summarizeShadow(readJson(resolve(base, source.selection)) as ShadowSelection,
+        source.audits.map((path) => readJson(resolve(base, path)) as ShadowAudit), source.reviews.map((path) => readJson(resolve(base, path)) as ShadowReview));
+      writeShadowArtifact(second, summary);
+    } else throw new Error("Usage: ebo shadow <run|review|select|summarize>; see --help.");
+    write("Wrote immutable shadow artifact.\n"); return 0;
+  } catch (error) { write(`${errorMessage(error)}\n`); return 1; }
 }

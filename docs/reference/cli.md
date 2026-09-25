@@ -136,3 +136,14 @@ ebo atlas serve <request.json> [--port <port>]
 
 For preparation and recovery, use the [operator guide](../guides/operator-guide.md).
 For field definitions, use the [reference index](README.md).
+
+## Jev shadow audits
+
+```sh
+ebo shadow run <run-bundle-root> <assertion.json> <audit.json>
+ebo shadow review <audit.json> <review.json> <retained-review.json>
+ebo shadow select <sources.json> <selection.json>
+ebo shadow summarize <sources.json> <summary.json>
+```
+
+See [Jev shadow audits](../evaluation/shadow-audit.md) for source formats, evidence bounds, review attribution and holdout metrics.

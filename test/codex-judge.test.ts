@@ -52,6 +52,10 @@ test("native judge isolates ambient state, retains failures, matches owned turns
       if (result.status === "failed" && ["timeout", "foreign", "late"].includes(prompt)) assert.equal(result.kind, "timeout");
       if (prompt === "late") assert.ok(JSON.stringify(result.raw).includes("turn/completed"), "Late terminal must actually arrive during shutdown grace.");
     }
+    const terminalError = await runCodexSemanticJudge("terminal-error", { ...request, limits: { ...request.limits, maxInputChars: 100000 } });
+    assert.equal(terminalError.status, "failed");
+    if (terminalError.status === "failed") assert.match(terminalError.message, /Provider capacity exhausted/);
+    assert.match(JSON.stringify((terminalError.raw as { diagnostic: string }).diagnostic), /responseStreamDisconnected/);
     const controller = new AbortController();
     const abortTimer = setTimeout(() => controller.abort(), 300);
     const interrupted = await runCodexSemanticJudge("timeout", request, controller.signal);

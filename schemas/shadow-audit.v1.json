@@ -1,0 +1,623 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ebo:schema:shadow-audit:v1",
+  "$defs": {
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim",
+        "evidence",
+        "status",
+        "durationMs"
+      ],
+      "properties": {
+        "claim": {
+          "$ref": "urn:ebo:schema:behavior-assertions:v1#/$defs/claim"
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "eventId",
+              "digest",
+              "content",
+              "truncated",
+              "workspaces"
+            ],
+            "properties": {
+              "eventId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "content": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "workspaces": {
+                "type": "array",
+                "maxItems": 4096,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                }
+              }
+            }
+          }
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "failed"
+          ]
+        },
+        "choice": {
+          "enum": [
+            "supports",
+            "contradicts",
+            "insufficient"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "probabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "supports",
+            "contradicts",
+            "insufficient"
+          ],
+          "properties": {
+            "supports": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "contradicts": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "insufficient": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "durationMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "error": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "request": {},
+        "response": {},
+        "usage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "input_tokens",
+            "output_tokens"
+          ],
+          "properties": {
+            "input_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "output_tokens": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "completed"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "choice",
+              "confidence",
+              "probabilities",
+              "request",
+              "response",
+              "usage"
+            ]
+          },
+          "else": {
+            "required": [
+              "error"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "choice"
+                  ]
+                },
+                {
+                  "required": [
+                    "confidence"
+                  ]
+                },
+                {
+                  "required": [
+                    "probabilities"
+                  ]
+                },
+                {
+                  "required": [
+                    "usage"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "createdAt",
+        "model",
+        "assertionDigest",
+        "runId",
+        "attemptId",
+        "advisory",
+        "results"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "ebo.shadow-audit/v1"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "assertionDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "attemptId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "advisory": {
+          "const": true
+        },
+        "results": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/result"
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "auditDigest",
+        "claimId",
+        "reviewer",
+        "verdict",
+        "cause",
+        "rationale",
+        "reviewedAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "ebo.shadow-review/v1"
+        },
+        "auditDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "claimId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "reviewer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "human",
+                "model"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        },
+        "verdict": {
+          "enum": [
+            "supported",
+            "unsupported",
+            "unresolved"
+          ]
+        },
+        "cause": {
+          "enum": [
+            "none",
+            "citation-gap",
+            "truncation",
+            "judge-error",
+            "jev-error",
+            "workspace-mismatch"
+          ]
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "reviewedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "durationMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "baselineDurationMs": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "createdAt",
+        "population",
+        "members"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "ebo.shadow-selection/v1"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "population": {
+          "enum": [
+            "development",
+            "holdout"
+          ]
+        },
+        "members": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "assertionDigest",
+              "task",
+              "harness"
+            ],
+            "properties": {
+              "assertionDigest": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "task": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "harness": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            }
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "selectionDigest",
+        "population",
+        "tasks",
+        "harnesses",
+        "claims",
+        "completed",
+        "failed",
+        "reviewed",
+        "resolved",
+        "reviewKinds",
+        "flagPrecision",
+        "missedUnsupportedRate",
+        "falseSupportRate",
+        "reviewCoverage",
+        "pairedReviewTime",
+        "causes",
+        "limitations"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "ebo.shadow-summary/v1"
+        },
+        "selectionDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "population": {
+          "enum": [
+            "development",
+            "holdout"
+          ]
+        },
+        "tasks": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "harnesses": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "claims": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reviewed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "resolved": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reviewKinds": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "enum": [
+              "human",
+              "model"
+            ]
+          }
+        },
+        "flagPrecision": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "numerator",
+            "denominator",
+            "value"
+          ],
+          "properties": {
+            "numerator": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "denominator": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "missedUnsupportedRate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "numerator",
+            "denominator",
+            "value"
+          ],
+          "properties": {
+            "numerator": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "denominator": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "falseSupportRate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "numerator",
+            "denominator",
+            "value"
+          ],
+          "properties": {
+            "numerator": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "denominator": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "reviewCoverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "numerator",
+            "denominator",
+            "value"
+          ],
+          "properties": {
+            "numerator": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "denominator": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "pairedReviewTime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pairs",
+            "meanSavedMs"
+          ],
+          "properties": {
+            "pairs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "meanSavedMs": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          }
+        },
+        "causes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/audit"
+    },
+    {
+      "$ref": "#/$defs/review"
+    },
+    {
+      "$ref": "#/$defs/selection"
+    },
+    {
+      "$ref": "#/$defs/summary"
+    }
+  ]
+}

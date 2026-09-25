@@ -1174,6 +1174,7 @@ function loadValidators(): Map<string, ValidateFunction> {
   ajv.addSchema(readSchema("structural-observations.v1.json"));
   ajv.addSchema(readSchema("behavior-assertions.v1.json"));
   ajv.addSchema(readSchema("semantic-judge.v1.json"));
+  ajv.addSchema(readSchema("shadow-audit.v1.json"));
   ajv.addSchema(readSchema("human-calibration.v1.json"));
   ajv.addSchema(readSchema("aggregation.v1.json"));
   ajv.addSchema(readSchema("deepseek-runtime-composition.v1.schema.json"));
@@ -1205,6 +1206,10 @@ function loadValidators(): Map<string, ValidateFunction> {
     ["ebo.behavior-vocabulary/v1", requiredValidator(ajv, "urn:ebo:schema:behavior-assertions:v1#/$defs/vocabulary")],
     ["ebo.behavior-assertion/v1", requiredValidator(ajv, "urn:ebo:schema:behavior-assertions:v1#/$defs/assertion")],
     ["ebo.behavior-review/v1", requiredValidator(ajv, "urn:ebo:schema:behavior-assertions:v1#/$defs/review")],
+    ["ebo.shadow-audit/v1", requiredValidator(ajv, "urn:ebo:schema:shadow-audit:v1#/$defs/audit")],
+    ["ebo.shadow-review/v1", requiredValidator(ajv, "urn:ebo:schema:shadow-audit:v1#/$defs/review")],
+    ["ebo.shadow-selection/v1", requiredValidator(ajv, "urn:ebo:schema:shadow-audit:v1#/$defs/selection")],
+    ["ebo.shadow-summary/v1", requiredValidator(ajv, "urn:ebo:schema:shadow-audit:v1#/$defs/summary")],
     ["ebo.semantic-judge-request/v1", requiredValidator(ajv, "urn:ebo:schema:semantic-judge:v1#/$defs/request")],
     ["ebo.semantic-judge-input/v1", requiredValidator(ajv, "urn:ebo:schema:semantic-judge:v1#/$defs/input")],
     ["ebo.semantic-judgment/v1", requiredValidator(ajv, "urn:ebo:schema:semantic-judge:v1#/$defs/judgment")],

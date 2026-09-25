@@ -41,7 +41,7 @@ The [evaluation reading path](evaluation/README.md) explains how the parts fit:
   [normalization integrity](evaluation/normalization-integrity.md)
 - [Structural observations](evaluation/structural-observations.md)
 - [Behavior assertions](evaluation/behavior-assertions.md) and
-  [semantic judging](evaluation/semantic-judge.md)
+  [semantic judging](evaluation/semantic-judge.md), [Jev shadow audits](evaluation/shadow-audit.md)
 - [Run behavioral evaluation](guides/behavioral-evaluation.md): model-only
   batches, explicit evidence selection, aggregation, and Atlas
 - [Optional human calibration](evaluation/human-calibration.md)
