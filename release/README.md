@@ -5,6 +5,7 @@ For downloads and published artifacts, see
 
 | Version | Changes and verification | Support boundary |
 | :--- | :--- | :--- |
+| [1.1.1](1.1.1/README.md) | Claude Agent SDK patch update to 0.3.282 | [Support boundary](1.0.0/KNOWN_LIMITATIONS.md) |
 | [1.1.0](1.1.0/README.md) | OpenHands Agent Server lifecycle and environment-bound conversation credential | [Support boundary](1.0.0/KNOWN_LIMITATIONS.md) |
 | [1.0.2](1.0.2/README.md) | DeepSeek resettable inactivity window; Codex third-party provider routes; sanitized route examples | [Support boundary](1.0.0/KNOWN_LIMITATIONS.md) |
 | [1.0.1](1.0.1/README.md) | Clarify released Harbor installation and optional human review; reconcile release records | [Support boundary](1.0.0/KNOWN_LIMITATIONS.md) |

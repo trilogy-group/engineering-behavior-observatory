@@ -12,7 +12,7 @@ After [preparing and freezing a queue](../guides/operator-guide.md):
 ebo agent-sdk run <bundle-root> <queue.json> <run-id> <output-root>
 ```
 
-The adapter uses `@anthropic-ai/claude-agent-sdk@0.3.258`. It probes the
+The adapter uses `@anthropic-ai/claude-agent-sdk@0.3.282`. It probes the
 installed SDK/CLI and records version-specific capabilities rather than
 assuming every hook is available. Runtime pins are implementation conditions,
 not assurances that a provider model route is accessible.
