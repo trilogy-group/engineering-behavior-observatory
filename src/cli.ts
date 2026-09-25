@@ -1143,11 +1143,11 @@ async function harborDoctor(write: (message: string) => void): Promise<number> {
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
     const { python } = await adapter.describePrerequisites();
-    const { stdout } = await promisify(execFile)(python, ["-c", "import importlib.metadata as m,os,platform,hashlib,json; from pathlib import Path; p=Path(os.environ.get('SMOLVM_LIB_DIR',''))/'libkrun.dylib'; print(json.dumps({'smol':m.version('smolmachines'),'host':platform.system()+'/'+platform.machine(),'libkrunSha256':hashlib.sha256(p.read_bytes()).hexdigest() if p.is_absolute() and p.is_file() else None}))"], { timeout: 15_000, maxBuffer: 64 * 1024 });
-    const info = JSON.parse(stdout) as { smol: string; host: string; libkrunSha256: string | null };
-    write(`Smol SDK: ${info.smol}; host: ${info.host}; isolated libkrun SHA-256: ${info.libkrunSha256 ?? "missing"}\n`);
+    const { stdout } = await promisify(execFile)(python, ["-c", "import importlib.metadata as m,os,platform,hashlib,json,smol; from pathlib import Path; pkg=Path(smol.__file__).resolve().parent; p=pkg/'libkrun.dylib'; print(json.dumps({'smol':m.version('smolmachines'),'host':platform.system()+'/'+platform.machine(),'bundled':Path(os.environ['SMOLVM_LIB_DIR']).resolve()==pkg,'libkrunSha256':hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None}))"], { timeout: 15_000, maxBuffer: 64 * 1024 });
+    const info = JSON.parse(stdout) as { smol: string; host: string; bundled: boolean; libkrunSha256: string | null };
+    write(`Smol SDK: ${info.smol}; host: ${info.host}; bundled libkrun SHA-256: ${info.libkrunSha256 ?? "missing"}; bundled library selected: ${info.bundled}\n`);
     write("This checks installation only. Environment preparation verifies the frozen library/image bindings; live conformance is separate.\n");
-    return info.smol === "1.15.0" && info.host === "Darwin/arm64" && info.libkrunSha256 !== null ? 0 : 1;
+    return info.smol === "1.18.2" && info.host === "Darwin/arm64" && info.bundled && info.libkrunSha256 !== null ? 0 : 1;
   } catch (error) {
     write(`${error instanceof Error ? error.message : "Harbor adapter is unavailable."}\n`);
     return 1;

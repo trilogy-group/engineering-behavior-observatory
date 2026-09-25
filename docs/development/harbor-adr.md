@@ -2,9 +2,8 @@
 
 Harbor 0.22.0 owns task schema 1.4, content hashing, instruction composition,
 task setup, multi-step policy, verification, locks and cleanup. Smol Python SDK
-1.15.0 supplies the microVM provider, using an isolated patched libkrun on Apple
-Silicon. EBO owns study
-governance and source-native trajectory capture. The boundary is an official
+1.18.2 supplies the microVM provider and bundled libkrun on Apple Silicon.
+EBO owns study governance and source-native trajectory capture. The boundary is an official
 Harbor `BaseAgent` extension launched by `Trial.create`, not a copy of its loop.
 
 The TypeScript worker runs inside the task environment. A host SDK pointed at a
@@ -44,7 +43,6 @@ fixture locally, then checks two isolated branches and an unchanged parent:
 
 ```sh
 EBO_HARBOR_PYTHON="$PWD/.harbor-venv/bin/python" \
-SMOLVM_LIB_DIR="/path/to/isolated-patched-libraries" \
 EBO_SMOL_LOCAL_SETUP_TEST=1 node --test dist/test/harbor-smol.test.js
 ```
 
@@ -52,7 +50,6 @@ The live gate needs an approved registry-accessible arm64 execution image:
 
 ```sh
 EBO_HARBOR_PYTHON="$PWD/.harbor-venv/bin/python" \
-SMOLVM_LIB_DIR="/path/to/isolated-patched-libraries" \
 EBO_HARBOR_RUNTIME=.ebo/smol-runtime/worker.tgz \
 EBO_SMOL_IMAGE="<registry/execution-image@sha256:platform-digest>" \
 EBO_SMOL_LIBKRUN_SHA256="<library digest>" \
@@ -86,11 +83,10 @@ branches. The manifest identity includes this choice. Public images need contain
 no repository or task data. Per-step setup remains Harbor-owned, and worker
 credentials are injected only into attempt children.
 
-The disk-capacity patch passes the direct and separate-process Smol branching
-gate. Public-egress image-backed execution still needs its full live gate.
-No-network image import and allowlist/virtio-net are not qualified; the latter
-crashed with SIGILL during a localhost-registry probe. Reject these policies
-instead of substituting public egress. Harbor 0.23 and Smol 1.16 are deferred.
+Smol's bundled disk-capacity fix must pass the direct and separate-process
+branching gate. Public-egress image-backed execution also needs its full live gate.
+No-network image import and allowlist/virtio-net are not qualified. Reject these
+policies instead of substituting public egress. Harbor 0.23 remains deferred.
 
 Native step bundles remain usable before behavioral assessment. Harbor rewards
 are retained as source outcomes; structural extractors and judges do not inherit

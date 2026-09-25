@@ -5,6 +5,7 @@ For downloads and published artifacts, see
 
 | Version | Changes and verification | Support boundary |
 | :--- | :--- | :--- |
+| [1.1.3](1.1.3/README.md) | Smol 1.18.2 bundled libkrun and Harbor 0.22 conformance | [Harbor runtime guide](../docs/guides/harbor-tasks.md) |
 | [1.1.2](1.1.2/README.md) | Codex, Pi, and DeepSeek Harness runtime updates | [Support boundary](1.0.0/KNOWN_LIMITATIONS.md) |
 | [1.1.1](1.1.1/README.md) | Claude Agent SDK patch update to 0.3.282 | [Support boundary](1.0.0/KNOWN_LIMITATIONS.md) |
 | [1.1.0](1.1.0/README.md) | OpenHands Agent Server lifecycle and environment-bound conversation credential | [Support boundary](1.0.0/KNOWN_LIMITATIONS.md) |

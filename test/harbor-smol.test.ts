@@ -11,7 +11,7 @@ test("Smol binding uses official Harbor models and rejects unsupported policies 
   const root = mkdtempSync(join(tmpdir(), "ebo-smol-contract-"));
   writeFileSync(join(root, "ebo_runtime.py"), HARBOR_TRIAL_SCRIPT);
   const result = spawnSync(python!, ["-c", String.raw`
-import asyncio, fcntl, json, os
+import asyncio, fcntl, hashlib, json, os, smol
 from pathlib import Path
 from unittest.mock import patch, AsyncMock
 from types import SimpleNamespace
@@ -49,6 +49,13 @@ binding = {'agent': image, 'graders': {'one': image, 'two': image}}
 manifest = {'schemaVersion': 'ebo.smol-environments/v1', 'platform': 'linux/arm64',
     'libkrunSha256': 'd'*64, 'runtimeArchiveDigest': 'e'*64, 'tasks': {'task': binding}}
 e.validate_environment_manifest(manifest)
+bundled = Path(smol.__file__).resolve().parent / 'libkrun.dylib'
+manifest['libkrunSha256'] = hashlib.sha256(bundled.read_bytes()).hexdigest()
+assert e.runtime_provenance(manifest)['libkrunSha256'] == manifest['libkrunSha256']
+with patch.dict(os.environ, {'SMOLVM_LIB_DIR': str(root)}):
+    try: e.runtime_provenance(manifest)
+    except ValueError as exc: assert 'bundled libkrun' in str(exc)
+    else: raise AssertionError('An isolated library override must be rejected')
 before = (task/'task.toml').read_bytes()
 record = e.derive_task(task, root/'derived', binding, True)
 assert (task/'task.toml').read_bytes() == before
@@ -98,6 +105,14 @@ async def check():
     assert [e.env_identity(env)['role'] for env in envs] == ['agent', 'grader', 'grader']
     assert [e.env_identity(env)['context'] for env in envs] == ['environment', 'steps/one/tests', 'steps/two/tests']
     agent = envs[0]
+    assert len('harbor-' + agent.session_id + '-' + 'f'*8) <= 63
+    with patch.object(e.SmolEnvironment, 'download_dir', new_callable=AsyncMock) as download:
+        await agent.download_dir(source_dir='/remote', target_dir=root)
+        download.assert_awaited_once_with('/remote', root)
+    grader = envs[1]
+    with patch.object(grader, 'upload_dir', new_callable=AsyncMock) as upload:
+        await grader._upload_environment_dir_after_start()
+        upload.assert_awaited_once_with(grader.environment_dir, '/tests')
     with patch.object(e.SmolEnvironment, '_upload_environment_dir_after_start', new_callable=AsyncMock) as upload:
         agent.ebo_context_prepared = True
         await agent._upload_environment_dir_after_start()
@@ -192,7 +207,7 @@ async def check():
     except ValueError as exc: assert 'never broadened' in str(exc)
     else: raise AssertionError('Unsupported policy must fail')
 asyncio.run(check())
-print('Harbor 0.22 model/Smol 1.15 boundary: passed')
+print(f'Harbor {e.HARBOR_VERSION} model/Smol {e.SMOL_VERSION} boundary: passed')
 `], { cwd: root, encoding: "utf8", timeout: 30_000 });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stdout, /boundary: passed/);

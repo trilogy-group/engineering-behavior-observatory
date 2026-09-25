@@ -13,14 +13,14 @@ separate control runtime with Python 3.14:
 
 ```sh
 python3 -m venv .harbor-venv
-.harbor-venv/bin/pip install 'smolmachines[harbor]==1.15.0' harbor==0.22.0
+.harbor-venv/bin/pip install 'smolmachines[harbor]==1.18.2' harbor==0.22.0
 .harbor-venv/bin/pip check
 export EBO_HARBOR_PYTHON="$PWD/.harbor-venv/bin/python"
-export SMOLVM_LIB_DIR="/absolute/path/to/isolated-patched-libraries"
+unset SMOLVM_LIB_DIR
 ebo harbor doctor
 ```
 
-Keep the virtual environment and the patched libraries in a durable location,
+Keep the virtual environment in a durable location,
 not under `/tmp`. Temporary-directory cleanup can remove a venv's `pyvenv.cfg`
 without removing its packages, after which the interpreter silently stops
 resolving the environment and every Harbor command fails with a misleading
@@ -28,15 +28,23 @@ resolving the environment and every Harbor command fails with a misleading
 `EBO_HARBOR_PYTHON` at a path that survives reboots and long unattended runs.
 
 A frozen task whose snapshot fails content verification reports
-`Harbor task status: changed`. Confirm `EBO_HARBOR_PYTHON` and `SMOLVM_LIB_DIR`
+`Harbor task status: changed`. Confirm `EBO_HARBOR_PYTHON`
 are exported before assuming the snapshot actually changed.
 
-The current runtime profile targets Apple Silicon macOS with the isolated
-libkrun disk-capacity patch. The environment manifest pins that library's
-SHA-256. Do not replace system libraries. Smol 1.16 and Harbor 0.23 are deferred.
+The current runtime profile targets Apple Silicon macOS with Smol's bundled
+libkrun. The environment manifest pins that library's SHA-256. Do not override
+`SMOLVM_LIB_DIR`. Harbor 0.23 remains outside this qualified profile.
 Docker is used only to build images, not to execute tasks or graders.
 `local-fs-test` supports preparation tests only; old Docker queues remain
 readable but must be explicitly recompiled as new Smol conditions to run.
+
+The worker runtime's `environmentKeys` allowlist passes selected host values as
+plaintext into the attempt child. Keep it minimal: an agent with shell access
+inside the guest can read those values. Smol 1.18 adds host-side credential
+substitution for HTTPS headers, but its current Python `MachineConfig` does not
+expose that binding. EBO does not claim host-held credentials for this SDK path.
+Use a separately approved route for experiments that require that boundary;
+gateway configuration belongs to the operator, not to a frozen task or EBO.
 
 ## Prepare, review and freeze
 
@@ -179,7 +187,7 @@ Use `localSetup` to prepare a private local parent from that image.
   "schemaVersion": "ebo.smol-environments/v1",
   "platform": "linux/arm64",
   "runtimeArchiveDigest": "<worker.tgz SHA-256>",
-  "libkrunSha256": "<isolated libkrun.dylib SHA-256>",
+  "libkrunSha256": "<bundled libkrun.dylib SHA-256>",
   "tasks": {
     "<task-source-id>": {
       "agent": {
@@ -231,7 +239,8 @@ steps into this script and review the new frozen task.
 Separate grader bindings may use their own `localSetup`, relative to Harbor's
 resolved grader build context. The agent receives only `environment/`, never
 the task root, hidden solutions, or separate grader tests. Harbor's per-step
-setup still runs in each attempt at its normal stage.
+setup still runs in each attempt at its normal stage. Verifier files enter
+`/tests` in the grader child after branching, not in the shared parent.
 
 The public image contains runtime software only. Repository files, prepared
 parents, branch disks and trajectories stay on this computer. Registry privacy
@@ -292,10 +301,10 @@ deletion does not guarantee that a warm child remains recoverable. The runner
 never turns a missing parent or a branch-chain limit into a cold attempt.
 Drain and restart preparation if the runtime exhausts its branch chain.
 
-This patched runtime currently accepts public egress only. No-network image
-import is unqualified, and an explicit localhost allowlist caused a virtio-net
-SIGILL during conformance. Such policies fail before creation rather than being
-broadened. Host-expanded task environment variables, GPU/TPU, task MCP services,
+This runtime profile currently accepts public egress only. No-network image
+import and allowlist networking remain unqualified. Such policies fail before
+creation rather than being broadened. Host-expanded task environment variables,
+GPU/TPU, task MCP services,
 Compose, Cloud and other platforms are also rejected. Worker credential keys
 remain the supported injection path. The full image-backed trial gate must pass
 before treating this integration as operationally qualified.

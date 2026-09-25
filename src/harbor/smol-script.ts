@@ -12,7 +12,7 @@ from harbor.models.task.verifier_mode import resolve_effective_verifier_env_conf
 from harbor.publisher.packager import Packager
 from harbor.environments.factory import EnvironmentFactory
 
-SMOL_VERSION = '1.15.0'
+SMOL_VERSION = '1.18.2'
 HARBOR_VERSION = '0.22.0'
 
 def json_write(path, value):
@@ -55,15 +55,19 @@ async def boot_identity(machine):
 def runtime_provenance(manifest):
     versions = {name: importlib.metadata.version(name) for name in ('smolmachines', 'harbor')}
     if versions != {'smolmachines': SMOL_VERSION, 'harbor': HARBOR_VERSION}:
-        raise ValueError('Requires smolmachines==1.15.0 and harbor==0.22.0: ' + str(versions))
+        raise ValueError('Requires smolmachines==1.18.2 and harbor==0.22.0: ' + str(versions))
     if platform.system() != 'Darwin' or platform.machine() != 'arm64':
-        raise ValueError('This patched Smol runtime is qualified only on Apple Silicon macOS')
-    library = Path(os.environ.get('SMOLVM_LIB_DIR', '')) / 'libkrun.dylib'
-    if not library.is_absolute() or not library.is_file():
-        raise ValueError('Set SMOLVM_LIB_DIR to the isolated patched library directory')
+        raise ValueError('This Smol runtime is qualified only on Apple Silicon macOS')
+    import smol
+    package = Path(smol.__file__).resolve().parent
+    if Path(os.environ['SMOLVM_LIB_DIR']).resolve() != package:
+        raise ValueError('Smol must use its bundled libkrun; unset SMOLVM_LIB_DIR override')
+    library = package / 'libkrun.dylib'
+    if not library.is_file():
+        raise ValueError('Smol bundled libkrun is missing')
     digest = hashlib.sha256(library.read_bytes()).hexdigest()
     if digest != manifest['libkrunSha256']:
-        raise ValueError('Patched libkrun digest differs from the frozen environment condition')
+        raise ValueError('Bundled libkrun digest differs from the frozen environment condition')
     return {**versions, 'libkrunSha256': digest, 'library': str(library),
             'python': platform.python_version(), 'host': platform.node(), 'platform': 'linux/arm64'}
 
@@ -151,7 +155,7 @@ def env_identity(env):
     if not config.get('workdir') or config['workdir'] == '/':
         raise ValueError('Declare an absolute non-root environment workdir')
     if env.network_policy.network_mode.value != 'public':
-        raise ValueError('This isolated patched runtime currently qualifies public egress only; no-network image import and allowlist networking require separate conformance. Policy is never broadened.')
+        raise ValueError('This Smol profile qualifies public egress only; no-network image import and allowlist networking require separate conformance. Policy is never broadened.')
     role = 'agent' if env.environment_dir.name == 'environment' else 'grader'
     context = str(Path('steps', env.environment_dir.parent.name, 'tests')) if env.environment_dir.parent.parent.name == 'steps' else env.environment_dir.name
     return {'role': role, 'context': context, 'environmentId': env.environment_id, 'configuration': config,
@@ -166,6 +170,8 @@ class OwnedSmolEnvironment(SmolEnvironment):
         self.ebo_context_prepared = False
         self.ebo_runtime = ebo_runtime
         super().__init__(*args, target='local', auto_checkpoint=False, fork_batch_window_ms=0, **kwargs)
+        # Smol includes session_id in the guest hostname; keep it below Linux's 64-byte limit.
+        self.session_id = hashlib.sha256(self.session_id.encode()).hexdigest()[:24]
 
     def event(self, state, **fields):
         if self.ebo_events:
@@ -210,13 +216,17 @@ class OwnedSmolEnvironment(SmolEnvironment):
                    durationSeconds=time.monotonic()-started, fingerprint=key)
 
     async def _upload_environment_dir_after_start(self):
-        # Local setup already materialized this context before branching.
-        if not self.ebo_context_prepared:
+        if self.environment_dir.name == 'tests':
+            # Harbor expects separate-verifier images to contain /tests.
+            # This reusable image receives the hidden tests only in the grader child.
+            await self.upload_dir(self.environment_dir, '/tests')
+        elif not self.ebo_context_prepared:
+            # Local setup already materialized the agent context before branching.
             await super()._upload_environment_dir_after_start()
 
-    async def download_dir(self, source_path, target_path):
+    async def download_dir(self, source_dir, target_dir):
         try:
-            await super().download_dir(source_path, target_path)
+            await super().download_dir(source_dir, target_dir)
         except BaseException:
             self.ebo_transfer_failed = True
             raise

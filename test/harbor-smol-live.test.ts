@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { spawn } from "node:child_process";
-import { buildCorpusIndex, createHarborAdapter, prepareHarborAdmission, preAdmissionDigestOf, admitHarborTask, freezeHarborTask, compileHarborRunQueue, runHarborBackedQueueEntry, digestBytes, createRetainedBehaviorEvidence, createPortableRunBundleExport, readPortableRunBundleExport } from "../src/index.js";
+import { buildCorpusIndex, createHarborAdapter, prepareHarborAdmission, preAdmissionDigestOf, admitHarborTask, freezeHarborTask, compileHarborRunQueue, runHarborBackedQueueEntry, digestBytes, createRetainedBehaviorEvidence, createPortableRunBundleExport, readPortableRunBundleExport, PINNED_PI_SDK_VERSION } from "../src/index.js";
 
 const runtimeArchive = process.env.EBO_HARBOR_RUNTIME;
 const image = process.env.EBO_SMOL_IMAGE;
@@ -53,6 +53,7 @@ name = "two"
       put(join(study, "governance/reviews/harbor", id + ".json"), JSON.stringify({ schemaVersion: "ebo.harbor-review/v1", taskSourceId: id, preAdmissionDigest: preAdmissionDigestOf(proposal.record), decision: "admitted", reviewedAt: "2026-09-13T00:00:00.000Z", reviewedBy: "deterministic-test" }));
       await admitHarborTask(study, id, { adapter }); await freezeHarborTask(study, id, { adapter });
       const configs = Object.fromEntries(["model", "harness", "limits", "tools", "capture"].map(name => [name, JSON.parse(readFileSync(resolve("test/fixtures/pi/configs", name + ".json"), "utf8"))]));
+      configs.harness.version = PINNED_PI_SDK_VERSION;
       configs.model.baseUrl = "http://127.0.0.1:18881/v1";
       const archive = { locator: "config/worker.tgz", digest: digestBytes(readFileSync(runtimeArchive!)) };
       mkdirSync(join(study, "config"), { recursive: true });
