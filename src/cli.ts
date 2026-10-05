@@ -21,6 +21,7 @@ import {
 import { runAgentSdkQueueEntry } from "./agent-sdk-runner.js";
 import { validateRetainedBehaviorAssertion, type BehaviorAssertion, type BehaviorReview } from "./behavior-assertions.js";
 import { runCodexQueueEntry } from "./codex-run.js";
+import { runDevinQueueEntry } from "./devin-run.js";
 import { runCursorSdkQueueEntry } from "./cursor-sdk-runner.js";
 import { runPiQueueEntry } from "./pi.js";
 import { createPortableRunBundleExport, type PortableExportPolicy } from "./exports.js";
@@ -69,6 +70,7 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo harbor <inspect|prepare|admit|freeze|status|doctor|compile|convert-legacy|environment|run> ...
        ebo agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
        ebo codex run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
+       ebo devin run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
        ebo cursor run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
        ebo pi run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
        ebo export create <run-bundle-root> <policy.json> <export-root>
@@ -151,6 +153,10 @@ export function main(
 
   if (args[0] === "cursor" && args[1] === "run") {
     return runCursorSdkCommand(args.slice(2), write);
+  }
+
+  if (args[0] === "devin" && args[1] === "run") {
+    return runDevinCommand(args.slice(2), write);
   }
 
   if (args[0] === "pi" && args[1] === "run") {
@@ -745,6 +751,53 @@ async function runCodexCommand(
   process.on("SIGTERM", abort);
   try {
     const summary = await runCodexQueueEntry({
+      bundleRoot,
+      queuePath,
+      runId,
+      outputRoot,
+      signal: controller.signal,
+      ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+    });
+    write(`${canonicalizeMetadata(summary)}\n`);
+    return 0;
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  } finally {
+    process.off("SIGINT", abort);
+    process.off("SIGTERM", abort);
+  }
+}
+
+async function runDevinCommand(
+  args: string[],
+  write: (message: string) => void,
+): Promise<number> {
+  const commandUsage = "Usage: ebo devin run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]\n";
+  const positional: string[] = [];
+  let workspaceRoot: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === "--workspace-root") {
+      const value = args[++index];
+      if (value === undefined || value.startsWith("--")) {
+        write(commandUsage);
+        return 1;
+      }
+      workspaceRoot = value;
+    } else positional.push(args[index]!);
+  }
+  const [bundleRoot, queuePath, runId, outputRoot] = positional;
+  if (bundleRoot === undefined || queuePath === undefined || runId === undefined
+      || outputRoot === undefined || positional.length !== 4) {
+    write(commandUsage);
+    return 1;
+  }
+  const controller = new AbortController();
+  const abort = (): void => controller.abort();
+  process.on("SIGINT", abort);
+  process.on("SIGTERM", abort);
+  try {
+    const summary = await runDevinQueueEntry({
       bundleRoot,
       queuePath,
       runId,

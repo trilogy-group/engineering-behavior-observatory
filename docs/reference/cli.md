@@ -59,6 +59,7 @@ Execute one selected frozen entry. Use the matching harness configuration and au
 ```sh
 ebo agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 ebo codex run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
+ebo devin run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 ebo cursor run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 ebo pi run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 ```

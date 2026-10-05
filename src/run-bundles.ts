@@ -927,7 +927,7 @@ function nativeRecordSummary(records: unknown[]): { hookNames: string[]; session
     for (const sessionId of [
       record.sessionId,
       record.session_id,
-      record.schemaVersion === "ebo.protocol-observation/v1" && record.source === "codex-app-server"
+      record.schemaVersion === "ebo.protocol-observation/v1" && (record.source === "codex-app-server" || record.source === "devin-cli")
         ? record.sourceIdentity : undefined,
       isRecord(record.message) ? record.message.session_id : undefined,
     ]) {

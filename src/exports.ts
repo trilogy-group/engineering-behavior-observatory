@@ -132,6 +132,7 @@ const HIDDEN_FIELDS = new Set([
   "thoughtsignature",
 ]);
 const CODEX_REASONING_DELTA_METHOD = "item/reasoning/textDelta";
+const DEVIN_THOUGHT_UPDATE = "agent_thought_chunk";
 const CODEX_REASONING_CONTENT_FIELDS = new Set(["content", "delta", "encryptedcontent", "summary", "text"]);
 const CURSOR_REASONING_TYPES = new Set(["thinking", "thinkingdelta", "thinkingcompleted", "thinkingmessage"]);
 const PI_PRIVATE_CONTENT_TYPES = new Set([
@@ -631,7 +632,46 @@ function stripNativeReasoning(
   kind: PortableKind | undefined,
   counts: Map<TransformationAction, number>,
 ): unknown {
-  return stripPiReasoning(stripCodexReasoning(value, kind, counts), kind, counts);
+  return stripDevinReasoning(stripPiReasoning(stripCodexReasoning(value, kind, counts), kind, counts), kind, counts);
+}
+
+/** Devin ACP `agent_thought_chunk` updates carry hidden reasoning; drop their content and any raw frame copy. */
+function stripDevinReasoning(
+  value: unknown,
+  kind: PortableKind | undefined,
+  counts: Map<TransformationAction, number>,
+): unknown {
+  if (kind !== "session") return value;
+  if (Array.isArray(value)) return value.map((entry) => stripDevinReasoning(entry, kind, counts));
+  if (!isRecord(value)) return value;
+  const thought = value.sessionUpdate === DEVIN_THOUGHT_UPDATE;
+  const output: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (thought && key === "content") {
+      increment(counts, "removed-field");
+      continue;
+    }
+    if (key === "raw" && typeof entry === "string" && rawContainsDevinReasoning(entry)) {
+      increment(counts, "removed-field");
+      continue;
+    }
+    output[key] = stripDevinReasoning(entry, kind, counts);
+  }
+  return output;
+}
+
+function containsDevinReasoning(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsDevinReasoning);
+  if (!isRecord(value)) return false;
+  return value.sessionUpdate === DEVIN_THOUGHT_UPDATE || Object.values(value).some(containsDevinReasoning);
+}
+
+function rawContainsDevinReasoning(value: string): boolean {
+  try {
+    return containsDevinReasoning(JSON.parse(value) as unknown);
+  } catch {
+    return false;
+  }
 }
 
 function stripPiReasoning(
@@ -772,6 +812,7 @@ function scanPortableTree(
       ["hidden content field", /"(?:chain[_-]?of[_-]?thought|extended[_-]?thinking|hidden[_-]?reasoning|encrypted[_-]?(?:reasoning|thinking)|reasoning(?:[_-]?(?:content|details|signature))?|thinking(?:[_-]?(?:content|signature))?|text[_-]?signature|thought[_-]?signature|raw[_-]?(?:api|request|response)[_-]?body)"\s*:/iu.test(text)],
       ["Codex reasoning content", containsCodexReasoningContent(text, mediaType)],
       ["Pi private reasoning content", containsPiReasoningContent(text, mediaType)],
+      ["Devin thought content", containsDevinReasoningContent(text, mediaType)],
     ].find(([, matched]) => matched);
     if (failure !== undefined) {
       resetPatterns();
@@ -806,6 +847,29 @@ function containsCodexReasoningContent(text: string, mediaType: string): boolean
       valueContainsCodexReasoningContent(parseJson(Buffer.from(line), "Portable JSONL reasoning scan")));
   }
   return false;
+}
+
+function containsDevinReasoningContent(text: string, mediaType: string): boolean {
+  if (mediaType === "application/json") return valueContainsDevinReasoningContent(parseJson(Buffer.from(text), "Portable JSON Devin reasoning scan"));
+  if (mediaType === "application/x-ndjson") return text.split(/\r?\n/gu).filter(Boolean).some((line) =>
+    valueContainsDevinReasoningContent(parseJson(Buffer.from(line), "Portable JSONL Devin reasoning scan")));
+  return false;
+}
+
+function valueContainsDevinReasoningContent(value: unknown): boolean {
+  if (typeof value === "string") {
+    const trimmed = value.trimStart();
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+    try {
+      return valueContainsDevinReasoningContent(JSON.parse(trimmed) as unknown);
+    } catch {
+      return false;
+    }
+  }
+  if (Array.isArray(value)) return value.some(valueContainsDevinReasoningContent);
+  if (!isRecord(value)) return false;
+  if (value.sessionUpdate === DEVIN_THOUGHT_UPDATE && "content" in value) return true;
+  return Object.values(value).some(valueContainsDevinReasoningContent);
 }
 
 function valueContainsCodexReasoningContent(value: unknown): boolean {
