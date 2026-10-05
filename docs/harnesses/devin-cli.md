@@ -150,6 +150,21 @@ content.
   No verified endpoint returns tool calls or an ordered trajectory, and CLI/ACP
   sessions authenticate with a different credential than the Cloud API.
 
+## Approved live smoke
+
+The live smoke never runs by default. It needs an already authenticated
+`WINDSURF_API_KEY` in the environment, the pinned CLI on `PATH` (or
+`EBO_LIVE_DEVIN_EXECUTABLE`), and an explicit opt-in:
+
+```sh
+EBO_LIVE_DEVIN_CAPTURE_SMOKE=1 \
+  node --test --test-name-pattern='approved existing-auth' dist/test/devin.test.js
+```
+
+It creates one synthetic file through a real `devin acp` turn, requires the
+native `end_turn` response, an isolated user configuration, no capture gaps,
+and asserts that the credential value never appears in retained evidence.
+
 ## Known limits
 
 - The CLI executes tools locally with the user's permissions; the attempt

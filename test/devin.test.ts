@@ -756,3 +756,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function temporaryRoot(): Promise<string> {
   return mkdtemp(join(tmpdir(), "ebo-devin-test-"));
 }
+
+test("approved existing-auth live Devin ACP capture smoke", { skip: process.env.EBO_LIVE_DEVIN_CAPTURE_SMOKE !== "1" }, async (context) => {
+  assert.ok(process.env.WINDSURF_API_KEY, "Supply WINDSURF_API_KEY for the live Devin CLI route.");
+  const executable = process.env.EBO_LIVE_DEVIN_EXECUTABLE ?? "devin";
+  const model = process.env.EBO_LIVE_DEVIN_MODEL ?? "swe-2-high";
+  const root = await temporaryRoot();
+  try {
+    const workspace = join(root, "workspace");
+    await mkdir(workspace);
+    const capture = await captureDevinCli({
+      runId: "synthetic-live-capture", attemptId: "synthetic-live-capture-1", workspacePath: workspace,
+      prompt: "Synthetic test only. Run the shell command `printf 'EBO_SYNTHETIC_CAPTURE_OK\\n' > capture-proof.txt` in the current directory, then reply with exactly DONE. Do nothing else.",
+      configuration: { executable, version: DEVIN_CLI_VERSION, model, mode: "accept-edits", permissionDecision: "allow-once", telemetry: { signals: ["logs", "metrics"] } },
+      evidencePath: join(root, "session.jsonl"), stderrPath: join(root, "stderr.log"),
+      signal: AbortSignal.timeout(120_000), shutdownGraceMs: 3000,
+    });
+    assert.equal(capture.terminalStatus, "completed", JSON.stringify(capture.gaps));
+    assert.equal(capture.terminal?.stopReason, "end_turn");
+    assert.equal(await readFile(join(workspace, "capture-proof.txt"), "utf8"), "EBO_SYNTHETIC_CAPTURE_OK\n");
+    assert.equal(capture.telemetry.runtime.version, DEVIN_CLI_VERSION);
+    assert.equal(capture.telemetry.runtime.userConfiguration, "isolated");
+    assert.deepEqual(capture.gaps, []);
+    const evidence = await readFile(join(root, "session.jsonl"), "utf8");
+    assert.equal(evidence.includes(process.env.WINDSURF_API_KEY), false, "Credential values must never reach retained evidence.");
+    const { dataset } = await describeAndValidateDevinDataset(capture);
+    const terminalTool = dataset.events.find((event) => event.family === "tool" && event.phase === "after");
+    assert.ok(terminalTool, "The live run must normalize a terminal tool event.");
+    assert.equal(terminalTool.attributes.exitCode, 0);
+    assert.ok(dataset.events.some((event) => event.family === "outcome" && event.attributes.stopReason === "end_turn"));
+    context.diagnostic(JSON.stringify({ runtime: capture.telemetry.runtime.version, terminal: capture.terminalStatus, events: dataset.events.length,
+      receipt: capture.telemetry.telemetry.receipt, gaps: capture.gaps }));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
