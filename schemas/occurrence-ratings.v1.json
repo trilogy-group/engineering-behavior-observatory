@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ebo:schema:occurrence-ratings:v1",
+  "$defs": {
+    "identifier": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "probabilities": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 } },
+    "answer": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "choice", "probabilities", "confidence"],
+          "properties": { "type": { "const": "choice" }, "choice": { "type": "string" }, "probabilities": { "$ref": "#/$defs/probabilities" }, "confidence": { "type": "number", "minimum": 0, "maximum": 1 } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "noul"],
+          "properties": { "type": { "const": "noul" }, "noul": { "type": "number", "minimum": 0, "maximum": 1 } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "score", "probabilities", "confidence"],
+          "properties": { "type": { "const": "score" }, "score": { "type": "number", "minimum": 0 }, "probabilities": { "$ref": "#/$defs/probabilities" }, "confidence": { "type": "number", "minimum": 0, "maximum": 1 } }
+        }
+      ]
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "provider", "requestedModel", "request", "status", "startedAt", "durationMs", "attempts"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.decision-record/v1" },
+        "provider": { "enum": ["typesafe", "fireworks"] },
+        "requestedModel": { "$ref": "#/$defs/identifier" },
+        "model": { "$ref": "#/$defs/identifier" },
+        "request": {
+          "type": "object", "additionalProperties": false, "required": ["model", "state", "questions"],
+          "properties": { "model": { "type": "string" }, "state": {}, "questions": { "type": "object" } }
+        },
+        "status": { "enum": ["completed", "failed"] },
+        "answers": { "type": "object", "additionalProperties": { "$ref": "#/$defs/answer" } },
+        "usage": {
+          "type": "object", "additionalProperties": false, "required": ["inputTokens", "outputTokens"],
+          "properties": { "inputTokens": { "type": "integer", "minimum": 0 }, "outputTokens": { "type": "integer", "minimum": 0 }, "cachedInputTokens": { "type": "integer", "minimum": 0 } }
+        },
+        "response": {},
+        "failedResponses": {
+          "type": "array", "maxItems": 16,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["attempt", "status", "body"],
+            "properties": { "attempt": { "type": "integer", "minimum": 1 }, "status": { "type": "integer", "minimum": 100, "maximum": 599 }, "body": { "type": "string", "maxLength": 4096 } }
+          }
+        },
+        "error": { "type": "string", "maxLength": 4096 },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "serverProcessingTime": { "type": "string", "maxLength": 64 },
+        "attempts": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "rating": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["occurrenceId", "occurrenceType", "questionId", "source", "label", "accepted"],
+      "properties": {
+        "occurrenceId": { "$ref": "#/$defs/identifier" },
+        "occurrenceType": { "enum": ["failure-response", "validation-run", "source-change", "repeated-operation", "compaction", "delegation"] },
+        "questionId": { "$ref": "#/$defs/identifier" },
+        "source": { "enum": ["model", "rule"] },
+        "label": { "$ref": "#/$defs/identifier" },
+        "answer": { "$ref": "#/$defs/answer" },
+        "accepted": { "type": "boolean" },
+        "decision": { "type": "integer", "minimum": 0 },
+        "rule": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "ratings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "runId", "attemptId", "observationSetDigest", "datasetDigest", "questionSetVersion", "provider", "requestedModel", "policy", "createdAt", "coverage", "ratings", "decisions"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.occurrence-ratings/v1" },
+        "runId": { "$ref": "#/$defs/identifier" },
+        "attemptId": { "$ref": "#/$defs/identifier" },
+        "observationSetDigest": { "$ref": "#/$defs/digest" },
+        "datasetDigest": { "$ref": "#/$defs/digest" },
+        "questionSetVersion": { "const": "1.0.0" },
+        "provider": { "enum": ["typesafe", "fireworks"] },
+        "requestedModel": { "$ref": "#/$defs/identifier" },
+        "policy": {
+          "type": "object", "additionalProperties": false, "required": ["choiceConfidence", "noulMargin"],
+          "properties": { "choiceConfidence": { "type": "number", "minimum": 0, "maximum": 1 }, "noulMargin": { "type": "number", "minimum": 0, "maximum": 0.5 } }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "coverage": {
+          "type": "object", "additionalProperties": false, "required": ["occurrences", "asked", "failedDecisions", "accepted", "deferred", "byRule"],
+          "properties": {
+            "occurrences": { "type": "integer", "minimum": 0 }, "asked": { "type": "integer", "minimum": 0 }, "failedDecisions": { "type": "integer", "minimum": 0 },
+            "accepted": { "type": "integer", "minimum": 0 }, "deferred": { "type": "integer", "minimum": 0 }, "byRule": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "ratings": { "type": "array", "maxItems": 1000000, "items": { "$ref": "#/$defs/rating" } },
+        "decisions": { "type": "array", "maxItems": 1000000, "items": { "$ref": "#/$defs/decision" } }
+      }
+    }
+  },
+  "$ref": "#/$defs/ratings"
+}

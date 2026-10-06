@@ -22,7 +22,8 @@ flowchart TD
 | Step | Read | Result |
 | :--- | :--- | :--- |
 | 1. Establish what is observable | [Uniform events](uniform-events.md), [integrity gates](normalization-integrity.md) | Source-bound events, unmapped records, capability coverage |
-| 2. Extract exact facts | [Structural observations](structural-observations.md) | Counts, resource observations, explicit denominators and missing values |
+| 2. Extract exact facts | [Structural observations](structural-observations.md) | Counts, resource observations, occurrences, explicit denominators and missing values |
+| Optional: rate occurrences | [Occurrence ratings](occurrence-ratings.md) | Typed decision-model ratings per occurrence, and judge requests with a complete occurrence ledger |
 | 3. Evaluate behavior with an LLM judge | [Assertions](behavior-assertions.md), [semantic judge](semantic-judge.md), [batch runbook](../guides/behavioral-evaluation.md) | Evidence-grounded model assessment or abstention |
 | Optional: human-intervention experiment | [Human calibration](human-calibration.md) | Separately attributed human decisions and agreement populations |
 | 5. Compare declared conditions | [Aggregation](aggregation.md) | Descriptive distributions, matched differences, exclusions and caveats |

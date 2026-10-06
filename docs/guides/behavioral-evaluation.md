@@ -22,6 +22,11 @@ consistent across compared runs. Configure those in the request files rather
 than embedding model IDs in a script. Evidence IDs must belong to the retained
 attempt. The runner validates and resolves them before judging.
 
+To give the judge every occurrence instead of a sample, rate the occurrences
+and prepare the request with `ebo judge prepare`: the request records how full
+records were chosen, and the input carries one row per occurrence of the
+selected types. See [occurrence ratings](../evaluation/occurrence-ratings.md).
+
 For bounded chronological sampling, select complete tool calls/results and
 messages across the beginning, middle, and end. Check native event types:
 streaming chunks are not interchangeable with complete messages, and removing
@@ -59,7 +64,8 @@ ebo judge batch study/batch.json
 ```
 
 The batch accepts 1–256 jobs, executes sequentially, and requires distinct,
-new output directories. Each job uses the existing `judge run` implementation,
+new output directories. A job may add `"ratings"`: the occurrence ratings its
+prepared request names by digest. Each job uses the existing `judge run` implementation,
 including its limits, evidence checks, signal handling, and retained failure
 records. Output is one judgment record per completed invocation. A failure or
 interruption stops the batch; completed outputs remain intact. Resume with a

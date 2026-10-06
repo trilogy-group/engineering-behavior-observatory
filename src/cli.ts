@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -46,6 +46,9 @@ import {
   type SemanticJudgeRequest,
 } from "./semantic-judge.js";
 import { createRetainedStructuralObservationSet } from "./structural-observations.js";
+import { DEFAULT_RATING_POLICY, rateRetainedOccurrences, type OccurrenceRatings } from "./occurrence-ratings.js";
+import { prepareRetainedJudgeRequest, type JudgePrepareSpec } from "./judge-prepare.js";
+import { DECISION_PROVIDERS, type DecisionProviderId } from "./decision-models.js";
 import type { StructuralObservationSet } from "./structural-observations.js";
 import {
   admitTaskPacket,
@@ -85,8 +88,10 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo atlas serve <request.json> [--port <port>]
        ebo observations create <run-bundle-root> <output.json>
        ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
+       ebo occurrences rate <run-bundle-root> <observations.json> <output.json> --provider <typesafe|fireworks> [--model <id>] [--choice-confidence <0-1>] [--noul-margin <0-0.5>]
        ebo assertions validate <run-bundle-root> <assertion.json> [review.json]
-       ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root>
+       ebo judge prepare <run-bundle-root> <observations.json> <spec.json> <request.json> [--ratings <ratings.json>]
+       ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root> [--ratings <ratings.json>]
        ebo judge batch <batch.json>
        ebo calibration sample <sources.json> <criteria.json> <selection.json>
        ebo calibration packet <selection.json> <output-root>
@@ -222,6 +227,10 @@ export function main(
     return runObservationsCommand(args.slice(1), write);
   }
 
+  if (args[0] === "occurrences" && args[1] === "rate") {
+    return runOccurrenceRatingCommand(args.slice(2), write);
+  }
+
   if (args[0] === "assertions" && args[1] === "validate") {
     const bundleRoot = args[2];
     const assertionPath = args[3];
@@ -262,10 +271,12 @@ export function main(
         const keys = ["bundleRoot", "observations", "request", "outputRoot"] as const;
         const outputs = new Set<string>();
         const jobs = manifest.jobs.map((job: unknown) => {
+          const value = job as Record<string, unknown>;
+          const expected = value !== null && typeof value === "object" && "ratings" in value ? [...keys, "ratings"] : [...keys];
           if (!job || typeof job !== "object" || Array.isArray(job)
-              || Object.keys(job).length !== keys.length || keys.some((key) => typeof (job as Record<string, unknown>)[key] !== "string"
-                || !(job as Record<string, string>)[key]!.trim())) throw new Error("Invalid judge batch job.");
-          const paths = keys.map((key) => resolve(dirname(resolve(args[2]!)), (job as Record<string, string>)[key]!));
+              || Object.keys(job).length !== expected.length || expected.some((key) => typeof value[key] !== "string"
+                || !(value[key] as string).trim())) throw new Error("Invalid judge batch job.");
+          const paths = expected.map((key) => resolve(dirname(resolve(args[2]!)), value[key] as string));
           if (outputs.has(paths[3]!) || existsSync(paths[3]!)) throw new Error("Judge batch output roots must be distinct and new.");
           outputs.add(paths[3]!);
           return paths;
@@ -273,7 +284,7 @@ export function main(
         // Sequential, fail-fast composition of the existing runner: no hidden retries.
         for (const paths of jobs) {
           if (interrupted) return 1;
-          const code = await main(["judge", "run", ...paths], write, dependencies);
+          const code = await main(["judge", "run", ...paths.slice(0, 4), ...(paths[4] === undefined ? [] : ["--ratings", paths[4]])], write, dependencies);
           if (code !== 0) return code;
         }
         return interrupted ? 1 : 0;
@@ -287,14 +298,34 @@ export function main(
     })();
   }
 
+  if (args[0] === "judge" && args[1] === "prepare") {
+    const [, , bundleRoot, observationsPath, specPath, requestPath, ratingsFlag, ratingsPath] = args;
+    if (bundleRoot === undefined || observationsPath === undefined || specPath === undefined || requestPath === undefined
+        || !(args.length === 6 || args.length === 8 && ratingsFlag === "--ratings" && ratingsPath !== undefined)) {
+      write("Usage: ebo judge prepare <run-bundle-root> <observations.json> <spec.json> <request.json> [--ratings <ratings.json>]\n");
+      return 1;
+    }
+    return (async () => {
+      try {
+        assertDerivedDestination(bundleRoot, requestPath);
+        const request = await prepareRetainedJudgeRequest(bundleRoot, readJson(observationsPath) as StructuralObservationSet,
+          readJson(specPath) as JudgePrepareSpec, ratingsPath === undefined ? undefined : readJson(ratingsPath) as OccurrenceRatings);
+        await writeObservationReport(requestPath, request, bundleRoot);
+        const strata = request.selection.frame!.strata.map(({ type, population, fullRecords }) => `${type} ${String(fullRecords)}/${String(population)}`).join(", ");
+        write(`Prepared judge request ${request.id}: ${String(request.selection.eventIds.length)} full-record event(s); ledger ${strata}.\n`);
+        return 0;
+      } catch (error) {
+        write(`${errorMessage(error)}\n`);
+        return 1;
+      }
+    })();
+  }
+
   if (args[0] === "judge" && args[1] === "run") {
-    const bundleRoot = args[2];
-    const observationsPath = args[3];
-    const requestPath = args[4];
-    const outputRoot = args[5];
-    if (bundleRoot === undefined || observationsPath === undefined || requestPath === undefined
-        || outputRoot === undefined || args.length !== 6) {
-      write("Usage: ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root>\n");
+    const [, , bundleRoot, observationsPath, requestPath, outputRoot, ratingsFlag, ratingsPath] = args;
+    if (bundleRoot === undefined || observationsPath === undefined || requestPath === undefined || outputRoot === undefined
+        || !(args.length === 6 || args.length === 8 && ratingsFlag === "--ratings" && ratingsPath !== undefined)) {
+      write("Usage: ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root> [--ratings <ratings.json>]\n");
       return 1;
     }
     const controller = new AbortController();
@@ -311,6 +342,7 @@ export function main(
         observations: readJson(observationsPath) as StructuralObservationSet,
         request: readJson(requestPath) as SemanticJudgeRequest,
         outputRoot,
+        ...(ratingsPath === undefined ? {} : { ratings: readJson(ratingsPath) as OccurrenceRatings }),
         signal: controller.signal,
         ...(dependencies.semanticJudgeBackend === undefined ? {} : { backend: dependencies.semanticJudgeBackend }),
       }).then((record) => {
@@ -642,6 +674,50 @@ async function runObservationsCommand(args: string[], write: (message: string) =
   }
   write("Usage: ebo observations <create|corpus> ...\n");
   return 1;
+}
+
+async function runOccurrenceRatingCommand(args: string[], write: (message: string) => void): Promise<number> {
+  const usage = "Usage: ebo occurrences rate <run-bundle-root> <observations.json> <output.json> --provider <typesafe|fireworks> [--model <id>] [--choice-confidence <0-1>] [--noul-margin <0-0.5>]\n";
+  const [bundleRoot, observationsPath, outputPath, ...flags] = args;
+  const options: Record<string, string> = {};
+  for (let index = 0; index < flags.length; index += 2) {
+    const flag = flags[index]!;
+    const value = flags[index + 1];
+    if (!["--provider", "--model", "--choice-confidence", "--noul-margin"].includes(flag) || value === undefined || flag in options) { write(usage); return 1; }
+    options[flag] = value;
+  }
+  const provider = options["--provider"];
+  if (bundleRoot === undefined || observationsPath === undefined || outputPath === undefined || provider === undefined || !(provider in DECISION_PROVIDERS)) { write(usage); return 1; }
+  const fraction = (value: string | undefined, fallback: number, maximum: number) => {
+    if (value === undefined) return fallback;
+    const parsed = Number(value);
+    if (!(parsed >= 0 && parsed <= maximum)) throw new Error(`Rating thresholds must be numbers from 0 to ${String(maximum)}.`);
+    return parsed;
+  };
+  try {
+    assertDerivedDestination(bundleRoot, outputPath);
+    const policy = {
+      choiceConfidence: fraction(options["--choice-confidence"], DEFAULT_RATING_POLICY.choiceConfidence, 1),
+      noulMargin: fraction(options["--noul-margin"], DEFAULT_RATING_POLICY.noulMargin, 0.5),
+    };
+    const observations = readJson(observationsPath) as StructuralObservationSet;
+    if (existsSync(resolve(outputPath))) throw new Error("Occurrence ratings destination already exists.");
+    // Decision records are appended as calls finish; the partial log is removed once the artifact is written.
+    const partialPath = `${resolve(outputPath)}.decisions.partial.jsonl`;
+    if (existsSync(partialPath)) throw new Error("A partial decision log from an interrupted run exists for this destination; keep it and choose a new destination.");
+    prepareDerivedParent(bundleRoot, partialPath);
+    const ratings = await rateRetainedOccurrences(bundleRoot, observations,
+      { provider: provider as DecisionProviderId, ...(options["--model"] === undefined ? {} : { model: options["--model"] }) },
+      { policy, onDecision: (record, occurrenceId) => appendFileSync(partialPath, `${JSON.stringify({ occurrenceId, record })}\n`, { mode: 0o600 }) });
+    await writeObservationReport(outputPath, ratings, bundleRoot);
+    rmSync(partialPath, { force: true });
+    const { coverage } = ratings;
+    write(`Rated ${String(coverage.asked)} of ${String(coverage.occurrences)} occurrences for attempt ${ratings.attemptId}: ${String(coverage.accepted)} accepted, ${String(coverage.deferred)} deferred, ${String(coverage.byRule)} by rule, ${String(coverage.failedDecisions)} failed decision(s).\n`);
+    return coverage.failedDecisions === 0 ? 0 : 1;
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  }
 }
 
 async function writeObservationReport(path: string, report: unknown, sourceRoot: string): Promise<void> {

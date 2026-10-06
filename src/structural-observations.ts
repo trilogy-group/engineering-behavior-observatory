@@ -151,7 +151,7 @@ export function createStructuralObservationSet(
 }
 
 /** Resolve `<locator>#<json pointer>` content references against the retained native documents. */
-function nativeContentResolver(capture: NormalizationInput<AgentSdkNativeRecord>): (reference: NativeEvidenceReference) => unknown {
+export function nativeContentResolver(capture: NormalizationInput<AgentSdkNativeRecord>): (reference: NativeEvidenceReference) => unknown {
   const documents = new Map(capture.records.map(({ reference, record }) => [`${reference.artifactId}\0${reference.recordLocator}`, record.document]));
   return (reference) => {
     const marker = reference.recordLocator.indexOf("#");

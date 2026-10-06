@@ -82,7 +82,8 @@
       "required": ["eventId", "nativeReference"],
       "properties": {
         "eventId": { "$ref": "#/$defs/identifier" },
-        "nativeReference": { "$ref": "urn:ebo:schema:uniform-events:v1#/$defs/nativeReference" }
+        "nativeReference": { "$ref": "urn:ebo:schema:uniform-events:v1#/$defs/nativeReference" },
+        "occurrenceId": { "$ref": "#/$defs/identifier" }
       }
     },
     "assessedJudgment": {

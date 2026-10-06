@@ -164,7 +164,7 @@ export async function runCodexSemanticJudge(prompt: string, request: SemanticJud
       || !Array.isArray(start.instructionSources) || start.instructionSources.length !== 0
       || start.approvalPolicy !== "never" || start.sandbox?.type !== "readOnly" || start.sandbox.networkAccess !== false) throw new Error("Codex judge runtime configuration did not match requested isolation/model.");
     const turn = await send("turn/start", { threadId, model: request.evaluator.model, effort: request.evaluator.effort, environments: [],
-      input: [{ type: "text", text: prompt }], outputSchema: semanticJudgeResponseSchema(request.limits.maxCitations) });
+      input: [{ type: "text", text: prompt }], outputSchema: semanticJudgeResponseSchema(request.limits.maxCitations, request.selection?.occurrences !== undefined) });
     turnId = turn.turn?.id;
     if (typeof turnId !== "string") throw new Error("Codex judge returned no turn identity.");
     const result = await Promise.race([terminal, exited]);
