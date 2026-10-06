@@ -686,6 +686,8 @@ export function parseSemanticJudgeResponse(
   const response = record(envelope.judgment, "Judge response");
   const disposition = response.disposition;
   const ledgerCites = ledgerCitations(input);
+  // Ledger inputs use the citation shape with `occurrenceId`, even when the ledger has no rows.
+  const ledgerMode = input.promptVersion === SEMANTIC_JUDGE_LEDGER_PROMPT_VERSION;
   const allowedEventIds = new Set([...input.selection.includedEventIds, ...ledgerCites.values()]);
   let judgment: BehaviorAssertion["judgment"];
   exactKeys(response, [
@@ -718,7 +720,7 @@ export function parseSemanticJudgeResponse(
       confidence: { value: confidence.value, scale: confidence.scale },
       rationale: requiredText(response.rationale, "Judge rationale", 8192),
       alternativeExplanation: requiredText(response.alternativeExplanation, "Judge alternative explanation", 8192),
-      citations: citations(response.citations, allowedEventIds, request.limits.maxCitations, ledgerCites),
+      citations: citations(response.citations, allowedEventIds, request.limits.maxCitations, ledgerCites, ledgerMode),
     };
   } else if (disposition === "abstained") {
     if (response.assessment !== null || response.confidence !== null) {
@@ -734,7 +736,7 @@ export function parseSemanticJudgeResponse(
       ...(missing === null ? {} : { missingEvidenceCapability: requiredText(missing, "Missing evidence capability", 256) }),
       rationale: requiredText(response.rationale, "Judge rationale", 8192),
       alternativeExplanation: requiredText(response.alternativeExplanation, "Judge alternative explanation", 8192),
-      citations: citations(response.citations, allowedEventIds, request.limits.maxCitations, ledgerCites),
+      citations: citations(response.citations, allowedEventIds, request.limits.maxCitations, ledgerCites, ledgerMode),
     };
   } else {
     throw new Error("Judge response must be an assessed proposal or abstention.");
@@ -947,12 +949,13 @@ function citations(
   allowed: ReadonlySet<string>,
   max: number,
   ledger: ReadonlyMap<string, string> = new Map(),
+  ledgerMode = false,
 ): BehaviorAssertion["judgment"]["citations"] {
   if (!Array.isArray(value) || value.length > max) throw new Error("Judge citations are invalid or exceed maxCitations.");
   const seen = new Set<string>();
   return value.map((entry) => {
     const citation = record(entry, "Judge citation");
-    exactKeys(citation, ledger.size > 0 ? ["eventId", "nativeReference", "occurrenceId"] : ["eventId", "nativeReference"], "Judge citation");
+    exactKeys(citation, ledgerMode ? ["eventId", "nativeReference", "occurrenceId"] : ["eventId", "nativeReference"], "Judge citation");
     const eventId = requiredText(citation.eventId, "Judge citation eventId", 256);
     if (!allowed.has(eventId)) throw new Error(`Judge cites event "${eventId}" outside the packaged evidence.`);
     if (seen.has(eventId)) throw new Error(`Judge cites event "${eventId}" more than once.`);

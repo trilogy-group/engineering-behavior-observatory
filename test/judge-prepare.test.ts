@@ -113,3 +113,14 @@ test("the judge input carries every ledger row, ratings bound by digest, and acc
   assert.equal(schema.properties.judgment.anyOf[0]!.properties.citations.maxItems, 24);
   assert.deepEqual(schema.properties.judgment.anyOf[0]!.properties.citations.items.required, ["eventId", "nativeReference", "occurrenceId"]);
 });
+
+test("a ledger request with no occurrences still accepts the ledger citation shape", () => {
+  const { events, observations, capture } = fixture();
+  const empty = { ...observations, occurrences: [] } as StructuralObservationSet;
+  const request = prepareJudgeRequest(empty, events, spec(8));
+  const input = packageSemanticJudgeInput(events, capture, empty, request, `sha256:${"c".repeat(64)}`, "evaluated-model");
+  assert.equal(input.selection.ledgerOccurrenceIds!.length, 0);
+  const assertion = parseSemanticJudgeResponse({ judgment: { disposition: "assessed", assessment: "adverse", confidence: { value: 0.8, scale: "evaluator-reported-0-to-1" }, reason: null, missingEvidenceCapability: null,
+    rationale: "No validation ran.", alternativeExplanation: "The run ended early.", citations: [{ eventId: "event-99", nativeReference: { artifactId: "session", recordLocator: "line:99" }, occurrenceId: null }] } }, request, input, "0.157.0");
+  assert.equal(assertion.judgment.citations[0]!.occurrenceId, undefined);
+});
