@@ -7,11 +7,52 @@ import test from "node:test";
 import { HARBOR_TRIAL_SCRIPT } from "../src/harbor/trial-script.js";
 
 const python = process.env.EBO_HARBOR_PYTHON;
+test("Smol provenance checks host, bundled library and frozen digest without a VM", { skip: !python }, () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-smol-provenance-"));
+  writeFileSync(join(root, "ebo_runtime.py"), HARBOR_TRIAL_SCRIPT);
+  const result = spawnSync(python!, ["-c", String.raw`
+import hashlib, os, smol
+from pathlib import Path
+from unittest.mock import patch
+import ebo_runtime as e
+
+# Contract fixtures exercise the macOS policy on Linux CI without a native library.
+package = Path.cwd() / 'fixture-smol'
+package.mkdir()
+library = package / 'libkrun.dylib'
+library.write_bytes(b'fixture library, never loaded')
+manifest = {'libkrunSha256': hashlib.sha256(library.read_bytes()).hexdigest()}
+def rejects(message):
+    try: e.runtime_provenance(manifest)
+    except ValueError as exc: assert message in str(exc), str(exc)
+    else: raise AssertionError('Expected runtime rejection: ' + message)
+
+with patch.object(smol, '__file__', str(package / '__init__.py')), \
+     patch.dict(os.environ, {'SMOLVM_LIB_DIR': str(package)}), \
+     patch.object(e.platform, 'system', return_value='Darwin'), \
+     patch.object(e.platform, 'machine', return_value='arm64'):
+    assert e.runtime_provenance(manifest)['libkrunSha256'] == manifest['libkrunSha256']
+    with patch.object(e.platform, 'system', return_value='Linux'):
+        rejects('only on Apple Silicon macOS')
+    with patch.object(e.platform, 'machine', return_value='x86_64'):
+        rejects('only on Apple Silicon macOS')
+    with patch.dict(os.environ, {'SMOLVM_LIB_DIR': str(Path.cwd())}):
+        rejects('bundled libkrun')
+    library.write_bytes(b'changed fixture library')
+    rejects('digest differs')
+    library.unlink()
+    rejects('bundled libkrun is missing')
+print('Smol provenance contract: passed')
+`], { cwd: root, encoding: "utf8", timeout: 30_000 });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /provenance contract: passed/);
+});
+
 test("Smol binding uses official Harbor models and rejects unsupported policies without a VM", { skip: !python }, () => {
   const root = mkdtempSync(join(tmpdir(), "ebo-smol-contract-"));
   writeFileSync(join(root, "ebo_runtime.py"), HARBOR_TRIAL_SCRIPT);
   const result = spawnSync(python!, ["-c", String.raw`
-import asyncio, fcntl, hashlib, json, os, smol
+import asyncio, fcntl, json
 from pathlib import Path
 from unittest.mock import patch, AsyncMock
 from types import SimpleNamespace
@@ -49,13 +90,6 @@ binding = {'agent': image, 'graders': {'one': image, 'two': image}}
 manifest = {'schemaVersion': 'ebo.smol-environments/v1', 'platform': 'linux/arm64',
     'libkrunSha256': 'd'*64, 'runtimeArchiveDigest': 'e'*64, 'tasks': {'task': binding}}
 e.validate_environment_manifest(manifest)
-bundled = Path(smol.__file__).resolve().parent / 'libkrun.dylib'
-manifest['libkrunSha256'] = hashlib.sha256(bundled.read_bytes()).hexdigest()
-assert e.runtime_provenance(manifest)['libkrunSha256'] == manifest['libkrunSha256']
-with patch.dict(os.environ, {'SMOLVM_LIB_DIR': str(root)}):
-    try: e.runtime_provenance(manifest)
-    except ValueError as exc: assert 'bundled libkrun' in str(exc)
-    else: raise AssertionError('An isolated library override must be rejected')
 before = (task/'task.toml').read_bytes()
 record = e.derive_task(task, root/'derived', binding, True)
 assert (task/'task.toml').read_bytes() == before

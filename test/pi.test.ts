@@ -348,6 +348,16 @@ test("retained Pi readback rejects unsupported versions, identity mismatches, an
     eventsDescriptor.sizeBytes = legacyEvents.length;
     writeFileSync(manifestPath, JSON.stringify(legacy));
     assert.ok((await createRetainedBehaviorEvidence(summary.bundlePath)).dataset.events.length > 0, "consistent retained Pi 0.85.1 bundles stay readable");
+    const legacyLines = legacyEvents.toString().trim().split("\n");
+    const conflicting = JSON.parse(legacyLines.find((line) => line.includes("\"session_created\""))!) as { sequence: number; payload: { sdk: { version: string } } };
+    conflicting.sequence = legacyLines.length + 1;
+    conflicting.payload.sdk.version = "0.87.1";
+    const duplicated = Buffer.from(`${legacyEvents.toString()}${JSON.stringify(conflicting)}\n`);
+    writeFileSync(eventsPath, duplicated);
+    eventsDescriptor.digest = `sha256:${digestBytes(duplicated).value}`;
+    eventsDescriptor.sizeBytes = duplicated.length;
+    writeFileSync(manifestPath, JSON.stringify(legacy));
+    await assert.rejects(createRetainedBehaviorEvidence(summary.bundlePath), /expected exactly one/u, "a second, conflicting composition record is rejected");
     writeFileSync(eventsPath, eventsBefore);
     writeFileSync(manifestPath, before);
 

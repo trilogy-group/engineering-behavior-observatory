@@ -140,3 +140,44 @@ test("a partial compaction stays separate and spans use parsed timestamps", () =
   assert.ok(compactions.every(({ rule }) => rule.heuristic), "grouping by adjacency is labeled heuristic");
   assert.deepEqual(compactions[1]!.span, { start: "2026-01-01T10:00:00+02:00", end: "2026-01-01T09:00:00Z" }, "10:00+02:00 is 08:00Z, before 09:00Z");
 });
+
+test("failure chains form within their own session, and failed edits are not source changes", () => {
+  const at = (sequence: number, attributes: UniformEvent["attributes"], phase: UniformEvent["phase"], session: string) =>
+    event(sequence, "tool", { ...attributes, sessionId: session }, phase);
+  const operation = (id: string, toolName: string, events: UniformEvent[], failed: boolean): OccurrenceOperation => ({ id, events, toolName, inputDigest: `sha256:${id}`, failed });
+  const firstFailure = operation("a", "Bash", [at(1, { toolName: "Bash" }, "before", "s1"), at(2, { toolName: "Bash", isError: true }, "after", "s1")], true);
+  const otherSession = operation("b", "Bash", [at(3, { toolName: "Bash" }, "before", "s2"), at(4, { toolName: "Bash", isError: false }, "after", "s2")], false);
+  const secondFailure = operation("c", "Bash", [at(5, { toolName: "Bash" }, "before", "s1"), at(6, { toolName: "Bash", isError: true }, "after", "s1")], true);
+  const recovery = operation("d", "Bash", [at(7, { toolName: "Bash" }, "before", "s1"), at(8, { toolName: "Bash", isError: false }, "after", "s1")], false);
+  const failedEdit = operation("e", "Edit", [at(9, { toolName: "Edit" }, "before", "s1"), at(10, { toolName: "Edit", isError: true }, "after", "s1")], true);
+  const operations = [firstFailure, otherSession, secondFailure, recovery, failedEdit];
+  const { occurrences } = extractOccurrences({
+    attemptId: "attempt", events: operations.flatMap(({ events }) => events), operations, toolCapability: capability,
+    delegationCapability: capability, isCompaction: () => false, resolveContent: () => undefined,
+  });
+  const chains = occurrences.filter(({ type, attributes }) => type === "failure-response" && attributes.toolName === "Bash");
+  assert.deepEqual(chains.map(({ eventIds, attributes }) => [eventIds, attributes.failures]),
+    [[["event-1", "event-2", "event-5", "event-6", "event-7", "event-8"], 2]], "the other session's call does not split the chain");
+  assert.equal(occurrences.some(({ type }) => type === "source-change"), false, "a failed edit is an attempt, not a change");
+});
+
+test("inferred changes need native success, partitions use the resolved scope, DeepSeek compaction kinds differ", () => {
+  const tool = (sequence: number, attributes: UniformEvent["attributes"], phase: UniformEvent["phase"]) => ({ ...event(sequence, "tool", attributes, phase), scope: { kind: "operation" as const, id: `op-${sequence}` } });
+  const operation = (id: string, toolName: string, events: UniformEvent[], failed: boolean, scope?: string): OccurrenceOperation =>
+    ({ id, events, toolName, inputDigest: `sha256:${id}`, failed, ...(scope === undefined ? {} : { scope }) });
+  // Agent SDK tool events carry no sessionId; the resolved scope separates the main agent from a subagent.
+  const mainFailure = operation("a", "Bash", [tool(1, { toolName: "Bash" }, "before"), tool(2, { toolName: "Bash", isError: true }, "after")], true, "main");
+  const subagentFailure = operation("b", "Bash", [tool(3, { toolName: "Bash" }, "before"), tool(4, { toolName: "Bash", isError: true }, "after")], true, "subagent");
+  const interruptedEdit = operation("c", "Edit", [tool(5, { toolName: "Edit" }, "before")], false, "main");
+  const hookConfirmedEdit = operation("d", "Edit", [tool(6, { toolName: "Edit" }, "before"), tool(7, { toolName: "Edit", hook: "PostToolUse" }, "after")], false, "main");
+  const compaction = (sequence: number, eventType: string) => ({ ...event(sequence, "context", { eventType }), source: { ...event(sequence, "context").source, nativeType: "session.event" } });
+  const operations = [mainFailure, subagentFailure, interruptedEdit, hookConfirmedEdit];
+  const { occurrences } = extractOccurrences({
+    attemptId: "attempt", events: [...operations.flatMap(({ events }) => events), compaction(20, "compaction/start"), compaction(21, "compaction/end")],
+    operations, toolCapability: capability, delegationCapability: capability, isCompaction: ({ family }) => family === "context", resolveContent: () => undefined,
+  });
+  const of = (type: string) => occurrences.filter((occurrence) => occurrence.type === type);
+  assert.deepEqual(of("failure-response").map(({ attributes }) => attributes.failures), [1, 1], "main-agent and subagent failures are separate chains");
+  assert.deepEqual(of("source-change").map(({ eventIds }) => eventIds), [["event-6", "event-7"]], "an unfinished edit is not a change; a PostToolUse-confirmed one is");
+  assert.deepEqual(of("compaction").map(({ eventIds }) => eventIds), [["event-20", "event-21"]], "start and end of one DeepSeek compaction form one boundary");
+});

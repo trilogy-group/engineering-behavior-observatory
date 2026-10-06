@@ -137,10 +137,33 @@ test("environment references stay while literal fallbacks inside parameter expan
     ["export API_KEY=${API_KEY:-EBO_FALLBACK_SECRET_123456} && run", "export API_KEY=${API_KEY:-[REDACTED_SECRET]} && run"],
     ["TOKEN=${TOKEN:=correcthorse}", "TOKEN=${TOKEN:=[REDACTED_SECRET]}"],
     ["password: ${DB_PASSWORD:-hunter2pass}", "password: ${DB_PASSWORD:-[REDACTED_SECRET]}"],
+    ["PASSWORD=${PASSWORD:-\"correct horse battery staple\"} run", "PASSWORD=${PASSWORD:-\"[REDACTED_SECRET]\"} run"],
+    ["API_KEY=${API_KEY}EBO_LITERAL_SECRET_123456", "API_KEY=${API_KEY}[REDACTED_SECRET]"],
+    ["API_KEY=$KEY_PREFIX-EBO_LITERAL_SECRET_123456", "API_KEY=$KEY_PREFIX[REDACTED_SECRET]"],
+    ["API_KEY=$SAFE:correcthorsebatterystaple", "API_KEY=$SAFE[REDACTED_SECRET]"],
+    ["TOKEN=${TOKEN:-incomplete fallback", "TOKEN=[REDACTED_SECRET]"],
   ];
   for (const [input, expected] of redactedWords) {
     const { text, findings } = redact(input);
     assert.equal(text, expected);
     assert.ok(findings.some(({ disposition }) => disposition === "redacted"), input);
+    assert.equal(containsSecret(input), true, `the final scan rejects ${input}`);
+    assert.equal(containsSecret(text), false, `the final scan accepts ${text}`);
+  }
+});
+
+test("literals later in a code-style expression are redacted, lookup keys are not", () => {
+  const cases: Array<[string, string]> = [
+    ["password = process.env.PREFIX + \"correcthorsebatterystaple\";", "password = process.env.PREFIX + \"[REDACTED_SECRET]\";"],
+    ["const apiKey = input.apiKey ?? 'literal-fallback-credential';", "const apiKey = input.apiKey ?? '[REDACTED_SECRET]';"],
+    ["api_key = os.getenv(\"FIREWORKS_API_KEY\", \"default-secret-value\")", "api_key = os.getenv(\"FIREWORKS_API_KEY\", \"[REDACTED_SECRET]\")"],
+  ];
+  for (const [input, expected] of cases) {
+    assert.equal(redact(input).text, expected);
+    assert.equal(containsSecret(input), true, input);
+    assert.equal(containsSecret(expected), false, expected);
+  }
+  for (const kept of ["api_key = os.environ['FIREWORKS_API_KEY']", "const client = new Client({ apiKey: input.apiKey, label: \"Production\" });", "token = os.getenv(\"TOKEN\")"]) {
+    assert.equal(redact(kept).text, kept, kept);
   }
 });

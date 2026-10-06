@@ -30,10 +30,10 @@ jobs:
           python-version: '3.14'
       - run: npm ci
       - run: npm run build && npm run typecheck
-      - run: python -m venv .harbor-venv && .harbor-venv/bin/pip install 'smolmachines[harbor]==1.15.0' harbor==0.22.0 && .harbor-venv/bin/pip check
+      - run: python -m venv .harbor-venv && .harbor-venv/bin/pip install 'smolmachines[harbor]==1.18.2' harbor==0.22.0 && .harbor-venv/bin/pip check
       - name: Native worker and admission regression checks
         run: node --test dist/test/harbor.test.js dist/test/harbor-worker.test.js dist/test/harbor-trial.test.js dist/test/harbor-smol.test.js
         env:
           EBO_HARBOR_PYTHON: '${{ github.workspace }}/.harbor-venv/bin/python'
-      # Live Smol conformance needs the qualified Apple Silicon host and isolated
-      # patched libkrun. This job tests contracts, not virtualization availability.
+      # Live Smol conformance needs the qualified Apple Silicon host and Smol's
+      # bundled libkrun. This job tests contracts, not virtualization availability.

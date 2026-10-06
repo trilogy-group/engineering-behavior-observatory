@@ -38,6 +38,8 @@ git diff --check
 
 The PR workflow checks the pinned Python model/provider contracts and native
 worker tests. It does not claim VM qualification on a hosted Linux runner.
+The provenance unit test uses fixture library bytes and mocked host metadata to
+check the Apple Silicon policy, bundled-library requirement and digest binding.
 The local-preparation gate uses a public Alpine image and uploads a unique
 fixture locally, then checks two isolated branches and an unchanged parent:
 

@@ -86,12 +86,13 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
   }));
   let dataset: NormalizedDataset;
   if (harness === PI_HARNESS) {
-    // The manifest's runtime identity must agree with the SDK version the capture recorded natively.
-    const composition = capture.records.find(({ record }) => {
+    // The manifest's runtime identity must agree with the one composition record the capture wrote natively.
+    const compositions = capture.records.filter(({ record }) => {
       const value = record as Record<string, unknown>;
       return value.channel === "adapter" && value.nativeType === "session_created";
-    })?.record as { payload?: { sdk?: { version?: unknown } } } | undefined;
-    if (composition?.payload?.sdk?.version !== manifest.run.harness.version) {
+    }).map(({ record }) => record as { payload?: { sdk?: { version?: unknown } } });
+    if (compositions.length !== 1) throw new Error(`Retained Pi capture has ${String(compositions.length)} native composition records; expected exactly one.`);
+    if (compositions[0]!.payload?.sdk?.version !== manifest.run.harness.version) {
       throw new Error("Retained Pi native composition version differs from the run manifest.");
     }
     const native = qualifyRetainedPiCapture(capture as NormalizationInput<PiNativeRecord>, manifest.run.native?.sessionId, expectsCompletion);
