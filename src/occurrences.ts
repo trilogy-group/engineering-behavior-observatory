@@ -30,6 +30,8 @@ export type OccurrenceOperation = {
   toolName?: string;
   inputDigest?: string;
   failed: boolean;
+  /** Resolved session (and agent) of the operation; falls back to the first event's own fields. */
+  scope?: string;
 };
 
 export type OccurrenceInput = {
@@ -129,7 +131,8 @@ export function extractOccurrences(input: OccurrenceInput): { occurrences: Occur
     if (boundary.length > 0) add("compaction", true, boundary, { records: boundary.length, grouping: "adjacent-records" });
     boundary = [];
   };
-  const compactionKind = (event: UniformEvent) => `${event.source.nativeType}:${String(event.attributes.hook ?? event.attributes.subtype ?? event.attributes.lifecycle ?? "")}`;
+  const compactionKind = (event: UniformEvent) => JSON.stringify([event.source.nativeType, event.attributes.hook ?? event.attributes.subtype
+    ?? event.attributes.eventType ?? event.attributes.method ?? event.attributes.lifecycle ?? ""]);
   for (const event of ordered(input.events)) {
     if (input.isCompaction(event)) {
       if (boundary.some((part) => compactionKind(part) === compactionKind(event))) closeBoundary();
@@ -183,15 +186,17 @@ function describe(operation: OccurrenceOperation, resolveContent: OccurrenceInpu
   const writes = command === undefined ? [] : shellWrites(command);
   const explicitMutation = operation.events.some(({ attributes }) => attributes.mutation === true);
   const editTool = EDIT_TOOLS.has((operation.toolName ?? "").toLowerCase());
+  // Native success evidence: a false error flag, a completed status, exit code 0, or the Agent SDK `PostToolUse` hook
+  // (which fires only for successful calls; failures fire `PostToolUseFailure`).
   const passed = operation.events.some(({ attributes }) => attributes.isError === false || attributes.status === "completed"
-    || attributes.exitCode === 0);
+    || attributes.exitCode === 0 || attributes.hook === "PostToolUse");
   const exited = operation.events.some(({ attributes }) => typeof attributes.exitCode === "number" && attributes.exitCode !== 0);
   return {
     checkKinds,
     writes,
     ...(command === undefined || checkKinds.length === 0 ? {} : { outputRedirected: /(?<![0-9&])>\s*[^\s&]/u.test(unwrap(command)) }),
-    // A failed edit or shell write is an attempt, not an observed change.
-    ...(explicitMutation ? { change: "explicit-mutation" as const } : operation.failed || exited ? {}
+    // An inferred edit or shell write counts only after a native success result; a failed or unfinished one is an attempt.
+    ...(explicitMutation ? { change: "explicit-mutation" as const } : operation.failed || exited || !passed ? {}
       : editTool ? { change: "edit-tool" as const } : writes.length > 0 ? { change: "shell-write" as const } : {}),
     result: operation.failed || exited ? "failed" : passed ? "passed" : "unknown",
   };
@@ -310,10 +315,11 @@ function stripQuotes(value: string): string {
   return value.replace(/^['"]|['"]$/gu, "");
 }
 
-/** Session and native-order domain of an operation's first event. */
+/** Resolved session and agent of an operation, and the native-order domain of its first event. */
 function operationScope(operation: OccurrenceOperation): string {
   const first = operation.events[0]!;
-  const session = text(first.attributes.sessionId) ?? (first.scope.kind === "session" ? text(first.scope.id) : undefined) ?? "";
+  const session = operation.scope
+    ?? text(first.attributes.sessionId) ?? (first.scope.kind === "session" ? text(first.scope.id) : undefined) ?? "";
   return JSON.stringify([session, first.nativeOrder.status === "known" ? first.nativeOrder.domain : ""]);
 }
 

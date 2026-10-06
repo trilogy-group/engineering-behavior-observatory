@@ -90,6 +90,8 @@ type ToolOperation = {
   toolName?: string;
   inputDigest?: string;
   failed: boolean;
+  /** Resolved session and agent of the operation (sibling records and relations included). */
+  scope?: string;
 };
 
 export async function createAgentSdkStructuralObservationSet(bundleRoot: string): Promise<StructuralObservationSet> {
@@ -326,7 +328,11 @@ function toolOperations(events: readonly UniformEvent[]): ToolOperation[] {
     groups.set(id, grouped);
   }
   return [...groups].sort(([left], [right]) => left.localeCompare(right))
-    .flatMap(([id, grouped]) => groupToolEvents(id, grouped, events).groups.map(([scopedId, scoped]) => operation(scopedId, scoped)));
+    .flatMap(([id, grouped]) => groupToolEvents(id, grouped, events).groups.map(([scopedId, scoped]) => ({
+      ...operation(scopedId, scoped),
+      scope: JSON.stringify([scoped.map((event) => sessionScope(event, events)).find((value) => value !== undefined) ?? "",
+        scoped.map(explicitAgentScope).find((value) => value !== undefined) ?? ""]),
+    })));
 }
 
 function operation(id: string, grouped: UniformEvent[]): ToolOperation {
