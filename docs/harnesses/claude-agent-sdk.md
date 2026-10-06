@@ -41,6 +41,21 @@ A hook's occurrence is authoritative in callback evidence; a hook span is
 optional timing data. Hooks do not modify the agent's choices. Native reasoning
 may be present in restricted source data and is removed from portable exports.
 
+Normalized events use a message's origin timestamp when it has one. Hooks use
+their callback time and other streamed messages (task, result and system
+records) use EBO's receipt time; both carry `nativeTimeSource`
+(`hook-callback`, `capture-receipt`). A `PostToolBatch` hook relates to each
+tool call in its batch. Task delegation records carry the task and tool-use
+IDs, task type and status, and reference the description, summary or patch.
+
+Each provider message yields one usage event (`resourceSemantics: increment`)
+with its request and message IDs and per-request input, cache-read and
+cache-creation tokens; the session repeats usage on every content block, so
+only the first block counts. The session stream records output tokens at
+message start, so per-request output is marked unavailable
+(`outputTokenCoverage`) and output totals come from the result record. Each
+result's usage equals the sum of the requests since the previous result.
+
 Tracing is beta; metrics/log events are separate capabilities. Content capture
 is opt-in. Short export intervals **and** clean shutdown reduce buffering loss,
 but collector receipt must still be checked. See [telemetry](../guides/telemetry.md).

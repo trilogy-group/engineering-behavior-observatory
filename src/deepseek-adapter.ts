@@ -27,6 +27,8 @@ import type {
 } from "./uniform-events.js";
 
 export const DEEPSEEK_SDK_VERSION = "0.1.7-rc.2";
+/** DeepSeek client versions whose retained bundles EBO reads back; the pinned version alone is used for capture. */
+export const RETAINED_DEEPSEEK_SDK_VERSIONS: readonly string[] = [DEEPSEEK_SDK_VERSION, "0.1.1-rc.2"];
 export const DEEPSEEK_ADAPTER_ID = "deepseek-harness-sdk";
 export const DEEPSEEK_HARNESS_ID = "deepseek-harness";
 
@@ -469,14 +471,16 @@ export function qualifyRetainedDeepSeekCapture(
   input: QualifiedNativeCapture<DeepSeekNativeObservation>,
   sessionId: string | undefined,
   completed: boolean,
+  manifestVersion: string,
 ): QualifiedNativeCapture<DeepSeekNativeObservation> {
   const rootSessionId = required(sessionId ?? "", "Retained DeepSeek root session ID");
   const records = input.records.map(({ record }) => record);
   const children = new Map<string, string[]>();
   for (const observation of records) {
     const payload = record(observation.payload) ?? {};
-    if (observation.kind === "composition" && record(payload.runtime)?.clientVersion !== DEEPSEEK_SDK_VERSION) {
-      throw new Error("Retained DeepSeek capture is unqualified: native client version differs from the pinned runtime.");
+    if (observation.kind === "composition" && (!RETAINED_DEEPSEEK_SDK_VERSIONS.includes(String(record(payload.runtime)?.clientVersion))
+      || record(payload.runtime)?.clientVersion !== manifestVersion)) {
+      throw new Error("Retained DeepSeek capture is unqualified: native client version differs from the run manifest or is not a supported retained runtime.");
     }
     if (observation.kind === "notification" && ["subagent.started", "subagent.finished"].includes(observation.method ?? "")
       && typeof payload.parentSessionId === "string" && typeof payload.childSessionId === "string") {
@@ -580,13 +584,13 @@ export function normalizeDeepSeekCapture(
     }
     return [{ reference, record, family, id, event, sessionId, nativeSequence }];
   });
-  const events: UniformEvent[] = mapped.map(({ reference, record, family, id, event, sessionId, nativeSequence }) => {
+  const events: UniformEvent[] = mapped.flatMap(({ reference, record, family, id, event, sessionId, nativeSequence }) => {
     const sourceSequences = nativeSourceSequences(event);
     const known = sessionId === undefined ? [] : sourceSequences.flatMap((sequence) => {
       const eventId = eventBySessionSequence.get(`${sessionId}:${sequence}`);
       return eventId === undefined ? [] : [{ kind: "caused-by" as const, eventId }];
     });
-    return {
+    const base: UniformEvent = {
       schemaVersion: "ebo.uniform-event/v1",
       id,
       runId: input.runId,
@@ -615,6 +619,7 @@ export function normalizeDeepSeekCapture(
         ? { status: "known", value: [{ nativeReference: { ...reference, recordLocator: `${reference.recordLocator}#/payload` } }] }
         : { status: "unknown", reason: "native record carries no mapped content" },
     };
+    return [base, ...requestUsage(base, event)];
   });
   const mappedReferences = new Set(mapped.map(({ reference }) => referenceKey(reference)));
   return {
@@ -830,6 +835,30 @@ function eventFamily(recordValue: DeepSeekNativeObservation): UniformEventFamily
   return undefined;
 }
 
+/** The step usage reported on a completed assistant message, as a per-request increment. */
+function requestUsage(message: UniformEvent, event: Record<string, unknown> | undefined): UniformEvent[] {
+  const data = record(event?.data);
+  const usage = record(data?.usage);
+  if (event?.type !== "assistant/message" || usage === undefined) return [];
+  const attributes: Record<string, UniformAttributeValue> = {};
+  for (const [target, source] of [["inputTokens", "inputTokens"], ["outputTokens", "outputTokens"], ["cacheReadInputTokens", "cacheReadTokens"],
+    ["cacheCreationInputTokens", "cacheWriteTokens"], ["reasoningOutputTokens", "reasoningTokens"]] as const) {
+    const value = usage[source];
+    if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) attributes[target] = value;
+  }
+  if (Object.keys(attributes).length === 0) return [];
+  for (const key of ["turn", "step"] as const) addAttribute(attributes, key, data?.[key]);
+  return [{
+    ...message,
+    id: `${message.id}:usage`,
+    family: "runtime",
+    phase: "after",
+    relations: { parent: message.relations.parent, known: [{ kind: "caused-by", eventId: message.id }] },
+    attributes: { ...attributes, resourceSemantics: "increment", usageScope: "assistant" },
+    content: { status: "known", value: [{ nativeReference: { ...message.source.nativeReference, recordLocator: `${message.source.nativeReference.recordLocator}#/payload/event/data/usage` } }] },
+  }];
+}
+
 function nativeSessionEvent(recordValue: DeepSeekNativeObservation): Record<string, unknown> | undefined {
   if (recordValue.method !== "session.event") return undefined;
   return record(record(recordValue.payload)?.event);
@@ -897,6 +926,22 @@ function eventAttributes(
   addAttribute(attributes, "surface", event === undefined ? undefined : Object.hasOwn(event, "surfaceOp") ? "surface" : "log-only");
   addAttribute(attributes, "surfaceOp", typeof event?.surfaceOp === "string" ? event.surfaceOp : record(event?.surfaceOp)?.op);
   for (const key of ["turn", "step", "callId", "name", "status", "reason"] as const) addAttribute(attributes, key, data?.[key]);
+  // Tool identity for structural extraction: name and input digest on calls; call ID and failure flag on results.
+  if (event?.type === "tool/call") {
+    addAttribute(attributes, "toolName", data?.name);
+    if (data?.arguments !== undefined) attributes.inputDigest = `sha256:${digestBytes(Buffer.from(canonicalizeMetadata(data.arguments))).value}`;
+  }
+  if (event?.type === "tool/result") {
+    const message = record(data?.message);
+    const parts = Array.isArray(message?.content) ? message.content.map(record) : [];
+    addAttribute(attributes, "callId", data?.callId ?? record(message?.source)?.callId ?? parts[0]?.toolCallId);
+    if (parts.some((part) => typeof part?.isError === "boolean")) attributes.isError = parts.some((part) => part?.isError === true);
+    // The bash tool reports a non-zero exit only as a trailing `[exit code: N]` line it appends to the output.
+    const output = parts.flatMap((part) => Array.isArray(part?.content) ? part.content.flatMap((block) => typeof record(block)?.text === "string" ? [record(block)!.text as string] : [])
+      : typeof part?.content === "string" ? [part.content] : []).join("");
+    const exit = /\n?\[exit code: (-?\d+)\]\s*$/u.exec(output);
+    if (exit !== null) attributes.exitCode = Number(exit[1]);
+  }
   return attributes;
 }
 

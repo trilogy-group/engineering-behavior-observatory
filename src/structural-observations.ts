@@ -6,6 +6,7 @@ import {
   type AgentSdkNativeRecord,
 } from "./agent-sdk-normalizer.js";
 import { canonicalizeMetadata, digestMetadata, validateArtifact } from "./artifacts.js";
+import { extractOccurrences, type Occurrence, type OccurrenceCoverage } from "./occurrences.js";
 import {
   type AdapterCoverageReport,
   type NormalizedDataset,
@@ -19,7 +20,7 @@ import type {
   UniformEventFamily,
 } from "./uniform-events.js";
 
-export const STRUCTURAL_EXTRACTOR_VERSION = "1.0.0";
+export const STRUCTURAL_EXTRACTOR_VERSION = "1.1.0";
 export { CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_VERSION } from "./agent-sdk-normalizer.js";
 
 type RequiredCapability = `family:${UniformEventFamily}` | "evidence:nativeOrder";
@@ -57,6 +58,9 @@ export type StructuralObservationSet = {
     coverage: AdapterCoverageReport;
   };
   observations: readonly StructuralObservation[];
+  /** Instance-level occurrences, each citing exactly its own events (extractor 1.1.0 and later). */
+  occurrences?: readonly Occurrence[];
+  occurrenceCoverage?: readonly OccurrenceCoverage[];
 };
 
 type ExtractorRegistration = { id: string; requiredCapabilities: readonly RequiredCapability[]; definition: string };
@@ -86,6 +90,8 @@ type ToolOperation = {
   toolName?: string;
   inputDigest?: string;
   failed: boolean;
+  /** Resolved session and agent of the operation (sibling records and relations included). */
+  scope?: string;
 };
 
 export async function createAgentSdkStructuralObservationSet(bundleRoot: string): Promise<StructuralObservationSet> {
@@ -112,10 +118,20 @@ export function createStructuralObservationSet(
     throw new Error("Structural observation coverage does not match the normalized dataset.");
   }
   const assessmentMode = importAssessmentMode(dataset, nativeCapture);
+  const operations = toolOperations(dataset.events);
   const observations = [
     ...importOutcomes(dataset, nativeCapture, assessmentMode),
-    ...extractStructuralFacts(dataset),
+    ...extractStructuralFacts(dataset, operations),
   ];
+  const { occurrences, coverage: occurrenceCoverage } = extractOccurrences({
+    attemptId: dataset.attemptId,
+    events: dataset.events,
+    operations,
+    toolCapability: dataset.capabilityProfile.families.tool,
+    delegationCapability: dataset.capabilityProfile.families.delegation,
+    isCompaction: isCompactionBoundary,
+    ...(nativeCapture === undefined ? {} : { resolveContent: nativeContentResolver(nativeCapture) }),
+  });
   return {
     schemaVersion: "ebo.structural-observation-set/v1",
     runId: dataset.runId,
@@ -129,6 +145,25 @@ export function createStructuralObservationSet(
       coverage: structuredClone(coverage),
     },
     observations,
+    occurrences,
+    occurrenceCoverage,
+  };
+}
+
+/** Resolve `<locator>#<json pointer>` content references against the retained native documents. */
+function nativeContentResolver(capture: NormalizationInput<AgentSdkNativeRecord>): (reference: NativeEvidenceReference) => unknown {
+  const documents = new Map(capture.records.map(({ reference, record }) => [`${reference.artifactId}\0${reference.recordLocator}`, record.document]));
+  return (reference) => {
+    const marker = reference.recordLocator.indexOf("#");
+    const base = marker === -1 ? reference.recordLocator : reference.recordLocator.slice(0, marker);
+    let current = documents.get(`${reference.artifactId}\0${base === "" ? "#" : base}`);
+    const pointer = marker === -1 ? "" : reference.recordLocator.slice(marker + 1);
+    for (const segment of pointer.split("/").slice(1)) {
+      const key = segment.replace(/~1/gu, "/").replace(/~0/gu, "~");
+      current = Array.isArray(current) ? current[Number(key)] : asRecord(current)?.[key];
+      if (current === undefined) return undefined;
+    }
+    return current;
   };
 }
 
@@ -138,6 +173,18 @@ export async function validateStructuralObservationSet(
 ): Promise<void> {
   const errors = validateArtifact("structural observations", report);
   if (errors.length > 0) throw new Error(errors.map(({ field, message }) => `${field}: ${message}`).join("\n"));
+  const occurrenceIds = new Set<string>();
+  for (const occurrence of report.occurrences ?? []) {
+    if (occurrenceIds.has(occurrence.id)) throw new Error(`Duplicate occurrence ID "${occurrence.id}".`);
+    occurrenceIds.add(occurrence.id);
+    if (!occurrence.id.startsWith(`${report.attemptId}/occ/${occurrence.type}/`)) throw new Error(`Occurrence "${occurrence.id}" belongs to another attempt or type.`);
+    for (const citation of occurrence.citations) {
+      const resolution = await resolver.resolve(citation);
+      if (typeof resolution !== "object" || resolution.runId !== report.runId || resolution.attemptId !== report.attemptId) {
+        throw new Error(`Occurrence "${occurrence.id}" has an unresolved native citation.`);
+      }
+    }
+  }
   const ids = new Set<string>();
   for (const observation of report.observations) {
     if (ids.has(observation.id)) throw new Error(`Duplicate structural observation ID "${observation.id}".`);
@@ -160,12 +207,11 @@ export async function validateStructuralObservationSet(
   }
 }
 
-function extractStructuralFacts(dataset: NormalizedDataset): StructuralObservation[] {
-  const operations = toolOperations(dataset.events);
+function extractStructuralFacts(dataset: NormalizedDataset, operations: readonly ToolOperation[]): StructuralObservation[] {
   const unprojectedToolEvidence = dataset.events.filter((event) =>
     typeof event.attributes.unprojectedToolBlockCount === "number" && event.attributes.unprojectedToolBlockCount > 0);
   const ambiguousTools = uniqueEvents([
-    ...dataset.events.filter((event) => event.family === "tool" && operationId(event, dataset.events) === undefined),
+    ...dataset.events.filter((event) => event.family === "tool" && !isToolBatch(event) && operationId(event, dataset.events) === undefined),
     ...ambiguousActorScopedToolEvents(dataset.events),
     ...unprojectedToolEvidence,
   ]);
@@ -282,7 +328,11 @@ function toolOperations(events: readonly UniformEvent[]): ToolOperation[] {
     groups.set(id, grouped);
   }
   return [...groups].sort(([left], [right]) => left.localeCompare(right))
-    .flatMap(([id, grouped]) => groupToolEvents(id, grouped, events).groups.map(([scopedId, scoped]) => operation(scopedId, scoped)));
+    .flatMap(([id, grouped]) => groupToolEvents(id, grouped, events).groups.map(([scopedId, scoped]) => ({
+      ...operation(scopedId, scoped),
+      scope: JSON.stringify([scoped.map((event) => sessionScope(event, events)).find((value) => value !== undefined) ?? "",
+        scoped.map(explicitAgentScope).find((value) => value !== undefined) ?? ""]),
+    })));
 }
 
 function operation(id: string, grouped: UniformEvent[]): ToolOperation {
@@ -314,22 +364,39 @@ function directSessionScope(event: UniformEvent): string | undefined {
     ? `${event.scope.kind}:${scopeId}` : undefined;
 }
 
+// Per-dataset indexes: sibling and relation lookups were linear scans with canonical JSON per candidate.
+const eventIndexes = new WeakMap<readonly UniformEvent[], { byId: Map<string, UniformEvent>; scopeByReference: Map<string, string> }>();
+
+function eventIndex(allEvents: readonly UniformEvent[]): { byId: Map<string, UniformEvent>; scopeByReference: Map<string, string> } {
+  let index = eventIndexes.get(allEvents);
+  if (index === undefined) {
+    index = { byId: new Map(), scopeByReference: new Map() };
+    for (const event of allEvents) {
+      if (!index.byId.has(event.id)) index.byId.set(event.id, event);
+      const scope = directSessionScope(event);
+      const key = referenceKey(event.source.nativeReference);
+      if (scope !== undefined && !index.scopeByReference.has(key)) index.scopeByReference.set(key, scope);
+    }
+    eventIndexes.set(allEvents, index);
+  }
+  return index;
+}
+
+function referenceKey(reference: NativeEvidenceReference): string {
+  return JSON.stringify([reference.artifactId, reference.recordLocator]);
+}
+
 function sessionScope(event: UniformEvent, allEvents: readonly UniformEvent[]): string | undefined {
   const direct = directSessionScope(event);
   if (direct !== undefined) return direct;
-  const reference = canonicalizeMetadata(event.source.nativeReference);
-  const sibling = allEvents.find((candidate) => candidate.id !== event.id
-    && canonicalizeMetadata(candidate.source.nativeReference) === reference && directSessionScope(candidate) !== undefined);
-  if (sibling !== undefined) return directSessionScope(sibling);
+  const index = eventIndex(allEvents);
+  const sibling = index.scopeByReference.get(referenceKey(event.source.nativeReference));
+  if (sibling !== undefined) return sibling;
   for (const relation of event.relations.known) {
-    const related = allEvents.find(({ id }) => id === relation.eventId);
+    const related = index.byId.get(relation.eventId);
     if (related === undefined) continue;
-    const relatedDirect = directSessionScope(related);
-    if (relatedDirect !== undefined) return relatedDirect;
-    const relatedReference = canonicalizeMetadata(related.source.nativeReference);
-    const relatedSibling = allEvents.find((candidate) => candidate.id !== related.id
-      && canonicalizeMetadata(candidate.source.nativeReference) === relatedReference && directSessionScope(candidate) !== undefined);
-    if (relatedSibling !== undefined) return directSessionScope(relatedSibling);
+    const relatedScope = directSessionScope(related) ?? index.scopeByReference.get(referenceKey(related.source.nativeReference));
+    if (relatedScope !== undefined) return relatedScope;
   }
   return undefined;
 }
@@ -562,15 +629,17 @@ function resourceObservation(dataset: NormalizedDataset, id: ExtractorRegistrati
       ? known(dataset, registrationValue, finals[0]!.value, unit, citations(finals.map(({ event }) => event)), finals.map(({ event }) => event))
       : unavailable(dataset, registrationValue, `Conflicting cumulative-final ${field} records are available.`, citations(finals.map(({ event }) => event)), finals.map(({ event }) => event));
   }
+  // Harness-reported cumulative snapshots outrank per-request increments derived from the same records.
+  const snapshotCandidates = candidates.filter(({ semantics }) => semantics === "cumulative-snapshot");
+  if (snapshotCandidates.length > 0 && candidates.every(({ semantics }) => semantics === "cumulative-snapshot" || semantics === "increment")) {
+    const snapshots = resourceEvents.filter(({ attributes }) => attributes.resourceSemantics === "cumulative-snapshot");
+    return cumulativeResourceObservation(dataset, registrationValue, snapshotCandidates, snapshots, field, unit);
+  }
   if (candidates.every(({ semantics }) => semantics === "increment")) {
     const invalid = invalidResourceReason(candidates, field, unit);
     return invalid === undefined
       ? known(dataset, registrationValue, candidates.reduce((sum, { value }) => sum + value, 0), unit, citations(candidates.map(({ event }) => event)), candidates.map(({ event }) => event))
       : unavailable(dataset, registrationValue, invalid, citations(candidates.map(({ event }) => event)), candidates.map(({ event }) => event));
-  }
-  if (candidates.every(({ semantics }) => semantics === "cumulative-snapshot")) {
-    const snapshots = resourceEvents.filter(({ attributes }) => attributes.resourceSemantics === "cumulative-snapshot");
-    return cumulativeResourceObservation(dataset, registrationValue, candidates, snapshots, field, unit);
   }
   return unavailable(dataset, registrationValue, `${field} records have overlapping or unordered usage semantics.`, citations(candidates.map(({ event }) => event)), candidates.map(({ event }) => event));
 }
@@ -686,13 +755,13 @@ function observation(
 }
 
 function operationId(event: UniformEvent, events: readonly UniformEvent[]): string | undefined {
+  if (isToolBatch(event)) return undefined;
   const direct = [event.attributes.toolUseId, event.attributes.toolCallId, event.attributes.actionId, event.attributes.callId, event.attributes.itemId]
     .map(scalarString).find((value) => value !== undefined)
     ?? (event.scope.kind === "operation" ? event.scope.id : undefined);
   if (direct !== undefined) return direct;
   for (const relation of event.relations.known) {
-    // ponytail: linear lookup keeps the extractor stateless; index IDs if million-record profiles require it.
-    const related = events.find(({ id }) => id === relation.eventId);
+    const related = eventIndex(events).byId.get(relation.eventId);
     const relatedId = related === undefined ? undefined : operationIdWithoutRelations(related);
     if (relatedId !== undefined) return relatedId;
   }
@@ -735,8 +804,14 @@ function logicalRequestCount(events: readonly UniformEvent[]): { count: number; 
   return { count, ...(ambiguities.length === 0 ? {} : { reason: `Model-request count is unavailable because ${ambiguities.join(" and ")}.` }) };
 }
 
+/** A tool batch callback spans several operations and belongs to none of them. */
+function isToolBatch(event: UniformEvent): boolean {
+  return event.attributes.hook === "PostToolBatch";
+}
+
 function explicitToolFailure(event: UniformEvent): boolean {
   return event.attributes.isError === true || event.attributes.errorScope === "agent-tool"
+    || typeof event.attributes.exitCode === "number" && event.attributes.exitCode !== 0
     || event.attributes.hook === "PostToolUseFailure" || event.attributes.status === "failed"
     || event.attributes.status === "error" || event.attributes.status === "declined";
 }

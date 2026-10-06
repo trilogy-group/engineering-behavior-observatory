@@ -84,6 +84,10 @@ The native JSONL evidence records:
 - bounded, redacted diagnostics only when the official client attributes them
   to the child stderr tail.
 
+Each completed `assistant/message` event yields a per-request usage event
+(`resourceSemantics: increment`) with the step's input, output and cache-read
+tokens, timed by the native event `time`.
+
 Stdout remains exclusively owned by the official JSON-RPC transport. EBO does
 not attach a console exporter or stdout logger. The controlled-runtime test
 parses every emitted evidence line and forces a contaminated runtime to fail

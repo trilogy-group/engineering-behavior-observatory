@@ -67,6 +67,8 @@ export const PI_HARNESS = "pi-sdk";
 export const PI_CONFIG_SCHEMA_VERSION = "ebo.pi-config/v1";
 export const PI_ADAPTER_VERSION = "1.0.0";
 export const PINNED_PI_SDK_VERSION = "0.87.1";
+/** Pi SDK versions whose retained bundles EBO reads back; the pinned version alone is used for capture. */
+export const RETAINED_PI_SDK_VERSIONS: readonly string[] = [PINNED_PI_SDK_VERSION, "0.85.1"];
 
 const ATTEMPT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -171,7 +173,7 @@ export const piCapabilityProfile: AdapterCapabilityProfile = {
   },
   evidence: {
     nativeOrder: { status: "partial", detail: "Pi history and subscription/observer records retain separate source-local order domains." },
-    nativeTime: { status: "partial", detail: "History timestamps are native; adapter receipt timestamps are labeled and not promoted to native time." },
+    nativeTime: { status: "partial", detail: "History and message timestamps are native; other stream, observer and adapter records use the in-process receipt time, labeled by nativeTimeSource." },
     parentage: { status: "partial", detail: "Pi session entry IDs and parent IDs remain authoritative in native history." },
     content: { status: "partial", detail: "Native content remains restricted and is referenced rather than copied into uniform events." },
   },
@@ -849,7 +851,45 @@ export async function normalizePiCapture(input: NormalizationInput<PiNativeRecor
     events.push(...mapped);
     if (mapped.length === 0) unmapped.push({ reference: captured.reference, reason: piUnmappedReason(captured.record) });
   }
-  return { events, unmapped };
+  return { events: correlateHistoryWithStream(events, input.records), unmapped };
+}
+
+/**
+ * Pi history snapshots and stream events describe the same messages and tool calls. Link each history
+ * event to its stream counterparts through the native tool-call IDs, response ID or message timestamp
+ * they share, so a citation of either resolves to the same logical event.
+ */
+function correlateHistoryWithStream(events: UniformEvent[], records: NormalizationInput<PiNativeRecord>["records"]): UniformEvent[] {
+  const streamByKey = new Map<string, string[]>();
+  for (const event of events) {
+    if (!event.source.nativeType.startsWith("stream:")) continue;
+    const { toolCallId, responseId, messageTimestamp, role } = event.attributes;
+    for (const key of [
+      typeof toolCallId === "string" ? `tool:${toolCallId}` : undefined,
+      typeof responseId === "string" ? `response:${responseId}` : undefined,
+      typeof messageTimestamp === "number" && typeof role === "string" ? `message:${role}:${String(messageTimestamp)}` : undefined,
+    ]) if (key !== undefined) streamByKey.set(key, [...streamByKey.get(key) ?? [], event.id]);
+  }
+  const historyMessages = new Map(records.flatMap(({ reference, record }) => reference.artifactId === "pi-session" && isRecord(record.message)
+    ? [[JSON.stringify([reference.artifactId, reference.recordLocator]), record.message] as const] : []));
+  return events.map((event) => {
+    const message = historyMessages.get(JSON.stringify([event.source.nativeReference.artifactId, event.source.nativeReference.recordLocator]));
+    if (message === undefined) return event;
+    const toolCallIds = Array.isArray(message.content)
+      ? message.content.flatMap((block) => isRecord(block) && block.type === "toolCall" ? text(block.id) ?? [] : []) : [];
+    const keys = [
+      ...toolCallIds.map((id) => `tool:${id}`),
+      ...(text(message.toolCallId) === undefined ? [] : [`tool:${text(message.toolCallId)!}`]),
+      ...(text(message.responseId) === undefined ? [] : [`response:${text(message.responseId)!}`]),
+      ...(number(message.timestamp) === undefined || text(message.role) === undefined ? [] : [`message:${text(message.role)!}:${String(number(message.timestamp))}`]),
+    ];
+    const linked = [...new Set(keys.flatMap((key) => streamByKey.get(key) ?? []))]
+      .filter((id) => !event.relations.known.some(({ eventId }) => eventId === id));
+    return linked.length === 0 ? event : {
+      ...event,
+      relations: { ...event.relations, known: [...event.relations.known, ...linked.map((eventId) => ({ kind: "correlates-with" as const, eventId }))] },
+    };
+  });
 }
 
 export async function describeAndValidatePiDataset(
@@ -901,7 +941,10 @@ function mapPiRecord(
   const sourceId = text(record.sessionId) ?? retainedSessionId ?? text(payload.id) ?? input.attemptId;
   const order = envelope ? number(record.sequence) : lineNumber(captured.reference.recordLocator);
   const payloadMessage = isRecord(payload.message) ? payload.message : isRecord(payload.error) ? payload.error : undefined;
-  const timestamp = envelope ? millisTimestamp(payloadMessage?.timestamp) : text(record.timestamp) ?? millisTimestamp(payload.timestamp);
+  const originTimestamp = envelope ? millisTimestamp(payloadMessage?.timestamp) : text(record.timestamp) ?? millisTimestamp(payload.timestamp);
+  // Stream, observer and adapter records without an origin timestamp use the in-process receipt time, labeled.
+  const receiptTimestamp = envelope && payloadMessage?.timestamp === undefined ? isoTimestamp(record.receivedAt) : undefined;
+  const timestamp = originTimestamp ?? receiptTimestamp;
   const common = {
     schemaVersion: "ebo.uniform-event/v1" as const,
     runId: input.runId,
@@ -911,7 +954,7 @@ function mapPiRecord(
       ? { status: "unknown" as const, reason: "Pi native order is unavailable" }
       : { status: "known" as const, value: order, domain: envelope ? `pi-${channel ?? "adapter"}` : "pi-session" },
     nativeTime: timestamp === undefined
-      ? { status: "unknown" as const, reason: envelope ? "Adapter receipt time is not native time" : "Pi history timestamp is unavailable" }
+      ? { status: "unknown" as const, reason: envelope ? "Pi record has no origin or receipt timestamp" : "Pi history timestamp is unavailable" }
       : { status: "known" as const, value: timestamp },
     relations: { parent: { status: "unknown" as const, reason: "Native parent IDs remain in Pi session history" }, known: [] },
   };
@@ -923,7 +966,7 @@ function mapPiRecord(
       phase,
       actor,
       scope,
-      attributes: { sessionId: sourceId, ...attributes },
+      attributes: { sessionId: sourceId, ...attributes, ...(receiptTimestamp === undefined ? {} : { nativeTimeSource: "adapter-receipt" }) },
       content: content ? { status: "known", value: [{ nativeReference: structuredClone(captured.reference) }] }
         : { status: "unknown", reason: "No content is associated with this lifecycle record" },
     });
@@ -940,10 +983,11 @@ function mapPiRecord(
               : undefined;
       if (actor === undefined) return [];
       const result = [event(`message-${text(record.id) ?? "entry"}`, "message", "after", actor, { kind: "session", id: sourceId }, {
-        role: role ?? "unknown", entryId: text(record.id) ?? "unknown",
+        role: role ?? "unknown", entryId: text(record.id) ?? "unknown", ...messageIdentity(message),
       })];
       if ((role === "assistant" || role === "toolResult") && isRecord(message.usage)) {
-        result.push(event(`usage-${text(record.id) ?? "entry"}`, "runtime", "after", { kind: "harness" }, { kind: "session", id: sourceId }, usageAttributes(message.usage, role), false));
+        result.push(event(`usage-${text(record.id) ?? "entry"}`, "runtime", "after", { kind: "harness" }, { kind: "session", id: sourceId },
+          { ...usageAttributes(message.usage, role), ...compactAttributes({ responseId: text(message.responseId) }) }, false));
       }
       return result;
     }
@@ -971,7 +1015,7 @@ function mapPiRecord(
           : role === "user" ? { kind: "user" as const }
             : role === "custom" ? { kind: "harness" as const }
               : undefined;
-      return actor === undefined ? [] : [event(kind, "message", kind.endsWith("start") ? "before" : "after", actor, { kind: "session", id: sourceId }, { role })];
+      return actor === undefined ? [] : [event(kind, "message", kind.endsWith("start") ? "before" : "after", actor, { kind: "session", id: sourceId }, { role, ...(message === undefined ? {} : messageIdentity(message)) })];
     }
     if (["tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(kind)) {
       const toolCallId = text(payload.toolCallId);
@@ -989,7 +1033,7 @@ function mapPiRecord(
         ? { kind: "turn" as const, ...(turnIndex === undefined ? {} : { id: `${sourceId}:turn:${String(turnIndex)}` }) }
         : { kind: "session" as const, id: sourceId };
       return [event(kind, kind.startsWith("auto_retry") ? "context" : "runtime", kind.endsWith("start") ? "before" : "after", { kind: "harness" }, scope,
-        compactAttributes({ lifecycle: kind, turnIndex, receiptAt: text(record.receivedAt) }))];
+        compactAttributes({ lifecycle: kind, turnIndex }))];
     }
     return [];
   }
@@ -1459,6 +1503,24 @@ function sameTextSet(left: Set<string>, right: Set<string>): boolean {
   return left.size === right.size && [...left].every((value) => right.has(value));
 }
 
+/**
+ * Identities a Pi message shares between its history snapshot and its stream events, so a citation of
+ * either resolves to the same logical message or tool call without time matching.
+ */
+function messageIdentity(message: Record<string, unknown>): Record<string, UniformAttributeValue> {
+  const toolCallIds = Array.isArray(message.content)
+    ? message.content.flatMap((block) => isRecord(block) && block.type === "toolCall" ? text(block.id) ?? [] : [])
+    : [];
+  return compactAttributes({
+    messageTimestamp: number(message.timestamp),
+    responseId: text(message.responseId),
+    toolCallId: text(message.toolCallId),
+    toolName: message.role === "toolResult" ? text(message.toolName) : undefined,
+    // Attribute lists hold at most 16 values; relations to stream events carry every tool call.
+    toolCallIds: toolCallIds.length > 0 && toolCallIds.length <= 16 ? toolCallIds : undefined,
+  });
+}
+
 function usageAttributes(usage: Record<string, unknown>, usageScope: string): Record<string, UniformAttributeValue> {
   const cost = isRecord(usage.cost) ? usage.cost : undefined;
   return compactAttributes({
@@ -1509,6 +1571,12 @@ function millisTimestamp(value: unknown): string | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   const timestamp = new Date(value).toISOString();
   return Number.isNaN(Date.parse(timestamp)) ? undefined : timestamp;
+}
+
+function isoTimestamp(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? undefined : new Date(parsed).toISOString();
 }
 
 function text(value: unknown): string | undefined {

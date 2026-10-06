@@ -226,7 +226,16 @@ test("captures matching native lifecycle, interleaving, usage, history, and inde
       outputTokens: 4,
       reasoningOutputTokens: 2,
       resourceSemantics: "cumulative-snapshot",
+      nativeTimeSource: "capture-receipt",
     });
+    const snapshot = normalized.events.find(({ source, attributes }) => source.nativeType === "thread/tokenUsage/updated" && attributes.resourceSemantics === "cumulative-snapshot")!;
+    const request = normalized.events.find(({ source, attributes }) => source.nativeType === "thread/tokenUsage/updated" && attributes.resourceSemantics === "increment");
+    assert.equal(snapshot.nativeTime.status, "known", "usage snapshots are timed by observation");
+    assert.equal(request?.id, `${snapshot.id}:request`);
+    assert.deepEqual(request?.nativeTime, snapshot.nativeTime);
+    assert.equal(request?.attributes.usageScope, "assistant");
+    assert.equal(request?.content.status === "known" ? request.content.value[0]!.nativeReference.recordLocator : undefined,
+      `${snapshot.source.nativeReference.recordLocator}#/payload/tokenUsage/last`);
     assert.ok(normalized.unmapped.some(({ reference }) => {
       const record = capture.records.find(({ reference: candidate }) => candidate.recordLocator === reference.recordLocator)?.record;
       return record?.method === "unknown/native";

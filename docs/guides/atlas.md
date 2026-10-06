@@ -98,7 +98,13 @@ Output must be a new directory outside immutable sources. The offline report
 declares its frozen population and never recalculates semantic populations in
 browser JavaScript. Cited records use the existing export sanitizer to omit
 secrets, hidden fields and local paths; original evidence remains authoritative.
-Assertion/source digests identify the original. Existing human packet links are
+Assertion/source digests identify the original. `report.json` lists every
+secret-scan match in the displayed evidence under `secretScan`: its kind, a JSON
+pointer to its location in that report (case positions follow its filtered
+`cases` array; `caseKey` names the case), and whether it was redacted or kept as not secret
+(with the variable name and reason, such as an identifier like `sessionApiKey`
+in a cited command). Matched values are never retained. Shareable summaries omit
+this list. Existing human packet links are
 local file URLs; browsers may block them from HTTP, so open them from the saved
 local report.
 

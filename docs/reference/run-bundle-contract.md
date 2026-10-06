@@ -200,6 +200,26 @@ references, policy, JSON/JSONL structure, and a final secret scan. A failed
 creation removes its newly-created destination tree; an existing destination
 is never replaced.
 
+Redaction and the final scan share one rule set (`src/redaction.ts`), so a
+sanitized value never fails its own scan. Known credential formats (private-key
+blocks, AWS, GitHub, Anthropic, OpenAI-style, Fireworks, Slack and Google keys,
+JWTs, bearer values and authorization headers) are always redacted, as are
+secret-named JSON fields. Assignments to secret-named variables are classified
+by context. A quoted value, or the value of a shell-style assignment such as
+`KEY=value`, `--key=value` or `?token=value`, is scanned as a shell word across
+quotes and balanced `${...}` expansions: complete environment references
+(`$VAR`, `${VAR}`, `%VAR%`) and placeholders stay, and every literal part is
+redacted, including a literal default, assigned or alternate word in an
+expansion (`${VAR:-[REDACTED_SECRET]}`), a literal next to a reference
+(`${VAR}[REDACTED_SECRET]`) and command-substitution text. An unterminated
+quote or expansion is redacted whole. In a
+code-style assignment (`key = expr`, `key: expr`) dotted paths, calls,
+environment lookups, constant names and keywords are references and stay
+intact; any other unquoted value of eight or more characters is redacted, as is
+every string literal later in the same expression
+(`process.env.PREFIX + "[REDACTED_SECRET]"`), except the key of a lookup that
+directly follows the value (`os.environ['NAME']`).
+
 The remainder of this verifier section applies only to `verified` tasks.
 Verifier results cannot contradict their assertions: passed results have no
 failed assertion, while failed results retain at least one failed assertion.

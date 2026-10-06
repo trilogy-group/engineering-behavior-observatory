@@ -69,6 +69,7 @@ type DraftEvent = {
 const MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
 const MAX_EVIDENCE_BYTES = 64 * 1024 * 1024;
 const HOOK_EVENT_SET = new Set<string>(HOOK_EVENTS);
+const DELEGATION_SUBTYPES = new Set(["task_started", "task_progress", "task_updated", "task_notification"]);
 const SESSION_NATIVE_TYPES = [
   "assistant",
   "auth_status",
@@ -114,7 +115,7 @@ const BASE_CAPABILITY_PROFILE: AdapterCapabilityProfile = {
   },
   evidence: {
     nativeOrder: { status: "partial", detail: "Session and hook streams retain independent source-local sequences." },
-    nativeTime: { status: "partial", detail: "Origin timestamps are used when emitted; capture clocks are not substituted." },
+    nativeTime: { status: "partial", detail: "Origin timestamps are used when emitted; otherwise hook callback or EBO receipt time, labeled by nativeTimeSource." },
     parentage: { status: "partial", detail: "Relations require stable tool-use, task, agent, or workspace identifiers." },
     content: { status: "partial", detail: "Raw content remains in native evidence and is represented only by references." },
   },
@@ -130,8 +131,9 @@ export const claudeAgentSdkNormalizationAdapter: Omit<UniformEventNormalizationA
     assertQualifiedInput(input);
     const drafts: DraftEvent[] = [];
     const unmapped: AgentSdkNormalizationResult["unmapped"][number][] = [];
+    const usageMessageIds = new Set<string>();
     for (const captured of input.records) {
-      const mapped = mapRecord(input, captured);
+      const mapped = [...mapRecord(input, captured), ...mapRequestUsage(input, captured, usageMessageIds)];
       drafts.push(...mapped);
       if (mapped.length === 0) {
         unmapped.push({
@@ -310,8 +312,8 @@ function mapSessionRecord(
   const subtype = text(wrapper.nativeSubtype) ?? text(message.subtype);
   const sessionId = text(wrapper.sessionId) ?? text(message.session_id);
   const nativeOrder = sourceOrder(wrapper, orderDomain("session", captured.reference.artifactId));
-  const nativeTime = originTime(message.timestamp, "Agent SDK message has no originating timestamp");
-  const common = { input, captured, nativeType, nativeOrder, nativeTime, sessionId };
+  const { nativeTime, timeSource } = sessionTime(wrapper, message);
+  const common = { input, captured, nativeType, nativeOrder, nativeTime, timeSource, sessionId };
 
   const base = sessionEventShape(nativeType, subtype, message);
   if (base !== undefined) {
@@ -343,6 +345,60 @@ function mapSessionRecord(
   return drafts;
 }
 
+/**
+ * One usage event per provider message: the session repeats a message's usage on
+ * every content block, so only its first record is projected. Input and cache
+ * counts are per request; the stream records output tokens at message start, so
+ * per-request output is reported unavailable and stays in the result totals.
+ */
+function mapRequestUsage(
+  input: NormalizationInput<AgentSdkNativeRecord>,
+  captured: CapturedNativeRecord<AgentSdkNativeRecord>,
+  seen: Set<string>,
+): DraftEvent[] {
+  if (captured.record.kind !== "session") return [];
+  const wrapper = asRecord(captured.record.document);
+  const message = asRecord(wrapper?.message);
+  const inner = asRecord(message?.message);
+  const usage = asRecord(inner?.usage);
+  const messageId = text(inner?.id);
+  if (wrapper === undefined || message === undefined || text(wrapper.nativeType) !== "assistant" || usage === undefined
+      || messageId === undefined || seen.has(messageId)) return [];
+  seen.add(messageId);
+  const sessionId = text(wrapper.sessionId) ?? text(message.session_id);
+  const { nativeTime, timeSource } = sessionTime(wrapper, message);
+  return [draftEvent({
+    input,
+    captured,
+    discriminator: "request-usage",
+    nativeType: "assistant",
+    nativeOrder: sourceOrder(wrapper, orderDomain("session", captured.reference.artifactId)),
+    nativeTime,
+    timeSource,
+    family: "runtime",
+    phase: "after",
+    actor: { kind: "model", ...(text(inner?.model) === undefined ? {} : { id: text(inner?.model) }) },
+    scope: sessionId === undefined ? { kind: "attempt", id: input.attemptId } : { kind: "session", id: sessionId },
+    attributes: compactAttributes({
+      requestId: scalar(message.request_id),
+      providerMessageId: messageId,
+      model: scalar(inner?.model),
+      inputTokens: tokenCount(usage.input_tokens),
+      cacheReadInputTokens: tokenCount(usage.cache_read_input_tokens),
+      cacheCreationInputTokens: tokenCount(usage.cache_creation_input_tokens),
+      outputTokenCoverage: "unavailable-per-request",
+      resourceSemantics: "increment",
+      usageScope: parentToolKey(message) === undefined ? "assistant" : "subagent",
+    }),
+    content: knownContent(contentReference(captured.reference, "/message/message/usage", "request-usage")),
+    parentKey: parentToolKey(message),
+  })];
+}
+
+function tokenCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
 function mapResultResources(
   common: {
     input: NormalizationInput<AgentSdkNativeRecord>;
@@ -350,6 +406,7 @@ function mapResultResources(
     nativeType: string;
     nativeOrder: UniformEvent["nativeOrder"];
     nativeTime: UniformEvent["nativeTime"];
+    timeSource?: string;
     sessionId?: string;
   },
   message: JsonRecord,
@@ -430,6 +487,7 @@ function mapToolBlocks(
     nativeType: string;
     nativeOrder: UniformEvent["nativeOrder"];
     nativeTime: UniformEvent["nativeTime"];
+    timeSource?: string;
     sessionId?: string;
   },
   message: JsonRecord,
@@ -491,6 +549,10 @@ function mapHookRecord(
   const agentId = text(wrapper.agentId) ?? text(payload.agent_id);
   const taskId = text(payload.task_id);
   const stable = toolUseId === undefined ? taskId === undefined ? agentId === undefined ? undefined : `agent:${agentId}` : `task:${taskId}` : `tool:${toolUseId}`;
+  // A tool batch callback carries its own synthetic ID; its member calls keep their tool-use IDs.
+  const batchToolUseIds = hook === "PostToolBatch" && Array.isArray(payload.tool_calls)
+    ? payload.tool_calls.flatMap((call) => text(asRecord(call)?.tool_use_id) ?? [])
+    : [];
   const anchorRank = hook === "PreToolUse" ? 1
     : hook === "SubagentStart" || hook === "TaskCreated" ? 0
       : undefined;
@@ -500,15 +562,19 @@ function mapHookRecord(
     discriminator: "record",
     nativeType: hook,
     nativeOrder: sourceOrder(wrapper, orderDomain("hooks", captured.reference.artifactId)),
-    nativeTime: { status: "unknown", reason: "Hook callback record has no native occurrence timestamp" },
+    nativeTime: originTime(wrapper.callbackAt, "Hook callback record has no callback timestamp"),
+    ...(originTime(wrapper.callbackAt, "").status === "known" ? { timeSource: "hook-callback" } : {}),
     family: shape.family,
     phase: shape.phase,
     actor: hookActor(shape.family, hook, payload),
     scope: hookScope(shape.family, input.attemptId, wrapper, payload, toolUseId, agentId, taskId),
-    attributes: hookAttributes(hook, payload, toolUseId, agentId, taskId),
+    attributes: {
+      ...hookAttributes(hook, payload, toolUseId, agentId, taskId),
+      ...(batchToolUseIds.length > 0 && batchToolUseIds.length <= 16 ? { batchToolUseIds } : {}),
+    },
     content: hookContent(captured.reference, hook, payload),
     anchors: stable === undefined || anchorRank === undefined ? [] : [{ key: stable, rank: anchorRank }],
-    relationKeys: stable === undefined ? [] : [stable],
+    relationKeys: [...(stable === undefined ? [] : [stable]), ...batchToolUseIds.map((id) => `tool:${id}`)],
   })];
 }
 
@@ -682,6 +748,8 @@ function draftEvent(input: {
   nativeType: string;
   nativeOrder: UniformEvent["nativeOrder"];
   nativeTime: UniformEvent["nativeTime"];
+  /** Set when nativeTime is a callback or receipt clock rather than an origin timestamp. */
+  timeSource?: string;
   family: UniformEventFamily;
   phase: UniformEvent["phase"];
   actor: UniformEvent["actor"];
@@ -710,7 +778,9 @@ function draftEvent(input: {
       phase: input.phase,
       scope: input.scope,
       relations: { parent: { status: "unknown", reason: "Native record does not establish an emitted parent" }, known: [] },
-      attributes: input.attributes,
+      attributes: input.timeSource === undefined || input.nativeTime.status !== "known"
+        ? input.attributes
+        : { ...input.attributes, nativeTimeSource: input.timeSource },
       content: input.content,
     },
     anchors: input.anchors ?? [],
@@ -777,8 +847,8 @@ function capabilityProfileFor(
       nativeTime: {
         status: "partial",
         detail: detailedBetaConfigured
-          ? "Origin timestamps are used when emitted; detailed-beta hook spans are configured but are not substituted for native semantic events."
-          : "Origin timestamps are used when emitted; detailed-beta hook span timing is unavailable and semantic hook history is unchanged.",
+          ? "Origin timestamps are used when emitted; otherwise hook callback or EBO receipt time, labeled by nativeTimeSource. Detailed-beta hook spans are configured but are not substituted for native semantic events."
+          : "Origin timestamps are used when emitted; otherwise hook callback or EBO receipt time, labeled by nativeTimeSource. Detailed-beta hook span timing is unavailable.",
       },
     },
   };
@@ -886,6 +956,14 @@ function orderDomain(kind: "session" | "hooks", artifactId: string): string {
     : `${kind}:sha256:${createHash("sha256").update(artifactId).digest("hex")}`;
 }
 
+/** Origin timestamp when the message has one, otherwise the labeled EBO receipt time; an invalid origin stays unknown. */
+function sessionTime(wrapper: JsonRecord, message: JsonRecord): { nativeTime: UniformEvent["nativeTime"]; timeSource?: string } {
+  const origin = originTime(message.timestamp, "Agent SDK message has no originating timestamp");
+  if (message.timestamp !== undefined) return { nativeTime: origin };
+  const receipt = originTime(wrapper.capturedAt, "Agent SDK message has no originating or receipt timestamp");
+  return receipt.status === "known" ? { nativeTime: receipt, timeSource: "capture-receipt" } : { nativeTime: receipt };
+}
+
 function originTime(value: unknown, reason: string): UniformEvent["nativeTime"] {
   if (typeof value === "string" && isRfc3339DateTime(value)) return { status: "known", value };
   return { status: "unknown", reason };
@@ -913,6 +991,7 @@ function isRfc3339DateTime(value: string): boolean {
 
 function sessionAttributes(nativeType: string, subtype: string | undefined, message: JsonRecord): Record<string, UniformAttributeValue> {
   const rateLimit = asRecord(message.rate_limit_info);
+  const delegation = nativeType === "system" && DELEGATION_SUBTYPES.has(subtype ?? "");
   return compactAttributes({
     subtype,
     messageId: scalar(message.uuid),
@@ -927,6 +1006,11 @@ function sessionAttributes(nativeType: string, subtype: string | undefined, mess
     apiDurationMs: scalar(message.duration_api_ms),
     unprojectedToolBlockCount: unprojectedToolBlockCount(message),
     resourceSemantics: nativeType === "result" && typeof message.duration_ms === "number" ? "cumulative-final" : undefined,
+    taskId: delegation ? scalar(message.task_id) : undefined,
+    toolUseId: delegation ? scalar(message.tool_use_id) : undefined,
+    taskType: delegation ? scalar(message.task_type) : undefined,
+    taskStatus: delegation ? scalar(message.status) : undefined,
+    isBackgrounded: delegation ? scalar(message.is_backgrounded) : undefined,
     rateLimitStatus: nativeType === "rate_limit_event" ? scalar(rateLimit?.status) : undefined,
     rateLimitType: nativeType === "rate_limit_event" ? scalar(rateLimit?.rateLimitType) : undefined,
     utilization: nativeType === "rate_limit_event" ? scalar(rateLimit?.utilization) : undefined,
@@ -962,6 +1046,11 @@ function sessionContent(
   }
   if (nativeType === "system" && ["local_command_output", "informational"].includes(subtype ?? "") && message.content !== undefined) {
     return knownContent(contentReference(reference, "/message/content", "system-message"));
+  }
+  if (nativeType === "system" && DELEGATION_SUBTYPES.has(subtype ?? "")) {
+    const fields = [["description", "task-description"], ["summary", "task-summary"], ["patch", "task-patch"]] as const;
+    const present = fields.filter(([field]) => message[field] !== undefined);
+    if (present.length > 0) return knownContent(...present.map(([field, role]) => contentReference(reference, `/message/${field}`, role)));
   }
   return { status: "unknown", reason: "Native message content remains in the source record" };
 }

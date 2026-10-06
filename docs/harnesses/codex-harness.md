@@ -224,11 +224,15 @@ are retained without synthetic spans or time-based joins.
 The receiver accepts at most 256 records, 4 MiB per request, and 16 MiB total;
 rejected requests remain explicit receiver diagnostics.
 
-`thread/tokenUsage/updated` retains cumulative `total` and per-turn `last`
+`thread/tokenUsage/updated` retains cumulative `total` and per-request `last`
 values separately, including `totalTokens`, `inputTokens`,
 `cachedInputTokens`, `cacheWriteInputTokens`, `outputTokens`, and
-`reasoningOutputTokens` when emitted. EBO does not sum cumulative updates or
-turn cache/reasoning subsets into additional cost. Account quota and billing
+`reasoningOutputTokens` when emitted. Each update normalizes to a cumulative
+snapshot and a per-request increment; structural totals use the latest
+snapshot. Records without a native lifecycle timestamp, including usage
+updates, are timed by EBO's observation time and labeled
+`nativeTimeSource: capture-receipt`. EBO does not turn cache/reasoning subsets
+into additional cost. Account quota and billing
 remain unavailable unless supplied by separate evidence.
 
 Restricted native session evidence retains Codex reasoning records unchanged.

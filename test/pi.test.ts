@@ -83,6 +83,15 @@ test("runs a frozen observational Pi entry through capture, export, retained eva
     assert.deepEqual(turnScopes, [`${SESSION_ID}:turn:0`, `${SESSION_ID}:turn:1`]);
     const streamTurnEnd = evidence.dataset.events.filter(({ source }) => source.nativeType === "stream:turn_end").at(-1);
     assert.deepEqual(streamTurnEnd?.nativeTime, { status: "known", value: "2023-11-14T22:13:20.400Z" });
+    const streamTool = evidence.dataset.events.filter(({ source }) => source.nativeType.startsWith("stream:tool_execution_"));
+    assert.ok(streamTool.length > 0 && streamTool.every(({ nativeTime, attributes }) => nativeTime.status === "known" && attributes.nativeTimeSource === "adapter-receipt"),
+      "stream tool events are timed by labeled receipt time");
+    const historyCall = evidence.dataset.events.find(({ source, attributes }) => source.nativeType === "history:message" && Array.isArray(attributes.toolCallIds))!;
+    const historyResult = evidence.dataset.events.find(({ source, attributes }) => source.nativeType === "history:message" && attributes.toolCallId === "tool-1")!;
+    const linked = (event: typeof historyCall) => new Set(event.relations.known.map(({ eventId }) => evidence.dataset.events.find(({ id }) => id === eventId)?.source.nativeType));
+    assert.deepEqual(historyCall.attributes.toolCallIds, ["tool-1"]);
+    assert.ok(linked(historyCall).has("stream:tool_execution_start"), "a history tool call relates to its streamed execution");
+    assert.ok(linked(historyResult).has("stream:tool_execution_end"), "a history tool result relates to its streamed execution");
     const observations = await createRetainedStructuralObservationSet(summary.bundlePath);
     const toolCount = observations.observations.find(({ id }) => id.endsWith("tool-operation-count"));
     assert.deepEqual(toolCount?.value, { status: "known", value: 1, unit: "identified-logical-tool-operations" });
@@ -317,6 +326,39 @@ test("retained Pi readback rejects unsupported versions, identity mismatches, an
     unsupported.run.harness.version = "0.0.0";
     writeFileSync(manifestPath, JSON.stringify(unsupported));
     await assert.rejects(createRetainedBehaviorEvidence(summary.bundlePath), /Unsupported retained Pi runtime/u);
+    writeFileSync(manifestPath, before);
+
+    const legacy = JSON.parse(before.toString()) as RunManifest;
+    legacy.run.harness.version = "0.85.1";
+    legacy.run.runtime = legacy.run.runtime.map((runtime) => ["pi-coding-agent", "pi-sdk"].includes(runtime.name) ? { ...runtime, version: "0.85.1" } : runtime);
+    writeFileSync(manifestPath, JSON.stringify(legacy));
+    await assert.rejects(createRetainedBehaviorEvidence(summary.bundlePath), /native composition version differs/u,
+      "a manifest relabeled to another retained version does not match the SDK the capture recorded");
+    // A consistent legacy bundle: the native composition record names the same SDK version as the manifest.
+    const eventsDescriptor = legacy.evidence.find(({ relativePath }) => relativePath === "pi-events.jsonl")!;
+    const eventsPath = join(summary.bundlePath, eventsDescriptor.relativePath);
+    const eventsBefore = readFileSync(eventsPath);
+    const legacyEvents = Buffer.from(`${eventsBefore.toString().trim().split("\n").map((line) => {
+      const record = JSON.parse(line) as { channel?: string; nativeType?: string; payload?: { sdk?: { version?: string } } };
+      if (record.channel === "adapter" && record.nativeType === "session_created") record.payload!.sdk!.version = "0.85.1";
+      return JSON.stringify(record);
+    }).join("\n")}\n`);
+    writeFileSync(eventsPath, legacyEvents);
+    eventsDescriptor.digest = `sha256:${digestBytes(legacyEvents).value}`;
+    eventsDescriptor.sizeBytes = legacyEvents.length;
+    writeFileSync(manifestPath, JSON.stringify(legacy));
+    assert.ok((await createRetainedBehaviorEvidence(summary.bundlePath)).dataset.events.length > 0, "consistent retained Pi 0.85.1 bundles stay readable");
+    const legacyLines = legacyEvents.toString().trim().split("\n");
+    const conflicting = JSON.parse(legacyLines.find((line) => line.includes("\"session_created\""))!) as { sequence: number; payload: { sdk: { version: string } } };
+    conflicting.sequence = legacyLines.length + 1;
+    conflicting.payload.sdk.version = "0.87.1";
+    const duplicated = Buffer.from(`${legacyEvents.toString()}${JSON.stringify(conflicting)}\n`);
+    writeFileSync(eventsPath, duplicated);
+    eventsDescriptor.digest = `sha256:${digestBytes(duplicated).value}`;
+    eventsDescriptor.sizeBytes = duplicated.length;
+    writeFileSync(manifestPath, JSON.stringify(legacy));
+    await assert.rejects(createRetainedBehaviorEvidence(summary.bundlePath), /expected exactly one/u, "a second, conflicting composition record is rejected");
+    writeFileSync(eventsPath, eventsBefore);
     writeFileSync(manifestPath, before);
 
     const runtimeMismatch = JSON.parse(before.toString()) as RunManifest;

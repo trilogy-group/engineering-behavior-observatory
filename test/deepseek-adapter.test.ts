@@ -232,6 +232,16 @@ test("packages a verified smoke bundle and qualifies session evidence without in
     assert.equal(captureReport.capabilities.timingResource.status, "unsupported");
     await checkRetainedEvaluation(bundleRoot, root);
     const originalEvidenceQualification = (await createRetainedBehaviorEvidence(bundleRoot)).capture.qualification;
+    const manifestPath = join(bundleRoot, "manifest.json");
+    const manifestBefore = readFileSync(manifestPath);
+    const relabeled = JSON.parse(manifestBefore.toString());
+    const nativeVersion = relabeled.run.harness.version;
+    relabeled.run.harness.version = "0.1.1-rc.2";
+    relabeled.run.runtime = relabeled.run.runtime.map((runtime: { version: string }) => runtime.version === nativeVersion ? { ...runtime, version: "0.1.1-rc.2" } : runtime);
+    writeFileSync(manifestPath, JSON.stringify(relabeled));
+    await assert.rejects(createRetainedBehaviorEvidence(bundleRoot), /native client version differs from the run manifest/u,
+      "a retained manifest version must match the native composition's client version");
+    writeFileSync(manifestPath, manifestBefore);
     assert.equal(qualifiedDeepSeekCapture(definition.run.id, definition.attempt.id,
       { ...execution.evidence as DeepSeekCaptureReport, status: "failed" }).qualification, "qualified",
     "Complete native boundaries remain qualified independently of task outcome.");
@@ -742,3 +752,42 @@ class FailingNotificationCapture extends DeepSeekNativeCapture {
   }
 }
 import { checkRetainedEvaluation } from "./retained-evaluation-helper.js";
+
+test("projects the step usage of each completed assistant message as a timed per-request increment", () => {
+  const observation = (sequence: number, event: Record<string, unknown>) => ({
+    reference: { artifactId: "deepseek-session", recordLocator: `line:${sequence}` },
+    record: { schemaVersion: "ebo.deepseek-native-observation/v1" as const, sequence, observedAt: "2026-09-19T00:00:00.000Z",
+      kind: "notification" as const, method: "session.event", sessionId: "session-usage", payload: { sessionId: "session-usage", event } },
+  });
+  const { events } = normalizeDeepSeekCapture({ runId: "run-usage", attemptId: "attempt-usage", qualification: "qualified", records: [
+    observation(1, { type: "assistant/chunk", seq: 1, time: 1_789_752_712_465, data: { turn: 1, step: 1, chunk: { type: "usage", usage: { inputTokens: 12, outputTokens: 3 } } } }),
+    observation(2, { type: "assistant/message", seq: 2, time: 1_789_752_712_467, sourceEventSeqs: [1], data: { turn: 1, step: 1, message: {}, usage: { inputTokens: 12, outputTokens: 3, cacheReadTokens: 8 } } }),
+  ] });
+  const usage = events.filter(({ attributes }) => attributes.resourceSemantics === "increment");
+  assert.equal(usage.length, 1, "streamed usage chunks are not counted beside the completed message");
+  const message = events.find(({ id }) => id === "attempt-usage-deepseek-2")!;
+  assert.equal(usage[0]!.id, `${message.id}:usage`);
+  assert.deepEqual(usage[0]!.attributes, { inputTokens: 12, outputTokens: 3, cacheReadInputTokens: 8, turn: 1, step: 1, resourceSemantics: "increment", usageScope: "assistant" });
+  assert.deepEqual(usage[0]!.nativeTime, message.nativeTime);
+  assert.equal(usage[0]!.nativeTime.status, "known");
+  assert.deepEqual(usage[0]!.relations.known, [{ kind: "caused-by", eventId: message.id }]);
+});
+
+test("maps tool identity, failure flag and the bash exit trailer onto tool events", () => {
+  const observation = (sequence: number, event: Record<string, unknown>) => ({
+    reference: { artifactId: "deepseek-session", recordLocator: `line:${sequence}` },
+    record: { schemaVersion: "ebo.deepseek-native-observation/v1" as const, sequence, observedAt: "2026-09-19T00:00:00.000Z",
+      kind: "notification" as const, method: "session.event", sessionId: "session-tools", payload: { sessionId: "session-tools", event } },
+  });
+  const { events } = normalizeDeepSeekCapture({ runId: "run-tools", attemptId: "attempt-tools", qualification: "qualified", records: [
+    observation(1, { type: "tool/call", seq: 1, time: 1_789_752_712_000, data: { turn: 1, step: 1, callId: "call-1", name: "bash", arguments: "{\"command\":\"pnpm test\"}" } }),
+    observation(2, { type: "tool/result", seq: 2, time: 1_789_752_713_000, data: { turn: 1, step: 1, message: { role: "tool", id: "m", source: { callId: "call-1" },
+      content: [{ type: "tool_result", toolCallId: "call-1", isError: false, content: [{ type: "text", text: "FAIL src/a.test.ts\n[exit code: 1]" }] }] } } }),
+  ] });
+  const [call, result] = events;
+  assert.equal(call!.attributes.toolName, "bash");
+  assert.match(String(call!.attributes.inputDigest), /^sha256:[a-f0-9]{64}$/u);
+  assert.equal(result!.attributes.callId, "call-1", "results carry the call identity from the message source");
+  assert.equal(result!.attributes.isError, false);
+  assert.equal(result!.attributes.exitCode, 1, "the harness reports a non-zero exit only in its trailer");
+});

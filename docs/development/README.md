@@ -25,6 +25,14 @@ consume external capacity, and require approved credentials. Their instructions
 belong in the relevant harness guide. Do not treat a skipped live test as proof
 of provider access.
 
+A harness runtime pin governs new captures only. Retained bundles from every
+released pin stay readable: when you bump a pin, add the new version to the
+adapter's `RETAINED_*_VERSIONS` list and keep the older ones. Readback also
+requires the manifest's version to match the version the capture's single
+native composition record names (Pi `session_created`, DeepSeek composition). Remove a version
+only with a migration for its retained bundles. `test/retained-versions.test.ts`
+fails if any version pinned in `release/*/reproducibility.json` is rejected.
+
 Use [extension contracts](extension-contracts.md) when adding an adapter,
 structural extractor, rubric, verifier, or export policy. Preserve native
 records and qualified partial attempts before adding derived views.

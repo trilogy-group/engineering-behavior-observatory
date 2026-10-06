@@ -16,6 +16,7 @@ import {
   writeMetadataAtomically,
 } from "./artifacts.js";
 import type { Digest } from "./contracts.js";
+import { containsSecret, isSecretFieldName, normalizeFieldName, redactSecrets, SECRET_PLACEHOLDER, type SecretFinding } from "./redaction.js";
 import type { RunBundleEvidenceDescriptor, RunManifest } from "./run-bundles.js";
 
 type DigestString = `sha256:${string}`;
@@ -80,14 +81,22 @@ export type CreatePortableRunBundleExportOptions = {
   policy: PortableExportPolicy;
 };
 
+/** A secret-scan match in a derived document; `path` is a JSON pointer and the matched value is never retained. */
+export type LocatedSecretFinding = SecretFinding & { path: string };
+
 /** Sanitize a caller-allowlisted derived document; this does not grant sharing approval. */
-export function sanitizeDerivedExport(value: unknown, policy: PortableExportPolicy, correlations: readonly string[] = []): unknown {
+export function sanitizeDerivedExport(
+  value: unknown,
+  policy: PortableExportPolicy,
+  correlations: readonly string[] = [],
+  onFinding?: (finding: LocatedSecretFinding) => void,
+): unknown {
   validatePolicy(policy);
   const sensitive = effectiveSensitiveValues(policy);
   const replacements = new Map(correlations.map((source) => [source, `ref-${createHash("sha256").update(source).digest("hex").slice(0, 20)}`]));
   // Derived views may embed cited session envelopes; apply native reasoning omission too.
   const bytes = sanitizeArtifact(Buffer.from(canonicalizeMetadata(value)), "application/json", policy, replacements,
-    sensitive, [homedir(), userInfo().username], new Map(), "session");
+    sensitive, [homedir(), userInfo().username], new Map(), "session", new Map(), onFinding);
   scanPortableTree([{ bytes, mediaType: "application/json" }], sensitive, correlations);
   return JSON.parse(bytes.toString("utf8"));
 }
@@ -131,27 +140,6 @@ const PI_PRIVATE_CONTENT_TYPES = new Set([
 ]);
 const PI_PRIVATE_CONTENT_FIELDS = new Set(["content", "delta", "encryptedcontent", "reasoning", "signature", "summary", "text", "thinking", "thinkingsignature"]);
 const PI_PRIVATE_FIELDS = new Set(["encryptedreasoning", "encryptedthinking", "reasoningcontent", "reasoningdetails", "reasoningsignature", "thinkingcontent", "thinkingsignature", "textsignature", "thoughtsignature"]);
-const SECRET_FIELDS = new Set([
-  "accesskey",
-  "accesstoken",
-  "apikey",
-  "authorization",
-  "blobencryptionkey",
-  "clientsecret",
-  "connectionstring",
-  "credential",
-  "credentials",
-  "credentialsjson",
-  "databaseurl",
-  "idtoken",
-  "oauthtoken",
-  "password",
-  "privatekey",
-  "refreshtoken",
-  "secret",
-  "secretaccesskey",
-  "token",
-]);
 // "eborunid"/"eboattemptid" are the normalized EBO OTel resource-attribute keys
 // ("ebo.run.id"/"ebo.attempt.id") retained inside native telemetry evidence.
 const CORRELATION_FIELDS = new Set(["attemptid", "bundleid", "id", "runid", "sessionid", "traceid", "eborunid", "eboattemptid"]);
@@ -174,18 +162,13 @@ const TRUNCATABLE_FIELDS = new Set([
   "toolinput",
   "toolresult",
 ]);
-const SECRET_PATTERNS = [
-  /()(?:-----BEGIN (?:(?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----[\s\S]*?(?:-----END (?:(?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----|$))()/gu,
-  /()(?:\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{12,}|AKIA[0-9A-Z]{16})\b)()/gu,
-  /((?:authorization)\s*[:=])(?!(?:\s*)\[REDACTED_)\s*[^\r\n]+()/giu,
-  /((?:authorization|api[_-]?key|(?:access|oauth|refresh|id)?[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=]\s*")(?!\[REDACTED_SECRET\]")(?:\\.|[^"\\])*(")/giu,
-  /((?:authorization|api[_-]?key|(?:access|oauth|refresh|id)?[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=]\s*')(?!\[REDACTED_SECRET\]')(?:\\.|[^'\\])*(')/giu,
-  /((?:authorization|api[_-]?key|(?:access|oauth|refresh|id)?[_-]?token|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|password)\s*[:=])(?!(?:\s*(?:Bearer\s+)?)\[REDACTED_)\s*(?:Bearer\s+)?[^\s,"'}\]]{8,}()/giu,
-];
 const LOCAL_IDENTIFIER_PATTERNS = [
+  // Code embedded in strings often escapes its quotes: user=\"root\".
+  /((?:user(?:name)?|owner|login)\s*[:=]\s*\\")(?!\[LOCAL_USER\]\\")(?:(?!\\")[^\r\n])*(\\")/giu,
+  /((?:user(?:name)?|owner|login)\s*[:=]\s*\\')(?!\[LOCAL_USER\]\\')(?:(?!\\')[^\r\n])*(\\')/giu,
   /((?:user(?:name)?|owner|login)\s*[:=]\s*")(?!\[LOCAL_USER\]")(?:\\.|[^"\\])*(")/giu,
   /((?:user(?:name)?|owner|login)\s*[:=]\s*')(?!\[LOCAL_USER\]')(?:\\.|[^'\\])*(')/giu,
-  /((?:user(?:name)?|owner|login)\s*[:=])(?!(?:\s*)\[LOCAL_USER\])\s*[^\s,"'}\]]+()/giu,
+  /((?:user(?:name)?|owner|login)\s*[:=])(?!(?:\s*)\[LOCAL_USER\])\s*[^\s,"'}\]\\]+()/giu,
 ];
 const LOCAL_PATH = /(^|[\s"'=:(+\-])(?:[A-Za-z]:\\(?:[^\\\s"']+\\)*[^\\\s"']*|\/(?!\/)[^\s"']+)/gu;
 const LOCAL_HOME_PATH = /(?:^|[\s`"'=:(+\-]|file:\/\/)(?:[A-Za-z]:\\+Users\\+[^\\\s`"']+(?=[\\\s`"',;:)}\]]|$)|\/(?:Users|home)\/[^/\s`"']+(?=[/\s`"',;:)}\]]|$)|\/root(?=[/\s`"',;:)}\]]|$))/giu;
@@ -442,6 +425,7 @@ function sanitizeArtifact(
   counts: Map<TransformationAction, number>,
   kind?: PortableKind,
   portableDiagnostics: ReadonlyMap<string, PortableDiagnosticOutput> = new Map(),
+  onFinding?: (finding: LocatedSecretFinding) => void,
 ): Buffer {
   if (mediaType === "application/json") {
     increment(counts, "canonicalized");
@@ -454,6 +438,10 @@ function sanitizeArtifact(
       sensitiveValues,
       localIdentifiers,
       counts,
+      undefined,
+      false,
+      "",
+      onFinding,
     )));
     if (output.length > policy.maxArtifactBytes) throw new Error("Sanitized JSON evidence exceeds the configured artifact limit.");
     return output;
@@ -532,6 +520,8 @@ function sanitizeValue(
   counts: Map<TransformationAction, number>,
   fieldName?: string,
   truncatable = false,
+  path = "",
+  onFinding?: (finding: LocatedSecretFinding) => void,
 ): unknown {
   const normalizedField = fieldName === undefined ? undefined : normalizeFieldName(fieldName);
   if (typeof value === "string") {
@@ -549,11 +539,13 @@ function sanitizeValue(
       truncatable,
       true,
       normalizedField !== undefined && LOCAL_IDENTIFIER_FIELDS.has(normalizedField),
+      onFinding === undefined ? undefined : (finding) => onFinding({ ...finding, path }),
     );
   }
   if (Array.isArray(value)) {
-    return value.map((entry) => sanitizeValue(
+    return value.map((entry, index) => sanitizeValue(
       entry, policy, replacements, sensitiveValues, localIdentifiers, counts, fieldName, truncatable,
+      `${path}/${String(index)}`, onFinding,
     ));
   }
   if (!isRecord(value)) return value;
@@ -564,9 +556,10 @@ function sanitizeValue(
       increment(counts, "removed-field");
       continue;
     }
-    if (SECRET_FIELDS.has(normalizeFieldName(key))) {
-      output[key] = "[REDACTED_SECRET]";
+    if (isSecretFieldName(key)) {
+      output[key] = SECRET_PLACEHOLDER;
       increment(counts, "redacted-secret");
+      onFinding?.({ kind: "secret-field", disposition: "redacted", name: key, path: `${path}/${pointerToken(key)}` });
       continue;
     }
     output[key] = sanitizeValue(
@@ -578,6 +571,8 @@ function sanitizeValue(
       counts,
       key,
       truncatable || TRUNCATABLE_FIELDS.has(normalizeFieldName(key)),
+      `${path}/${pointerToken(key)}`,
+      onFinding,
     );
   }
   if (sourceFieldCount > 0 && Object.keys(output).length === 0) {
@@ -706,6 +701,7 @@ function rewriteString(
   truncateContent: boolean,
   rewriteTextCorrelations = false,
   rewriteLocalIdentifier = false,
+  onFinding?: (finding: SecretFinding) => void,
 ): string {
   let output = input;
   // Declared sensitive values are redacted before correlation rewriting: a
@@ -733,12 +729,9 @@ function rewriteString(
       }
     }
   }
-  for (const pattern of SECRET_PATTERNS) {
-    output = output.replace(pattern, (_match, prefix: unknown, suffix: unknown) => {
-      increment(counts, "redacted-secret");
-      return `${typeof prefix === "string" ? prefix : ""}[REDACTED_SECRET]${typeof suffix === "string" ? suffix : ""}`;
-    });
-  }
+  const secrets = redactSecrets(output, onFinding);
+  output = secrets.text;
+  if (secrets.redacted > 0) increment(counts, "redacted-secret", secrets.redacted);
   output = output.replace(LOCAL_PATH, (_match, prefix: unknown) => {
     increment(counts, "redacted-local-identifier");
     return `${typeof prefix === "string" ? prefix : ""}[LOCAL_PATH]`;
@@ -774,7 +767,7 @@ function scanPortableTree(
       ["known sensitive value", sensitiveValues.some((value) => text.includes(value))],
       ["secret pattern", containsPortableSecretPattern(text, mediaType)],
       ["absolute path", containsLocalPath(text, mediaType)],
-      ["local identifier", LOCAL_IDENTIFIER_PATTERNS.some((pattern) => pattern.test(text))],
+      ["local identifier", containsLocalIdentifier(text, mediaType)],
       ["source correlation", sourceCorrelations.filter((value) => value.length >= 8).some((value) => text.includes(value))],
       ["hidden content field", /"(?:chain[_-]?of[_-]?thought|extended[_-]?thinking|hidden[_-]?reasoning|encrypted[_-]?(?:reasoning|thinking)|reasoning(?:[_-]?(?:content|details|signature))?|thinking(?:[_-]?(?:content|signature))?|text[_-]?signature|thought[_-]?signature|raw[_-]?(?:api|request|response)[_-]?body)"\s*:/iu.test(text)],
       ["Codex reasoning content", containsCodexReasoningContent(text, mediaType)],
@@ -881,14 +874,39 @@ function valueContainsSecretPattern(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(valueContainsSecretPattern);
   if (!isRecord(value)) return false;
   return Object.entries(value).some(([key, entry]) =>
-    SECRET_FIELDS.has(normalizeFieldName(key)) && entry !== "[REDACTED_SECRET]"
+    isSecretFieldName(key) && entry !== SECRET_PLACEHOLDER
       || stringContainsSecretPattern(key)
       || valueContainsSecretPattern(entry));
 }
 
 function stringContainsSecretPattern(value: string): boolean {
-  const matched = SECRET_PATTERNS.some((pattern) => pattern.test(value));
-  resetPatterns();
+  return containsSecret(value);
+}
+
+function containsLocalIdentifier(text: string, mediaType: string): boolean {
+  if (mediaType === "application/json") {
+    return valueContainsLocalIdentifier(parseJson(Buffer.from(text), "Portable JSON final scan"));
+  }
+  if (mediaType === "application/x-ndjson") {
+    return text.split(/\r?\n/gu).filter(Boolean).some((line) =>
+      valueContainsLocalIdentifier(parseJson(Buffer.from(line), "Portable JSONL final scan")));
+  }
+  return stringContainsLocalIdentifier(text);
+}
+
+// Scan decoded values: JSON serialization escapes quotes, so a redacted
+// `owner: "[LOCAL_USER]"` would otherwise read as an unquoted value.
+function valueContainsLocalIdentifier(value: unknown): boolean {
+  if (typeof value === "string") return stringContainsLocalIdentifier(value);
+  if (Array.isArray(value)) return value.some(valueContainsLocalIdentifier);
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(([key, entry]) =>
+    stringContainsLocalIdentifier(key) || valueContainsLocalIdentifier(entry));
+}
+
+function stringContainsLocalIdentifier(value: string): boolean {
+  const matched = LOCAL_IDENTIFIER_PATTERNS.some((pattern) => pattern.test(value));
+  for (const pattern of LOCAL_IDENTIFIER_PATTERNS) pattern.lastIndex = 0;
   return matched;
 }
 
@@ -1167,13 +1185,12 @@ function formatValidationErrors(errors: Array<{ artifact: string; field: string;
   return errors.map((error) => `${error.artifact} ${error.field}: ${error.message}`).join("\n");
 }
 
-function normalizeFieldName(value: string): string {
-  return value.replaceAll(/[^a-z0-9]/giu, "").toLowerCase();
+function pointerToken(key: string): string {
+  return key.replaceAll("~", "~0").replaceAll("/", "~1");
 }
 
 function resetPatterns(): void {
   LOCAL_PATH.lastIndex = 0;
-  for (const pattern of SECRET_PATTERNS) pattern.lastIndex = 0;
   for (const pattern of LOCAL_IDENTIFIER_PATTERNS) pattern.lastIndex = 0;
 }
 

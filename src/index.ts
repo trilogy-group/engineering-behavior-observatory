@@ -223,6 +223,7 @@ export {
   CODEX_ADAPTER_VERSION,
   CODEX_APP_SERVER_CAPABILITIES,
   CODEX_APP_SERVER_VERSION,
+  RETAINED_CODEX_APP_SERVER_VERSIONS,
   CODEX_DEFAULT_SHUTDOWN_GRACE_MS,
   CODEX_HARNESS,
   createCodexHarnessAdapter,
@@ -269,6 +270,7 @@ export {
   DEEPSEEK_CAPABILITY_PROFILE,
   DEEPSEEK_HARNESS_ID,
   DEEPSEEK_SDK_VERSION,
+  RETAINED_DEEPSEEK_SDK_VERSIONS,
   deepSeekCapabilities,
   deepSeekCompositionDigest,
   DeepSeekNativeCapture,
@@ -324,6 +326,7 @@ export type {
 export {
   AdapterRegistry,
   assertAdapterContract,
+  globalEventKey,
   UNIFORM_EVENT_FAMILIES,
   validateUniformEvents,
 } from "./uniform-events.js";
@@ -366,6 +369,8 @@ export {
   STRUCTURAL_EXTRACTOR_VERSION,
   validateStructuralObservationSet,
 } from "./structural-observations.js";
+export { extractOccurrences, OCCURRENCE_RULES_VERSION, OCCURRENCE_TYPES } from "./occurrences.js";
+export type { Occurrence, OccurrenceCoverage, OccurrenceType } from "./occurrences.js";
 export type {
   StructuralObservation,
   StructuralObservationSet,
@@ -457,6 +462,7 @@ export {
   normalizeOpenHandsCapture,
   OPENHANDS_AGENT_SERVER_CAPABILITIES,
   OPENHANDS_AGENT_SERVER_VERSION,
+  RETAINED_OPENHANDS_AGENT_SERVER_VERSIONS,
   OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES,
   OPENHANDS_MAX_RESPONSE_BYTES,
   OPENHANDS_DEFAULT_MAX_CAPTURE_BYTES,
@@ -509,6 +515,7 @@ export {
   PI_CONFIG_SCHEMA_VERSION,
   PI_HARNESS,
   PINNED_PI_SDK_VERSION,
+  RETAINED_PI_SDK_VERSIONS,
 } from "./pi.js";
 export type {
   CapturePiSdkRunOptions,
@@ -561,6 +568,7 @@ export {
   CURSOR_SDK_DEFAULT_SHUTDOWN_GRACE_MS,
   CURSOR_SDK_HARNESS,
   CURSOR_SDK_VERSION,
+  RETAINED_CURSOR_SDK_VERSIONS,
   normalizeCursorSdkCapture,
 } from "./cursor-sdk.js";
 export type {

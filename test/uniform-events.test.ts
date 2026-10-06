@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   AdapterRegistry,
   assertAdapterContract,
+  globalEventKey,
   UNIFORM_EVENT_FAMILIES,
   validateUniformEvents,
   type AdapterCapabilityProfile,
@@ -261,3 +262,10 @@ function resolverFor(events: readonly UniformEvent[]): NativeEvidenceResolver {
 function referenceKey(reference: NativeEvidenceReference): string {
   return `${reference.artifactId}:${reference.recordLocator}`;
 }
+
+test("global event keys include the run and cannot collide through separators", () => {
+  const key = (runId: string, attemptId: string, id: string) => globalEventKey({ runId, attemptId, id });
+  assert.notEqual(key("run-a", "attempt-1", "codex:1:item-completed"), key("run-b", "attempt-1", "codex:1:item-completed"));
+  assert.notEqual(key("run", "a/b", "c"), key("run", "a", "b/c"));
+  assert.equal(key("run 1", "attempt/1", "event"), "run%201/attempt%2F1/event");
+});

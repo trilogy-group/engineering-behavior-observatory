@@ -28,6 +28,7 @@ export type UniformAttributeValue = UniformAttributeScalar | readonly UniformAtt
 
 export type UniformEvent = {
   schemaVersion: "ebo.uniform-event/v1";
+  /** Unique within one run attempt only; adapters may reuse IDs across attempts. Use globalEventKey across a corpus. */
   id: string;
   runId: string;
   attemptId: string;
@@ -125,6 +126,14 @@ export type NativeEvidenceResolution = {
   attemptId: string;
   digest: `sha256:${string}`;
 };
+
+/**
+ * Corpus-wide event identity: `<runId>/<attemptId>/<eventId>`, each part percent-encoded. Attempt IDs can repeat
+ * across runs, so the run is part of the identity; encoding keeps `/` inside an ID from forming another key.
+ */
+export function globalEventKey(event: Pick<UniformEvent, "runId" | "attemptId" | "id">): string {
+  return [event.runId, event.attemptId, event.id].map(encodeURIComponent).join("/");
+}
 
 export class AdapterRegistry {
   readonly #adapters: ReadonlyMap<string, HarnessAdapter>;

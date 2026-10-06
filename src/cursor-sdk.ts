@@ -66,6 +66,8 @@ import type { VerifierResult } from "./verifiers.js";
 import { readBoundedFile } from "./scheduler.js";
 
 export const CURSOR_SDK_VERSION = "1.0.31";
+/** Cursor SDK versions whose retained bundles EBO reads back; the pinned version alone is used for capture. */
+export const RETAINED_CURSOR_SDK_VERSIONS: readonly string[] = [CURSOR_SDK_VERSION];
 export const CURSOR_SDK_HARNESS = "cursor-sdk";
 export const CURSOR_SDK_ADAPTER_ID = "ebo-cursor-sdk-v1";
 export const CURSOR_SDK_ADAPTER_VERSION = "0.1.0";
@@ -738,8 +740,9 @@ function restrictCursorProcessEnvironment(apiKey: string): { keys: string[]; res
 /** Read and normalize one retained, capture-qualified Cursor SDK bundle. */
 export async function createCursorSdkBehaviorEvidence(bundleRoot: string): Promise<CursorSdkBehaviorEvidence> {
   const manifest = JSON.parse(readBoundedFile(join(resolve(bundleRoot), "manifest.json"), "Run manifest").toString("utf8")) as RunManifest;
-  if (manifest.run.harness.id !== CURSOR_SDK_HARNESS || manifest.run.harness.version !== CURSOR_SDK_VERSION
-      || !manifest.run.runtime.some(({ source, name, version }) => source === "cursor" && name === "cursor-sdk" && version === CURSOR_SDK_VERSION)) {
+  const retainedVersion = manifest.run.harness.version;
+  if (manifest.run.harness.id !== CURSOR_SDK_HARNESS || !RETAINED_CURSOR_SDK_VERSIONS.includes(retainedVersion)
+      || !manifest.run.runtime.some(({ source, name, version }) => source === "cursor" && name === "cursor-sdk" && version === retainedVersion)) {
     throw new Error(`Unsupported retained Cursor SDK runtime ${manifest.run.harness.version}.`);
   }
   const outcomeCapture = await readQualifiedRunCapture(bundleRoot);
@@ -793,7 +796,7 @@ function assertRetainedCursorIdentity(manifest: RunManifest, records: readonly C
   }
   const configuration = asRecord(configurations[0]!.payload);
   const configuredModel = configuration?.model;
-  if (configuration?.sdkVersion !== CURSOR_SDK_VERSION || modelId(configuredModel) !== manifest.run.model.id
+  if (configuration?.sdkVersion !== manifest.run.harness.version || modelId(configuredModel) !== manifest.run.model.id
       || configuration?.workingDirectoryPolicy !== "isolated-local.cwd"
       || !Array.isArray(configuration?.environmentKeys) || configuration.environmentKeys.some((key) => typeof key !== "string")) {
     throw new Error("Retained Cursor configuration differs from the effective run manifest or policy.");

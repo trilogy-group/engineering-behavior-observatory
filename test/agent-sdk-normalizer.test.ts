@@ -146,6 +146,58 @@ test("handles optional and required evidence gaps without weakening qualificatio
   }), /capture-qualified/u);
 });
 
+test("projects per-request usage once per provider message, times delegation and hooks, and links tool batches", async () => {
+  const input = readFixture("complete");
+  const session = (sequence: number, nativeType: string, message: Record<string, unknown>, nativeSubtype?: string) => ({
+    reference: { artifactId: "session", recordLocator: `line:${sequence}` },
+    record: { kind: "session" as const, document: {
+      schemaVersion: "ebo.agent-sdk-message/v1", sequence, capturedAt: `2026-09-01T00:01:0${sequence}.000Z`, nativeType,
+      ...(nativeSubtype === undefined ? {} : { nativeSubtype }), sessionId: "session-golden", message } },
+  });
+  const usage = { input_tokens: 7, cache_read_input_tokens: 1000, cache_creation_input_tokens: 30, output_tokens: 2 };
+  const block = (content: unknown) => ({ type: "assistant", session_id: "session-golden", uuid: `uuid-${JSON.stringify(content).length}`,
+    request_id: "req_1", timestamp: "2026-09-01T00:01:00.500Z", parent_tool_use_id: null,
+    message: { id: "msg_1", model: "claude-test", role: "assistant", usage, content: [content] } });
+  input.records = [
+    ...input.records,
+    session(4, "assistant", block({ type: "text", text: "Checking." })),
+    session(5, "assistant", block({ type: "tool_use", id: "toolu_batch", name: "Bash", input: { command: "true" } })),
+    session(6, "system", { type: "system", subtype: "task_started", task_id: "task-1", tool_use_id: "toolu_batch", description: "Run checks",
+      task_type: "local_bash", is_backgrounded: true, session_id: "session-golden", uuid: "uuid-task" }, "task_started"),
+    { reference: { artifactId: "hooks", recordLocator: "line:10" }, record: { kind: "hook" as const, document: {
+      schemaVersion: "ebo.claude-agent-hook/v1", sequence: 10, callbackAt: "2026-09-01T00:01:09.000Z", hook: "PostToolBatch",
+      sessionId: "session-golden", toolUseId: "hook-batch-1",
+      nativePayload: { hook_event_name: "PostToolBatch", session_id: "session-golden", tool_calls: [{ tool_name: "Bash", tool_use_id: "toolu_batch" }] } } } },
+  ];
+  const { events } = await claudeAgentSdkNormalizationAdapter.normalize(input);
+  await validateUniformEvents(events, createAgentSdkNativeEvidenceResolver(input));
+
+  const requests = events.filter(({ attributes }) => attributes.resourceSemantics === "increment");
+  assert.equal(requests.length, 1, "repeated content blocks of one provider message count once");
+  assert.deepEqual(requests[0]!.attributes, {
+    requestId: "req_1", providerMessageId: "msg_1", model: "claude-test", inputTokens: 7, cacheReadInputTokens: 1000,
+    cacheCreationInputTokens: 30, outputTokenCoverage: "unavailable-per-request", resourceSemantics: "increment", usageScope: "assistant",
+  });
+  assert.deepEqual(requests[0]!.nativeTime, { status: "known", value: "2026-09-01T00:01:00.500Z" });
+  assert.equal(requests[0]!.source.nativeReference.recordLocator, "line:4");
+
+  const task = events.find(({ source }) => source.nativeType === "system" && source.nativeReference.recordLocator === "line:6")!;
+  assert.equal(task.family, "delegation");
+  assert.deepEqual(task.nativeTime, { status: "known", value: "2026-09-01T00:01:06.000Z" });
+  assert.equal(task.attributes.nativeTimeSource, "capture-receipt");
+  assert.equal(task.attributes.taskId, "task-1");
+  assert.equal(task.attributes.taskType, "local_bash");
+  assert.equal(task.attributes.isBackgrounded, true);
+  assert.deepEqual(task.content, { status: "known", value: [{ nativeReference: { artifactId: "session", recordLocator: "line:6#/message/description" }, role: "task-description" }] });
+
+  const toolUse = events.find(({ attributes }) => attributes.toolUseId === "toolu_batch" && attributes.toolName === "Bash" && attributes.hook === undefined)!;
+  const batch = events.find(({ source }) => source.nativeType === "PostToolBatch")!;
+  assert.deepEqual(batch.nativeTime, { status: "known", value: "2026-09-01T00:01:09.000Z" });
+  assert.equal(batch.attributes.nativeTimeSource, "hook-callback");
+  assert.deepEqual(batch.attributes.batchToolUseIds, ["toolu_batch"]);
+  assert.ok(batch.relations.known.some(({ eventId }) => eventId === toolUse.id), "a tool batch relates to each tool call in it");
+});
+
 test("marks recognized but unprojected native payload content as unknown", async () => {
   const input = readFixture("complete");
   input.records = [...input.records, {

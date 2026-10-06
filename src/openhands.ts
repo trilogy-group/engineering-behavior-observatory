@@ -9,6 +9,8 @@ import type {
 } from "./uniform-events.js";
 
 export const OPENHANDS_AGENT_SERVER_VERSION = "1.46.0";
+/** Agent Server versions whose retained bundles EBO reads back; the pinned version alone is used for capture. */
+export const RETAINED_OPENHANDS_AGENT_SERVER_VERSIONS: readonly string[] = [OPENHANDS_AGENT_SERVER_VERSION, "1.44.1"];
 export const OPENHANDS_TYPESCRIPT_CLIENT_VERSION = "1.39.0";
 export const OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 export const OPENHANDS_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
@@ -58,7 +60,7 @@ export const OPENHANDS_AGENT_SERVER_CAPABILITIES = {
 
 /** Retained evidence keeps the identity of the runtime that produced it. */
 export function openHandsCapabilityProfile(version: string): AdapterCapabilityProfile {
-  if (version !== "1.44.1" && version !== OPENHANDS_AGENT_SERVER_VERSION) {
+  if (!RETAINED_OPENHANDS_AGENT_SERVER_VERSIONS.includes(version)) {
     throw new Error(`Unsupported retained OpenHands runtime ${version}.`);
   }
   return { ...OPENHANDS_AGENT_SERVER_CAPABILITIES, adapterId: `openhands-agent-server-v${version}` };

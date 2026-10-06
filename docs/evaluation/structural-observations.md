@@ -69,9 +69,10 @@ Definitions are deliberately mechanical:
   records in one native-order domain; tool names are never used to infer either;
 - model requests require model-request events and native request identities;
   assistant messages and model reroutes are not requests;
-- cumulative resource snapshots select only the latest snapshot in one known
-  native-order domain, increments are summed only when every record declares
-  increment semantics, and a cumulative-final record is used directly;
+- a cumulative-final record is used directly; otherwise the latest cumulative
+  snapshot in one known native-order domain is used, and per-request
+  increments derived from the same updates are not added to it; increments are
+  summed only when every record declares increment semantics;
 - native token categories stay separate, native total tokens are never rebuilt
   from components, and cost does not imply subscription utilization;
 - compaction counts include only native records that explicitly identify a
@@ -82,3 +83,26 @@ unsupported capability, ambiguous identity, unknown order, overlapping usage,
 or missing timing remains `unavailable` with a reason. Observational runs have
 no verifier assertion records and make no task-pass claim. Verified runs retain
 each assertion outcome with its native verifier citation.
+
+## Occurrences
+
+Extractor `1.1.0` adds `occurrences` beside the attempt-level counts. Each
+occurrence is one instance of a pattern and lists only its own events and native
+records, so a judge or reviewer can open exactly that instance:
+
+| Type | One occurrence | Rule |
+| :--- | :--- | :--- |
+| `failure-response` | within one resolved session, agent and order domain: consecutive explicit failures of one tool, then the next call of that tool that starts after the last failure | exact |
+| `validation-run` | one call whose command runs a test, typecheck, lint or build, classified per command segment; `result`, `reportedExitCode`, `outputRedirected` | heuristic |
+| `source-change` | an explicit mutation record, or an edit/write tool call or shell command that writes a source path and has a native success result (`detectedBy`); failed or unfinished attempts are not changes | heuristic except explicit mutations |
+| `repeated-operation` | a call with the same tool and input digest as an earlier one | exact |
+| `compaction` | adjacent compaction records with no tool event or model/user message between them and no repeated record kind; a partial boundary stays on its own | heuristic |
+| `delegation` | the records of one delegated task, joined by task or agent ID | exact |
+
+IDs are `<attemptId>/occ/<type>/<firstEventId>`. A failure is an explicit native
+failure flag or non-zero exit code; failure text inside a successful call's
+output does not count, and validation runs report it as `reportedExitCode`.
+`occurrenceCoverage` reports each type as available with its count, or
+unavailable with a reason: delegation when the adapter does not expose it, and
+command-based types when native tool content is not available. An unavailable
+type is never an observed zero.

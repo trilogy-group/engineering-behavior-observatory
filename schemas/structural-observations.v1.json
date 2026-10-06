@@ -59,7 +59,7 @@
           "required": ["id", "version", "requiredCapabilities"],
           "properties": {
             "id": { "$ref": "#/$defs/identifier" },
-            "version": { "const": "1.0.0" },
+            "version": { "enum": ["1.0.0", "1.1.0"] },
             "requiredCapabilities": {
               "type": "array",
               "maxItems": 8,
@@ -95,6 +95,57 @@
         }
       }
     },
+    "occurrence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "id", "type", "rule", "eventIds", "citations", "attributes", "span"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.occurrence/v1" },
+        "id": { "$ref": "#/$defs/identifier" },
+        "type": { "enum": ["failure-response", "validation-run", "source-change", "repeated-operation", "compaction", "delegation"] },
+        "rule": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "version", "heuristic"],
+          "properties": {
+            "id": { "$ref": "#/$defs/identifier" },
+            "version": { "const": "1.0.0" },
+            "heuristic": { "type": "boolean" }
+          }
+        },
+        "eventIds": { "type": "array", "minItems": 1, "maxItems": 131072, "uniqueItems": true, "items": { "$ref": "#/$defs/identifier" } },
+        "citations": { "type": "array", "minItems": 1, "maxItems": 131072, "items": { "$ref": "#/$defs/reference" } },
+        "attributes": {
+          "type": "object",
+          "propertyNames": { "maxLength": 64 },
+          "additionalProperties": { "$ref": "urn:ebo:schema:uniform-events:v1#/$defs/attributeValue" }
+        },
+        "span": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "start": { "type": "string", "format": "date-time" },
+            "end": { "type": "string", "format": "date-time" }
+          }
+        }
+      }
+    },
+    "occurrenceCoverage": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "status", "count"],
+          "properties": { "type": { "enum": ["failure-response", "validation-run", "source-change", "repeated-operation", "compaction", "delegation"] }, "status": { "const": "available" }, "count": { "type": "integer", "minimum": 0 } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "status", "reason"],
+          "properties": { "type": { "enum": ["failure-response", "validation-run", "source-change", "repeated-operation", "compaction", "delegation"] }, "status": { "const": "unavailable" }, "reason": { "$ref": "#/$defs/identifier" } }
+        }
+      ]
+    },
     "set": {
       "type": "object",
       "additionalProperties": false,
@@ -104,7 +155,7 @@
         "runId": { "$ref": "#/$defs/identifier" },
         "attemptId": { "$ref": "#/$defs/identifier" },
         "assessmentMode": { "enum": ["observational", "verified", "unknown"] },
-        "extractorVersion": { "const": "1.0.0" },
+        "extractorVersion": { "enum": ["1.0.0", "1.1.0"] },
         "normalization": {
           "type": "object",
           "additionalProperties": false,
@@ -120,6 +171,16 @@
           "type": "array",
           "maxItems": 1000000,
           "items": { "$ref": "#/$defs/observation" }
+        },
+        "occurrences": {
+          "type": "array",
+          "maxItems": 1000000,
+          "items": { "$ref": "#/$defs/occurrence" }
+        },
+        "occurrenceCoverage": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/occurrenceCoverage" }
         }
       }
     }
