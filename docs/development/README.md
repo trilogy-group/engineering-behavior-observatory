@@ -27,7 +27,9 @@ of provider access.
 
 A harness runtime pin governs new captures only. Retained bundles from every
 released pin stay readable: when you bump a pin, add the new version to the
-adapter's `RETAINED_*_VERSIONS` list and keep the older ones. Remove a version
+adapter's `RETAINED_*_VERSIONS` list and keep the older ones. Readback also
+requires the manifest's version to match the version the native composition
+record names (Pi `session_created`, DeepSeek composition). Remove a version
 only with a migration for its retained bundles. `test/retained-versions.test.ts`
 fails if any version pinned in `release/*/reproducibility.json` is rejected.
 

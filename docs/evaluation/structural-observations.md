@@ -92,11 +92,11 @@ records, so a judge or reviewer can open exactly that instance:
 
 | Type | One occurrence | Rule |
 | :--- | :--- | :--- |
-| `failure-response` | consecutive explicit failures of one tool, then the next call of that tool | exact |
+| `failure-response` | consecutive explicit failures of one tool, then the next call of that tool in the same session and order domain that starts after the last failure | exact |
 | `validation-run` | one call whose command runs a test, typecheck, lint or build, classified per command segment; `result`, `reportedExitCode`, `outputRedirected` | heuristic |
 | `source-change` | an explicit mutation record, an edit/write tool call, or a shell command that writes a source path (`detectedBy`) | heuristic except explicit mutations |
 | `repeated-operation` | a call with the same tool and input digest as an earlier one | exact |
-| `compaction` | the records of one compaction boundary | exact |
+| `compaction` | adjacent compaction records with no tool event or model/user message between them and no repeated record kind; a partial boundary stays on its own | heuristic |
 | `delegation` | the records of one delegated task, joined by task or agent ID | exact |
 
 IDs are `<attemptId>/occ/<type>/<firstEventId>`. A failure is an explicit native

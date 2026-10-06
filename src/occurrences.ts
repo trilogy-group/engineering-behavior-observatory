@@ -54,7 +54,8 @@ export function extractOccurrences(input: OccurrenceInput): { occurrences: Occur
   const occurrences: Occurrence[] = [];
   const add = (type: OccurrenceType, heuristic: boolean, events: readonly UniformEvent[], attributes: Record<string, UniformAttributeValue | undefined>) => {
     const sorted = ordered(uniqueEvents(events));
-    const times = sorted.flatMap(({ nativeTime }) => nativeTime.status === "known" ? [nativeTime.value] : []).sort();
+    const times = sorted.flatMap(({ nativeTime }) => nativeTime.status === "known" && Number.isFinite(Date.parse(nativeTime.value)) ? [nativeTime.value] : [])
+      .sort((left, right) => Date.parse(left) - Date.parse(right));
     occurrences.push({
       schemaVersion: "ebo.occurrence/v1",
       id: `${input.attemptId}/occ/${type}/${sorted[0]!.id}`,
@@ -67,14 +68,19 @@ export function extractOccurrences(input: OccurrenceInput): { occurrences: Occur
     });
   };
 
-  // Consecutive failures of one tool, then the next operation of that tool.
+  // Consecutive failures of one tool, then the next operation of that tool in the same session and order domain that
+  // starts after the last failure ended (a parallel call that was already running is not a response).
   for (let index = 0; index < operations.length;) {
     const first = operations[index]!;
     if (!first.failed) { index += 1; continue; }
+    const scope = operationScope(first);
     let end = index;
-    while (end < operations.length && operations[end]!.failed && operations[end]!.toolName === first.toolName) end += 1;
+    while (end < operations.length && operations[end]!.failed && operations[end]!.toolName === first.toolName
+      && operationScope(operations[end]!) === scope) end += 1;
     const failures = operations.slice(index, end);
-    const next = operations.slice(end).find(({ toolName }) => toolName === first.toolName);
+    const failedAt = failures.flatMap(({ events }) => events).sort(compareEvents).at(-1)!;
+    const next = operations.slice(end).find((operation) => operation.toolName === first.toolName
+      && operationScope(operation) === scope && compareEvents(operation.events[0]!, failedAt) > 0);
     add("failure-response", false, [...failures, ...(next === undefined ? [] : [next])].flatMap(({ events }) => events), {
       toolName: first.toolName, failures: failures.length,
       nextOutcome: next === undefined ? "none" : details.get(next.id)!.result,
@@ -105,18 +111,30 @@ export function extractOccurrences(input: OccurrenceInput): { occurrences: Occur
     }
   }
 
-  // Compaction records of one boundary live in different native records (hooks, session markers, stream start/end);
-  // the k-th record of each kind belongs to the k-th compaction.
-  const compactionKinds = new Map<string, UniformEvent[]>();
-  for (const event of ordered(input.events.filter(input.isCompaction))) {
-    const kind = `${event.source.nativeType}:${String(event.attributes.hook ?? event.attributes.subtype ?? "")}`;
-    compactionKinds.set(kind, [...compactionKinds.get(kind) ?? [], event]);
+  // Explicit mutation records outside tool operations (Codex fileChange items, file-change hooks).
+  const changed = new Set(occurrences.filter(({ type }) => type === "source-change").flatMap(({ eventIds }) => eventIds));
+  const operationEvents = new Set(operations.flatMap(({ events }) => events.map(({ id }) => id)));
+  for (const event of ordered(input.events.filter(({ id, attributes }) => attributes.mutation === true && !changed.has(id) && !operationEvents.has(id)))) {
+    add("source-change", false, [event], { toolName: text(event.attributes.toolName) ?? text(event.attributes.itemType) ?? text(event.attributes.hook), detectedBy: "explicit-mutation" });
   }
-  const compactions = Math.max(0, ...[...compactionKinds.values()].map(({ length }) => length));
-  for (let index = 0; index < compactions; index += 1) {
-    const parts = [...compactionKinds.values()].flatMap((events) => events[index] ?? []);
-    add("compaction", false, parts, { records: parts.length });
+
+  // Records of one compaction live in different native records (hooks, session markers, stream start/end) with no
+  // shared identity. Adjacent records form one boundary until a tool event or a non-harness message intervenes or a
+  // record kind repeats, so a partial boundary stays on its own instead of borrowing another boundary's records.
+  let boundary: UniformEvent[] = [];
+  const closeBoundary = () => {
+    if (boundary.length > 0) add("compaction", true, boundary, { records: boundary.length, grouping: "adjacent-records" });
+    boundary = [];
+  };
+  const compactionKind = (event: UniformEvent) => `${event.source.nativeType}:${String(event.attributes.hook ?? event.attributes.subtype ?? event.attributes.lifecycle ?? "")}`;
+  for (const event of ordered(input.events)) {
+    if (input.isCompaction(event)) {
+      if (boundary.some((part) => compactionKind(part) === compactionKind(event))) closeBoundary();
+      boundary.push(event);
+    // Harness-authored messages (the continuation summary a compaction writes) belong to the boundary.
+    } else if (event.family === "tool" || event.family === "message" && event.actor.kind !== "harness") closeBoundary();
   }
+  closeBoundary();
 
   const delegationAvailable = input.delegationCapability.status !== "unsupported";
   if (delegationAvailable) {
@@ -286,6 +304,13 @@ export function shellWrites(command: string): string[] {
 
 function stripQuotes(value: string): string {
   return value.replace(/^['"]|['"]$/gu, "");
+}
+
+/** Session and native-order domain of an operation's first event. */
+function operationScope(operation: OccurrenceOperation): string {
+  const first = operation.events[0]!;
+  const session = text(first.attributes.sessionId) ?? (first.scope.kind === "session" ? text(first.scope.id) : undefined) ?? "";
+  return JSON.stringify([session, first.nativeOrder.status === "known" ? first.nativeOrder.domain : ""]);
 }
 
 function ordered(events: readonly UniformEvent[]): UniformEvent[] {

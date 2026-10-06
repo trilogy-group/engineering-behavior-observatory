@@ -86,6 +86,14 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
   }));
   let dataset: NormalizedDataset;
   if (harness === PI_HARNESS) {
+    // The manifest's runtime identity must agree with the SDK version the capture recorded natively.
+    const composition = capture.records.find(({ record }) => {
+      const value = record as Record<string, unknown>;
+      return value.channel === "adapter" && value.nativeType === "session_created";
+    })?.record as { payload?: { sdk?: { version?: unknown } } } | undefined;
+    if (composition?.payload?.sdk?.version !== manifest.run.harness.version) {
+      throw new Error("Retained Pi native composition version differs from the run manifest.");
+    }
     const native = qualifyRetainedPiCapture(capture as NormalizationInput<PiNativeRecord>, manifest.run.native?.sessionId, expectsCompletion);
     capture.qualification = native.qualification;
     outcomeCapture.qualification = native.qualification;
@@ -188,7 +196,7 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
       nativeType: (record) => typeof record.payload.kind === "string" ? record.payload.kind : record.channel });
   } else {
     const native = qualifyRetainedDeepSeekCapture(capture as NormalizationInput<DeepSeekNativeObservation>,
-      manifest.run.native?.sessionId, expectsCompletion);
+      manifest.run.native?.sessionId, expectsCompletion, manifest.run.harness.version);
     capture.qualification = native.qualification;
     outcomeCapture.qualification = native.qualification;
     dataset = describeNormalizedDataset({ capture: native, normalization: normalizeDeepSeekCapture(native),

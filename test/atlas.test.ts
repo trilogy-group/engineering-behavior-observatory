@@ -67,12 +67,27 @@ test("Atlas mixed fixture preserves exact cohort populations, decisions and nati
     assert.doesNotMatch(`${html}${JSON.stringify(view)}`, /sk-ant-EBO-SENTINEL|fw_SyntheticPlantedKey/u);
     const scan = view.secretScan!;
     const cited = view.cases.filter(({ citations }) => citations.length > 0);
-    assert.equal(scan.findings.filter((finding) => "name" in finding && finding.name === "sessionApiKey" && finding.disposition === "not-secret").length, cited.length * 2);
+    const named = (disposition: string) => scan.findings.filter((finding) => "name" in finding && finding.name === "sessionApiKey" && finding.disposition === disposition).length;
+    assert.equal(named("not-secret"), cited.length, "`sessionApiKey = /const` is a short path, not a credential");
+    assert.equal(named("redacted"), cited.length, "`sessionApiKey: sessionAuth` is a bare word and is redacted");
     for (const kind of ["github-token", "anthropic-api-key", "fireworks-api-key"]) {
       assert.equal(scan.findings.filter((finding) => finding.kind === kind).length, cited.length, kind);
     }
     assert.equal(scan.redacted + scan.notSecret, scan.findings.length);
-    assert.ok(scan.findings.every(({ caseKey, location }) => caseKey !== undefined && location.startsWith(`/cases/${caseKey}/citations/0/nativeRecord/`)));
+    const pointer = (document: unknown, location: string) => location.split("/").slice(1).reduce<unknown>((value, segment) => {
+      const key = segment.replaceAll("~1", "/").replaceAll("~0", "~");
+      return Array.isArray(value) ? value[Number(key)] : (value as Record<string, unknown> | undefined)?.[key];
+    }, document);
+    for (const finding of scan.findings) {
+      const index = view.cases.findIndex(({ key }) => key === finding.caseKey);
+      assert.ok(finding.location.startsWith(`/cases/${String(index)}/citations/0/nativeRecord/`), finding.location);
+      assert.equal(typeof pointer(view, finding.location), "string", `${finding.location} resolves in the view`);
+    }
+    const narrowed = await queryAtlas(source, { review: "confirmed" });
+    for (const finding of narrowed.secretScan!.findings) {
+      assert.equal(narrowed.cases[Number(finding.location.split("/")[2])]!.key, finding.caseKey, "pointers follow the filtered case order");
+      assert.equal(typeof pointer(narrowed, finding.location), "string");
+    }
     assert.equal(JSON.stringify(scan).includes("SENTINEL"), false);
     assert.match(html, /Print \/ save PDF/u);
     assert.match(html, /Frozen cohort/u);

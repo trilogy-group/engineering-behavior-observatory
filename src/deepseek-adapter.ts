@@ -471,14 +471,16 @@ export function qualifyRetainedDeepSeekCapture(
   input: QualifiedNativeCapture<DeepSeekNativeObservation>,
   sessionId: string | undefined,
   completed: boolean,
+  manifestVersion: string,
 ): QualifiedNativeCapture<DeepSeekNativeObservation> {
   const rootSessionId = required(sessionId ?? "", "Retained DeepSeek root session ID");
   const records = input.records.map(({ record }) => record);
   const children = new Map<string, string[]>();
   for (const observation of records) {
     const payload = record(observation.payload) ?? {};
-    if (observation.kind === "composition" && !RETAINED_DEEPSEEK_SDK_VERSIONS.includes(String(record(payload.runtime)?.clientVersion))) {
-      throw new Error("Retained DeepSeek capture is unqualified: native client version is not a supported retained runtime.");
+    if (observation.kind === "composition" && (!RETAINED_DEEPSEEK_SDK_VERSIONS.includes(String(record(payload.runtime)?.clientVersion))
+      || record(payload.runtime)?.clientVersion !== manifestVersion)) {
+      throw new Error("Retained DeepSeek capture is unqualified: native client version differs from the run manifest or is not a supported retained runtime.");
     }
     if (observation.kind === "notification" && ["subagent.started", "subagent.finished"].includes(observation.method ?? "")
       && typeof payload.parentSessionId === "string" && typeof payload.childSessionId === "string") {

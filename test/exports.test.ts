@@ -47,7 +47,9 @@ test("release scanning reuses the complete export credential patterns", () => {
     'api_key="synthetic-credential-value"',
   ]) assert.equal(containsPortableSecretPattern(value, "text/plain"), true);
   assert.equal(containsPortableSecretPattern('const fixture = "api_key=syntheticcredential1;";', "text/plain"), true);
-  assert.equal(containsPortableSecretPattern('const fixture = "api_key=syntheticcredential;";', "text/plain"), false);
+  assert.equal(containsPortableSecretPattern('const fixture = "api_key=syntheticcredential;";', "text/plain"), true);
+  assert.equal(containsPortableSecretPattern("export SERVICE_API_KEY=SYNTHETICUPPERCASECREDENTIAL", "text/plain"), true);
+  assert.equal(containsPortableSecretPattern("const client = new Client({ apiKey: input.apiKey });", "text/plain"), false);
   assert.equal(containsPortableSecretPattern("sed -i 's/const sessionApiKey = [LOCAL_PATH]", "text/plain"), false);
   assert.equal(containsPortableSecretPattern("FIREWORKS=fw_SyntheticPlantedKey0123456789", "text/plain"), true);
   assert.equal(containsPortableSecretPattern("// api_key=sk-ant-api03-syntheticvalue", "text/plain"), true);

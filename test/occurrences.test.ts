@@ -95,3 +95,48 @@ test("command-based occurrence types are unavailable without native content, nev
   assert.equal(coverage.find(({ type }) => type === "source-change")?.status, "unavailable");
   assert.deepEqual(coverage.find(({ type }) => type === "delegation"), { type: "delegation", status: "available", count: 0 });
 });
+
+test("explicit mutations outside tool operations are source changes", () => {
+  const fileChange = event(5, "artifact", { mutation: true, itemType: "fileChange", status: "completed" }, "after");
+  const { occurrences } = extractOccurrences({
+    attemptId: "attempt", events: [fileChange], operations: [], toolCapability: capability, delegationCapability: capability,
+    isCompaction: () => false, resolveContent: () => undefined,
+  });
+  assert.deepEqual(occurrences.map(({ type, eventIds, rule, attributes }) => [type, eventIds, rule.heuristic, attributes.detectedBy, attributes.toolName]),
+    [["source-change", ["event-5"], false, "explicit-mutation", "fileChange"]]);
+});
+
+test("a failure response starts after the failure, in the same session", () => {
+  const at = (sequence: number, seconds: number, attributes: UniformEvent["attributes"], phase: UniformEvent["phase"], session = "s1") => {
+    const value = event(sequence, "tool", { ...attributes, sessionId: session }, phase);
+    return { ...value, nativeTime: { status: "known" as const, value: new Date(Date.UTC(2026, 9, 4, 0, 0, seconds)).toISOString() } };
+  };
+  const operation = (id: string, events: UniformEvent[], failed: boolean): OccurrenceOperation => ({ id, events, toolName: "Bash", inputDigest: `sha256:${id}`, failed });
+  const failing = operation("a", [at(1, 1, { toolName: "Bash" }, "before"), at(4, 4, { toolName: "Bash", isError: true }, "after")], true);
+  const parallel = operation("b", [at(2, 2, { toolName: "Bash" }, "before"), at(5, 5, { toolName: "Bash", isError: false }, "after")], false);
+  const otherSession = operation("c", [at(6, 6, { toolName: "Bash" }, "before", "s2"), at(7, 7, { toolName: "Bash", isError: false }, "after", "s2")], false);
+  const response = operation("d", [at(8, 8, { toolName: "Bash" }, "before"), at(9, 9, { toolName: "Bash", isError: false }, "after")], false);
+  const operations = [failing, parallel, otherSession, response];
+  const { occurrences } = extractOccurrences({
+    attemptId: "attempt", events: operations.flatMap(({ events }) => events), operations, toolCapability: capability,
+    delegationCapability: capability, isCompaction: () => false, resolveContent: () => undefined,
+  });
+  const [chain] = occurrences.filter(({ type }) => type === "failure-response");
+  assert.deepEqual(chain!.eventIds, ["event-1", "event-4", "event-8", "event-9"], "the running parallel call and the other session's call are not responses");
+});
+
+test("a partial compaction stays separate and spans use parsed timestamps", () => {
+  const compaction = (sequence: number, hook: string, time: string) => ({ ...event(sequence, "context", { hook }), nativeTime: { status: "known" as const, value: time } });
+  const firstStart = compaction(1, "PreCompact", "2026-01-01T07:00:00Z");
+  const message = { ...event(2, "message", {}), nativeTime: { status: "known" as const, value: "2026-01-01T07:30:00Z" } };
+  const secondStart = compaction(3, "PreCompact", "2026-01-01T10:00:00+02:00");
+  const secondEnd = compaction(4, "PostCompact", "2026-01-01T09:00:00Z");
+  const { occurrences } = extractOccurrences({
+    attemptId: "attempt", events: [firstStart, message, secondStart, secondEnd], operations: [], toolCapability: capability,
+    delegationCapability: capability, isCompaction: ({ family }) => family === "context", resolveContent: () => undefined,
+  });
+  const compactions = occurrences.filter(({ type }) => type === "compaction");
+  assert.deepEqual(compactions.map(({ eventIds }) => eventIds), [["event-1"], ["event-3", "event-4"]]);
+  assert.ok(compactions.every(({ rule }) => rule.heuristic), "grouping by adjacency is labeled heuristic");
+  assert.deepEqual(compactions[1]!.span, { start: "2026-01-01T10:00:00+02:00", end: "2026-01-01T09:00:00Z" }, "10:00+02:00 is 08:00Z, before 09:00Z");
+});

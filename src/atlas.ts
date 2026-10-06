@@ -49,10 +49,15 @@ export type AtlasView = {
   operatorNarrative?: string; reviewPackets: readonly string[]; grafanaUrl?: string; atlasUrl?: string;
   secretScan?: AtlasSecretScan;
 };
-/** Secret-scan matches in the displayed evidence; `location` is a JSON pointer into this view and values are never retained. */
+/**
+ * Secret-scan matches in the displayed evidence. `location` is an RFC 6901 JSON pointer into this view (case
+ * positions follow the view's filtered `cases` array); `caseKey` identifies the case independently of filters.
+ * Matched values are never retained.
+ */
 export type AtlasSecretFinding = SecretFinding & { caseKey?: string; location: string };
+type CaseSecretFinding = SecretFinding & { caseKey: string; caseLocation: string };
 export type AtlasSecretScan = { redacted: number; notSecret: number; findings: AtlasSecretFinding[] };
-export type AtlasSource = { request: AtlasRequest; aggregation: AggregationRequest; input: AggregationInput; corpusRoot: string; requestPath: string; cases: AtlasCase[]; sourceDigest: Digest; secretFindings: AtlasSecretFinding[] };
+export type AtlasSource = { request: AtlasRequest; aggregation: AggregationRequest; input: AggregationInput; corpusRoot: string; requestPath: string; cases: AtlasCase[]; sourceDigest: Digest; secretFindings: CaseSecretFinding[] };
 export function atlasBehaviorPartitions(view: AtlasView): Array<{ group: string; partition: BehaviorAggregate }> {
   return view.report.groups.flatMap((group) => (group.behaviors ?? []).map((partition) => ({ group: Object.values(group.dimensions).join(" · ") || "Selected cohort", partition })));
 }
@@ -102,8 +107,8 @@ export async function loadAtlas(requestPath: string): Promise<AtlasSource> {
   // Validate the complete source before any case or review state is exposed.
   const validated = await aggregateEvaluation(input, aggregation);
   const cases: AtlasCase[] = [];
-  const secretFindings: AtlasSecretFinding[] = [];
-  const located = (caseKey: string, location: string) => ({ path, ...finding }: LocatedSecretFinding) => { secretFindings.push({ ...finding, caseKey, location: `${location}${path}` }); };
+  const secretFindings: CaseSecretFinding[] = [];
+  const located = (caseKey: string, location: string) => ({ path, ...finding }: LocatedSecretFinding) => { secretFindings.push({ ...finding, caseKey, caseLocation: `${location}${path}` }); };
   const seenAssertions = new Set<string>();
   for (const entry of corpusEntries.filter(({ manifestKind }) => manifestKind === "run")) {
     const ownAssertions = input.assertions.filter(({ document }) => attemptKey(document) === attemptKey(entry));
@@ -131,11 +136,11 @@ export async function loadAtlas(requestPath: string): Promise<AtlasSource> {
         const normalizedEvent = evidence.dataset.events.find(({ id }) => id === citation.eventId);
         const native = evidence.capture.records.find(({ reference }) => canonicalizeMetadata(reference) === canonicalizeMetadata(citation.nativeReference));
         if (!normalizedEvent || !native) throw new Error("Atlas citation cannot resolve to normalized and native evidence.");
-        const location = `/cases/${caseKey}/citations/${String(index)}`;
+        const location = `/citations/${String(index)}`;
         return { ...citation, normalizedEvent: displaySafe(normalizedEvent, located(caseKey, `${location}/normalizedEvent`)), nativeRecord: displaySafe(evidence.dataset.adapter.harness === "claude-agent-sdk" ? (native.record as AgentSdkNativeRecord).document : native.record, located(caseKey, `${location}/nativeRecord`)) };
       });
       const decisions = [...new Map(reviews.flatMap(({ history }) => history.decisions.filter(({ assertion: binding }) => binding.id === assertion.id && binding.digest === assertionDigest)).map((decision) => [digest(decision), decision])).values()];
-      cases.push({ ...context, key: caseKey, assertion: displaySafe(assertion, located(caseKey, `/cases/${caseKey}/assertion`)) as BehaviorAssertion, assertionDigest, category: assertion.behavior.categoryId, assessment: assertion.judgment.disposition === "assessed" ? assertion.judgment.assessment : "abstained", review, decisions: displaySafe(decisions, located(caseKey, `/cases/${caseKey}/decisions`)) as ReviewDecision[], citations, ...(trace ? { trace } : {}) });
+      cases.push({ ...context, key: caseKey, assertion: displaySafe(assertion, located(caseKey, "/assertion")) as BehaviorAssertion, assertionDigest, category: assertion.behavior.categoryId, assessment: assertion.judgment.disposition === "assessed" ? assertion.judgment.assessment : "abstained", review, decisions: displaySafe(decisions, located(caseKey, "/decisions")) as ReviewDecision[], citations, ...(trace ? { trace } : {}) });
     }
   }
   return { request, aggregation, input, corpusRoot, requestPath: resolve(requestPath), cases, sourceDigest: digest({ request, lineage: validated.sourceLineage }), secretFindings };
@@ -155,8 +160,11 @@ export async function queryAtlas(source: AtlasSource, filters: AtlasFilters = {}
   const report = await aggregateEvaluation({ ...source.input, lineage: { ...source.input.lineage, corpusIndexDigest: digest(corpusEntries) }, corpusEntries, observationSets: source.input.observationSets.filter(({ document }) => ids.has(attemptKey(document))), assertions: source.input.assertions.filter(({ document }) => ids.has(attemptKey(document))) }, source.aggregation);
   const filterOptions = Object.fromEntries(ATLAS_FILTERS.filter((key) => key !== "q").map((key) => [key, [...new Set(eligibleCases.map((item) => String(item[key])))].sort()]));
   const sourceAttempts = new Set(source.input.corpusEntries.filter(({ manifestKind }) => manifestKind === "run").map(attemptKey)).size;
-  const matchingKeys = new Set(matches.map(({ key }) => key));
-  const findings = source.secretFindings.filter(({ caseKey }) => caseKey !== undefined && matchingKeys.has(caseKey));
+  const caseIndex = new Map(matches.map(({ key }, index) => [key, index]));
+  const findings: AtlasSecretFinding[] = source.secretFindings.flatMap(({ caseLocation, ...finding }) => {
+    const index = caseIndex.get(finding.caseKey);
+    return index === undefined ? [] : [{ ...finding, location: `/cases/${String(index)}${caseLocation}` }];
+  });
   const operatorNarrative = source.request.operatorNarrative
     ? (displaySafe({ text: source.request.operatorNarrative }, ({ path: _path, ...finding }) => { findings.push({ ...finding, location: "/operatorNarrative" }); }) as { text: string }).text
     : undefined;

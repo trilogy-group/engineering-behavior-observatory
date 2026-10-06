@@ -204,10 +204,15 @@ Redaction and the final scan share one rule set (`src/redaction.ts`), so a
 sanitized value never fails its own scan. Known credential formats (private-key
 blocks, AWS, GitHub, Anthropic, OpenAI-style, Fireworks, Slack and Google keys,
 JWTs, bearer values and authorization headers) are always redacted, as are
-secret-named JSON fields. An assignment to a secret-named variable is redacted
-when its value is a quoted literal or looks like a secret: at least eight
-characters including a digit. Identifiers, dotted paths, environment lookups,
-constant names and placeholders are references, not secrets, and stay intact.
+secret-named JSON fields. Assignments to secret-named variables are classified
+by context. A quoted value, or the value of a shell-style assignment such as
+`KEY=value`, `--key=value` or `?token=value`, is a literal and is redacted
+unless it is a complete environment reference (`$VAR`, `${VAR}`, `%VAR%`) or a
+placeholder. A parameter expansion keeps its reference but a literal default,
+assigned or alternate word is redacted (`${VAR:-[REDACTED_SECRET]}`). In a
+code-style assignment (`key = expr`, `key: expr`) dotted paths, calls,
+environment lookups, constant names and keywords are references and stay
+intact; any other unquoted value of eight or more characters is redacted.
 
 The remainder of this verifier section applies only to `verified` tasks.
 Verifier results cannot contradict their assertions: passed results have no

@@ -232,6 +232,16 @@ test("packages a verified smoke bundle and qualifies session evidence without in
     assert.equal(captureReport.capabilities.timingResource.status, "unsupported");
     await checkRetainedEvaluation(bundleRoot, root);
     const originalEvidenceQualification = (await createRetainedBehaviorEvidence(bundleRoot)).capture.qualification;
+    const manifestPath = join(bundleRoot, "manifest.json");
+    const manifestBefore = readFileSync(manifestPath);
+    const relabeled = JSON.parse(manifestBefore.toString());
+    const nativeVersion = relabeled.run.harness.version;
+    relabeled.run.harness.version = "0.1.1-rc.2";
+    relabeled.run.runtime = relabeled.run.runtime.map((runtime: { version: string }) => runtime.version === nativeVersion ? { ...runtime, version: "0.1.1-rc.2" } : runtime);
+    writeFileSync(manifestPath, JSON.stringify(relabeled));
+    await assert.rejects(createRetainedBehaviorEvidence(bundleRoot), /native client version differs from the run manifest/u,
+      "a retained manifest version must match the native composition's client version");
+    writeFileSync(manifestPath, manifestBefore);
     assert.equal(qualifiedDeepSeekCapture(definition.run.id, definition.attempt.id,
       { ...execution.evidence as DeepSeekCaptureReport, status: "failed" }).qualification, "qualified",
     "Complete native boundaries remain qualified independently of task outcome.");

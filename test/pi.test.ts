@@ -332,7 +332,23 @@ test("retained Pi readback rejects unsupported versions, identity mismatches, an
     legacy.run.harness.version = "0.85.1";
     legacy.run.runtime = legacy.run.runtime.map((runtime) => ["pi-coding-agent", "pi-sdk"].includes(runtime.name) ? { ...runtime, version: "0.85.1" } : runtime);
     writeFileSync(manifestPath, JSON.stringify(legacy));
-    assert.ok((await createRetainedBehaviorEvidence(summary.bundlePath)).dataset.events.length > 0, "retained Pi 0.85.1 bundles stay readable");
+    await assert.rejects(createRetainedBehaviorEvidence(summary.bundlePath), /native composition version differs/u,
+      "a manifest relabeled to another retained version does not match the SDK the capture recorded");
+    // A consistent legacy bundle: the native composition record names the same SDK version as the manifest.
+    const eventsDescriptor = legacy.evidence.find(({ relativePath }) => relativePath === "pi-events.jsonl")!;
+    const eventsPath = join(summary.bundlePath, eventsDescriptor.relativePath);
+    const eventsBefore = readFileSync(eventsPath);
+    const legacyEvents = Buffer.from(`${eventsBefore.toString().trim().split("\n").map((line) => {
+      const record = JSON.parse(line) as { channel?: string; nativeType?: string; payload?: { sdk?: { version?: string } } };
+      if (record.channel === "adapter" && record.nativeType === "session_created") record.payload!.sdk!.version = "0.85.1";
+      return JSON.stringify(record);
+    }).join("\n")}\n`);
+    writeFileSync(eventsPath, legacyEvents);
+    eventsDescriptor.digest = `sha256:${digestBytes(legacyEvents).value}`;
+    eventsDescriptor.sizeBytes = legacyEvents.length;
+    writeFileSync(manifestPath, JSON.stringify(legacy));
+    assert.ok((await createRetainedBehaviorEvidence(summary.bundlePath)).dataset.events.length > 0, "consistent retained Pi 0.85.1 bundles stay readable");
+    writeFileSync(eventsPath, eventsBefore);
     writeFileSync(manifestPath, before);
 
     const runtimeMismatch = JSON.parse(before.toString()) as RunManifest;
