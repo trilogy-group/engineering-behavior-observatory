@@ -427,6 +427,8 @@ export {
   rateRetainedOccurrences, validateOccurrenceRatings,
 } from "./occurrence-ratings.js";
 export type { OccurrenceRating, OccurrenceRatings, RateOptions, RatingPolicy } from "./occurrence-ratings.js";
+export { JUDGE_PREPARE_METHOD, prepareJudgeRequest, prepareRetainedJudgeRequest } from "./judge-prepare.js";
+export type { JudgePrepareSpec } from "./judge-prepare.js";
 export type { Occurrence, OccurrenceCoverage, OccurrenceType } from "./occurrences.js";
 export type {
   StructuralObservation,
@@ -488,6 +490,7 @@ export {
   runAgentSdkSemanticJudge,
   runClaudeAgentSdkSemanticJudge,
   SEMANTIC_JUDGE_PROMPT_VERSION,
+  SEMANTIC_JUDGE_LEDGER_PROMPT_VERSION,
 } from "./semantic-judge.js";
 export type {
   RunAgentSdkSemanticJudgeOptions,
