@@ -234,7 +234,13 @@ function answerLabel(answer: DecisionAnswer): string {
   return answer.type === "choice" ? answer.choice : answer.type === "noul" ? (answer.noul >= 0.5 ? "yes" : "no") : String(Math.round(answer.score));
 }
 
-export type RateOptions = DecideOptions & { policy?: RatingPolicy; concurrency?: number; types?: readonly OccurrenceType[] };
+export type RateOptions = DecideOptions & {
+  policy?: RatingPolicy;
+  concurrency?: number;
+  types?: readonly OccurrenceType[];
+  /** Called as each decision finishes, so callers can persist evidence before the whole run completes. */
+  onDecision?: (record: DecisionRecord, occurrenceId: string) => void;
+};
 
 /**
  * Rate every occurrence of a retained run bundle. The observation set must equal the one rebuilt from the bundle,
@@ -294,6 +300,7 @@ export async function rateOccurrences(
     jobs.push(async () => {
       const record = await decide(config, state, questions, options);
       decisions[index] = record;
+      options.onDecision?.(record, occurrence.id);
       if (record.status !== "completed") return;
       for (const [questionId, answer] of Object.entries(record.answers!)) {
         ratings.push({ occurrenceId: occurrence.id, occurrenceType: occurrence.type, questionId, source: "model", label: answerLabel(answer), answer, accepted: acceptedByPolicy(answer, policy), decision: index });

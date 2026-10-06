@@ -47,7 +47,9 @@ export function prepareJudgeRequest(
     validateOccurrenceRatings(ratings);
     if (ratings.observationSetDigest !== `sha256:${digestMetadata(observations).value}`) throw new Error("Occurrence ratings belong to another observation set.");
   }
-  const types = spec.occurrenceTypes.filter((type) => observations.occurrenceCoverage!.some((entry) => entry.type === type && entry.status === "available"));
+  // Unavailable types stay in the request and its frame with their reason: unsupported evidence is not absence.
+  const types = [...spec.occurrenceTypes];
+  const unavailable = new Map(observations.occurrenceCoverage.flatMap((entry) => entry.status === "unavailable" ? [[entry.type, entry.reason] as const] : []));
   const population = observations.occurrences.filter(({ type }) => types.includes(type));
   const budget = spec.limits.maxEvidenceItems;
   const selected = new Set<string>();
@@ -107,7 +109,9 @@ export function prepareJudgeRequest(
         method: JUDGE_PREPARE_METHOD,
         strata: types.map((type) => {
           const members = population.filter((occurrence) => occurrence.type === type);
-          return { type, population: members.length, ledgerRows: members.length, fullRecords: members.filter(({ id }) => full.has(id)).length };
+          const reason = unavailable.get(type);
+          return { type, population: members.length, ledgerRows: members.length, fullRecords: members.filter(({ id }) => full.has(id)).length,
+            ...(reason === undefined ? {} : { unavailable: reason.slice(0, 1024) }) };
         }),
       },
     },

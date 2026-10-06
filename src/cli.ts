@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -701,9 +701,15 @@ async function runOccurrenceRatingCommand(args: string[], write: (message: strin
       noulMargin: fraction(options["--noul-margin"], DEFAULT_RATING_POLICY.noulMargin, 0.5),
     };
     const observations = readJson(observationsPath) as StructuralObservationSet;
+    if (existsSync(resolve(outputPath))) throw new Error("Occurrence ratings destination already exists.");
+    // Decision records are appended as calls finish; the partial log is removed once the artifact is written.
+    const partialPath = `${resolve(outputPath)}.decisions.partial.jsonl`;
+    prepareDerivedParent(bundleRoot, partialPath);
     const ratings = await rateRetainedOccurrences(bundleRoot, observations,
-      { provider: provider as DecisionProviderId, ...(options["--model"] === undefined ? {} : { model: options["--model"] }) }, { policy });
+      { provider: provider as DecisionProviderId, ...(options["--model"] === undefined ? {} : { model: options["--model"] }) },
+      { policy, onDecision: (record, occurrenceId) => appendFileSync(partialPath, `${JSON.stringify({ occurrenceId, record })}\n`, { mode: 0o600 }) });
     await writeObservationReport(outputPath, ratings, bundleRoot);
+    rmSync(partialPath, { force: true });
     const { coverage } = ratings;
     write(`Rated ${String(coverage.asked)} of ${String(coverage.occurrences)} occurrences for attempt ${ratings.attemptId}: ${String(coverage.accepted)} accepted, ${String(coverage.deferred)} deferred, ${String(coverage.byRule)} by rule, ${String(coverage.failedDecisions)} failed decision(s).\n`);
     return coverage.failedDecisions === 0 ? 0 : 1;

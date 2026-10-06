@@ -107,8 +107,16 @@ test("the judge input carries every ledger row, ratings bound by digest, and acc
   const response = (citation: Record<string, unknown>) => ({ judgment: { disposition: "assessed", assessment: "mixed", confidence: { value: 0.6, scale: "evaluator-reported-0-to-1" }, reason: null, missingEvidenceCapability: null, rationale: "Two runs failed before later runs passed.", alternativeExplanation: "Failures may be flaky tests.", citations: [citation] } });
   const assertion = parseSemanticJudgeResponse(response({ eventId: row.cite.eventId, nativeReference: row.cite.nativeReference, occurrenceId: row.id }), request, input, "0.157.0");
   assert.equal(assertion.judgment.citations[0]!.occurrenceId, row.id, "an occurrence known only from its ledger row can be cited");
-  assert.throws(() => parseSemanticJudgeResponse(response({ eventId: input.selection.includedEventIds[0], nativeReference: { artifactId: "session", recordLocator: "line:1" }, occurrenceId: row.id }), request, input, "0.157.0"),
-    /must use that ledger row's cited event/u);
+  assert.throws(() => parseSemanticJudgeResponse(response({ eventId: "event-1", nativeReference: { artifactId: "session", recordLocator: "line:1" }, occurrenceId: row.id }), request, input, "0.157.0"),
+    /cites an event outside that occurrence/u);
+  const fullRow = ledger.find(({ cite }) => input.selection.includedEventIds.includes(cite.eventId)) as unknown as { id: string; eventIds: string[] };
+  const member = fullRow.eventIds.find((id) => input.selection.includedEventIds.includes(id))!;
+  const memberCitation = parseSemanticJudgeResponse(response({ eventId: member, nativeReference: { artifactId: "session", recordLocator: `line:${member.slice("event-".length)}` }, occurrenceId: fullRow.id }), request, input, "0.157.0");
+  assert.equal(memberCitation.judgment.citations[0]!.occurrenceId, fullRow.id, "a member event included in full may be cited for its occurrence");
+  const classicRequest = { ...request, selection: { eventIds: request.selection.eventIds, structuralObservationIds: [], includeOutcomeObservations: false } };
+  const classicInput = packageSemanticJudgeInput(events, capture, boundObservations, classicRequest, `sha256:${"c".repeat(64)}`, "evaluated-model");
+  const classic = parseSemanticJudgeResponse({ judgment: { ...response({ eventId: member, nativeReference: { artifactId: "session", recordLocator: `line:${member.slice("event-".length)}` } }).judgment } }, classicRequest, classicInput, "0.157.0");
+  assert.notEqual(classic.evaluator.configurationDigest, memberCitation.evaluator.configurationDigest, "the ledger prompt version is part of the evaluator configuration");
   const schema = semanticJudgeResponseSchema(24, true) as { properties: { judgment: { anyOf: Array<{ properties: { citations: { maxItems: number; items: { required: string[] } } } }> } } };
   assert.equal(schema.properties.judgment.anyOf[0]!.properties.citations.maxItems, 24);
   assert.deepEqual(schema.properties.judgment.anyOf[0]!.properties.citations.items.required, ["eventId", "nativeReference", "occurrenceId"]);
@@ -123,4 +131,17 @@ test("a ledger request with no occurrences still accepts the ledger citation sha
   const assertion = parseSemanticJudgeResponse({ judgment: { disposition: "assessed", assessment: "adverse", confidence: { value: 0.8, scale: "evaluator-reported-0-to-1" }, reason: null, missingEvidenceCapability: null,
     rationale: "No validation ran.", alternativeExplanation: "The run ended early.", citations: [{ eventId: "event-99", nativeReference: { artifactId: "session", recordLocator: "line:99" }, occurrenceId: null }] } }, request, input, "0.157.0");
   assert.equal(assertion.judgment.citations[0]!.occurrenceId, undefined);
+});
+
+test("unavailable occurrence types stay in the frame, and an oversized ledger row fails before the judge", () => {
+  const { events, observations, capture } = fixture();
+  const coverage = observations.occurrenceCoverage!.map((entry) => entry.type === "delegation" ? { type: "delegation" as const, status: "unavailable" as const, reason: "The adapter does not expose delegation." } : entry);
+  const withGap = { ...observations, occurrenceCoverage: coverage } as StructuralObservationSet;
+  const request = prepareJudgeRequest(withGap, events, { ...spec(8), occurrenceTypes: ["validation-run", "delegation"] });
+  assert.deepEqual(request.selection.occurrences!.types, ["validation-run", "delegation"]);
+  assert.deepEqual(request.selection.frame!.strata.find(({ type }) => type === "delegation"),
+    { type: "delegation", population: 0, ledgerRows: 0, fullRecords: 0, unavailable: "The adapter does not expose delegation." });
+  assert.deepEqual(validateArtifact("request", request), []);
+  const tight = { ...request, limits: { ...request.limits, maxRecordChars: 256 } };
+  assert.throws(() => packageSemanticJudgeInput(events, capture, withGap, tight, `sha256:${"c".repeat(64)}`, "evaluated-model"), /exceeds maxRecordChars/u);
 });

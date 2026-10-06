@@ -66,8 +66,11 @@ ebo occurrences rate <run-bundle-root> <observations.json> <ratings.json> --prov
 
 The observation set must equal the one rebuilt from the bundle. The
 `ebo.occurrence-ratings/v1` artifact binds to the observation-set and dataset
-digests and holds every rating with its decision record. The command exits
-non-zero when any decision failed; the artifact still records them.
+digests and holds every rating with its decision record. While the command runs,
+each finished decision is appended to `<output>.decisions.partial.jsonl`; the
+log is removed once the artifact is written, so an interrupted run keeps every
+completed call. The command exits non-zero when any decision failed; the
+artifact still records them.
 
 ## Judge preparation
 
@@ -88,12 +91,16 @@ The prepared request records:
   runs and adverse or low-confidence ratings; the last validation run of each
   check kind; then evenly spaced remaining occurrences.
 - `selection.frame`: the method and, per type, the population, ledger rows
-  (always the whole population) and occurrences given in full.
+  (always the whole population) and occurrences given in full. A requested type
+  the adapter does not expose stays in the frame with its `unavailable` reason,
+  so the judge can abstain instead of reading the gap as absence.
 
 The judge input carries the ledger as `occurrence-ledger` evidence items of
-whole rows. Ledger rows are never dropped: when they do not fit
-`maxInputChars`, packaging fails and the limit must be raised. Each row names
-one event the judge may cite for the occurrence; such citations carry
-`occurrenceId`, and validation requires the cited event to be that row's. Inputs
-with a ledger use prompt version `1.1.0`. The citation cap is the request's
+whole rows. Ledger rows are never dropped or cut: when they do not fit
+`maxInputChars`, or one row exceeds `maxRecordChars`, packaging fails before the
+judge is called and the limit must be raised. Each row lists the occurrence's
+events and names one the judge may cite; a citation with `occurrenceId` must use
+that event or another event of the occurrence included as a full record. Inputs
+with a ledger use prompt version `1.1.0`, which is part of the assertion's
+evaluator configuration digest. The citation cap is the request's
 `maxCitations` (up to 64).

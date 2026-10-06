@@ -137,8 +137,10 @@ test("occurrence ratings ask only bounded, typed questions and bind every answer
   assert.equal(JSON.stringify(state).includes("hidden reasoning"), false, "hidden reasoning is never sent");
 
   const fake = provider();
+  const streamed: string[] = [];
   const ratings = await rateOccurrences(observationSet, events, ({ recordLocator }) => content[recordLocator], { provider: "typesafe" },
-    { fetch: fake.fetch, env, now: () => new Date("2026-10-06T00:00:00.000Z") });
+    { fetch: fake.fetch, env, now: () => new Date("2026-10-06T00:00:00.000Z"), onDecision: (_record, occurrenceId) => streamed.push(occurrenceId) });
+  assert.equal(streamed.length, ratings.coverage.asked, "every decision is handed to the caller as it finishes");
   validateOccurrenceRatings(ratings);
   assert.equal(ratings.coverage.failedDecisions, 0);
   assert.equal(fake.calls.length, ratings.coverage.asked, "one request per rated occurrence, all its questions together");

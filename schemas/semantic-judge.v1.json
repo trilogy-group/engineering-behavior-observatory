@@ -148,7 +148,8 @@
               "type": { "$ref": "#/$defs/identifier" },
               "population": { "type": "integer", "minimum": 0 },
               "ledgerRows": { "type": "integer", "minimum": 0 },
-              "fullRecords": { "type": "integer", "minimum": 0 }
+              "fullRecords": { "type": "integer", "minimum": 0 },
+              "unavailable": { "type": "string", "minLength": 1, "maxLength": 1024 }
             }
           }
         }
