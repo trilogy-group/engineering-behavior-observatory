@@ -5,6 +5,7 @@ For downloads and published artifacts, see
 
 | Version | Changes and verification | Support boundary |
 | :--- | :--- | :--- |
+| [1.2.0](1.2.0/README.md) | Devin CLI harness; per-request usage and labeled timing (normalization changed in place); occurrences, occurrence ratings and judge preparation; context-classified secret redaction | [Support boundary](1.0.0/KNOWN_LIMITATIONS.md) |
 | [1.1.3](1.1.3/README.md) | Smol 1.18.2 bundled libkrun and Harbor 0.22 conformance | [Harbor runtime guide](../docs/guides/harbor-tasks.md) |
 | [1.1.2](1.1.2/README.md) | Codex, Pi, and DeepSeek Harness runtime updates | [Support boundary](1.0.0/KNOWN_LIMITATIONS.md) |
 | [1.1.1](1.1.1/README.md) | Claude Agent SDK patch update to 0.3.282 | [Support boundary](1.0.0/KNOWN_LIMITATIONS.md) |
