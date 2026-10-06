@@ -272,6 +272,7 @@ function logsRequest(eventName) {
     lengthDelimited(6, keyValue("session_id", anyString(SESSION_ID))),
     lengthDelimited(6, keyValue("request_id", anyString("req-1"))),
     lengthDelimited(6, keyValue("input_tokens", anyInt(10985))),
+    ...(mode === "otlp-secret" ? [lengthDelimited(6, keyValue("api_key", anyString(process.env.EBO_FAKE_DEVIN_KEY ?? "")))] : []),
     fixed64(11, nowNanos()),
     stringField(12, eventName),
   ]);

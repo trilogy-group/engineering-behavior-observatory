@@ -433,7 +433,7 @@ function sanitizeArtifact(
     const output = Buffer.from(canonicalizeMetadata(sanitizeValue(
       kind === "verifier"
         ? rewriteVerifierDiagnosticReferences(parseJson(bytes, "JSON evidence"), portableDiagnostics)
-        : stripNativeReasoning(parseJson(bytes, "JSON evidence"), kind, counts),
+        : stripDevinRawTelemetryBodies(stripNativeReasoning(parseJson(bytes, "JSON evidence"), kind, counts), kind, counts),
       policy,
       replacements,
       sensitiveValues,
@@ -633,6 +633,30 @@ function stripNativeReasoning(
   counts: Map<TransformationAction, number>,
 ): unknown {
   return stripDevinReasoning(stripPiReasoning(stripCodexReasoning(value, kind, counts), kind, counts), kind, counts);
+}
+
+const DEVIN_TELEMETRY_SCHEMA = "ebo.devin-telemetry/v1";
+
+/**
+ * Devin OTLP records retain the original request body as base64. Encoded bytes
+ * cannot be sanitized, so portable exports keep only `bodyDigest`, `sizeBytes`
+ * and the sanitized projection; the raw body stays restricted in the bundle.
+ */
+function stripDevinRawTelemetryBodies(
+  value: unknown,
+  kind: PortableKind | undefined,
+  counts: Map<TransformationAction, number>,
+): unknown {
+  if (kind !== "telemetry" || !isRecord(value) || value.schemaVersion !== DEVIN_TELEMETRY_SCHEMA) return value;
+  const telemetry = value.telemetry;
+  if (!isRecord(telemetry) || !Array.isArray(telemetry.records)) return value;
+  const records = telemetry.records.map((record) => {
+    if (!isRecord(record) || !("body" in record)) return record;
+    const { body: _body, ...rest } = record;
+    increment(counts, "removed-field");
+    return rest;
+  });
+  return { ...value, telemetry: { ...telemetry, records } };
 }
 
 /** Devin ACP `agent_thought_chunk` updates carry hidden reasoning; drop their content and any raw frame copy. */

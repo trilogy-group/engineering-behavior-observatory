@@ -71,8 +71,11 @@ export type DevinOtlpRecord = {
   receivedAt: string;
   contentType?: string;
   sizeBytes: number;
-  /** The original request body (base64) within the receiver bounds, retained even when it cannot be decoded. */
-  body: string;
+  /**
+   * The original request body (base64) within the receiver bounds, retained even when it cannot be decoded.
+   * Restricted evidence: portable exports omit it and keep only `bodyDigest`/`sizeBytes`.
+   */
+  body?: string;
   bodyDigest: string;
   /** The OTLP/JSON projection of `body`; absent when decoding failed. */
   payload?: unknown;
@@ -601,9 +604,10 @@ export function qualifyRetainedDevinCapture(
     if (record.source !== DEVIN_HARNESS && record.source !== DEVIN_CLIENT) throw new Error(`Retained Devin capture contains a foreign source ${record.source}.`);
   }
   let acceptedSequence = 0;
-  const owned = (method: string, required: boolean): { request: ProtocolObservation; response?: ProtocolObservation } | undefined => {
+  // A completed bundle must hold every owned request/response pair; partial attempts may stop at any point.
+  const owned = (method: string): { request: ProtocolObservation; response?: ProtocolObservation } | undefined => {
     const sent = records.filter((record) => record.kind === "request" && record.source === DEVIN_CLIENT && record.method === method);
-    if (sent.length > 1 || required && sent.length !== 1) throw new Error(`Retained Devin ${method} requires one owned request.`);
+    if (sent.length > 1 || options.expectsCompletion && sent.length !== 1) throw new Error(`Retained Devin ${method} requires one owned request.`);
     const request = sent[0];
     if (request === undefined) return undefined;
     const responses = records.filter((record) => record.kind === "response" && record.source === DEVIN_HARNESS && record.id === request.id);
@@ -611,15 +615,19 @@ export function qualifyRetainedDevinCapture(
       || responses.some((response) => response.sequence <= request.sequence)) {
       throw new Error(`Retained Devin ${method} requires a unique ordered owned request/response pair.`);
     }
-    acceptedSequence = responses[0]?.sequence ?? request.sequence;
-    return { request, ...(responses[0] === undefined ? {} : { response: responses[0] }) };
+    const response = responses[0];
+    if (options.expectsCompletion && (response === undefined || !isRecord(response.payload) || response.payload.error !== undefined)) {
+      throw new Error(`Completed retained Devin capture lacks a successful owned ${method} response.`);
+    }
+    acceptedSequence = response?.sequence ?? request.sequence;
+    return { request, ...(response === undefined ? {} : { response }) };
   };
-  owned("initialize", options.expectsCompletion);
-  const session = owned("session/new", options.expectsCompletion);
+  owned("initialize");
+  const session = owned("session/new");
   const sessionResult = session?.response?.payload;
   const sessionId = isRecord(sessionResult) && sessionResult.error === undefined ? text(sessionResult.sessionId) : undefined;
   if (sessionId !== options.sessionId) throw new Error("Retained Devin session identity differs from the run manifest.");
-  const prompt = owned("session/prompt", options.expectsCompletion);
+  const prompt = owned("session/prompt");
   if (prompt !== undefined && (sessionId === undefined || !isRecord(prompt.request.payload) || prompt.request.payload.sessionId !== sessionId
     || typeof prompt.request.id !== "number")) {
     throw new Error("Retained Devin session/prompt is not bound to the owned session.");

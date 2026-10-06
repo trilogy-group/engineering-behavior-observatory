@@ -117,8 +117,10 @@ delta metrics. Every accepted body is retained as received (`body`, base64,
 with a `bodyDigest`) inside the receiver bounds (4 MiB per request, 16 MiB per
 attempt); EBO additionally decodes protobuf bodies with a small
 standard-library decoder into their OTLP/JSON `payload` projection, and
-undecodable bodies keep their original bytes alongside a `parseError`. Receipt
-is `received` only when every requested signal arrived.
+undecodable bodies keep their original bytes alongside a `parseError`. Raw
+bodies are restricted evidence: portable export removes `body` (encoded bytes
+cannot be sanitized) and keeps `bodyDigest`, `sizeBytes` and the sanitized
+projection. Receipt is `received` only when every requested signal arrived.
 OTLP never replaces ACP evidence, and the receiver is not a telemetry backend.
 
 ## Normalization

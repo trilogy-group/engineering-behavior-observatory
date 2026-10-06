@@ -147,17 +147,20 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
     }
     dataset = (await describeAndValidateCodexDataset(native, manifest.run.harness.version)).dataset;
   } else if (harness === DEVIN_HARNESS) {
-    const telemetryVersions = outcomeCapture.records.flatMap(({ record }) => {
-      const document = record.document as Record<string, any> | undefined;
-      return document?.schemaVersion === "ebo.devin-telemetry/v1" ? [String(document.runtime?.version)] : [];
-    });
+    // The native runtime document is the only runtime-version evidence; never fall back to the manifest pin alone.
+    const telemetryDocuments = outcomeCapture.records.filter(({ record }) => record.kind === "telemetry").map(({ record }) => record.document as Record<string, any> | undefined);
+    if (telemetryDocuments.length !== 1 || telemetryDocuments[0]?.schemaVersion !== "ebo.devin-telemetry/v1") {
+      throw new Error("Retained Devin capture requires exactly one recognized ebo.devin-telemetry/v1 runtime document.");
+    }
+    const telemetryVersion = telemetryDocuments[0].runtime?.version;
+    if (typeof telemetryVersion !== "string") throw new Error("Retained Devin runtime document lacks a native runtime version.");
     const runtimeVersions = manifest.run.runtime.filter(({ name }) => name === DEVIN_HARNESS).map(({ version }) => version);
     if (runtimeVersions.length !== 1) throw new Error("Retained Devin runtime identity devin-cli differs from the pinned adapter manifest.");
     const native = qualifyRetainedDevinCapture(capture as NormalizationInput<ProtocolObservation>, {
       sessionId: manifest.run.native?.sessionId,
       expectsCompletion,
       harnessVersion: manifest.run.harness.version,
-      runtimeVersions: [...telemetryVersions, ...runtimeVersions],
+      runtimeVersions: [telemetryVersion, ...runtimeVersions],
     });
     dataset = (await describeAndValidateDevinDataset(native, manifest.run.harness.version)).dataset;
   } else if (harness === "openhands-agent-server") {

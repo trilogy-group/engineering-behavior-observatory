@@ -17,6 +17,7 @@ import {
   qualifyRetainedDevinCapture,
   type DevinCliCapture,
   type DevinCliConfiguration,
+  type DevinTelemetryEvidence,
 } from "../src/devin.js";
 import { captureDevinCliRun, DEVIN_CONTRACT_DIGEST, resolveDevinConfigurationRecord, runDevinQueueEntry } from "../src/devin-run.js";
 import { decodeOtlpProtobuf } from "../src/otlp-protobuf.js";
@@ -107,7 +108,7 @@ test("Devin ACP success turn ends on the native session/prompt response and norm
     const metricRecord = capture.telemetry.telemetry.records.find(({ signal }) => signal === "metrics");
     assert.ok(JSON.stringify(metricRecord?.payload).includes("devin.token.usage"));
     for (const record of capture.telemetry.telemetry.records) {
-      const body = Buffer.from(record.body, "base64");
+      const body = Buffer.from(record.body!, "base64");
       assert.equal(body.length, record.sizeBytes, "the original OTLP body is retained alongside its projection");
       assert.equal(record.bodyDigest, `sha256:${digestBytes(body).value}`);
       assert.deepEqual(decodeOtlpProtobuf(record.signal, body), record.payload, "the projection re-derives from the retained body");
@@ -414,8 +415,8 @@ test("Devin OTLP receiver retains malformed protobuf bodies with a parse error",
     assert.ok(malformed.length > 0);
     assert.ok(malformed.every(({ sizeBytes, payload }) => sizeBytes === 6 && payload === undefined));
     for (const record of malformed) {
-      assert.deepEqual(Buffer.from(record.body, "base64"), Buffer.from([0xff, 0xff, 0xff, 0xff, 0x0f, 0x00]), "undecodable bodies keep their original bytes");
-      assert.equal(record.bodyDigest, `sha256:${digestBytes(Buffer.from(record.body, "base64")).value}`);
+      assert.deepEqual(Buffer.from(record.body!, "base64"), Buffer.from([0xff, 0xff, 0xff, 0xff, 0x0f, 0x00]), "undecodable bodies keep their original bytes");
+      assert.equal(record.bodyDigest, `sha256:${digestBytes(Buffer.from(record.body!, "base64")).value}`);
     }
     assert.equal(capture.telemetry.telemetry.receipt.signals.metrics.status, "missing");
   } finally {
@@ -576,6 +577,28 @@ test("runDevinQueueEntry executes a frozen queue entry and produces a normalized
         await writeFile(sessionPath, bytes);
         await writeFile(join(summary.bundlePath, "manifest.json"), JSON.stringify(changed));
       }],
+      ["missing-initialize-response", /successful owned initialize response/u, async () => {
+        const kept = records.filter((record) => !(record.kind === "response" && record.method === "initialize"));
+        const bytes = Buffer.from(`${kept.map((record, index) => JSON.stringify({ ...record, sequence: index + 1 })).join("\n")}\n`);
+        const changed = structuredClone(manifest);
+        const descriptor = changed.evidence.find(({ id }) => id === sessionDescriptor.id)!;
+        descriptor.digest = `sha256:${digestBytes(bytes).value}`;
+        descriptor.sizeBytes = bytes.length;
+        await writeFile(sessionPath, bytes);
+        await writeFile(join(summary.bundlePath, "manifest.json"), JSON.stringify(changed));
+      }],
+      ["unknown-telemetry-schema", /recognized ebo\.devin-telemetry\/v1 runtime document/u, async () => {
+        const document = JSON.parse(telemetry) as Record<string, any>;
+        document.schemaVersion = "ebo.devin-telemetry/v999";
+        document.runtime.version = "3000.10.0";
+        const bytes = Buffer.from(JSON.stringify(document));
+        const changed = structuredClone(manifest);
+        const descriptor = changed.evidence.find(({ relativePath }) => relativePath === "telemetry/devin.json")!;
+        descriptor.digest = `sha256:${digestBytes(bytes).value}`;
+        descriptor.sizeBytes = bytes.length;
+        await writeFile(telemetryPath, bytes);
+        await writeFile(join(summary.bundlePath, "manifest.json"), JSON.stringify(changed));
+      }],
       ["duplicate-prompt", /requires one owned request/u, async () => {
         const prompt = records.find((record) => record.kind === "request" && record.method === "session/prompt")!;
         const bytes = Buffer.from(`${[...records, { ...prompt, sequence: records.length + 1 }].map((record) => JSON.stringify(record)).join("\n")}\n`);
@@ -635,6 +658,48 @@ test("portable export removes Devin thought content while the retained bundle ke
     const portableSession = await readFile(join(exportRoot, session.relativePath), "utf8");
     assert.equal(portableSession.includes(REASONING_SENTINEL), false);
     assert.ok(portableSession.includes("agent_thought_chunk"), "the update type remains; only its content is removed");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("portable export omits raw OTLP bodies so encoded secrets cannot bypass sanitization", async () => {
+  const root = await temporaryRoot();
+  try {
+    const queueFixture = createQueueFixture(root);
+    const summary = await runDevinQueueEntry({
+      bundleRoot: queueFixture.bundleRoot,
+      queuePath: queueFixture.queuePath,
+      runId: queueFixture.runId,
+      outputRoot: join(root, "runs"),
+      workspaceRoot: join(root, "workspaces"),
+      probeRuntime: async () => ({ path: process.execPath, version: DEVIN_CLI_VERSION }),
+      executableArgs: [fixture, "--mode=otlp-secret"],
+    });
+    const retained = JSON.parse(await readFile(join(summary.bundlePath, "telemetry/devin.json"), "utf8")) as DevinTelemetryEvidence;
+    const retainedLogs = retained.telemetry.records.filter(({ signal }) => signal === "logs");
+    assert.ok(retainedLogs.length > 0);
+    for (const record of retainedLogs) {
+      assert.ok(Buffer.from(record.body!, "base64").includes(CREDENTIAL_VALUE), "the restricted bundle keeps the original bytes");
+    }
+
+    const policy: PortableExportPolicy = { sharingClass: "partner", maxArtifactBytes: 8 * 1024 * 1024, maxStringBytes: 64 * 1024, sensitiveValues: [CREDENTIAL_VALUE] };
+    const exportRoot = join(root, "portable");
+    const exported = await createPortableRunBundleExport({ sourceRoot: summary.bundlePath, destinationRoot: exportRoot, policy });
+    await readPortableRunBundleExport(exportRoot, policy);
+    const telemetryArtifact = exported.artifacts.find(({ kind }) => kind === "telemetry");
+    assert.ok(telemetryArtifact);
+    const portableText = await readFile(join(exportRoot, telemetryArtifact.relativePath), "utf8");
+    assert.equal(portableText.includes(CREDENTIAL_VALUE), false);
+    assert.equal(portableText.includes(Buffer.from(CREDENTIAL_VALUE).toString("base64").slice(1, -2)), false);
+    const portable = JSON.parse(portableText) as DevinTelemetryEvidence;
+    assert.equal(portable.telemetry.records.length, retained.telemetry.records.length);
+    for (const [index, record] of portable.telemetry.records.entries()) {
+      assert.equal("body" in record, false, "raw bodies never leave the restricted bundle");
+      assert.equal(record.bodyDigest, retained.telemetry.records[index]!.bodyDigest);
+      assert.equal(record.sizeBytes, retained.telemetry.records[index]!.sizeBytes);
+      assert.equal(JSON.stringify(record.payload).includes(CREDENTIAL_VALUE), false);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
