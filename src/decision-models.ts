@@ -96,13 +96,14 @@ export async function decide(
   try {
     if (apiKey === undefined || apiKey === "") throw new Error(`${provider.apiKeyEnv} is required for decision provider ${config.provider}.`);
     const body = JSON.stringify(request);
+    const authorizationHeader = `Bearer ${apiKey}`;
     const maxRetries = options.maxRetries ?? 3;
     for (;;) {
       record.attempts += 1;
       const signals = [AbortSignal.timeout(options.timeoutMs ?? 120_000), ...(options.signal === undefined ? [] : [options.signal])];
       const response = await (options.fetch ?? fetch)(provider.endpoint, {
         method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        headers: { Authorization: authorizationHeader, "Content-Type": "application/json" },
         body,
         signal: AbortSignal.any(signals),
       });
