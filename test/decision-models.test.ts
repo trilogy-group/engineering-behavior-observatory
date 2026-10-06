@@ -1,0 +1,173 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { decide, parseDecisionResponse, type DecisionQuestion } from "../src/decision-models.js";
+import {
+  acceptedByPolicy,
+  occurrenceState,
+  rateOccurrences,
+  validateOccurrenceRatings,
+} from "../src/occurrence-ratings.js";
+import { extractOccurrences, type OccurrenceOperation } from "../src/occurrences.js";
+import type { StructuralObservationSet } from "../src/structural-observations.js";
+import type { UniformEvent } from "../src/uniform-events.js";
+
+const questions: Record<string, DecisionQuestion> = {
+  result: { type: "choice", instructions: "Did it pass?", criteria: { passed: "yes", failed: "no" } },
+  ran: { type: "noul", instructions: "Did a test run?" },
+  depth: { type: "score", instructions: "How deep?", criteria: ["none", "some", "full"] },
+};
+const env = { TYPESAFE_API_KEY: "ts-secret-key", FIREWORKS_API_KEY: "fw-secret-key", FIREWORKS_SYSTEMONE_MODEL: "accounts/fireworks/routers/example" };
+
+/** A provider that answers every question with its first option, and records what it received. */
+function provider(options: { status?: number[]; body?: (request: { model: string; questions: Record<string, DecisionQuestion> }) => unknown; headers?: Record<string, string> } = {}) {
+  const calls: Array<{ url: string; authorization: string; body: { model: string; state: unknown; questions: Record<string, DecisionQuestion> } }> = [];
+  const statuses = [...(options.status ?? [])];
+  const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init!.body)) as { model: string; state: unknown; questions: Record<string, DecisionQuestion> };
+    calls.push({ url: String(url), authorization: String((init!.headers as Record<string, string>).Authorization), body });
+    const status = statuses.shift() ?? 200;
+    if (status !== 200) return new Response(`{"error":"busy"}`, { status, headers: { "retry-after": "0" } });
+    const answers = Object.fromEntries(Object.entries(body.questions).map(([id, question]) => {
+      if (question.type === "noul") return [id, { type: "noul", noul: 0.97 }];
+      const keys = question.type === "choice" ? Object.keys(question.criteria) : question.criteria.map((_, index) => String(index));
+      const probabilities = Object.fromEntries(keys.map((key, index) => [key, index === 0 ? 0.9 : 0.1 / (keys.length - 1)]));
+      return [id, question.type === "choice" ? { type: "choice", choice: keys[0], probabilities, confidence: 0.85 } : { type: "score", score: 0.2, probabilities, confidence: 0.85 }];
+    }));
+    return new Response(JSON.stringify(options.body?.(body) ?? { model: `${body.model}-resolved`, answers, usage: { input_tokens: 120, output_tokens: 4, cached_input_tokens: 30 } }),
+      { status: 200, headers: options.headers ?? {} });
+  }) as typeof fetch;
+  return { calls, fetch: fetchImpl };
+}
+
+test("decide sends one request per state to the configured provider and validates every answer", async () => {
+  const typesafe = provider();
+  const record = await decide({ provider: "typesafe" }, { output: "PASS" }, questions, { fetch: typesafe.fetch, env });
+  assert.equal(record.status, "completed");
+  assert.equal(typesafe.calls[0]!.url, "https://api.typesafe.ai/v1/systemone");
+  assert.equal(typesafe.calls[0]!.authorization, "Bearer ts-secret-key");
+  assert.equal(typesafe.calls[0]!.body.model, "jev-1.13.0");
+  assert.equal(record.model, "jev-1.13.0-resolved");
+  assert.deepEqual(record.answers!.ran, { type: "noul", noul: 0.97 });
+  assert.deepEqual(record.usage, { inputTokens: 120, outputTokens: 4, cachedInputTokens: 30 });
+
+  const fireworks = provider({ headers: { "fireworks-server-processing-time": "0.042" } });
+  const fireworksRecord = await decide({ provider: "fireworks" }, "state", questions, { fetch: fireworks.fetch, env });
+  assert.equal(fireworks.calls[0]!.url, "https://api.fireworks.ai/inference/v1/systemone");
+  assert.equal(fireworks.calls[0]!.body.model, "accounts/fireworks/routers/example", "the Fireworks model comes from FIREWORKS_SYSTEMONE_MODEL");
+  assert.equal(fireworksRecord.serverProcessingTime, "0.042");
+});
+
+test("decide retries busy responses, records failures without answers and never leaks the key", async () => {
+  const busy = provider({ status: [429, 503] });
+  const slept: number[] = [];
+  const retried = await decide({ provider: "typesafe" }, "s", questions, { fetch: busy.fetch, env, sleep: async (ms) => { slept.push(ms); } });
+  assert.equal(retried.status, "completed");
+  assert.equal(retried.attempts, 3);
+  assert.equal(slept.length, 2);
+
+  const unauthorized = (async () => new Response("invalid key ts-secret-key", { status: 401 })) as unknown as typeof fetch;
+  const failed = await decide({ provider: "typesafe" }, "s", questions, { fetch: unauthorized, env });
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.answers, undefined);
+  assert.match(failed.error!, /HTTP 401/u);
+  assert.equal(failed.error!.includes("ts-secret-key"), false);
+
+  const missing = await decide({ provider: "fireworks" }, "s", questions, { fetch: busy.fetch, env: { FIREWORKS_SYSTEMONE_MODEL: "m" } });
+  assert.match(missing.error!, /FIREWORKS_API_KEY is required/u);
+  await assert.rejects(decide({ provider: "fireworks" }, "s", questions, { env: { FIREWORKS_API_KEY: "k" } }), /needs a model/u);
+});
+
+test("responses that do not match the questions fail the whole call", () => {
+  const good = { model: "m", usage: { input_tokens: 1, output_tokens: 0 }, answers: {
+    result: { type: "choice", choice: "passed", probabilities: { passed: 0.7, failed: 0.3 }, confidence: 0.4 },
+    ran: { type: "noul", noul: 0.5 },
+    depth: { type: "score", score: 1.2, probabilities: { 0: 0.1, 1: 0.6, 2: 0.3 }, confidence: 0.3 },
+  } };
+  assert.doesNotThrow(() => parseDecisionResponse(good, questions));
+  const broken = (patch: (value: typeof good) => void) => { const copy = structuredClone(good); patch(copy); return copy; };
+  for (const [name, value] of [
+    ["undeclared choice", broken((value) => { value.answers.result.choice = "maybe"; })],
+    ["probabilities off by more than tolerance", broken((value) => { value.answers.result.probabilities.failed = 0.2; })],
+    ["noul out of range", broken((value) => { value.answers.ran.noul = 1.2; })],
+    ["score out of range", broken((value) => { value.answers.depth.score = 3; })],
+    ["missing answer", broken((value) => { delete (value.answers as Record<string, unknown>).ran; })],
+    ["missing usage", broken((value) => { delete (value as Record<string, unknown>).usage; })],
+  ] as const) assert.throws(() => parseDecisionResponse(value, questions), Error, name);
+});
+
+function event(sequence: number, attributes: UniformEvent["attributes"], phase: UniformEvent["phase"]): UniformEvent {
+  return {
+    schemaVersion: "ebo.uniform-event/v1", id: `event-${sequence}`, runId: "run", attemptId: "attempt",
+    source: { harness: "fixture", nativeType: "tool", nativeReference: { artifactId: "session", recordLocator: `line:${sequence}` } },
+    nativeOrder: { status: "known", value: sequence, domain: "session" },
+    nativeTime: { status: "known", value: new Date(Date.UTC(2026, 9, 6, 0, 0, sequence)).toISOString() },
+    actor: { kind: "tool" }, family: "tool", phase, scope: { kind: "session", id: "s" },
+    relations: { parent: { status: "unknown", reason: "fixture" }, known: [] }, attributes,
+    content: { status: "known", value: [{ nativeReference: { artifactId: "session", recordLocator: `line:${sequence}` } }] },
+  };
+}
+
+test("occurrence ratings ask only bounded, typed questions and bind every answer to its decision record", async () => {
+  const content: Record<string, unknown> = {
+    "line:1": { input: { command: "pnpm exec jest src/a.test.ts" } },
+    "line:2": { content: [{ type: "text", text: `FAIL src/a.test.ts\n${"x".repeat(20_000)}\nTests: 1 failed` }, { type: "thinking", thinking: "hidden reasoning" }] },
+    "line:3": { input: { command: "pnpm exec jest src/a.test.ts --runInBand" } },
+    "line:4": { content: "Tests: 4 passed" },
+    "line:5": { input: { command: "pnpm exec jest" } },
+  };
+  const operation = (id: string, events: UniformEvent[], failed: boolean): OccurrenceOperation => ({ id, events, toolName: "Bash", inputDigest: `sha256:${id}`, failed });
+  const failing = operation("a", [event(1, { toolName: "Bash", toolUseId: "a" }, "before"), event(2, { toolName: "Bash", toolUseId: "a", isError: true }, "after")], true);
+  const passing = operation("b", [event(3, { toolName: "Bash", toolUseId: "b" }, "before"), event(4, { toolName: "Bash", toolUseId: "b", isError: false }, "after")], false);
+  const unanswered = operation("c", [event(5, { toolName: "Bash", toolUseId: "c" }, "before")], false);
+  const operations = [failing, passing, unanswered];
+  const events = operations.flatMap(({ events: own }) => own);
+  const { occurrences, coverage } = extractOccurrences({
+    attemptId: "attempt", events, operations, toolCapability: { status: "available" }, delegationCapability: { status: "available" },
+    isCompaction: () => false, resolveContent: ({ recordLocator }) => content[recordLocator],
+  });
+  const observationSet = { runId: "run", attemptId: "attempt", normalization: { datasetDigest: `sha256:${"a".repeat(64)}` }, occurrences, occurrenceCoverage: coverage } as unknown as StructuralObservationSet;
+
+  const failure = occurrences.find(({ type }) => type === "failure-response")!;
+  const { state, omittedCharacters } = occurrenceState(failure, new Map(events.map((value) => [value.id, value])), ({ recordLocator }) => content[recordLocator]);
+  const calls = state.calls as Array<{ position: string; input?: string; output?: string; nativeResult: string }>;
+  assert.deepEqual(calls.map(({ position, nativeResult }) => [position, nativeResult]), [["failure 1", "failed"], ["response", "passed"]]);
+  assert.ok(omittedCharacters > 0 && calls[0]!.output!.includes("characters omitted from this request"), "long output keeps head and tail with a marked omission");
+  assert.ok(calls[0]!.output!.startsWith("FAIL") && calls[0]!.output!.endsWith("Tests: 1 failed"));
+  assert.equal(JSON.stringify(state).includes("hidden reasoning"), false, "hidden reasoning is never sent");
+
+  const fake = provider();
+  const ratings = await rateOccurrences(observationSet, events, ({ recordLocator }) => content[recordLocator], { provider: "typesafe" },
+    { fetch: fake.fetch, env, now: () => new Date("2026-10-06T00:00:00.000Z") });
+  validateOccurrenceRatings(ratings);
+  assert.equal(ratings.coverage.failedDecisions, 0);
+  assert.equal(fake.calls.length, ratings.coverage.asked, "one request per rated occurrence, all its questions together");
+  assert.ok(fake.calls.every(({ body }) => Object.keys(body.questions).length >= 1));
+  const byType = (type: string) => ratings.ratings.filter(({ occurrenceType }) => occurrenceType === type).map(({ questionId, label, accepted, source }) => [questionId, label, accepted, source]);
+  assert.deepEqual(byType("failure-response"), [["response", "addressed-cause", true, "model"]]);
+  assert.deepEqual(byType("validation-run").sort(), [
+    ["outcome", "all-passed", true, "model"], ["outcome", "all-passed", true, "model"], ["outcome", "all-passed", true, "model"],
+    ["targeted", "yes", true, "model"], ["targeted", "yes", true, "model"], ["targeted", "yes", true, "model"],
+  ]);
+
+  const tampered = structuredClone(ratings);
+  tampered.ratings[0]!.label = "retried-unchanged";
+  tampered.ratings[0]!.answer = { ...tampered.ratings[0]!.answer!, choice: "retried-unchanged" } as never;
+  assert.throws(() => validateOccurrenceRatings(tampered), /differs from its decision record/u);
+  assert.equal(acceptedByPolicy({ type: "choice", choice: "a", probabilities: { a: 0.6, b: 0.4 }, confidence: 0.3 }, ratings.policy), false);
+  assert.equal(acceptedByPolicy({ type: "noul", noul: 0.95 }, ratings.policy), true);
+});
+
+test("a failure with no later call is rated by rule without asking the model", async () => {
+  const lone = { id: "a", events: [event(1, { toolName: "Bash", toolUseId: "a" }, "before"), event(2, { toolName: "Bash", toolUseId: "a", isError: true }, "after")], toolName: "Bash", inputDigest: "sha256:a", failed: true };
+  const { occurrences, coverage } = extractOccurrences({
+    attemptId: "attempt", events: lone.events, operations: [lone], toolCapability: { status: "available" }, delegationCapability: { status: "available" },
+    isCompaction: () => false, resolveContent: () => undefined,
+  });
+  const observationSet = { runId: "run", attemptId: "attempt", normalization: { datasetDigest: `sha256:${"b".repeat(64)}` }, occurrences, occurrenceCoverage: coverage } as unknown as StructuralObservationSet;
+  const fake = provider();
+  const ratings = await rateOccurrences(observationSet, lone.events, () => undefined, { provider: "typesafe" }, { fetch: fake.fetch, env });
+  assert.equal(fake.calls.length, 0);
+  assert.deepEqual(ratings.ratings.map(({ source, label, rule }) => [source, label, rule]), [["rule", "no-response", "no later call of the tool in the same session"]]);
+  validateOccurrenceRatings(ratings);
+});

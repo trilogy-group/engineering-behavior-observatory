@@ -38,6 +38,8 @@ export type BehaviorVocabulary = {
 export type BehaviorCitation = {
   eventId: string;
   nativeReference: NativeEvidenceReference;
+  /** The occurrence this event stands for, when the judge cited it from the occurrence ledger. */
+  occurrenceId?: string;
 };
 
 type AssessedJudgment = {

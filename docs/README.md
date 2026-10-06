@@ -40,7 +40,8 @@ The [evaluation reading path](evaluation/README.md) explains how the parts fit:
 
 - [Uniform events](evaluation/uniform-events.md) and
   [normalization integrity](evaluation/normalization-integrity.md)
-- [Structural observations](evaluation/structural-observations.md)
+- [Structural observations](evaluation/structural-observations.md) and
+  [occurrence ratings](evaluation/occurrence-ratings.md)
 - [Behavior assertions](evaluation/behavior-assertions.md) and
   [semantic judging](evaluation/semantic-judge.md)
 - [Run behavioral evaluation](guides/behavioral-evaluation.md): model-only

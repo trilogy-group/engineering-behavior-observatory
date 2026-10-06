@@ -420,6 +420,13 @@ export {
   validateStructuralObservationSet,
 } from "./structural-observations.js";
 export { extractOccurrences, OCCURRENCE_RULES_VERSION, OCCURRENCE_TYPES } from "./occurrences.js";
+export { decide, DECISION_PROVIDERS, parseDecisionResponse, resolveDecisionModel } from "./decision-models.js";
+export type { DecideOptions, DecisionAnswer, DecisionProviderConfig, DecisionProviderId, DecisionQuestion, DecisionRecord, DecisionUsage } from "./decision-models.js";
+export {
+  acceptedByPolicy, DEFAULT_RATING_POLICY, OCCURRENCE_QUESTION_SET_VERSION, occurrenceQuestions, occurrenceState, rateOccurrences,
+  rateRetainedOccurrences, validateOccurrenceRatings,
+} from "./occurrence-ratings.js";
+export type { OccurrenceRating, OccurrenceRatings, RateOptions, RatingPolicy } from "./occurrence-ratings.js";
 export type { Occurrence, OccurrenceCoverage, OccurrenceType } from "./occurrences.js";
 export type {
   StructuralObservation,
