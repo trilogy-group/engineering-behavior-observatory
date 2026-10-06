@@ -17,8 +17,8 @@ import {
   type ProtocolIdentity,
   type ProtocolObservation,
   type ProtocolProcess,
-  type ProtocolProcessResult,
-} from "./process-protocol.js";
+  type ProtocolProcessResult, writeProtocolLine } from "./process-protocol.js";
+export { writeProtocolLine } from "./process-protocol.js";
 import {
   createCapturedNativeEvidenceResolver,
   describeNormalizedDataset,
@@ -945,14 +945,6 @@ function historyMatches(history: Record<string, unknown>, threadId: string, turn
   if (text(thread?.id) !== threadId || thread?.historyMode !== "legacy" || !Array.isArray(thread.turns)) return false;
   return thread.turns.some((candidate) => isRecord(candidate) && text(candidate.id) === turnId
     && candidate.itemsView === "full" && Array.isArray(candidate.items));
-}
-
-export async function writeProtocolLine(stream: NodeJS.WritableStream, message: unknown): Promise<void> {
-  const line = `${JSON.stringify(message)}\n`;
-  await new Promise<void>((resolvePromise, reject) => {
-    const writable = stream as NodeJS.WritableStream & { write(chunk: string, callback: (error?: Error | null) => void): boolean };
-    writable.write(line, (error) => error === undefined || error === null ? resolvePromise() : reject(error));
-  });
 }
 
 function protocolId(value: unknown): ProtocolIdentity | undefined {

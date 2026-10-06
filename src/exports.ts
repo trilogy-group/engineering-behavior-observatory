@@ -132,6 +132,7 @@ const HIDDEN_FIELDS = new Set([
   "thoughtsignature",
 ]);
 const CODEX_REASONING_DELTA_METHOD = "item/reasoning/textDelta";
+const DEVIN_THOUGHT_UPDATE = "agent_thought_chunk";
 const CODEX_REASONING_CONTENT_FIELDS = new Set(["content", "delta", "encryptedcontent", "summary", "text"]);
 const CURSOR_REASONING_TYPES = new Set(["thinking", "thinkingdelta", "thinkingcompleted", "thinkingmessage"]);
 const PI_PRIVATE_CONTENT_TYPES = new Set([
@@ -432,7 +433,7 @@ function sanitizeArtifact(
     const output = Buffer.from(canonicalizeMetadata(sanitizeValue(
       kind === "verifier"
         ? rewriteVerifierDiagnosticReferences(parseJson(bytes, "JSON evidence"), portableDiagnostics)
-        : stripNativeReasoning(parseJson(bytes, "JSON evidence"), kind, counts),
+        : stripDevinRawTelemetryBodies(stripNativeReasoning(parseJson(bytes, "JSON evidence"), kind, counts), kind, counts),
       policy,
       replacements,
       sensitiveValues,
@@ -549,6 +550,14 @@ function sanitizeValue(
     ));
   }
   if (!isRecord(value)) return value;
+  // OTLP attributes carry their semantic name in `key`, not as a JSON property
+  // name, so a secret-named attribute is redacted by that name here.
+  const attributeName = otlpAttributeName(value);
+  if (attributeName !== undefined && isSecretFieldName(attributeName)) {
+    increment(counts, "redacted-secret");
+    onFinding?.({ kind: "secret-field", disposition: "redacted", name: attributeName, path: `${path}/value` });
+    return { ...value, value: REDACTED_ANY_VALUE };
+  }
   const sourceFieldCount = Object.keys(value).length;
   const output: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
@@ -631,7 +640,70 @@ function stripNativeReasoning(
   kind: PortableKind | undefined,
   counts: Map<TransformationAction, number>,
 ): unknown {
-  return stripPiReasoning(stripCodexReasoning(value, kind, counts), kind, counts);
+  return stripDevinReasoning(stripPiReasoning(stripCodexReasoning(value, kind, counts), kind, counts), kind, counts);
+}
+
+const DEVIN_TELEMETRY_SCHEMA = "ebo.devin-telemetry/v1";
+
+/**
+ * Devin OTLP records retain the original request body as base64. Encoded bytes
+ * cannot be sanitized, so portable exports keep only `bodyDigest`, `sizeBytes`
+ * and the sanitized projection; the raw body stays restricted in the bundle.
+ */
+function stripDevinRawTelemetryBodies(
+  value: unknown,
+  kind: PortableKind | undefined,
+  counts: Map<TransformationAction, number>,
+): unknown {
+  if (kind !== "telemetry" || !isRecord(value) || value.schemaVersion !== DEVIN_TELEMETRY_SCHEMA) return value;
+  const telemetry = value.telemetry;
+  if (!isRecord(telemetry) || !Array.isArray(telemetry.records)) return value;
+  const records = telemetry.records.map((record) => {
+    if (!isRecord(record) || !("body" in record)) return record;
+    const { body: _body, ...rest } = record;
+    increment(counts, "removed-field");
+    return rest;
+  });
+  return { ...value, telemetry: { ...telemetry, records } };
+}
+
+/** Devin ACP `agent_thought_chunk` updates carry hidden reasoning; drop their content and any raw frame copy. */
+function stripDevinReasoning(
+  value: unknown,
+  kind: PortableKind | undefined,
+  counts: Map<TransformationAction, number>,
+): unknown {
+  if (kind !== "session") return value;
+  if (Array.isArray(value)) return value.map((entry) => stripDevinReasoning(entry, kind, counts));
+  if (!isRecord(value)) return value;
+  const thought = value.sessionUpdate === DEVIN_THOUGHT_UPDATE;
+  const output: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (thought && key === "content") {
+      increment(counts, "removed-field");
+      continue;
+    }
+    if (key === "raw" && typeof entry === "string" && rawContainsDevinReasoning(entry)) {
+      increment(counts, "removed-field");
+      continue;
+    }
+    output[key] = stripDevinReasoning(entry, kind, counts);
+  }
+  return output;
+}
+
+function containsDevinReasoning(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsDevinReasoning);
+  if (!isRecord(value)) return false;
+  return value.sessionUpdate === DEVIN_THOUGHT_UPDATE || Object.values(value).some(containsDevinReasoning);
+}
+
+function rawContainsDevinReasoning(value: string): boolean {
+  try {
+    return containsDevinReasoning(JSON.parse(value) as unknown);
+  } catch {
+    return false;
+  }
 }
 
 function stripPiReasoning(
@@ -772,6 +844,7 @@ function scanPortableTree(
       ["hidden content field", /"(?:chain[_-]?of[_-]?thought|extended[_-]?thinking|hidden[_-]?reasoning|encrypted[_-]?(?:reasoning|thinking)|reasoning(?:[_-]?(?:content|details|signature))?|thinking(?:[_-]?(?:content|signature))?|text[_-]?signature|thought[_-]?signature|raw[_-]?(?:api|request|response)[_-]?body)"\s*:/iu.test(text)],
       ["Codex reasoning content", containsCodexReasoningContent(text, mediaType)],
       ["Pi private reasoning content", containsPiReasoningContent(text, mediaType)],
+      ["Devin thought content", containsDevinReasoningContent(text, mediaType)],
     ].find(([, matched]) => matched);
     if (failure !== undefined) {
       resetPatterns();
@@ -806,6 +879,29 @@ function containsCodexReasoningContent(text: string, mediaType: string): boolean
       valueContainsCodexReasoningContent(parseJson(Buffer.from(line), "Portable JSONL reasoning scan")));
   }
   return false;
+}
+
+function containsDevinReasoningContent(text: string, mediaType: string): boolean {
+  if (mediaType === "application/json") return valueContainsDevinReasoningContent(parseJson(Buffer.from(text), "Portable JSON Devin reasoning scan"));
+  if (mediaType === "application/x-ndjson") return text.split(/\r?\n/gu).filter(Boolean).some((line) =>
+    valueContainsDevinReasoningContent(parseJson(Buffer.from(line), "Portable JSONL Devin reasoning scan")));
+  return false;
+}
+
+function valueContainsDevinReasoningContent(value: unknown): boolean {
+  if (typeof value === "string") {
+    const trimmed = value.trimStart();
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+    try {
+      return valueContainsDevinReasoningContent(JSON.parse(trimmed) as unknown);
+    } catch {
+      return false;
+    }
+  }
+  if (Array.isArray(value)) return value.some(valueContainsDevinReasoningContent);
+  if (!isRecord(value)) return false;
+  if (value.sessionUpdate === DEVIN_THOUGHT_UPDATE && "content" in value) return true;
+  return Object.values(value).some(valueContainsDevinReasoningContent);
 }
 
 function valueContainsCodexReasoningContent(value: unknown): boolean {
@@ -869,10 +965,24 @@ function stringContainsLocalHomePath(text: string): boolean {
   return matched;
 }
 
+/** The semantic name of an OTLP `KeyValue` (`{ key, value: AnyValue }`), if `value` has that shape. */
+function otlpAttributeName(value: Record<string, unknown>): string | undefined {
+  return typeof value.key === "string" && "value" in value ? value.key : undefined;
+}
+
+const REDACTED_ANY_VALUE = Object.freeze({ stringValue: SECRET_PLACEHOLDER });
+
+function isRedactedAnyValue(value: unknown): boolean {
+  return value === SECRET_PLACEHOLDER
+    || isRecord(value) && Object.keys(value).length === 1 && value.stringValue === SECRET_PLACEHOLDER;
+}
+
 function valueContainsSecretPattern(value: unknown): boolean {
   if (typeof value === "string") return stringContainsSecretPattern(value);
   if (Array.isArray(value)) return value.some(valueContainsSecretPattern);
   if (!isRecord(value)) return false;
+  const attributeName = otlpAttributeName(value);
+  if (attributeName !== undefined && isSecretFieldName(attributeName) && !isRedactedAnyValue(value.value)) return true;
   return Object.entries(value).some(([key, entry]) =>
     isSecretFieldName(key) && entry !== SECRET_PLACEHOLDER
       || stringContainsSecretPattern(key)

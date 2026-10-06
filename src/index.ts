@@ -264,6 +264,56 @@ export type {
   RunCodexQueueEntryOptions,
 } from "./codex-run.js";
 export {
+  captureDevinCli,
+  createDevinHarnessAdapter,
+  describeAndValidateDevinDataset,
+  DEVIN_ADAPTER_VERSION,
+  DEVIN_CLI_CAPABILITIES,
+  DEVIN_CLI_VERSION,
+  DEVIN_DEFAULT_CREDENTIAL_ENV,
+  DEVIN_DEFAULT_SHUTDOWN_GRACE_MS,
+  DEVIN_HARNESS,
+  normalizeDevinCapture,
+  qualifyRetainedDevinCapture,
+  RETAINED_DEVIN_CLI_VERSIONS,
+} from "./devin.js";
+export type {
+  DevinCaptureGap,
+  DevinCliCapture,
+  DevinCliCaptureRequest,
+  DevinCliConfiguration,
+  DevinOtlpRecord,
+  DevinPermissionDecision,
+  DevinSessionMode,
+  DevinTelemetryEvidence,
+  DevinTelemetrySignal,
+  DevinUsageUpdate,
+  RetainedDevinCapture,
+} from "./devin.js";
+export {
+  captureDevinCliRun,
+  DEVIN_CONFIG_SCHEMA_VERSION,
+  probeDevinRuntime,
+  resolveDevinConfigurationRecord,
+  runDevinQueueEntry,
+} from "./devin-run.js";
+export type {
+  CaptureDevinCliRunOptions,
+  CaptureDevinCliRunResult,
+  CaptureDevinCliVerifier,
+  DevinCaptureProfileConfiguration,
+  DevinConfigurationKind,
+  DevinConfigurationRecord,
+  DevinHarnessConfiguration,
+  DevinModelConfiguration,
+  DevinNativeLimitsConfiguration,
+  DevinNativeToolPolicyConfiguration,
+  DevinRunSummary,
+  RunDevinQueueEntryOptions,
+} from "./devin-run.js";
+export { decodeOtlpProtobuf } from "./otlp-protobuf.js";
+export type { OtlpProtobufSignal } from "./otlp-protobuf.js";
+export {
   createDeepSeekHarnessAdapter,
   createDeepSeekRuntimeComposition,
   DEEPSEEK_ADAPTER_ID,

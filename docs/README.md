@@ -27,7 +27,8 @@ the `ebo` command is installed as described in the quickstart.
 ## Harness guides
 
 [Claude Agent SDK](harnesses/claude-agent-sdk.md) ·
-[Codex](harnesses/codex-harness.md) · [Cursor](harnesses/cursor-sdk.md) ·
+[Codex](harnesses/codex-harness.md) · [Devin CLI](harnesses/devin-cli.md) ·
+[Cursor](harnesses/cursor-sdk.md) ·
 [Pi](harnesses/pi-sdk.md) · [OpenHands](harnesses/openhands-agent-server.md) ·
 [DeepSeek Harness](harnesses/deepseek-harness.md)
 

@@ -7,12 +7,13 @@ different tools or context policies is a different experimental condition.
 | :--- | :--- | :--- | :--- |
 | [Claude Agent SDK](claude-agent-sdk.md) | `ebo agent-sdk run` | SDK stream and passive lifecycle hooks; optional OTLP | Tracing is beta; configured export is not receipt |
 | [Codex](codex-harness.md) | `ebo codex run` | Owned app-server thread/turn/item protocol and history | Requires the pinned runtime; no desktop-daemon attachment |
+| [Devin CLI](devin-cli.md) | `ebo devin run` | Owned `devin acp` JSON-RPC session, tool-call lifecycle, permissions, usage; optional OTLP protobuf receipt | Cloud-hosted inference and tools; no native timestamps on ACP frames; Cloud API exposes chat only |
 | [Cursor](cursor-sdk.md) | `ebo cursor run` | Stream, callbacks, official JSONL store, terminal and billing readback | Local SDK OTLP unavailable; Enterprise export is a separate, unqualified integration |
 | [Pi](pi-sdk.md) | `ebo pi run` | Native session tree, extension observer, retries/compaction | No verified native OTLP receipt; local SDK is not an OS sandbox |
 | [OpenHands](openhands-agent-server.md) | `captureOpenHandsAgentServerRun` library API | REST final events reconciled with WebSocket receipts | Full internal EventLog completeness cannot be proven through this boundary |
 | [DeepSeek Harness](deepseek-harness.md) | Source-specific library API | Durable events, lifecycle, runtime/plugin composition | Prompt response is enqueue acknowledgement; documented status/events determine completion |
 
-All six have retained-evidence paths for normalization and behavioral analysis.
+All seven have retained-evidence paths for normalization and behavioral analysis.
 That does not mean their capabilities are identical or every provider route is
 live-qualified. Consult the [release support record](../../release/0.2.1/KNOWN_LIMITATIONS.md)
 and each guide before selecting a route.
