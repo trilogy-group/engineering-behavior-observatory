@@ -206,10 +206,13 @@ blocks, AWS, GitHub, Anthropic, OpenAI-style, Fireworks, Slack and Google keys,
 JWTs, bearer values and authorization headers) are always redacted, as are
 secret-named JSON fields. Assignments to secret-named variables are classified
 by context. A quoted value, or the value of a shell-style assignment such as
-`KEY=value`, `--key=value` or `?token=value`, is a literal and is redacted
-unless it is a complete environment reference (`$VAR`, `${VAR}`, `%VAR%`) or a
-placeholder. A parameter expansion keeps its reference but a literal default,
-assigned or alternate word is redacted (`${VAR:-[REDACTED_SECRET]}`). In a
+`KEY=value`, `--key=value` or `?token=value`, is scanned as a shell word across
+quotes and balanced `${...}` expansions: complete environment references
+(`$VAR`, `${VAR}`, `%VAR%`) and placeholders stay, and every literal part is
+redacted, including a literal default, assigned or alternate word in an
+expansion (`${VAR:-[REDACTED_SECRET]}`), a literal next to a reference
+(`${VAR}[REDACTED_SECRET]`) and command-substitution text. An unterminated
+quote or expansion is redacted whole. In a
 code-style assignment (`key = expr`, `key: expr`) dotted paths, calls,
 environment lookups, constant names and keywords are references and stay
 intact; any other unquoted value of eight or more characters is redacted.

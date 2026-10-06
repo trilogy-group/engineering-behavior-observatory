@@ -5,8 +5,10 @@
  * rejects, so a sanitized document never fails its own scan. Known credential
  * formats are always redacted. Assignments to secret-named variables are
  * classified by context. A quoted value, or the value of a shell-style
- * assignment (`KEY=value`, `--key=value`), is a literal and is redacted unless
- * it is an environment reference or a placeholder. In a code-style assignment
+ * assignment (`KEY=value`, `--key=value`), is scanned as a shell word: its
+ * literal parts are redacted, complete environment references (`$VAR`,
+ * `${VAR}`, `%VAR%`) stay, and in a parameter expansion only a literal default,
+ * assigned or alternate word is redacted. In a code-style assignment
  * (`key = expr`, `key: expr`) only syntactic references (dotted paths, calls,
  * environment lookups, constant names, keywords) are kept and reported as not
  * secret. Bare words are redacted: over-redaction is preferred to a leak.
@@ -64,15 +66,10 @@ const TOKEN_PATTERNS: ReadonlyArray<{ kind: SecretTokenKind; pattern: RegExp }> 
 const SECRET_NAME = /(api[_-]?key|(?:access|oauth|refresh|id|auth)?[_-]?token|client[_-]?secret|secret(?:[_-]?(?:access[_-]?)?key)?|private[_-]?key|access[_-]?key|credentials?(?:[_-]?json)?|database[_-]?url|connection[_-]?string|passwd|password)(\\?["']?)([ \t]*)(:=|[:=](?![=>~]))([ \t]*)/giu;
 const QUOTES = new Set(["\"", "'", "`"]);
 const IDENTIFIER_CHAR = /[A-Za-z0-9_$.-]/u;
-const UNQUOTED_VALUE = /^(?:Bearer\s+)?(?:\$\{[^}\s]*\}|[^\s,;"'`)}\]])+/iu;
-// A complete plain environment reference: `$NAME`, `${NAME}`, `%NAME%`.
-const PLAIN_REFERENCE = /^(?:\$[A-Za-z_][A-Za-z0-9_]*|\$\{[A-Za-z_][A-Za-z0-9_]*\}|%[A-Za-z_][A-Za-z0-9_]*%)$/u;
-// `${NAME:-word}`, `${NAME=word}`, `${NAME:+word}`, `${NAME:?message}`: the word can be a literal credential.
-const PARAMETER_EXPANSION = /^\$\{[A-Za-z_][A-Za-z0-9_]*(:?[-=+?])([\s\S]*?)\}?$/u;
-const SHELL_REFERENCE = /^(?:\$[A-Za-z_{(]|%[A-Za-z_][A-Za-z0-9_]*%)/u;
+const UNQUOTED_VALUE = /^(?:Bearer\s+)?[^\s,;"'`)}\]]+/iu;
 const CALL_EXPRESSION = /^(?:new\s+)?[A-Za-z_$][\w$.]*\(/u;
 const KEYWORD = /^(?:null|undefined|true|false|none|nil|string|number|boolean|bigint|object|any|unknown|str|bytes|int|float|bool)$/iu;
-const ENVIRONMENT_REFERENCE = /^(?:process\.env\b|os\.environ\b|os\.getenv\b|import\.meta\.env\b|Deno\.env\b|env\.|getenv\b|secrets\.|\$[A-Za-z_{]|%[A-Za-z_][A-Za-z0-9_]*%)/u;
+const ENVIRONMENT_REFERENCE = /^(?:process\.env\b|os\.environ\b|os\.getenv\b|import\.meta\.env\b|Deno\.env\b|env\.|getenv\b|secrets\.)/u;
 const QUOTED_PLACEHOLDER = /^(?:|\[[A-Z_]+(?::[^\]]*)?\]|<[^<>]*>|\{\{[^}]*\}\}|\*+|x{3,}|\.{3})$/iu;
 // EBO's own markers, including a marker cut short by a display-length bound.
 const EBO_PLACEHOLDER_PREFIX = /^\[(?:REDACTED|LOCAL)_/u;
@@ -129,8 +126,10 @@ export function redactSecrets(text: string, onFinding?: SecretFindingSink): { te
   for (const assignment of assignments) {
     onFinding?.(assignment.finding);
     if (assignment.finding.disposition !== "redacted") continue;
-    rebuilt += `${output.slice(cursor, assignment.valueStart)}${SECRET_PLACEHOLDER}`;
-    cursor = assignment.valueEnd;
+    for (const { start, end } of assignment.redactions) {
+      rebuilt += `${output.slice(cursor, start)}${SECRET_PLACEHOLDER}`;
+      cursor = end;
+    }
     redacted += 1;
   }
   return { text: cursor === 0 ? output : rebuilt + output.slice(cursor), redacted };
@@ -147,7 +146,8 @@ export function containsSecret(text: string): boolean {
   return scanAssignments(text).some(({ finding }) => finding.disposition === "redacted");
 }
 
-type Assignment = { finding: SecretFinding; valueStart: number; valueEnd: number };
+type Range = { start: number; end: number };
+type Assignment = { finding: SecretFinding; redactions: Range[] };
 
 function scanAssignments(text: string): Assignment[] {
   const assignments: Assignment[] = [];
@@ -159,6 +159,14 @@ function scanAssignments(text: string): Assignment[] {
     const start = match.index + match[0].length;
     // Command text often embeds JSON with escaped quotes: token=\"value\".
     const escaped = text[start] === "\\" && QUOTES.has(text[start + 1] ?? "");
+    // Shell values, and code values that begin with an environment reference, follow shell quoting and expansion.
+    if (!escaped && (shell || /^[$%]/u.test(text[start] ?? ""))) {
+      const word = scanShellWord(text, start, lineEnd(text, start), "top");
+      SECRET_NAME.lastIndex = Math.max(SECRET_NAME.lastIndex, word.end);
+      const assignment = classifyWord(word, name, start);
+      if (assignment !== undefined) assignments.push(assignment);
+      continue;
+    }
     const quote = text[escaped ? start + 1 : start] ?? "";
     if (QUOTES.has(quote)) {
       const valueStart = start + (escaped ? 2 : 1);
@@ -166,75 +174,151 @@ function scanAssignments(text: string): Assignment[] {
       const valueEnd = close === -1 ? lineEnd(text, valueStart) : close;
       const value = text.slice(valueStart, valueEnd);
       SECRET_NAME.lastIndex = Math.max(SECRET_NAME.lastIndex, valueEnd);
-      // Values EBO already replaced were reported by the redaction that replaced them.
-      if (EBO_PLACEHOLDER_PREFIX.test(value)) continue;
-      const expansion = classifyReference(value);
-      if (expansion !== undefined) {
-        assignments.push(expansionAssignment(expansion, name, valueStart, valueEnd));
+      if (!escaped && quote !== "'" && /[$%]/u.test(value)) {
+        const assignment = classifyWord(scanShellWord(text, valueStart, valueEnd, "double"), name, valueStart);
+        if (assignment !== undefined) assignments.push(assignment);
         continue;
       }
-      const finding: SecretFinding = QUOTED_PLACEHOLDER.test(value)
-        ? { kind: "secret-assignment", disposition: "not-secret", name, reason: "placeholder" }
-        : { kind: "secret-assignment", disposition: "redacted", name };
-      assignments.push({ finding, valueStart, valueEnd });
+      // Values EBO already replaced were reported by the redaction that replaced them.
+      if (EBO_PLACEHOLDER_PREFIX.test(value)) continue;
+      assignments.push(QUOTED_PLACEHOLDER.test(value)
+        ? { finding: { kind: "secret-assignment", disposition: "not-secret", name, reason: "placeholder" }, redactions: [] }
+        : { finding: { kind: "secret-assignment", disposition: "redacted", name }, redactions: [{ start: valueStart, end: valueEnd }] });
       continue;
     }
     const raw = UNQUOTED_VALUE.exec(text.slice(start, start + 4096))?.[0];
     if (raw === undefined) continue;
     const bearer = /^Bearer\s+/iu.exec(raw)?.[0] ?? "";
     const value = raw.slice(bearer.length);
-    if (EBO_PLACEHOLDER_PREFIX.test(value)) continue;
-    const expansion = classifyReference(value);
-    if (expansion !== undefined) {
-      assignments.push(expansionAssignment(expansion, name, start + bearer.length, start + raw.length));
-      SECRET_NAME.lastIndex = Math.max(SECRET_NAME.lastIndex, start + raw.length);
-      continue;
-    }
-    const reason = notSecretReason(value, shell);
-    assignments.push({
-      finding: reason === undefined
-        ? { kind: "secret-assignment", disposition: "redacted", name }
-        : { kind: "secret-assignment", disposition: "not-secret", name, reason },
-      valueStart: start + bearer.length,
-      valueEnd: start + raw.length,
-    });
     SECRET_NAME.lastIndex = Math.max(SECRET_NAME.lastIndex, start + raw.length);
+    if (EBO_PLACEHOLDER_PREFIX.test(value)) continue;
+    const reason = notSecretReason(value);
+    assignments.push(reason === undefined
+      ? { finding: { kind: "secret-assignment", disposition: "redacted", name }, redactions: [{ start: start + bearer.length, end: start + raw.length }] }
+      : { finding: { kind: "secret-assignment", disposition: "not-secret", name, reason }, redactions: [] });
   }
   SECRET_NAME.lastIndex = 0;
   return assignments;
 }
 
-type ReferenceClass = { kind: "reference" } | { kind: "literal-word"; start: number; end: number };
+type ShellWord = { source: string; start: number; end: number; literals: Array<Range & { quoted: boolean }>; references: number; incomplete: boolean };
 
 /**
- * Environment references in any context. A complete plain reference stays; a parameter expansion stays unless its
- * default, assigned or alternate word is a literal, in which case only that word is redacted. Error messages
- * (`${NAME:?message}`) are not values.
+ * Scan one shell word from `start`: quoted strings, `$NAME`, `${...}` with balanced braces (its default or
+ * assigned word may contain quotes and spaces) and `$(...)`. Literal text is collected for redaction; references are
+ * counted. `top` ends at unquoted whitespace or a shell operator, `double` scans double-quoted content to `limit`.
  */
-function classifyReference(value: string): ReferenceClass | undefined {
-  if (PLAIN_REFERENCE.test(value)) return { kind: "reference" };
-  const expansion = PARAMETER_EXPANSION.exec(value);
-  if (expansion === null) return undefined;
-  const [, operator, word] = expansion as unknown as [string, string, string];
-  if (operator.endsWith("?") || word === "" || PLAIN_REFERENCE.test(word) || EBO_PLACEHOLDER_PREFIX.test(word)) return { kind: "reference" };
-  const end = value.length - (value.endsWith("}") ? 1 : 0);
-  return { kind: "literal-word", start: end - word.length, end };
+function scanShellWord(text: string, start: number, limit: number, mode: "top" | "double"): ShellWord {
+  const word: ShellWord = { source: text, start, end: start, literals: [], references: 0, incomplete: false };
+  word.end = scanWordPart(text, start, limit, word, mode);
+  return word;
 }
 
-function expansionAssignment(reference: ReferenceClass, name: string, valueStart: number, valueEnd: number): Assignment {
-  return reference.kind === "reference"
-    ? { finding: { kind: "secret-assignment", disposition: "not-secret", name, reason: "environment-reference" }, valueStart, valueEnd }
-    : { finding: { kind: "secret-assignment", disposition: "redacted", name }, valueStart: valueStart + reference.start, valueEnd: valueStart + reference.end };
-}
-
-function notSecretReason(value: string, shell: boolean): NotSecretReason | undefined {
-  if (value === "" || QUOTED_PLACEHOLDER.test(value)) return "placeholder";
-  if (shell) {
-    // Shell values are literals: `TOKEN=ABCDEFGHIJ` and `TOKEN=a.b.c` are credentials, not references.
-    if (SHELL_REFERENCE.test(value)) return "environment-reference";
-    return value.length < 8 ? "too-short" : undefined;
+function scanWordPart(text: string, from: number, limit: number, word: ShellWord, mode: "top" | "brace" | "double"): number {
+  let index = from;
+  let literalStart = from;
+  const quoted = mode === "double";
+  const flush = (end: number) => { if (end > literalStart) word.literals.push({ start: literalStart, end, quoted }); };
+  while (index < limit) {
+    const character = text[index]!;
+    if (mode === "top" && /[\s;&|<>()`]/u.test(character)) break;
+    if (mode === "brace" && character === "}") break;
+    if (mode === "double" && character === "\"") break;
+    if (character === "\\") { index += 2; continue; }
+    if (!quoted && character === "'") {
+      flush(index);
+      const close = text.indexOf("'", index + 1);
+      const end = close === -1 || close >= limit ? limit : close;
+      word.literals.push({ start: index + 1, end, quoted: true });
+      if (end === limit) word.incomplete = true;
+      index = end + 1;
+      literalStart = index;
+      continue;
+    }
+    if (!quoted && character === "\"") {
+      flush(index);
+      const end = scanWordPart(text, index + 1, limit, word, "double");
+      if (end >= limit) word.incomplete = true;
+      index = end + 1;
+      literalStart = index;
+      continue;
+    }
+    if (character === "%" || character === "$") {
+      const rest = text.slice(index, Math.min(limit, index + 256));
+      const simple = character === "%" ? /^%[A-Za-z_][A-Za-z0-9_]*%/u.exec(rest) : /^\$(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!-])/u.exec(rest);
+      if (simple !== null) {
+        flush(index);
+        word.references += 1;
+        index += simple[0].length;
+        literalStart = index;
+        continue;
+      }
+      const braced = /^\$\{[#!]?[A-Za-z_][A-Za-z0-9_]*/u.exec(rest);
+      if (braced !== null) {
+        flush(index);
+        word.references += 1;
+        let cursor = index + braced[0].length;
+        const operator = /^:?[-=+?]/u.exec(text.slice(cursor, cursor + 2))?.[0];
+        if (operator !== undefined) cursor += operator.length;
+        if (text[cursor] !== "}") {
+          // `${NAME:?message}` carries an error message; other words (defaults, pattern operands) are literal.
+          const before = word.literals.length;
+          cursor = scanWordPart(text, cursor, limit, word, "brace");
+          if (operator?.endsWith("?") === true) word.literals.length = before;
+        }
+        if (cursor >= limit || text[cursor] !== "}") word.incomplete = true;
+        index = cursor + 1;
+        literalStart = index;
+        continue;
+      }
+      if (rest.startsWith("$(")) {
+        // A command substitution can embed a credential; its text is literal.
+        flush(index);
+        let depth = 0;
+        let cursor = index + 1;
+        for (; cursor < limit; cursor += 1) {
+          if (text[cursor] === "(") depth += 1;
+          else if (text[cursor] === ")" && --depth === 0) break;
+        }
+        word.literals.push({ start: index + 2, end: Math.min(cursor, limit), quoted: false });
+        if (cursor >= limit) word.incomplete = true;
+        index = cursor + 1;
+        literalStart = index;
+        continue;
+      }
+    }
+    index += 1;
   }
-  if (/^[[<{(`]/u.test(value)) return "placeholder";
+  flush(Math.min(index, limit));
+  return Math.min(index, limit);
+}
+
+/**
+ * Literal parts of a scanned value are redacted and complete references stay. An unterminated quote or expansion is
+ * redacted whole. An unquoted literal shorter than eight characters with no reference is not a credential.
+ */
+function classifyWord(word: ShellWord, name: string, valueStart: number): Assignment | undefined {
+  if (word.end <= valueStart) return undefined;
+  const redacted = (redactions: Range[]): Assignment => ({ finding: { kind: "secret-assignment", disposition: "redacted", name }, redactions });
+  if (word.incomplete) return redacted([{ start: word.start, end: word.end }]);
+  const slice = ({ start, end }: Range) => word.source.slice(start, end);
+  const literals = word.literals.filter((literal) => /[A-Za-z0-9]/u.test(slice(literal)) && !EBO_PLACEHOLDER_PREFIX.test(slice(literal)));
+  if (literals.length === 0) {
+    if (word.references > 0) return { finding: { kind: "secret-assignment", disposition: "not-secret", name, reason: "environment-reference" }, redactions: [] };
+    return word.literals.length > 0 ? undefined : { finding: { kind: "secret-assignment", disposition: "not-secret", name, reason: "placeholder" }, redactions: [] };
+  }
+  const joined = literals.map(slice).join("");
+  if (word.references === 0 && QUOTED_PLACEHOLDER.test(joined)) {
+    return { finding: { kind: "secret-assignment", disposition: "not-secret", name, reason: "placeholder" }, redactions: [] };
+  }
+  if (word.references === 0 && literals.every(({ quoted }) => !quoted) && joined.length < 8) {
+    return { finding: { kind: "secret-assignment", disposition: "not-secret", name, reason: "too-short" }, redactions: [] };
+  }
+  return redacted(literals.map(({ start, end }) => ({ start, end })));
+}
+
+function notSecretReason(value: string): NotSecretReason | undefined {
+  if (value === "" || QUOTED_PLACEHOLDER.test(value) || /^[[<{(`]/u.test(value)) return "placeholder";
   if (ENVIRONMENT_REFERENCE.test(value)) return "environment-reference";
   if (CONSTANT_NAME.test(value)) return "constant-name";
   if (IDENTIFIER_PATH.test(value)) return "identifier-path";
