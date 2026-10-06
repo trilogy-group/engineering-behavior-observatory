@@ -39,6 +39,7 @@ import {
   type RunManifest,
   type TaskPacket,
 } from "../src/index.js";
+import { containsPortableSecretPattern } from "../src/exports.js";
 
 const fixture = resolve("test/fixtures/devin/fake-acp-server.mjs");
 const CREDENTIAL_ENV = "EBO_FAKE_DEVIN_KEY";
@@ -701,6 +702,43 @@ test("portable export omits raw OTLP bodies so encoded secrets cannot bypass san
       assert.equal(JSON.stringify(record.payload).includes(CREDENTIAL_VALUE), false);
     }
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("portable export redacts secret-named OTLP attributes without the capture credential in scope", async () => {
+  const root = await temporaryRoot();
+  try {
+    const queueFixture = createQueueFixture(root);
+    const summary = await runDevinQueueEntry({
+      bundleRoot: queueFixture.bundleRoot,
+      queuePath: queueFixture.queuePath,
+      runId: queueFixture.runId,
+      outputRoot: join(root, "runs"),
+      workspaceRoot: join(root, "workspaces"),
+      probeRuntime: async () => ({ path: process.execPath, version: DEVIN_CLI_VERSION }),
+      executableArgs: [fixture, "--mode=otlp-secret"],
+    });
+    const retainedText = await readFile(join(summary.bundlePath, "telemetry/devin.json"), "utf8");
+    assert.ok(retainedText.includes(`"key":"api_key","value":{"stringValue":"${CREDENTIAL_VALUE}"}`), "the projection carries the attribute by its semantic key");
+
+    delete process.env[CREDENTIAL_ENV];
+    const policy: PortableExportPolicy = { sharingClass: "partner", maxArtifactBytes: 8 * 1024 * 1024, maxStringBytes: 64 * 1024 };
+    const exportRoot = join(root, "portable");
+    const exported = await createPortableRunBundleExport({ sourceRoot: summary.bundlePath, destinationRoot: exportRoot, policy });
+    await readPortableRunBundleExport(exportRoot, policy);
+    const telemetryArtifact = exported.artifacts.find(({ kind }) => kind === "telemetry");
+    assert.ok(telemetryArtifact);
+    const portableText = await readFile(join(exportRoot, telemetryArtifact.relativePath), "utf8");
+    assert.equal(portableText.includes(CREDENTIAL_VALUE), false);
+    assert.ok(portableText.includes("\"key\":\"api_key\",\"value\":{\"stringValue\":\"[REDACTED_SECRET]\"}"), "the attribute stays, its value is the placeholder");
+    assert.ok(portableText.includes("\"key\":\"request_id\",\"value\":{\"stringValue\":\"req-1\"}"), "non-secret attributes are untouched");
+
+    const unredacted = JSON.stringify({ attributes: [{ key: "api_key", value: { stringValue: "plain-value" } }] });
+    assert.equal(containsPortableSecretPattern(unredacted, "application/json"), true);
+    assert.equal(containsPortableSecretPattern(JSON.stringify({ attributes: [{ key: "api_key", value: { stringValue: "[REDACTED_SECRET]" } }] }), "application/json"), false);
+  } finally {
+    process.env[CREDENTIAL_ENV] = CREDENTIAL_VALUE;
     await rm(root, { recursive: true, force: true });
   }
 });

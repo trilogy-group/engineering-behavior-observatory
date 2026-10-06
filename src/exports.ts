@@ -550,6 +550,14 @@ function sanitizeValue(
     ));
   }
   if (!isRecord(value)) return value;
+  // OTLP attributes carry their semantic name in `key`, not as a JSON property
+  // name, so a secret-named attribute is redacted by that name here.
+  const attributeName = otlpAttributeName(value);
+  if (attributeName !== undefined && isSecretFieldName(attributeName)) {
+    increment(counts, "redacted-secret");
+    onFinding?.({ kind: "secret-field", disposition: "redacted", name: attributeName, path: `${path}/value` });
+    return { ...value, value: REDACTED_ANY_VALUE };
+  }
   const sourceFieldCount = Object.keys(value).length;
   const output: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
@@ -957,10 +965,24 @@ function stringContainsLocalHomePath(text: string): boolean {
   return matched;
 }
 
+/** The semantic name of an OTLP `KeyValue` (`{ key, value: AnyValue }`), if `value` has that shape. */
+function otlpAttributeName(value: Record<string, unknown>): string | undefined {
+  return typeof value.key === "string" && "value" in value ? value.key : undefined;
+}
+
+const REDACTED_ANY_VALUE = Object.freeze({ stringValue: SECRET_PLACEHOLDER });
+
+function isRedactedAnyValue(value: unknown): boolean {
+  return value === SECRET_PLACEHOLDER
+    || isRecord(value) && Object.keys(value).length === 1 && value.stringValue === SECRET_PLACEHOLDER;
+}
+
 function valueContainsSecretPattern(value: unknown): boolean {
   if (typeof value === "string") return stringContainsSecretPattern(value);
   if (Array.isArray(value)) return value.some(valueContainsSecretPattern);
   if (!isRecord(value)) return false;
+  const attributeName = otlpAttributeName(value);
+  if (attributeName !== undefined && isSecretFieldName(attributeName) && !isRedactedAnyValue(value.value)) return true;
   return Object.entries(value).some(([key, entry]) =>
     isSecretFieldName(key) && entry !== SECRET_PLACEHOLDER
       || stringContainsSecretPattern(key)

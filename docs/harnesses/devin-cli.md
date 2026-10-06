@@ -120,7 +120,9 @@ standard-library decoder into their OTLP/JSON `payload` projection, and
 undecodable bodies keep their original bytes alongside a `parseError`. Raw
 bodies are restricted evidence: portable export removes `body` (encoded bytes
 cannot be sanitized) and keeps `bodyDigest`, `sizeBytes` and the sanitized
-projection. Receipt is `received` only when every requested signal arrived.
+projection, in which secret-named OTLP attributes (`api_key`, `token`, ...)
+are redacted by their semantic `key` and the final export scan rejects any
+such attribute left unredacted. Receipt is `received` only when every requested signal arrived.
 OTLP never replaces ACP evidence, and the receiver is not a telemetry backend.
 
 ## Normalization
