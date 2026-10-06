@@ -157,7 +157,7 @@ function scanAssignments(text: string): Assignment[] {
     // `KEY=value` with nothing between name, operator and value is a shell, env-file, flag or query assignment.
     const shell = match[2] === "" && match[3] === "" && match[4] === "=" && match[5] === "";
     const start = match.index + match[0].length;
-    // Command text often embeds JSON with escaped quotes: token=\"value\".
+    // Command text often embeds JSON with escaped quotes: token=\"<value>\".
     const escaped = text[start] === "\\" && QUOTES.has(text[start + 1] ?? "");
     // Shell values, and code values that begin with an environment reference, follow shell quoting and expansion.
     if (!escaped && (shell || /^[$%]/u.test(text[start] ?? ""))) {

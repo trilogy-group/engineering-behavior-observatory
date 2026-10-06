@@ -63,7 +63,7 @@ matching option kind the agent offered. Requests for other sessions are answered
 
 ```json
 { "schemaVersion": "ebo.devin-config/v1", "kind": "model", "provider": "cognition", "model": "swe-2-high", "credentialEnv": "WINDSURF_API_KEY" }
-{ "schemaVersion": "ebo.devin-config/v1", "kind": "harness", "adapter": "devin-cli", "executable": "/home/user/.local/bin/devin", "version": "3000.11.3", "contractDigest": "sha256:0b318ea3c233f2b74a98213ac9a2c7441c71d74d16bf5d4b421e55bc5b13139b" }
+{ "schemaVersion": "ebo.devin-config/v1", "kind": "harness", "adapter": "devin-cli", "executable": "/opt/devin/bin/devin", "version": "3000.11.3", "contractDigest": "sha256:0b318ea3c233f2b74a98213ac9a2c7441c71d74d16bf5d4b421e55bc5b13139b" }
 { "schemaVersion": "ebo.devin-config/v1", "kind": "native-limits", "shutdownGraceMs": 2000 }
 { "schemaVersion": "ebo.devin-config/v1", "kind": "native-tool-policy", "mode": "accept-edits", "permissionDecision": "allow-once" }
 { "schemaVersion": "ebo.devin-config/v1", "kind": "capture-profile", "telemetrySignals": ["logs", "metrics"], "workspaceOutcome": { "excludeDirectoryNames": ["node_modules"] } }
