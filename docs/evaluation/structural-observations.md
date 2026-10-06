@@ -92,9 +92,9 @@ records, so a judge or reviewer can open exactly that instance:
 
 | Type | One occurrence | Rule |
 | :--- | :--- | :--- |
-| `failure-response` | consecutive explicit failures of one tool, then the next call of that tool in the same session and order domain that starts after the last failure | exact |
+| `failure-response` | within one session and order domain: consecutive explicit failures of one tool, then the next call of that tool that starts after the last failure | exact |
 | `validation-run` | one call whose command runs a test, typecheck, lint or build, classified per command segment; `result`, `reportedExitCode`, `outputRedirected` | heuristic |
-| `source-change` | an explicit mutation record, an edit/write tool call, or a shell command that writes a source path (`detectedBy`) | heuristic except explicit mutations |
+| `source-change` | an explicit mutation record, or a successful edit/write tool call or shell command that writes a source path (`detectedBy`); failed attempts are not changes | heuristic except explicit mutations |
 | `repeated-operation` | a call with the same tool and input digest as an earlier one | exact |
 | `compaction` | adjacent compaction records with no tool event or model/user message between them and no repeated record kind; a partial boundary stays on its own | heuristic |
 | `delegation` | the records of one delegated task, joined by task or agent ID | exact |

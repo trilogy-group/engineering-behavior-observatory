@@ -51,6 +51,7 @@ export function extractOccurrences(input: OccurrenceInput): { occurrences: Occur
   const operations = [...input.operations].map((operation) => ({ ...operation, events: ordered(operation.events) }))
     .sort((left, right) => compareEvents(left.events[0]!, right.events[0]!));
   const details = new Map(operations.map((operation) => [operation.id, describe(operation, input.resolveContent)]));
+  const eventsById = new Map(operations.flatMap(({ events }) => events.map((event) => [event.id, event] as const)));
   const occurrences: Occurrence[] = [];
   const add = (type: OccurrenceType, heuristic: boolean, events: readonly UniformEvent[], attributes: Record<string, UniformAttributeValue | undefined>) => {
     const sorted = ordered(uniqueEvents(events));
@@ -68,25 +69,27 @@ export function extractOccurrences(input: OccurrenceInput): { occurrences: Occur
     });
   };
 
-  // Consecutive failures of one tool, then the next operation of that tool in the same session and order domain that
-  // starts after the last failure ended (a parallel call that was already running is not a response).
-  for (let index = 0; index < operations.length;) {
-    const first = operations[index]!;
-    if (!first.failed) { index += 1; continue; }
-    const scope = operationScope(first);
-    let end = index;
-    while (end < operations.length && operations[end]!.failed && operations[end]!.toolName === first.toolName
-      && operationScope(operations[end]!) === scope) end += 1;
-    const failures = operations.slice(index, end);
-    const failedAt = failures.flatMap(({ events }) => events).sort(compareEvents).at(-1)!;
-    const next = operations.slice(end).find((operation) => operation.toolName === first.toolName
-      && operationScope(operation) === scope && compareEvents(operation.events[0]!, failedAt) > 0);
-    add("failure-response", false, [...failures, ...(next === undefined ? [] : [next])].flatMap(({ events }) => events), {
-      toolName: first.toolName, failures: failures.length,
-      nextOutcome: next === undefined ? "none" : details.get(next.id)!.result,
-    });
-    index = end;
+  // Within each session and order domain: consecutive failures of one tool, then the next operation of that tool
+  // that starts after the last failure ended (a parallel call that was already running is not a response).
+  const scopes = new Map<string, typeof operations>();
+  for (const operation of operations) scopes.set(operationScope(operation), [...scopes.get(operationScope(operation)) ?? [], operation]);
+  for (const scoped of scopes.values()) {
+    for (let index = 0; index < scoped.length;) {
+      const first = scoped[index]!;
+      if (!first.failed) { index += 1; continue; }
+      let end = index;
+      while (end < scoped.length && scoped[end]!.failed && scoped[end]!.toolName === first.toolName) end += 1;
+      const failures = scoped.slice(index, end);
+      const failedAt = failures.flatMap(({ events }) => events).sort(compareEvents).at(-1)!;
+      const next = scoped.slice(end).find((operation) => operation.toolName === first.toolName && compareEvents(operation.events[0]!, failedAt) > 0);
+      add("failure-response", false, [...failures, ...(next === undefined ? [] : [next])].flatMap(({ events }) => events), {
+        toolName: first.toolName, failures: failures.length,
+        nextOutcome: next === undefined ? "none" : details.get(next.id)!.result,
+      });
+      index = end;
+    }
   }
+  occurrences.sort((left, right) => compareEvents(eventsById.get(left.eventIds[0]!)!, eventsById.get(right.eventIds[0]!)!));
 
   const seen = new Map<string, OccurrenceOperation>();
   for (const operation of operations) {
@@ -187,8 +190,9 @@ function describe(operation: OccurrenceOperation, resolveContent: OccurrenceInpu
     checkKinds,
     writes,
     ...(command === undefined || checkKinds.length === 0 ? {} : { outputRedirected: /(?<![0-9&])>\s*[^\s&]/u.test(unwrap(command)) }),
-    ...(explicitMutation ? { change: "explicit-mutation" as const } : editTool ? { change: "edit-tool" as const }
-      : writes.length > 0 ? { change: "shell-write" as const } : {}),
+    // A failed edit or shell write is an attempt, not an observed change.
+    ...(explicitMutation ? { change: "explicit-mutation" as const } : operation.failed || exited ? {}
+      : editTool ? { change: "edit-tool" as const } : writes.length > 0 ? { change: "shell-write" as const } : {}),
     result: operation.failed || exited ? "failed" : passed ? "passed" : "unknown",
   };
 }
