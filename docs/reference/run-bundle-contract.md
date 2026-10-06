@@ -215,7 +215,10 @@ expansion (`${VAR:-[REDACTED_SECRET]}`), a literal next to a reference
 quote or expansion is redacted whole. In a
 code-style assignment (`key = expr`, `key: expr`) dotted paths, calls,
 environment lookups, constant names and keywords are references and stay
-intact; any other unquoted value of eight or more characters is redacted.
+intact; any other unquoted value of eight or more characters is redacted, as is
+every string literal later in the same expression
+(`process.env.PREFIX + "[REDACTED_SECRET]"`), except the key of a lookup that
+directly follows the value (`os.environ['NAME']`).
 
 The remainder of this verifier section applies only to `verified` tasks.
 Verifier results cannot contradict their assertions: passed results have no

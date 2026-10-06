@@ -179,11 +179,14 @@ function scanAssignments(text: string): Assignment[] {
         if (assignment !== undefined) assignments.push(assignment);
         continue;
       }
+      const rest = escaped ? [] : expressionLiterals(text, valueEnd + 1);
+      SECRET_NAME.lastIndex = Math.max(SECRET_NAME.lastIndex, rest.end ?? valueEnd);
       // Values EBO already replaced were reported by the redaction that replaced them.
-      if (EBO_PLACEHOLDER_PREFIX.test(value)) continue;
-      assignments.push(QUOTED_PLACEHOLDER.test(value)
+      if (EBO_PLACEHOLDER_PREFIX.test(value) && rest.length === 0) continue;
+      const own = EBO_PLACEHOLDER_PREFIX.test(value) || QUOTED_PLACEHOLDER.test(value) ? [] : [{ start: valueStart, end: valueEnd }];
+      assignments.push(own.length + rest.length === 0
         ? { finding: { kind: "secret-assignment", disposition: "not-secret", name, reason: "placeholder" }, redactions: [] }
-        : { finding: { kind: "secret-assignment", disposition: "redacted", name }, redactions: [{ start: valueStart, end: valueEnd }] });
+        : { finding: { kind: "secret-assignment", disposition: "redacted", name }, redactions: [...own, ...rest] });
       continue;
     }
     const raw = UNQUOTED_VALUE.exec(text.slice(start, start + 4096))?.[0];
@@ -193,12 +196,48 @@ function scanAssignments(text: string): Assignment[] {
     SECRET_NAME.lastIndex = Math.max(SECRET_NAME.lastIndex, start + raw.length);
     if (EBO_PLACEHOLDER_PREFIX.test(value)) continue;
     const reason = notSecretReason(value);
-    assignments.push(reason === undefined
-      ? { finding: { kind: "secret-assignment", disposition: "redacted", name }, redactions: [{ start: start + bearer.length, end: start + raw.length }] }
-      : { finding: { kind: "secret-assignment", disposition: "not-secret", name, reason }, redactions: [] });
+    // A reference can be followed by more of the expression (`process.env.PREFIX + "literal"`); its literals count.
+    const rest = expressionLiterals(text, start + raw.length);
+    SECRET_NAME.lastIndex = Math.max(SECRET_NAME.lastIndex, rest.end ?? start + raw.length);
+    const own = reason === undefined ? [{ start: start + bearer.length, end: start + raw.length }] : [];
+    assignments.push(own.length + rest.length > 0
+      ? { finding: { kind: "secret-assignment", disposition: "redacted", name }, redactions: [...own, ...rest] }
+      : { finding: { kind: "secret-assignment", disposition: "not-secret", name, reason: reason! }, redactions: [] });
   }
   SECRET_NAME.lastIndex = 0;
   return assignments;
+}
+
+/**
+ * String literals in the rest of a code expression, from `from` to the end of the statement: a newline, or `;`, `,`
+ * or a closing bracket at bracket depth zero. Literal contents with letters or digits are returned for redaction,
+ * except the key of a lookup that directly follows the value (`os.environ['NAME']`, `getenv("NAME", ...)`).
+ */
+function expressionLiterals(text: string, from: number): Range[] & { end?: number } {
+  const literals: Range[] & { end?: number } = [];
+  // The value token may already have consumed the opening bracket of a call or subscript (`os.getenv(`).
+  const opened = text[from - 1] === "(" || text[from - 1] === "[";
+  let depth = opened ? 1 : 0;
+  let index = from;
+  const lookup = (opened ? /^\s*/u : /^\s*[[(]\s*/u).exec(text.slice(from, from + 64));
+  const keyAt = lookup === null ? -1 : from + lookup[0].length;
+  for (; index < text.length; index += 1) {
+    const character = text[index]!;
+    if (character === "\n" || character === "\r") break;
+    if (QUOTES.has(character)) {
+      const close = closingQuote(text, index + 1, character);
+      const end = close === -1 ? lineEnd(text, index + 1) : close;
+      const content = text.slice(index + 1, end);
+      if (index !== keyAt && /[A-Za-z0-9]/u.test(content) && !EBO_PLACEHOLDER_PREFIX.test(content) && !QUOTED_PLACEHOLDER.test(content)) literals.push({ start: index + 1, end });
+      index = end;
+      continue;
+    }
+    if ("([{".includes(character)) depth += 1;
+    else if (")]}".includes(character)) { if (depth === 0) break; depth -= 1; }
+    else if ((character === ";" || character === ",") && depth === 0) break;
+  }
+  literals.end = index;
+  return literals;
 }
 
 type ShellWord = { source: string; start: number; end: number; literals: Array<Range & { quoted: boolean }>; references: number; incomplete: boolean };

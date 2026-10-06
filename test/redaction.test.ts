@@ -151,3 +151,19 @@ test("environment references stay while literal fallbacks inside parameter expan
     assert.equal(containsSecret(text), false, `the final scan accepts ${text}`);
   }
 });
+
+test("literals later in a code-style expression are redacted, lookup keys are not", () => {
+  const cases: Array<[string, string]> = [
+    ["password = process.env.PREFIX + \"correcthorsebatterystaple\";", "password = process.env.PREFIX + \"[REDACTED_SECRET]\";"],
+    ["const apiKey = input.apiKey ?? 'literal-fallback-credential';", "const apiKey = input.apiKey ?? '[REDACTED_SECRET]';"],
+    ["api_key = os.getenv(\"FIREWORKS_API_KEY\", \"default-secret-value\")", "api_key = os.getenv(\"FIREWORKS_API_KEY\", \"[REDACTED_SECRET]\")"],
+  ];
+  for (const [input, expected] of cases) {
+    assert.equal(redact(input).text, expected);
+    assert.equal(containsSecret(input), true, input);
+    assert.equal(containsSecret(expected), false, expected);
+  }
+  for (const kept of ["api_key = os.environ['FIREWORKS_API_KEY']", "const client = new Client({ apiKey: input.apiKey, label: \"Production\" });", "token = os.getenv(\"TOKEN\")"]) {
+    assert.equal(redact(kept).text, kept, kept);
+  }
+});
