@@ -274,6 +274,7 @@ export {
   DEVIN_DEFAULT_SHUTDOWN_GRACE_MS,
   DEVIN_HARNESS,
   normalizeDevinCapture,
+  qualifyRetainedDevinCapture,
   RETAINED_DEVIN_CLI_VERSIONS,
 } from "./devin.js";
 export type {
@@ -287,6 +288,7 @@ export type {
   DevinTelemetryEvidence,
   DevinTelemetrySignal,
   DevinUsageUpdate,
+  RetainedDevinCapture,
 } from "./devin.js";
 export {
   captureDevinCliRun,

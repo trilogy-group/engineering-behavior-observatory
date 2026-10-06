@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -14,6 +14,7 @@ import {
   DEVIN_CLI_VERSION,
   describeAndValidateDevinDataset,
   normalizeDevinCapture,
+  qualifyRetainedDevinCapture,
   type DevinCliCapture,
   type DevinCliConfiguration,
 } from "../src/devin.js";
@@ -22,9 +23,12 @@ import { decodeOtlpProtobuf } from "../src/otlp-protobuf.js";
 import {
   compileRunQueue,
   createPortableRunBundleExport,
+  createRetainedBehaviorEvidence,
+  createRetainedStructuralObservationSet,
   digestBytes,
   digestMetadata,
   freezeTaskPacket,
+  main,
   qualifyRunBundle,
   readPortableRunBundleExport,
   writeRunQueue,
@@ -102,7 +106,18 @@ test("Devin ACP success turn ends on the native session/prompt response and norm
     assert.ok(resourceLogs[0]!.resource.attributes.some(({ key }) => key === "ebo.attempt_id"));
     const metricRecord = capture.telemetry.telemetry.records.find(({ signal }) => signal === "metrics");
     assert.ok(JSON.stringify(metricRecord?.payload).includes("devin.token.usage"));
+    for (const record of capture.telemetry.telemetry.records) {
+      const body = Buffer.from(record.body, "base64");
+      assert.equal(body.length, record.sizeBytes, "the original OTLP body is retained alongside its projection");
+      assert.equal(record.bodyDigest, `sha256:${digestBytes(body).value}`);
+      assert.deepEqual(decodeOtlpProtobuf(record.signal, body), record.payload, "the projection re-derives from the retained body");
+    }
 
+    const retainedOptions = { sessionId: "fixture-session", expectsCompletion: true, harnessVersion: DEVIN_CLI_VERSION, runtimeVersions: [DEVIN_CLI_VERSION] };
+    assert.equal(qualifyRetainedDevinCapture(capture, retainedOptions).promptRequestId, capture.promptRequestId);
+    assert.throws(() => qualifyRetainedDevinCapture(capture, { ...retainedOptions, sessionId: "foreign-session" }), /session identity differs/u);
+    assert.throws(() => qualifyRetainedDevinCapture(capture, { ...retainedOptions, runtimeVersions: [DEVIN_CLI_VERSION, "3000.10.0"] }), /runtime version differs/u);
+    assert.throws(() => qualifyRetainedDevinCapture(capture, { ...retainedOptions, harnessVersion: "3000.10.0" }), /Unsupported retained Devin runtime/u);
     const { dataset, coverage } = await describeAndValidateDevinDataset(capture);
     const families = dataset.events.map(({ family }) => family);
     assert.deepEqual([...new Set(families)].sort(), ["message", "outcome", "runtime", "tool"]);
@@ -110,6 +125,12 @@ test("Devin ACP success turn ends on the native session/prompt response and norm
     const outcome = dataset.events.find(({ family }) => family === "outcome");
     assert.equal(outcome?.attributes.stopReason, "end_turn");
     assert.equal(outcome?.attributes.totalTokens, 11006);
+    assert.equal(outcome?.attributes.outputTokens, 21);
+    assert.equal(outcome?.attributes.usageSemantics, "final-request", "session/prompt usage is the final request, not a turn total");
+    assert.equal(outcome?.attributes.resourceSemantics, undefined);
+    const stopped = dataset.events.find(({ family, attributes }) => family === "runtime" && attributes.resourceSemantics !== undefined);
+    assert.equal(stopped?.attributes.resourceSemantics, "cumulative-final");
+    assert.equal(stopped?.attributes.outputTokens, 118, "only agent_stopped carries the cumulative turn total");
     const terminalTool = dataset.events.find(({ family, phase }) => family === "tool" && phase === "after");
     assert.equal(terminalTool?.attributes.status, "completed");
     assert.equal(terminalTool?.attributes.exitCode, 0);
@@ -356,6 +377,34 @@ test("Devin mode and model mismatches are gaps, and unauthenticated children fai
   }
 });
 
+test("captureDevinCli rejects a missing credential before allocating the OTLP receiver and exits cleanly", async () => {
+  const root = await temporaryRoot();
+  try {
+    delete process.env.EBO_DEVIN_UNSET_CREDENTIAL;
+    await assert.rejects(runFake(root, "success", ["logs"], undefined, "allow-once", "swe-2-high", "accept-edits", "EBO_DEVIN_UNSET_CREDENTIAL"), /EBO_DEVIN_UNSET_CREDENTIAL is not set/u);
+    const script = `
+      import { captureDevinCli } from ${JSON.stringify(pathToFileURL(resolve("dist/src/devin.js")).href)};
+      try {
+        await captureDevinCli({ runId: "r", attemptId: "a", workspacePath: ${JSON.stringify(root)}, prompt: "x", evidencePath: ${JSON.stringify(join(root, "s.jsonl"))},
+          configuration: { executable: process.execPath, executableArgs: [${JSON.stringify(fixture)}, "--mode=success"], version: ${JSON.stringify(DEVIN_CLI_VERSION)},
+            model: "swe-2-high", mode: "accept-edits", permissionDecision: "allow-once",
+            credentialEnv: "EBO_DEVIN_UNSET_CREDENTIAL", telemetry: { signals: ["logs", "metrics"] } } });
+      } catch (error) { console.log(error.message); }
+    `;
+    const child = spawn(process.execPath, ["--input-type=module", "-e", script], { env: { ...process.env, EBO_DEVIN_UNSET_CREDENTIAL: undefined }, stdio: ["ignore", "pipe", "inherit"] });
+    let output = "";
+    child.stdout!.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+    const timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+    const exit = await waitForChild(child);
+    clearTimeout(timer);
+    assert.equal(exit.signal, null, "the process must exit on its own instead of being kept alive by an orphaned receiver");
+    assert.equal(exit.code, 0);
+    assert.match(output, /EBO_DEVIN_UNSET_CREDENTIAL is not set/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Devin OTLP receiver retains malformed protobuf bodies with a parse error", async () => {
   const root = await temporaryRoot();
   try {
@@ -364,6 +413,10 @@ test("Devin OTLP receiver retains malformed protobuf bodies with a parse error",
     const malformed = capture.telemetry.telemetry.records.filter(({ parseError }) => parseError !== undefined);
     assert.ok(malformed.length > 0);
     assert.ok(malformed.every(({ sizeBytes, payload }) => sizeBytes === 6 && payload === undefined));
+    for (const record of malformed) {
+      assert.deepEqual(Buffer.from(record.body, "base64"), Buffer.from([0xff, 0xff, 0xff, 0xff, 0x0f, 0x00]), "undecodable bodies keep their original bytes");
+      assert.equal(record.bodyDigest, `sha256:${digestBytes(Buffer.from(record.body, "base64")).value}`);
+    }
     assert.equal(capture.telemetry.telemetry.receipt.signals.metrics.status, "missing");
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -426,11 +479,17 @@ test("captureDevinCliRun retains a crashed child as a valid failed partial bundl
     assert.equal(result.attempt.classification.kind, "infrastructure-failure");
     assert.equal(result.manifest.terminal.state, "failed");
     assert.ok(result.manifest.evidence.some(({ kind }) => kind === "session"));
-    assert.ok(result.manifest.evidence.some(({ kind, relativePath }) => kind === "telemetry" && relativePath === "telemetry/devin-stderr.log"));
+    const sessionRecords = await readEvidence(join(bundleRoot, "session.jsonl"));
+    assert.ok(sessionRecords.some(({ kind, method, payload }) => kind === "notification" && method === "diagnostic/stderr"
+      && String(payload?.text).includes("panicked before the tool completed")), "child stderr is retained inside the session evidence");
     const reports = await Promise.all((await readdir(join(bundleRoot, "capture"))).map((name) => readFile(join(bundleRoot, "capture", name), "utf8")));
     assert.ok(reports.some((report) => report.includes('"capture-error"')), "the capture report lists the missing native terminal");
     assert.equal(result.qualification.status, "qualified-with-gaps");
     assert.equal((await qualifyRunBundle(bundleRoot, { startingWorkspacePath: startingWorkspace, semanticEvidenceKinds: ["session"], relatedSessionIds: [] })).status, "qualified-with-gaps");
+    const evidence = await createRetainedBehaviorEvidence(bundleRoot);
+    assert.equal(evidence.capture.qualification, "qualified-with-gaps");
+    assert.equal(evidence.dataset.events.some(({ family }) => family === "outcome"), false, "no invented terminal without an owned prompt response");
+    await createRetainedStructuralObservationSet(bundleRoot);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -472,6 +531,73 @@ test("runDevinQueueEntry executes a frozen queue entry and produces a normalized
     const workspaceBytes = await readFile(join(summary.bundlePath, workspaceEvidence.relativePath));
     const workspaceText = workspaceEvidence.relativePath.endsWith(".gz") ? gunzipSync(workspaceBytes).toString("latin1") : workspaceBytes.toString("utf8");
     assert.ok(workspaceText.includes("devin-result.txt"), "the workspace outcome packages the file the fixture agent wrote");
+
+    const evidence = await createRetainedBehaviorEvidence(summary.bundlePath);
+    assert.equal(evidence.dataset.adapter.id, DEVIN_CLI_CAPABILITIES.adapterId);
+    assert.equal(evidence.dataset.events.length, summary.normalizedEvents, "reopened evidence reproduces the capture-time normalization");
+    assert.equal(evidence.coverage.records.mapped + evidence.coverage.records.unmapped, evidence.coverage.records.total);
+    const observations = await createRetainedStructuralObservationSet(summary.bundlePath);
+    assert.ok(observations.observations.length > 0);
+    assert.equal(await main(["observations", "create", summary.bundlePath, join(root, "observations.json")], () => undefined), 0);
+    assert.deepEqual(JSON.parse(await readFile(join(summary.bundlePath, "manifest.json"), "utf8")), manifest, "readback never rewrites the manifest");
+
+    const sessionDescriptor = manifest.evidence.find(({ kind }) => kind === "session")!;
+    const sessionPath = join(summary.bundlePath, sessionDescriptor.relativePath);
+    const telemetryPath = join(summary.bundlePath, "telemetry/devin.json");
+    const originalSession = await readFile(sessionPath);
+    const records = originalSession.toString().trim().split("\n").map((line) => JSON.parse(line) as Record<string, any>);
+    const mutations: Array<[string, RegExp, () => Promise<void>]> = [
+      ["foreign-session", /SESSION_RECORD_IDENTITY_MISMATCH|session identity differs/u, async () => {
+        const changed = structuredClone(manifest);
+        changed.run.native = { ...changed.run.native, sessionId: "foreign-session" };
+        for (const descriptor of changed.evidence) {
+          if (descriptor.kind === "session" && descriptor.nativeReference?.type === "session") descriptor.nativeReference.id = "foreign-session";
+        }
+        await writeFile(join(summary.bundlePath, "manifest.json"), JSON.stringify(changed));
+      }],
+      ["telemetry-version", /runtime version differs/u, async () => {
+        const document = JSON.parse(telemetry) as Record<string, any>;
+        document.runtime.version = "3000.10.0";
+        const bytes = Buffer.from(JSON.stringify(document));
+        const changed = structuredClone(manifest);
+        const descriptor = changed.evidence.find(({ relativePath }) => relativePath === "telemetry/devin.json")!;
+        descriptor.digest = `sha256:${digestBytes(bytes).value}`;
+        descriptor.sizeBytes = bytes.length;
+        await writeFile(telemetryPath, bytes);
+        await writeFile(join(summary.bundlePath, "manifest.json"), JSON.stringify(changed));
+      }],
+      ["cancelled-terminal", /end_turn terminal evidence/u, async () => {
+        const bytes = Buffer.from(`${records.map((record) => JSON.stringify(record.kind === "response" && record.method === "session/prompt"
+          ? { ...record, payload: { ...record.payload, stopReason: "cancelled" } } : record)).join("\n")}\n`);
+        const changed = structuredClone(manifest);
+        const descriptor = changed.evidence.find(({ id }) => id === sessionDescriptor.id)!;
+        descriptor.digest = `sha256:${digestBytes(bytes).value}`;
+        descriptor.sizeBytes = bytes.length;
+        await writeFile(sessionPath, bytes);
+        await writeFile(join(summary.bundlePath, "manifest.json"), JSON.stringify(changed));
+      }],
+      ["duplicate-prompt", /requires one owned request/u, async () => {
+        const prompt = records.find((record) => record.kind === "request" && record.method === "session/prompt")!;
+        const bytes = Buffer.from(`${[...records, { ...prompt, sequence: records.length + 1 }].map((record) => JSON.stringify(record)).join("\n")}\n`);
+        const changed = structuredClone(manifest);
+        const descriptor = changed.evidence.find(({ id }) => id === sessionDescriptor.id)!;
+        descriptor.digest = `sha256:${digestBytes(bytes).value}`;
+        descriptor.sizeBytes = bytes.length;
+        await writeFile(sessionPath, bytes);
+        await writeFile(join(summary.bundlePath, "manifest.json"), JSON.stringify(changed));
+      }],
+    ];
+    for (const [name, expected, mutate] of mutations) {
+      await writeFile(sessionPath, originalSession);
+      await writeFile(telemetryPath, telemetry);
+      await writeFile(join(summary.bundlePath, "manifest.json"), JSON.stringify(manifest));
+      await mutate();
+      await assert.rejects(createRetainedBehaviorEvidence(summary.bundlePath), expected, name);
+    }
+    await writeFile(sessionPath, originalSession);
+    await writeFile(telemetryPath, telemetry);
+    await writeFile(join(summary.bundlePath, "manifest.json"), JSON.stringify(manifest));
+
     await assert.rejects(runDevinQueueEntry({
       bundleRoot: queueFixture.bundleRoot,
       queuePath: queueFixture.queuePath,
@@ -565,6 +691,7 @@ async function runFake(
   permissionDecision: "allow-once" | "reject-once" = "allow-once",
   model = "swe-2-high",
   mode: DevinCliConfiguration["mode"] = "accept-edits",
+  credentialEnv = CREDENTIAL_ENV,
 ): Promise<DevinCliCapture> {
   const workspace = join(root, "workspace");
   await mkdir(workspace, { recursive: true });
@@ -573,7 +700,7 @@ async function runFake(
     attemptId: `attempt-${fixtureMode}`,
     workspacePath: workspace,
     prompt: "Perform one small task.",
-    configuration: { ...fakeConfiguration(fixtureMode), permissionDecision, model, mode, ...(signals.length === 0 ? {} : { telemetry: { signals } }) },
+    configuration: { ...fakeConfiguration(fixtureMode), permissionDecision, model, mode, credentialEnv, ...(signals.length === 0 ? {} : { telemetry: { signals } }) },
     evidencePath: join(root, "session.jsonl"),
     stderrPath: join(root, "diagnostics/stderr.txt"),
     shutdownGraceMs: 500,

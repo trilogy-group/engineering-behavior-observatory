@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 
-import { digestMetadata } from "./artifacts.js";
+import { digestBytes, digestMetadata } from "./artifacts.js";
 import {
   createCapturedNativeEvidenceResolver,
   describeNormalizedDataset,
@@ -71,6 +71,10 @@ export type DevinOtlpRecord = {
   receivedAt: string;
   contentType?: string;
   sizeBytes: number;
+  /** The original request body (base64) within the receiver bounds, retained even when it cannot be decoded. */
+  body: string;
+  bodyDigest: string;
+  /** The OTLP/JSON projection of `body`; absent when decoding failed. */
   payload?: unknown;
   parseError?: string;
 };
@@ -220,6 +224,8 @@ export async function captureDevinCli(request: DevinCliCaptureRequest): Promise<
   const shutdownGraceMs = request.shutdownGraceMs ?? DEVIN_DEFAULT_SHUTDOWN_GRACE_MS;
   if (!Number.isSafeInteger(shutdownGraceMs) || shutdownGraceMs < 0) throw new Error("Shutdown grace must be a nonnegative integer.");
   const credentialEnv = request.configuration.credentialEnv ?? DEVIN_DEFAULT_CREDENTIAL_ENV;
+  // Validate the credential before any receiver or temporary home exists so a missing key cannot leak resources.
+  const credential = requireCredential(credentialEnv);
 
   let abortRequested = request.signal?.aborted ?? false;
   let abortDeadline: number | undefined;
@@ -246,7 +252,7 @@ export async function captureDevinCli(request: DevinCliCaptureRequest): Promise<
     await telemetry.close();
     throw error;
   }
-  const environment = isolatedEnvironment(isolatedHome, credentialEnv);
+  const environment = isolatedEnvironment(isolatedHome, credentialEnv, credential);
   const gaps: DevinCaptureGap[] = [];
   const addGap = (gap: DevinCaptureGap): void => recordCaptureGap(gaps, gap);
   let sessionId: string | undefined;
@@ -575,6 +581,73 @@ export async function describeAndValidateDevinDataset(
   return { dataset, coverage };
 }
 
+export type RetainedDevinCapture = QualifiedNativeCapture<ProtocolObservation> & { sessionId?: string; promptRequestId?: number };
+
+/**
+ * Re-establishes the owned ACP identities of a retained Devin bundle before normalization. The ACP `initialize`
+ * handshake reports a placeholder `agentInfo.version`, so the runtime version is verified through the retained
+ * telemetry document and the manifest runtime pins rather than the handshake.
+ */
+export function qualifyRetainedDevinCapture(
+  capture: QualifiedNativeCapture<ProtocolObservation>,
+  options: { sessionId: string | undefined; expectsCompletion: boolean; harnessVersion: string; runtimeVersions: readonly string[] },
+): RetainedDevinCapture {
+  if (!RETAINED_DEVIN_CLI_VERSIONS.includes(options.harnessVersion)) throw new Error(`Unsupported retained Devin runtime ${options.harnessVersion}.`);
+  if (options.runtimeVersions.length === 0 || options.runtimeVersions.some((version) => version !== options.harnessVersion)) {
+    throw new Error("Retained Devin native runtime version differs from the run manifest.");
+  }
+  const records = capture.records.map(({ record }) => record);
+  for (const record of records) {
+    if (record.source !== DEVIN_HARNESS && record.source !== DEVIN_CLIENT) throw new Error(`Retained Devin capture contains a foreign source ${record.source}.`);
+  }
+  let acceptedSequence = 0;
+  const owned = (method: string, required: boolean): { request: ProtocolObservation; response?: ProtocolObservation } | undefined => {
+    const sent = records.filter((record) => record.kind === "request" && record.source === DEVIN_CLIENT && record.method === method);
+    if (sent.length > 1 || required && sent.length !== 1) throw new Error(`Retained Devin ${method} requires one owned request.`);
+    const request = sent[0];
+    if (request === undefined) return undefined;
+    const responses = records.filter((record) => record.kind === "response" && record.source === DEVIN_HARNESS && record.id === request.id);
+    if (request.id === undefined || request.id === null || request.sequence <= acceptedSequence || responses.length > 1
+      || responses.some((response) => response.sequence <= request.sequence)) {
+      throw new Error(`Retained Devin ${method} requires a unique ordered owned request/response pair.`);
+    }
+    acceptedSequence = responses[0]?.sequence ?? request.sequence;
+    return { request, ...(responses[0] === undefined ? {} : { response: responses[0] }) };
+  };
+  owned("initialize", options.expectsCompletion);
+  const session = owned("session/new", options.expectsCompletion);
+  const sessionResult = session?.response?.payload;
+  const sessionId = isRecord(sessionResult) && sessionResult.error === undefined ? text(sessionResult.sessionId) : undefined;
+  if (sessionId !== options.sessionId) throw new Error("Retained Devin session identity differs from the run manifest.");
+  const prompt = owned("session/prompt", options.expectsCompletion);
+  if (prompt !== undefined && (sessionId === undefined || !isRecord(prompt.request.payload) || prompt.request.payload.sessionId !== sessionId
+    || typeof prompt.request.id !== "number")) {
+    throw new Error("Retained Devin session/prompt is not bound to the owned session.");
+  }
+  for (const record of records) {
+    const payload = isRecord(record.payload) ? record.payload : {};
+    if (record.sourceIdentity !== undefined && record.sourceIdentity !== sessionId
+      || record.kind === "notification" && record.method === "session/update" && payload.sessionId !== sessionId) {
+      throw new Error("Retained Devin stream identity differs from the owned session.");
+    }
+  }
+  const completions = records.filter((record) => record.kind === "completion" && record.source === DEVIN_HARNESS && record.method === "session/prompt");
+  if (completions.length > 1 || completions.length === 1 && (prompt?.response === undefined || completions[0]!.sequence <= prompt.response.sequence)) {
+    throw new Error("Retained Devin capture requires unambiguous matching owned terminal evidence.");
+  }
+  if (options.expectsCompletion) {
+    const result = prompt?.response?.payload;
+    if (!isRecord(result) || result.error !== undefined || result.stopReason !== "end_turn" || completions[0]?.status !== "end_turn") {
+      throw new Error("Completed retained Devin capture lacks matching owned end_turn terminal evidence.");
+    }
+  }
+  return {
+    ...capture,
+    ...(sessionId === undefined ? {} : { sessionId }),
+    ...(prompt === undefined ? {} : { promptRequestId: prompt.request.id as number }),
+  };
+}
+
 type DevinToolCallState = {
   events: Map<string, string>;
   terminalExits: Map<string, Record<string, unknown>>;
@@ -616,7 +689,8 @@ function mapDevinRecord(
     }
     if (isRecord(payload.usage)) {
       for (const key of PROMPT_USAGE_FIELDS) copyScalar(attributes, key, payload.usage[key]);
-      attributes.resourceSemantics = "turn-total";
+      // Devin reports the final request's usage here; cumulative turn totals live only in `agent_stopped` stats.
+      attributes.usageSemantics = "final-request";
     }
   } else if (record.kind === "notification" && record.source === DEVIN_HARNESS && text(payload.sessionId) === owned.sessionId) {
     if (record.method === "session/update") {
@@ -977,6 +1051,8 @@ async function receiveOtlp(
       receivedAt: now(),
       ...(contentType === undefined ? {} : { contentType }),
       sizeBytes: body.length,
+      body: body.toString("base64"),
+      bodyDigest: `sha256:${digestBytes(body).value}`,
     };
     try {
       if (contentType?.startsWith("application/json")) record.payload = JSON.parse(body.toString("utf8"));
@@ -1011,8 +1087,14 @@ function recordCaptureGap(gaps: DevinCaptureGap[], gap: DevinCaptureGap): void {
   }
 }
 
-function isolatedEnvironment(home: string, credentialEnv: string): NodeJS.ProcessEnv {
+function requireCredential(credentialEnv: string): string {
   if (!/^[A-Z][A-Z0-9_]*$/.test(credentialEnv)) throw new Error("Devin credentialEnv must be an environment variable name.");
+  const value = process.env[credentialEnv];
+  if (value === undefined) throw new Error(`Devin credentialEnv ${credentialEnv} is not set.`);
+  return value;
+}
+
+function isolatedEnvironment(home: string, credentialEnv: string, credential: string): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {
     HOME: home,
     XDG_CONFIG_HOME: join(home, "config"),
@@ -1024,9 +1106,7 @@ function isolatedEnvironment(home: string, credentialEnv: string): NodeJS.Proces
   for (const key of ["PATH", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "USER", "LOGNAME", "SHELL"] as const) {
     if (process.env[key] !== undefined) environment[key] = process.env[key];
   }
-  const value = process.env[credentialEnv];
-  if (value === undefined) throw new Error(`Devin credentialEnv ${credentialEnv} is not set.`);
-  environment[credentialEnv] = value;
+  environment[credentialEnv] = credential;
   return environment;
 }
 

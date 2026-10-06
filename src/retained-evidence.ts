@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { CLAUDE_AGENT_SDK_HARNESS, readQualifiedRunCapture, createAgentSdkNativeEvidenceResolver, type AgentSdkNativeRecord } from "./agent-sdk-normalizer.js";
 import { createAgentSdkBehaviorEvidence } from "./behavior-assertions.js";
 import { describeAndValidateCodexDataset, CODEX_HARNESS } from "./codex.js";
+import { describeAndValidateDevinDataset, DEVIN_HARNESS, qualifyRetainedDevinCapture, RETAINED_DEVIN_CLI_VERSIONS } from "./devin.js";
 import { normalizeOpenHandsCapture, openHandsCapabilityProfile, type OpenHandsNativeRecord } from "./openhands.js";
 import { createDeepSeekHarnessAdapter, DEEPSEEK_HARNESS_ID, RETAINED_DEEPSEEK_SDK_VERSIONS, normalizeDeepSeekCapture, qualifyRetainedDeepSeekCapture, type DeepSeekNativeObservation } from "./deepseek-adapter.js";
 import { createCursorSdkBehaviorEvidence, CURSOR_SDK_HARNESS } from "./cursor-sdk.js";
@@ -41,12 +42,15 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
     const evidence = await createAgentSdkBehaviorEvidence(bundleRoot);
     return { ...evidence, outcomeCapture: evidence.capture };
   }
-  if (![CODEX_HARNESS, "openhands-agent-server", DEEPSEEK_HARNESS_ID, PI_HARNESS].includes(harness)) {
+  if (![CODEX_HARNESS, DEVIN_HARNESS, "openhands-agent-server", DEEPSEEK_HARNESS_ID, PI_HARNESS].includes(harness)) {
     throw new Error(`Unsupported retained harness ${harness}; refusing Agent SDK fallback normalization.`);
   }
   if (harness === "openhands-agent-server") openHandsCapabilityProfile(manifest.run.harness.version);
   if (harness === DEEPSEEK_HARNESS_ID && !RETAINED_DEEPSEEK_SDK_VERSIONS.includes(manifest.run.harness.version)) {
     throw new Error(`Unsupported retained DeepSeek runtime ${manifest.run.harness.version}.`);
+  }
+  if (harness === DEVIN_HARNESS && !RETAINED_DEVIN_CLI_VERSIONS.includes(manifest.run.harness.version)) {
+    throw new Error(`Unsupported retained Devin runtime ${manifest.run.harness.version}.`);
   }
   if (harness === PI_HARNESS && !RETAINED_PI_SDK_VERSIONS.includes(manifest.run.harness.version)) {
     throw new Error(`Unsupported retained Pi runtime ${manifest.run.harness.version}.`);
@@ -142,6 +146,20 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
       throw new Error("Retained Codex capture requires unambiguous matching owned terminal evidence.");
     }
     dataset = (await describeAndValidateCodexDataset(native, manifest.run.harness.version)).dataset;
+  } else if (harness === DEVIN_HARNESS) {
+    const telemetryVersions = outcomeCapture.records.flatMap(({ record }) => {
+      const document = record.document as Record<string, any> | undefined;
+      return document?.schemaVersion === "ebo.devin-telemetry/v1" ? [String(document.runtime?.version)] : [];
+    });
+    const runtimeVersions = manifest.run.runtime.filter(({ name }) => name === DEVIN_HARNESS).map(({ version }) => version);
+    if (runtimeVersions.length !== 1) throw new Error("Retained Devin runtime identity devin-cli differs from the pinned adapter manifest.");
+    const native = qualifyRetainedDevinCapture(capture as NormalizationInput<ProtocolObservation>, {
+      sessionId: manifest.run.native?.sessionId,
+      expectsCompletion,
+      harnessVersion: manifest.run.harness.version,
+      runtimeVersions: [...telemetryVersions, ...runtimeVersions],
+    });
+    dataset = (await describeAndValidateDevinDataset(native, manifest.run.harness.version)).dataset;
   } else if (harness === "openhands-agent-server") {
     const native = capture as NormalizationInput<OpenHandsNativeRecord>;
     const sessionId = manifest.run.native?.sessionId;
@@ -183,6 +201,13 @@ function assertNativeEnvelope(harness: string, value: unknown, line: number): vo
   if (value === null || typeof value !== "object" || Array.isArray(value)) fail();
   const record = value as Record<string, unknown>;
   if (!Number.isSafeInteger(line) || line < 1 || record.sequence !== line) fail();
+  if (harness === DEVIN_HARNESS) {
+    assertProtocolObservation(value, line);
+    if (value.source !== DEVIN_HARNESS && value.source !== "ebo-devin-client") fail();
+    if (value.source === "ebo-devin-client" && (!["request", "response", "notification"].includes(value.kind)
+      || value.kind === "notification" && value.method !== "session/cancel")) fail();
+    return;
+  }
   if (harness === CODEX_HARNESS) {
     assertProtocolObservation(value, line);
     if (value.source !== CODEX_HARNESS && value.source !== "ebo-codex-client") fail();

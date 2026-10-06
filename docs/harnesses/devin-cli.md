@@ -38,7 +38,8 @@ native attempt:
 | any other value, or a JSON-RPC error | failed, with a `terminal-stop-reason` gap |
 
 Process exit without that response is a `capture-error` gap; the partial
-`session.jsonl`, stderr, and process termination stay in the bundle. A malformed
+`session.jsonl`, stderr (`diagnostic/stderr` notifications inside it), and
+process termination stay in the bundle. A malformed
 stdout line ends the protocol (the raw line is retained in the process
 diagnostics) rather than being guessed around.
 
@@ -90,7 +91,6 @@ ebo devin run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-roo
 | :--- | :--- |
 | `session.jsonl` | Every ACP frame in receive/send order; restricted (`agent_thought_chunk` carries hidden reasoning) |
 | `telemetry/devin.json` | Runtime (`agentInfo`, capabilities), effective configuration (applied model/mode, environment key names), OTLP receipt per signal and decoded records, `usage_update` snapshots, final `usage`, `agent_stopped` statistics |
-| `telemetry/devin-stderr.log` | Bounded child stderr, when non-empty |
 | `workspace/…` | Workspace outcome packaged from the attempt directory |
 
 Native `session/update` kinds observed with 3000.11.3: `session_info_update`,
@@ -113,9 +113,12 @@ timestamps in telemetry evidence.
 The CLI exports `application/x-protobuf` OTLP logs (`session_start`,
 `user_prompt`, `api_request` with per-request token counts, `tool_decision`,
 `tool_result`, `assistant_response`, `session_end`) and `devin.token.usage`
-delta metrics. EBO decodes the protobuf bodies with a small standard-library
-decoder into their OTLP/JSON projection; undecodable bodies are retained with a
-`parseError`. Receipt is `received` only when every requested signal arrived.
+delta metrics. Every accepted body is retained as received (`body`, base64,
+with a `bodyDigest`) inside the receiver bounds (4 MiB per request, 16 MiB per
+attempt); EBO additionally decodes protobuf bodies with a small
+standard-library decoder into their OTLP/JSON `payload` projection, and
+undecodable bodies keep their original bytes alongside a `parseError`. Receipt
+is `received` only when every requested signal arrived.
 OTLP never replaces ACP evidence, and the receiver is not a telemetry backend.
 
 ## Normalization
@@ -125,12 +128,28 @@ and `user_message_chunk` (`message`, one event per chunk), `tool_call`
 (`tool`/before) and the terminal `completed`/`failed` `tool_call_update`
 (`tool`/after, parent = the start event), `plan` (`context`),
 `session/request_permission` (`permission`), `usage_update` and the owned
-`agent_stopped` statistics (`runtime`), and the owned `session/prompt` response
-(`outcome`, with `stopReason` and native `usage` totals). In-progress tool
+`agent_stopped` statistics (`runtime`, `resourceSemantics: cumulative-final`
+for the native cumulative token metrics), and the owned `session/prompt`
+response (`outcome`, with `stopReason` and the native `usage` labeled
+`usageSemantics: final-request`, because Devin reports the final request of
+the turn there rather than a turn total). In-progress tool
 updates, thought chunks, config/mode/command updates, `turn_stats`, and all
 frames for other sessions stay unmapped native evidence. Content is referenced
 by record locator, never copied. Portable export removes `agent_thought_chunk`
 content.
+
+### Retained readback
+
+`createRetainedBehaviorEvidence` reopens completed and partial Devin bundles
+for observations, semantic judging, aggregation and Atlas.
+`qualifyRetainedDevinCapture` re-establishes the owned identities before
+normalization: one ordered `initialize`, `session/new` and `session/prompt`
+request/response pair from `ebo-devin-client`, the `session/new` result
+matching the manifest `run.native.sessionId`, every envelope identity and
+`session/update` bound to that session, and, for completed bundles, exactly one
+matching `end_turn` prompt response and completion record. The ACP handshake
+reports a placeholder `agentInfo.version`, so the runtime version is verified
+through `telemetry/devin.json` and the manifest runtime pins instead.
 
 ## Surfaces measured but not wired
 

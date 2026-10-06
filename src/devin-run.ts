@@ -251,7 +251,6 @@ export async function captureDevinCliRun(options: CaptureDevinCliRunOptions): Pr
         prompt: options.prompt,
         configuration: options.configuration,
         evidencePath: `${assembler.bundleRoot}/session.jsonl`,
-        stderrPath: `${assembler.bundleRoot}/telemetry/devin-stderr.log`,
         signal,
         registerShutdown,
         shutdownGraceMs,
@@ -291,16 +290,6 @@ export async function captureDevinCliRun(options: CaptureDevinCliRunOptions): Pr
   });
   if (workspace?.status === "ready") await captureWorkspace().catch(() => undefined);
   await registerNativeEvidence();
-  if (await nonempty(`${assembler.bundleRoot}/telemetry/devin-stderr.log`)) {
-    await assembler.registerArtifact({
-      id: "devin-stderr",
-      source: DEVIN_HARNESS,
-      kind: "telemetry",
-      mediaType: "text/plain",
-      sharingClass: "restricted",
-      relativePath: "telemetry/devin-stderr.log",
-    });
-  }
 
   const missingEvidence: CaptureMissingEvidence[] = [];
   if (capture?.sessionId === undefined) missingEvidence.push({
