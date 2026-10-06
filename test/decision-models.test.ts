@@ -65,6 +65,7 @@ test("decide retries busy responses, records failures without answers and never 
   assert.equal(retried.status, "completed");
   assert.equal(retried.attempts, 3);
   assert.equal(slept.length, 2);
+  assert.deepEqual(retried.failedResponses!.map(({ attempt, status }) => [attempt, status]), [[1, 429], [2, 503]], "retried responses are kept");
 
   const unauthorized = (async () => new Response("invalid key ts-secret-key", { status: 401 })) as unknown as typeof fetch;
   const failed = await decide({ provider: "typesafe" }, "s", questions, { fetch: unauthorized, env });
@@ -72,6 +73,7 @@ test("decide retries busy responses, records failures without answers and never 
   assert.equal(failed.answers, undefined);
   assert.match(failed.error!, /HTTP 401/u);
   assert.equal(failed.error!.includes("ts-secret-key"), false);
+  assert.deepEqual(failed.failedResponses, [{ attempt: 1, status: 401, body: "invalid key [REDACTED]" }], "the failed body is kept, redacted");
 
   const missing = await decide({ provider: "fireworks" }, "s", questions, { fetch: busy.fetch, env: { FIREWORKS_SYSTEMONE_MODEL: "m" } });
   assert.match(missing.error!, /FIREWORKS_API_KEY is required/u);
@@ -156,6 +158,9 @@ test("occurrence ratings ask only bounded, typed questions and bind every answer
   tampered.ratings[0]!.label = "retried-unchanged";
   tampered.ratings[0]!.answer = { ...tampered.ratings[0]!.answer!, choice: "retried-unchanged" } as never;
   assert.throws(() => validateOccurrenceRatings(tampered), /differs from its decision record/u);
+  const relabeled = structuredClone(ratings);
+  relabeled.ratings[0]!.label = "retried-unchanged";
+  assert.throws(() => validateOccurrenceRatings(relabeled), /label .* differs from its answer/u, "labels are derived from answers, not trusted");
   assert.equal(acceptedByPolicy({ type: "choice", choice: "a", probabilities: { a: 0.6, b: 0.4 }, confidence: 0.3 }, ratings.policy), false);
   assert.equal(acceptedByPolicy({ type: "noul", noul: 0.95 }, ratings.policy), true);
 });
@@ -172,4 +177,7 @@ test("a failure with no later call is rated by rule without asking the model", a
   assert.equal(fake.calls.length, 0);
   assert.deepEqual(ratings.ratings.map(({ source, label, rule }) => [source, label, rule]), [["rule", "no-response", "no later call of the tool in the same session"]]);
   validateOccurrenceRatings(ratings);
+  const forged = structuredClone(ratings);
+  forged.ratings[0]!.label = "addressed-cause";
+  assert.throws(() => validateOccurrenceRatings(forged), /not a known rule/u);
 });

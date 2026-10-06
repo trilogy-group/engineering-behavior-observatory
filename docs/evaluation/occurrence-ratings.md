@@ -24,7 +24,8 @@ rounding, and token usage. The fixed provider registry:
 | `fireworks` | `https://api.fireworks.ai/inference/v1/systemone` | `FIREWORKS_API_KEY` | `FIREWORKS_SYSTEMONE_MODEL` or `--model` |
 
 Each call is retained as an `ebo.decision-record/v1`: the exact request, the
-raw response, the answering model, usage, duration and attempts. Responses 429,
+raw response, every non-2xx response (status and bounded, redacted body), the
+answering model, usage, duration and attempts. Responses 429,
 502 and 503 are retried up to three times, honoring `Retry-After`. A failed call
 is recorded as failed and never becomes an answer; credentials never appear in
 records.
@@ -69,7 +70,9 @@ The observation set must equal the one rebuilt from the bundle. The
 digests and holds every rating with its decision record. While the command runs,
 each finished decision is appended to `<output>.decisions.partial.jsonl`; the
 log is removed once the artifact is written, so an interrupted run keeps every
-completed call. The command exits non-zero when any decision failed; the
+completed call. The command refuses a destination whose partial log already
+exists. Validation derives each label from its answer and accepts rule ratings
+only for known rules. The command exits non-zero when any decision failed; the
 artifact still records them.
 
 ## Judge preparation
@@ -93,7 +96,9 @@ The prepared request records:
 - `selection.frame`: the method and, per type, the population, ledger rows
   (always the whole population) and occurrences given in full. A requested type
   the adapter does not expose stays in the frame with its `unavailable` reason,
-  so the judge can abstain instead of reading the gap as absence.
+  so the judge can abstain instead of reading the gap as absence. The judge
+  input recomputes `fullRecords` after packaging: an occurrence counts only when
+  all of its events arrived untruncated.
 
 The judge input carries the ledger as `occurrence-ledger` evidence items of
 whole rows. Ledger rows are never dropped or cut: when they do not fit

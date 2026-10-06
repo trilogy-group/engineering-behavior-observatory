@@ -41,6 +41,13 @@
           "properties": { "inputTokens": { "type": "integer", "minimum": 0 }, "outputTokens": { "type": "integer", "minimum": 0 }, "cachedInputTokens": { "type": "integer", "minimum": 0 } }
         },
         "response": {},
+        "failedResponses": {
+          "type": "array", "maxItems": 16,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["attempt", "status", "body"],
+            "properties": { "attempt": { "type": "integer", "minimum": 1 }, "status": { "type": "integer", "minimum": 100, "maximum": 599 }, "body": { "type": "string", "maxLength": 4096 } }
+          }
+        },
         "error": { "type": "string", "maxLength": 4096 },
         "startedAt": { "type": "string", "format": "date-time" },
         "durationMs": { "type": "integer", "minimum": 0 },

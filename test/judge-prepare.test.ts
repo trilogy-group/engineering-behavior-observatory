@@ -145,3 +145,16 @@ test("unavailable occurrence types stay in the frame, and an oversized ledger ro
   const tight = { ...request, limits: { ...request.limits, maxRecordChars: 256 } };
   assert.throws(() => packageSemanticJudgeInput(events, capture, withGap, tight, `sha256:${"c".repeat(64)}`, "evaluated-model"), /exceeds maxRecordChars/u);
 });
+
+test("the packaged frame counts only occurrences whose events all arrived untruncated", () => {
+  const { events, observations, capture } = fixture();
+  const request = prepareJudgeRequest(observations, events, spec(16));
+  const prepared = Object.fromEntries(request.selection.frame!.strata.map(({ type, fullRecords }) => [type, fullRecords]));
+  const full = packageSemanticJudgeInput(events, capture, observations, request, `sha256:${"c".repeat(64)}`, "evaluated-model");
+  assert.deepEqual(Object.fromEntries(full.selection.frame!.strata.map(({ type, fullRecords }) => [type, fullRecords])), prepared);
+  const tight = { ...request, limits: { ...request.limits, maxInputChars: JSON.stringify(full).length - 1500 } };
+  const squeezed = packageSemanticJudgeInput(events, capture, observations, tight, `sha256:${"c".repeat(64)}`, "evaluated-model");
+  assert.ok(squeezed.selection.omitted.some((entry) => entry.endsWith(":maxInputChars")));
+  const after = Object.fromEntries(squeezed.selection.frame!.strata.map(({ type, fullRecords }) => [type, fullRecords]));
+  assert.ok(after["validation-run"]! < prepared["validation-run"]!, "omitted events reduce the occurrences counted as full");
+});

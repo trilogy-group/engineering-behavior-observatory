@@ -660,7 +660,7 @@ export function packageSemanticJudgeInput(
           ledgerOccurrenceIds: ledgerRows.map(({ id }) => id),
           ...(request.selection.occurrences.ratingsDigest === undefined ? {} : { ratingsDigest: request.selection.occurrences.ratingsDigest }),
         }),
-        ...(request.selection.frame === undefined ? {} : { frame: structuredClone(request.selection.frame) }),
+        ...(request.selection.frame === undefined ? {} : { frame: packagedFrame(request.selection.frame, ledgerRows, items) }),
       },
       blinding: {
         evaluatedModelIdentity: redact ? "redacted" : "retained",
@@ -1044,6 +1044,21 @@ function chunkLedger(rows: readonly LedgerRow[], maxChars: number): LedgerRow[][
   }
   if (current.length > 0) chunks.push(current);
   return chunks;
+}
+
+/**
+ * The frame as packaged: an occurrence counts as given in full only when every one of its events is included
+ * untruncated, so omissions under maxInputChars and truncation under maxRecordChars are reflected.
+ */
+function packagedFrame(frame: SemanticJudgeFrame, rows: readonly LedgerRow[], items: readonly SemanticJudgeEvidenceItem[]): SemanticJudgeFrame {
+  const whole = new Set(items.filter(({ kind, truncated }) => kind === "event" && !truncated).map(({ id }) => id));
+  return {
+    method: frame.method,
+    strata: frame.strata.map((stratum) => ({
+      ...stratum,
+      fullRecords: rows.filter(({ type, eventIds }) => type === stratum.type && eventIds.every((id) => whole.has(id))).length,
+    })),
+  };
 }
 
 /** Occurrence id → its row's cited event and all of its member events. */

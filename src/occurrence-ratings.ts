@@ -225,6 +225,11 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
+/** Ratings decided by rule from recorded facts, keyed by occurrence type. */
+const RULE_RATINGS: Partial<Record<OccurrenceType, { questionId: string; label: string; rule: string }>> = {
+  "failure-response": { questionId: "response", label: "no-response", rule: "no later call of the tool in the same session" },
+};
+
 /** Whether an answer meets the acceptance policy. */
 export function acceptedByPolicy(answer: DecisionAnswer, policy: RatingPolicy): boolean {
   return answer.type === "noul" ? Math.abs(answer.noul - 0.5) >= policy.noulMargin : answer.confidence >= policy.choiceConfidence;
@@ -283,7 +288,8 @@ export async function rateOccurrences(
     const questions = occurrenceQuestions(occurrence.type);
     if (questions === undefined) continue;
     if (occurrence.type === "failure-response" && occurrence.attributes.nextOutcome === "none") {
-      ratings.push({ occurrenceId: occurrence.id, occurrenceType: occurrence.type, questionId: "response", source: "rule", label: "no-response", accepted: true, rule: "no later call of the tool in the same session" });
+      const rule = RULE_RATINGS["failure-response"]!;
+      ratings.push({ occurrenceId: occurrence.id, occurrenceType: occurrence.type, questionId: rule.questionId, source: "rule", label: rule.label, accepted: true, rule: rule.rule });
       continue;
     }
     const facts: Record<string, unknown> = {};
@@ -348,12 +354,23 @@ export function validateOccurrenceRatings(document: OccurrenceRatings): void {
   for (const rating of document.ratings) {
     if (!rating.occurrenceId.startsWith(`${document.attemptId}/occ/${rating.occurrenceType}/`)) throw new Error(`Rating for "${rating.occurrenceId}" belongs to another attempt or type.`);
     if (rating.source === "model") {
+      const question = occurrenceQuestions(rating.occurrenceType)?.[rating.questionId];
       const decision = rating.decision === undefined ? undefined : document.decisions[rating.decision];
       const answer = decision?.answers?.[rating.questionId];
-      if (decision?.status !== "completed" || answer === undefined || canonicalizeMetadata(answer) !== canonicalizeMetadata(rating.answer)) {
-        throw new Error(`Rating for "${rating.occurrenceId}" differs from its decision record.`);
+      if (question === undefined || decision?.status !== "completed" || answer === undefined || answer.type !== question.type
+          || canonicalizeMetadata(answer) !== canonicalizeMetadata(rating.answer)
+          || canonicalizeMetadata(decision.request.questions) !== canonicalizeMetadata(occurrenceQuestions(rating.occurrenceType))) {
+        throw new Error(`Rating for "${rating.occurrenceId}" differs from its decision record or question set.`);
       }
+      // Labels are derived from answers, never trusted as stored.
+      if (rating.label !== answerLabel(answer)) throw new Error(`Rating label for "${rating.occurrenceId}" differs from its answer.`);
       if (rating.accepted !== acceptedByPolicy(answer, document.policy)) throw new Error(`Rating for "${rating.occurrenceId}" contradicts the acceptance policy.`);
-    } else if (rating.rule === undefined || rating.answer !== undefined) throw new Error(`Rule rating for "${rating.occurrenceId}" must name its rule.`);
+    } else {
+      const rule = RULE_RATINGS[rating.occurrenceType];
+      if (rule === undefined || rating.answer !== undefined || rating.decision !== undefined || rating.accepted !== true
+          || rating.questionId !== rule.questionId || rating.label !== rule.label || rating.rule !== rule.rule) {
+        throw new Error(`Rule rating for "${rating.occurrenceId}" is not a known rule.`);
+      }
+    }
   }
 }

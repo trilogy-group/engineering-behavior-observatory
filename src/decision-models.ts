@@ -34,6 +34,8 @@ export type DecisionRecord = {
   answers?: Record<string, DecisionAnswer>;
   usage?: DecisionUsage;
   response?: unknown;
+  /** Every non-2xx response, retried or final: status and bounded, redacted body. */
+  failedResponses?: Array<{ attempt: number; status: number; body: string }>;
   error?: string;
   startedAt: string;
   durationMs: number;
@@ -118,6 +120,7 @@ export async function decide(
         record.status = "completed";
         break;
       }
+      (record.failedResponses ??= []).push({ attempt: record.attempts, status: response.status, body: redact(text).slice(0, 4096) });
       if ([429, 502, 503].includes(response.status) && record.attempts <= maxRetries) {
         const retryAfter = Number(response.headers.get("retry-after"));
         const delay = Math.min(options.maxRetryDelayMs ?? 30_000, Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1000 * 2 ** (record.attempts - 1));

@@ -704,6 +704,7 @@ async function runOccurrenceRatingCommand(args: string[], write: (message: strin
     if (existsSync(resolve(outputPath))) throw new Error("Occurrence ratings destination already exists.");
     // Decision records are appended as calls finish; the partial log is removed once the artifact is written.
     const partialPath = `${resolve(outputPath)}.decisions.partial.jsonl`;
+    if (existsSync(partialPath)) throw new Error("A partial decision log from an interrupted run exists for this destination; keep it and choose a new destination.");
     prepareDerivedParent(bundleRoot, partialPath);
     const ratings = await rateRetainedOccurrences(bundleRoot, observations,
       { provider: provider as DecisionProviderId, ...(options["--model"] === undefined ? {} : { model: options["--model"] }) },
