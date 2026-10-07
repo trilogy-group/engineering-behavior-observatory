@@ -57,8 +57,14 @@ test("evidence packets: three variants, verification, withholding and claims tha
 
     appendFileSync(join(root, "packet-internal", "index.html"), "<!-- changed -->");
     writeFileSync(join(root, "packet-internal", "extra.txt"), "x");
+    appendFileSync(join(root, "packet-internal", "ro-crate-metadata.json"), " ");
     const tampered = verifyPacket(join(root, "packet-internal"));
-    assert.deepEqual([tampered.ok, tampered.changed, tampered.unlisted], [false, ["index.html"], ["extra.txt"]]);
+    assert.deepEqual([tampered.ok, tampered.changed, tampered.unlisted], [false, ["index.html", "ro-crate-metadata.json"], ["extra.txt"]]);
+    const packetManifest = join(root, "packet-internal", "manifest.json");
+    const escaping = JSON.parse(readFileSync(packetManifest, "utf8")) as PacketManifest;
+    escaping.files[0]!.path = "../../etc/hosts";
+    writeFileSync(packetManifest, JSON.stringify(escaping));
+    assert.throws(() => verifyPacket(join(root, "packet-internal")), /not a contained relative path/u, "verification never reads outside the packet");
     await assert.rejects(buildPacket(join(root, "bundle"), join(root, "packet-internal"), { variant: "internal", viewerRoot: viewer }), /not empty/u);
 
     // A manifest path that escapes its root is rejected before anything is read or written.
@@ -84,7 +90,7 @@ test("evidence packets: three variants, verification, withholding and claims tha
 });
 
 test("shared native records drop hidden reasoning blocks and fields", () => {
-  assert.equal(sharedText("cd /Users/alex/repo && ls /home/sam/x C:\\Users\\kim\\y /root/z"), "cd ~/repo && ls ~/x ~\\y ~/z");
+  assert.equal(sharedText("cd /Users/alex/repo && ls /workspace/acme/private.ts src/app.ts"), "cd [LOCAL_PATH]/repo && ls [LOCAL_PATH] src/app.ts", "home directories and absolute local paths go, workspace-relative paths stay");
   assert.equal(sharedText(`${"-".repeat(5)}BEGIN RSA PRIVATE KEY${"-".repeat(5)}\nMIIE\n${"-".repeat(5)}END RSA PRIVATE KEY${"-".repeat(5)}`).includes("MIIE"), false);
   const record = { type: "assistant", message: { content: [{ type: "thinking", thinking: "private", signature: "sig" }, { type: "text", text: "visible" }], reasoning_content: "private" } };
   assert.deepEqual(withoutHiddenReasoning(record), { type: "assistant", message: { content: [{ type: "text", text: "visible" }] } });

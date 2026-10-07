@@ -6,7 +6,7 @@ import { tableFromIPC, tableToIPC, Table, vectorFromArray, Utf8, type Vector } f
 
 import { assertContainedPath, ATLAS_TABLES, flattenText, verifyAtlasBundle, type AtlasBundleManifest } from "./atlas-bundle.js";
 import { ATLAS_VIEWER_ROOT } from "./atlas-viewer.js";
-import { containsPortableLocalHomePath, containsPortableSecretPattern, visibleEvidence } from "./exports.js";
+import { containsPortableLocalHomePath, containsPortableLocalPath, containsPortableSecretPattern, redactLocalIdentifiers, visibleEvidence } from "./exports.js";
 import { isSecretFieldName, redactSecrets, SECRET_PLACEHOLDER } from "./redaction.js";
 
 /**
@@ -94,6 +94,7 @@ export function withoutHiddenReasoning(value: unknown): unknown {
 /** Credential patterns and local home paths are fatal in a shared variant. */
 function assertShareable(text: string, where: string, variant: PacketVariant, media = "text/plain") {
   if (containsPortableSecretPattern(text, media)) throw new Error(`The ${variant} packet still contains a credential pattern in ${where}.`);
+  if (containsPortableLocalPath(text, media)) throw new Error(`The ${variant} packet still contains an absolute local path in ${where}.`);
   if (containsPortableLocalHomePath(text, media)) throw new Error(`The ${variant} packet still contains a local home path in ${where}.`);
 }
 /** Apply shareNativeRecord to every native record inside a document (citations' `native`, units' `parts`). */
@@ -104,17 +105,17 @@ function shareNativeRecords(value: unknown, variant: PacketVariant, count: { n: 
   return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, shareNativeRecords(v, variant, count, transform, k)]));
 }
 const secrets = (s: string) => redactSecrets(s).text;
-/** A user's home directory (macOS, Linux, Windows, root) becomes `~`: a local identifier, not evidence. */
-const HOME = /(^|[\s`"'=:(+\-]|file:\/\/)(\/(?:Users|home)\/[^/\s`"']+|[A-Za-z]:\\+Users\\+[^\\\s`"']+|\/root)(?=[/\\\s`"',;:)}\]]|$)/giu;
-const homes = (s: string) => s.replace(HOME, (_, prefix: string) => `${prefix}~`);
 /**
- * A string as the partner variant shares it: secrets redacted, home directories as `~`. If the export pipeline's
- * stricter final scan still flags the result, the whole string is withheld: over-redaction is preferred to a leak.
+ * A string as the partner variant shares it, by the export pipeline's rules: secrets redacted, absolute local paths
+ * as `[LOCAL_PATH]` and user assignments as `[LOCAL_USER]` (workspace-relative paths stay). If the final scan still
+ * flags the result, the whole string is withheld: over-redaction is preferred to a leak.
  */
 export const WITHHELD_BY_SCAN = "[REDACTED_SECRET: text withheld by the final secret scan]";
+// Home directories after any quoting the home-path scan recognizes (backticks, file://), before the general rule.
+const HOME = /(^|[\s`"'=:(+\-]|file:\/\/)(\/(?:Users|home)\/[^/\s`"']+|[A-Za-z]:\\+Users\\+[^\\\s`"']+|\/root)(?=[/\\\s`"',;:)}\]]|$)/giu;
 export const sharedText = (s: string) => {
-  const t = homes(secrets(s));
-  return containsPortableSecretPattern(t, "text/plain") ? WITHHELD_BY_SCAN : t;
+  const t = redactLocalIdentifiers(secrets(s).replace(HOME, (_, prefix: string) => `${prefix}[LOCAL_PATH]`));
+  return containsPortableSecretPattern(t, "text/plain") || containsPortableLocalPath(t) || containsPortableLocalHomePath(t) ? WITHHELD_BY_SCAN : t;
 };
 /** Code in prose: fenced blocks and code spans. */
 const code = (s: string) => s.replace(/```[\s\S]*?```/gu, "[code redacted]").replace(/`[^`\n]+`/gu, "[code redacted]");
@@ -167,10 +168,11 @@ async function rewriteParquet(source: string, target: string, table: string, tra
             const shared = redactValue(withoutHiddenReasoning(JSON.parse(v)), count, transform);
             out[k] = JSON.stringify(shared);
             out.text = flattenText(shared).join("\n") || null;
+            out.text_sha256 = typeof out.text === "string" ? `sha256:${createHash("sha256").update(out.text).digest("hex")}` : null;
             if (out[k] !== v) redactions++;
             continue;
           }
-          if (k === "text" && "content_json" in row && typeof row.content_json === "string") continue;
+          if ((k === "text" || k === "text_sha256") && "content_json" in row && typeof row.content_json === "string") continue;
           if (typeof v === "string") { const t = transform(v); if (t !== v) redactions++; out[k] = t; }
           else if (typeof v === "bigint") out[k] = Number(v);
           else if (v !== null && typeof v === "object" && "items" in (v as object)) out[k] = ((v as { items: unknown[] }).items).map((x) => (typeof x === "string" ? transform(x) : x));
@@ -350,6 +352,7 @@ ${c.native.text !== undefined ? `<pre>${esc(c.native.text)}</pre>` : `<p class="
       const text = readFileSync(join(out, path), "utf8"), media = extname(path) === ".json" ? "application/json" : "text/plain";
       if (containsPortableSecretPattern(text, media)) throw new Error(`The ${variant} packet still contains a credential pattern in ${path}.`);
       if (containsPortableLocalHomePath(text, media)) throw new Error(`The ${variant} packet still contains a local home path in ${path}.`);
+      if (media === "application/json" && containsPortableLocalPath(text, media)) throw new Error(`The ${variant} packet still contains an absolute local path in ${path}.`);
     }
   }
 
@@ -380,6 +383,13 @@ function redactArrow(bytes: Buffer, transform: (s: string) => string, variant: P
   const table = tableFromIPC(bytes);
   const columns = Object.fromEntries(table.schema.fields.map((f) => {
     const v = table.getChild(f.name)!;
+    // List<Utf8> columns (writes, check kinds, occurrences, cited assessments) are shared element by element.
+    if (String(f.type).startsWith("List<Utf8")) {
+      return [f.name, vectorFromArray(Array.from({ length: table.numRows }, (_, i) => {
+        const items = v.get(i) as { toArray(): unknown[] } | null;
+        return items === null ? null : items.toArray().map((x) => { const t = transform(String(x)); assertShareable(t, `units.arrow ${f.name}`, variant); return t; });
+      }), f.type)];
+    }
     if (String(f.type) !== "Utf8") return [f.name, v];
     return [f.name, vectorFromArray(Array.from({ length: table.numRows }, (_, i) => {
       const s = v.get(i) as string | null;
@@ -415,12 +425,17 @@ export function roCrate(manifest: PacketManifest) {
 export function verifyPacket(root: string): { ok: boolean; changed: string[]; missing: string[]; unlisted: string[] } {
   const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8")) as PacketManifest;
   if (manifest.schemaVersion !== "ebo.packet/v1") throw new Error("Not an EBO packet manifest.");
+  for (const { path } of [...manifest.files, ...manifest.withheld]) assertContainedPath(path);
   const walk = (dir: string): string[] => readdirSync(join(root, dir), { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]));
   const listed = new Set(manifest.files.map(({ path }) => path));
   const present = walk("").map((p) => relative(".", p).replace(/\\/gu, "/")).filter((p) => p !== "manifest.json" && p !== "ro-crate-metadata.json");
   const missing = manifest.files.filter(({ path }) => !existsSync(join(root, path))).map(({ path }) => path);
   const changed = manifest.files.filter(({ path, bytes, sha256: d }) => existsSync(join(root, path)) && (statSync(join(root, path)).size !== bytes || sha256(readFileSync(join(root, path))) !== d)).map(({ path }) => path);
   const unlisted = present.filter((p) => !listed.has(p));
+  // The RO-Crate description is generated from the manifest: it must equal that generation exactly.
+  const crate = join(root, "ro-crate-metadata.json");
+  if (!existsSync(crate)) missing.push("ro-crate-metadata.json");
+  else if (readFileSync(crate, "utf8") !== `${JSON.stringify(roCrate(manifest), null, 2)}\n`) changed.push("ro-crate-metadata.json");
   return { ok: !missing.length && !changed.length && !unlisted.length, changed, missing, unlisted };
 }
 

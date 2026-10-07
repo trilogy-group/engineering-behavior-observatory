@@ -1025,6 +1025,23 @@ function stringContainsLocalIdentifier(value: string): boolean {
   return matched;
 }
 
+/**
+ * The export pipeline's local-identifier rule as a reusable step: absolute local paths become `[LOCAL_PATH]` and
+ * user assignments `[LOCAL_USER]`. Used by evidence packets for their shared variants.
+ */
+export function redactLocalIdentifiers(text: string): string {
+  let output = text.replace(LOCAL_PATH, (_match, prefix: unknown) => `${typeof prefix === "string" ? prefix : ""}[LOCAL_PATH]`);
+  for (const pattern of LOCAL_IDENTIFIER_PATTERNS) {
+    output = output.replace(pattern, (_match, prefix: unknown, suffix: unknown) => `${typeof prefix === "string" ? prefix : ""}[LOCAL_USER]${typeof suffix === "string" ? suffix : ""}`);
+  }
+  return output;
+}
+
+/** The export pipeline's final absolute-local-path scan. */
+export function containsPortableLocalPath(text: string, mediaType = "text/plain"): boolean {
+  return containsLocalPath(text, mediaType);
+}
+
 function containsLocalPath(text: string, mediaType: string): boolean {
   if (mediaType === "application/json") {
     return valueContainsLocalPath(parseJson(Buffer.from(text), "Portable JSON final scan"));

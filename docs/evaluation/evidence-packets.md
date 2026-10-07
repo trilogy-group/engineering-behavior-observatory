@@ -21,14 +21,23 @@ ebo packet verify <packet-dir>
 ## Variants
 
 - `internal`: all data, no redactions.
-- `partner`: all data; secrets and credentials redacted with the shared
-  redaction library in every text-bearing file, including Parquet tables and
-  the cloud's units. The manifest records the number of redactions per file.
+- `partner`: all data, shared by the export pipeline's rules in every
+  text-bearing file, including Parquet tables and the cloud's units: secrets
+  redacted (secret-named fields replaced whole), absolute local paths and home
+  directories as `[LOCAL_PATH]`, user assignments as `[LOCAL_USER]`, local path
+  fields dropped, and hidden reasoning removed from native records and event
+  content. A string the final scan still flags is withheld whole. The manifest
+  records the number of redactions per file.
 - `restricted`: narrative, claims, evaluations, metrics and the viewer. Unit
   text becomes a structural label (kind, role, tool, check, status); commands,
   targets and error text are removed; code in judgments is redacted; cited
   native lines, native records, attempt audits and tables are withheld and
   listed in the manifest with their SHA-256.
+
+A shared native record that sanitizing changed carries its own SHA-256 and
+length, with the original's as `source_sha256`. A final scan (credential
+patterns, absolute local paths, home paths) runs over every shared text file
+and every Parquet and Arrow value; any finding fails the build.
 
 Partner and restricted packets are built only when every claim validates; an
 internal packet shows a claim that no longer holds as such. A packet is built in
@@ -39,7 +48,9 @@ new or empty.
 
 `manifest.json` (`ebo.packet/v1`) lists every file with its SHA-256, size, media
 type, layer and, in redacted variants, its redaction count, plus withheld files
-with their digests. `ebo packet verify` recomputes them and reports changed,
+with their digests. `ebo packet verify` recomputes them, checks that
+`ro-crate-metadata.json` is exactly the description generated from the
+manifest, rejects manifest paths outside the packet, and reports changed,
 missing and unlisted files; `verify.html` does the same in the browser.
 `ro-crate-metadata.json` is an RO-Crate 1.2 description generated from the
 manifest, which stays authoritative.
