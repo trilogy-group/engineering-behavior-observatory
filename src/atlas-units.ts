@@ -239,8 +239,9 @@ export function deriveUnits({ attemptId, events, occurrences, resolveContent }: 
     unit.status = results.length || operation.failed ? (failed ? "error" : "ok") : null;
     unit.error_signature = failed ? errorSignature(outputText) : null;
     unit.input_chars = input.length ? JSON.stringify(input).length : null;
-    unit.output_chars = results.length ? outputText.length : null;
-    unit.output_lines = results.length ? (outputText ? outputText.split("\n").length : 0) : null;
+    // Output size only when the result content resolved; an unresolved result is unavailable, not empty.
+    unit.output_chars = output.length ? outputText.length : null;
+    unit.output_lines = output.length ? (outputText ? outputText.split("\n").length : 0) : null;
     unit.t_start = time(ordered[0]!);
     unit.t_end = results.length ? time(results.at(-1)!) : null;
     unit.duration_seconds = seconds(unit.t_start, unit.t_end);

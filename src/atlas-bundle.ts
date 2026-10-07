@@ -294,7 +294,10 @@ async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string
     const view: AtlasView = await queryAtlas(source);
     // Keep the report, not the view's cases (they carry native records for display).
     reports.set(cohort.id, { title: view.title, generatedAt: view.generatedAt, report: view.report } as AtlasView);
-    for (const entry of source.input.corpusEntries.filter(({ manifestKind }) => manifestKind === "run")) {
+    // Members are the attempts the cohort's selection policy keeps (every selected attempt has at least one case),
+    // so superseded retries stay out of the cohort as they stay out of its certified report.
+    const selected = new Set(view.cases.map(({ attemptId }) => attemptId));
+    for (const entry of source.input.corpusEntries.filter(({ manifestKind, attemptId }) => manifestKind === "run" && selected.has(attemptId!))) {
       const bundleRoot = resolve(source.corpusRoot, dirname(entry.manifestPath));
       // Cohorts may carry their own corpus copies: one attempt, one manifest digest, whichever copy is read.
       const known = attempts.get(entry.attemptId!) ?? { entry, bundleRoot, cohorts: new Set<string>() };

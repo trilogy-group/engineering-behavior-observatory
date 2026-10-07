@@ -83,13 +83,6 @@ export async function prepareCloud(unitsBytes: Uint8Array, getEmbeddings: () => 
   for (const [fi, family] of FAMILIES.entries()) {
     const members = rows.filter((r) => r.family === family).map((r) => r.row_id);
     if (!members.length) continue;
-    if (members.length < 10) {
-      // Too few units for UMAP: a deterministic circle, in seq order, with the family label above it.
-      members.forEach((row, i) => { x[row] = offset + 1 + Math.cos((2 * Math.PI * i) / members.length); y[row] = 1 + Math.sin((2 * Math.PI * i) / members.length); });
-      labels.push({ x: offset + 1, y: 2.5, text: family.toUpperCase(), level: 0, priority: 1e9 });
-      offset += 3.5;
-      continue;
-    }
     status(`Laying out ${members.length.toLocaleString()} ${family}…`);
     // Identical vectors (identical texts) are laid out once and their units placed together. The key is the vector,
     // not the text: a restricted packet replaces texts with structural labels but keeps the vectors.
@@ -99,6 +92,14 @@ export async function prepareCloud(unitsBytes: Uint8Array, getEmbeddings: () => 
       if (!unique.has(t)) { unique.set(t, unique.size); firstRow.push(row); }
       uniqueOf[i] = unique.get(t)!;
     });
+    if (firstRow.length < 10) {
+      // Too few distinct units for UMAP: a deterministic circle of the distinct vectors, duplicates together.
+      const k = firstRow.length;
+      members.forEach((row, i) => { const u = uniqueOf[i]!; x[row] = offset + 1 + Math.cos((2 * Math.PI * u) / k); y[row] = 1 + Math.sin((2 * Math.PI * u) / k); });
+      labels.push({ x: offset + 1, y: 2.5, text: family.toUpperCase(), level: 0, priority: 1e9 });
+      offset += 3.5;
+      continue;
+    }
     const m = firstRow.length, vectors = new Float32Array(m * d);
     firstRow.forEach((row, i) => vectors.set(data.subarray(row * d, (row + 1) * d), i * d));
     const umap = await createUMAP(m, d, 2, vectors, { metric: "cosine", nNeighbors: Math.min(15, m - 1), minDist: 0.1, seed: 42, initializeMethod: m < 50 ? "random" : "spectral" });
