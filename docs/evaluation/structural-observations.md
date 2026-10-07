@@ -86,14 +86,15 @@ each assertion outcome with its native verifier citation.
 
 ## Occurrences
 
-Extractor `1.1.0` adds `occurrences` beside the attempt-level counts. Each
+Extractors `1.1.0` and later add `occurrences` beside the attempt-level counts
+(`1.2.0` uses occurrence rules `1.1.0`). Each
 occurrence is one instance of a pattern and lists only its own events and native
 records, so a judge or reviewer can open exactly that instance:
 
 | Type | One occurrence | Rule |
 | :--- | :--- | :--- |
-| `failure-response` | within one resolved session, agent and order domain: consecutive explicit failures of one tool, then the next call of that tool that starts after the last failure | exact |
-| `validation-run` | one call whose command runs a test, typecheck, lint or build, classified per command segment; `result`, `reportedExitCode`, `outputRedirected` | heuristic |
+| `failure-response` | within one resolved session, agent and order domain: consecutive explicit failures of one tool, then the next call of that tool that starts after the last failure; `lastFailureEventId`, `responseEventId` | exact |
+| `validation-run` | one call whose command runs a test, typecheck, lint or build, classified per command segment; version, help, list and setup invocations (`--version`, `install`, `--listTests`) are not runs; `result`, `reportedExitCode`, `outputRedirected` | heuristic |
 | `source-change` | an explicit mutation record, or an edit/write tool call or shell command that writes a source path and has a native success result (`detectedBy`); failed or unfinished attempts are not changes | heuristic except explicit mutations |
 | `repeated-operation` | a call with the same tool and input digest as an earlier one | exact |
 | `compaction` | adjacent compaction records with no tool event or model/user message between them and no repeated record kind; a partial boundary stays on its own | heuristic |

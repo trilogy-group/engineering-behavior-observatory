@@ -191,3 +191,25 @@ EBO_NATIVE_CODEX_CONTRACT=1 node --test dist/test/codex-judge.test.js
 EBO_LIVE_CODEX_JUDGE_SMOKE=1 EBO_LIVE_CODEX_JUDGE_MODEL='<existing-route>' \
   node --test --test-name-pattern='approved existing-auth' dist/test/codex-judge.test.js
 ```
+
+## Atomic claims and evidence projection
+
+Judge responses carry atomic factual claims in `judgment.claims` (prompt version
+`1.2.0`, or `1.3.0` with an occurrence ledger). Each claim has a unique `id`,
+`text`, `citations` drawn from the assertion's citations, and `workspace`: the
+exact working directory its cited native records state, or `null` when unknown.
+An assessment needs at least one claim; an abstention may have none. Validation
+requires an explicit workspace to be the single `cwd`-style value of the cited
+records, so evidence from another checkout cannot verify the submitted
+workspace. The check establishes an explicit native binding; it cannot prove
+that a shell command did not change directories internally. Assertions without
+claims remain valid. Rationale and alternative explanation stay separate from
+the claims. [Claim checks](occurrence-ratings.md#claim-checks) can route
+unsupported claims to review.
+
+The judge sees a projection of each native record without hidden reasoning.
+Long strings keep marked head and tail excerpts, so test summaries at the end of
+an output survive, while exit codes, paths and other short fields stay intact;
+a structurally oversized record falls back to a marked excerpt. Native captures
+and citation digests are unchanged. A failed Codex judge turn records its
+terminal status and error.

@@ -101,6 +101,10 @@ whole-agent `session.status: idle`. Those two observation sequences are retained
 as the activity boundary. They do not claim that an assistant message was
 caused by the prompt, and `finalResponse` is not treated as a prompt result.
 
+The boundary proves capture completion, not a successful turn: when the
+session's `turn/end` reports `reason.kind: "error"`, the attempt is a failed task
+with the native error in its message, and the capture stays complete.
+
 The capability report keeps these current protocol limitations explicit:
 
 - protocol-version negotiation: unsupported;
