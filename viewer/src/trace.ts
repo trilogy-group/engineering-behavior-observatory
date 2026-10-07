@@ -10,7 +10,8 @@ export function downloadTrace(task: string, lanes: LaneMeta[], byLane: Map<strin
   lanes.forEach((l, n) => {
     const pid = arms.indexOf(l.condition) + 1, base = (n + 1) * 100;
     const us = byLane.get(l.attempt_id) ?? [];
-    const t0 = Math.min(...us.filter((u) => u.t0_ms != null).map((u) => u.t0_ms!));
+    const timed = us.filter((u) => u.t0_ms != null).map((u) => u.t0_ms!);
+    const t0 = timed.length ? Math.min(...timed) : 0;   // an all-untimed attempt starts at 0, like its swimlane
     const ts = (ms: number | null) => Math.round(((ms ?? t0) - t0) * 1000);
     // JSON traces need properly nested slices per thread: overlapping (parallel) calls go to extra threads.
     const tracks: { name: string; ends: number[] }[] = [];

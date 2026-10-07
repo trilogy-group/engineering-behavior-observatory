@@ -17,7 +17,7 @@ import { FiguresPanel, type ViewsDoc } from "./views";
 import { prepareCloud } from "./layout";
 import { tableFromJSON, tableToIPC } from "apache-arrow";
 import {
-  commandRunning, decodeState, describable, describe, encodeState, getState, listCommands, provide, recordChange, register, run, setState, subscribe, target,
+  commandRunning, decodeState, onCommandBoundary, describable, describe, encodeState, getState, listCommands, provide, recordChange, register, run, setState, subscribe, target,
   type CommandEvent, type Json,
 } from "./registry";
 
@@ -182,6 +182,14 @@ async function main() {
   let pendingBefore: Record<string, Json> | null = null;
   let settle: ReturnType<typeof setTimeout> | undefined;
   let quietUntil = 0;
+  // A pending gesture is recorded before any command starts, so the two never share one history entry.
+  const flushGesture = () => {
+    clearTimeout(settle);
+    const b = pendingBefore;
+    pendingBefore = null;
+    if (b) recordChange("cloudChanged", "Changed the cloud view.", b);
+  };
+  onCommandBoundary(flushGesture);
   const chartReadyPromise = new Promise<void>((resolve) => { chartReady = resolve; });
   let eaTools: EaTool[] = [];
   let atlasState: Record<string, any> = {};
@@ -214,7 +222,7 @@ async function main() {
       {
         pendingBefore ??= before;
         clearTimeout(settle);
-        settle = setTimeout(async () => { const b = pendingBefore!; pendingBefore = null; await refreshing; recordChange("cloudChanged", "Changed the cloud view.", b); }, 400);
+        settle = setTimeout(async () => { await refreshing; flushGesture(); }, 400);
       }
     },
     modelContext: { provideContext: (context: { tools?: EaTool[] }) => { eaTools = context.tools ?? []; } },

@@ -313,8 +313,8 @@ export class SwimlanesPanel {
           ? (((end ? u.t1_ms : u.t0_ms) ?? t0) - t0) / maxDur * W
           : ((stepIdx.get(u.row_id) ?? nextStep) + (end ? 1 : 0)) * sw;
         const pickedIdx = this.picked.indexOf(l.attempt_id);
-        const tok = [l.cost_usd != null ? `$${l.cost_usd.toFixed(2)}` : "", l.context_max ? `ctx ≤${fmtTok(l.context_max)}` : ""].filter(Boolean).join(" · ");
-        const tokTitle = `${l.tokens_total != null ? fmtTok(l.tokens_total) + " tokens processed" : "no token usage reported"}${l.cost_usd != null ? ` · $${l.cost_usd.toFixed(2)}` : ""}${l.context_max ? ` · largest context of one request ${l.context_max.toLocaleString()}` : ""} · usage source: ${l.usage_semantics}`;
+        const tok = esc([typeof l.cost_usd === "number" ? `$${l.cost_usd.toFixed(2)}` : "", typeof l.context_max === "number" && l.context_max ? `ctx ≤${fmtTok(l.context_max)}` : ""].filter(Boolean).join(" · "));
+        const tokTitle = `${typeof l.tokens_total === "number" ? fmtTok(l.tokens_total) + " tokens processed" : "no token usage reported"}${typeof l.cost_usd === "number" ? ` · $${l.cost_usd.toFixed(2)}` : ""}${typeof l.context_max === "number" && l.context_max ? ` · largest context of one request ${l.context_max.toLocaleString()}` : ""} · usage source: ${l.usage_semantics}`;
         labels += `<div class="lane-label ${pickedIdx >= 0 ? "picked" : ""}" style="height:${LANE_H}px" data-lane="${esc(l.attempt_id)}">
           <label class="pick"><input type="checkbox" data-pick="${esc(l.attempt_id)}" ${target("toggleLanePick", l.attempt_id)} ${pickedIdx >= 0 ? "checked" : ""} aria-label="Select trial ${esc(l.trial_id)} for alignment">${pickedIdx >= 0 ? `<b>${"AB"[pickedIdx]}</b>` : ""}</label>
           <div class="ll-main"><span class="ll-title">trial ${esc(l.trial_id)}${l.terminal_state !== "completed" ? ` <span class="badge">${esc(l.terminal_state)}</span>` : ""} <span class="muted" title="${esc(tokTitle)}">${tok}</span></span>

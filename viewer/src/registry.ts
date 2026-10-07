@@ -52,9 +52,14 @@ export async function setState(state: Record<string, Json>, source: Source = "sy
   emit({ command: "setState", args: null, source, description: "Restored a viewer state.", state: getState() });
 }
 
+const boundaryHooks: Array<() => void> = [];
+/** Called at the start of every command, e.g. to record a component's own pending change first. */
+export function onCommandBoundary(hook: () => void): void { boundaryHooks.push(hook); }
+
 /** Run a command. Commands run one at a time, in order, so an assistant's steps and a user's clicks never interleave. */
 export function run(name: string, args: Record<string, unknown> = {}, source: Source = "user"): Promise<CommandEvent> {
   const next = running.then(async () => {
+    for (const hook of boundaryHooks) hook();
     const def = commands.get(name);
     if (!def) throw new Error(`Unknown viewer command: ${name}`);
     const before = getState();
