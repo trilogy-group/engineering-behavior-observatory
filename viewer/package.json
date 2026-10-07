@@ -6,7 +6,7 @@
   "description": "EBO Atlas viewer: Embedding Atlas and EBO panels on one Mosaic/DuckDB-WASM data layer",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build --logLevel error",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "smoke": "node scripts/smoke.mjs",
     "check-upgrades": "node scripts/check-upgrades.mjs",
