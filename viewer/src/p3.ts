@@ -168,7 +168,9 @@ export class Evidence {
     if (view.kind === "audit" || view.kind === "chains" || view.kind === "compare") {
       const A = this.audit?.attempts[view.attemptId];
       return { summary: `${view.kind} of ${this.attemptLabel(view.attemptId)}${A ? `: ${A.checks.length} captured checks, ${A.changes.length} source changes, ${A.failure_chains.length} failure chains` : ""}.`,
-        data: { view, verdicts: A?.verdicts ?? [], failureChains: A?.failure_chains.length ?? null } as unknown as Json };
+        // The chains themselves, so a reader (or an assistant) can answer from describe() what the drawer shows.
+        data: { view, verdicts: A?.verdicts ?? [], failureChains: A?.failure_chains.length ?? null,
+          chains: (A?.failure_chains ?? []).map((f) => ({ tool: f.tool, failures: f.failures.length, firstStep: f.first_step, tMs: f.t_ms, signature: f.signature, nextOk: f.next_ok, nextRow: f.next_same_tool })) } as unknown as Json };
     }
     return { summary: `${view.kind} view in the drawer.`, data: view as unknown as Json };
   }

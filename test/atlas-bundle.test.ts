@@ -9,6 +9,8 @@ import { tableFromIPC } from "apache-arrow";
 import { ATLAS_TABLES, buildAtlasBundle, flattenText, verifyAtlasBundle, type AtlasBundleRequest } from "../src/atlas-bundle.js";
 import { loadAtlas } from "../src/atlas.js";
 import { laneData } from "../src/atlas-lanes.js";
+import { nativeRecordDigest } from "../src/atlas-evidence.js";
+import { createHash } from "node:crypto";
 import { main } from "../src/cli.js";
 import { createAtlasFixture } from "./atlas-fixture.js";
 
@@ -94,7 +96,10 @@ test("an Atlas bundle holds Atlas tables v1 built from the validated cohort, and
     writeFileSync(requestPath, JSON.stringify({ ...request, condition: { pattern: "^(?<arm>.+)$" } }));
     await assert.rejects(buildAtlasBundle(requestPath, join(root, "bundle-3"), { embed }), /named group "condition"/u);
     writeFileSync(requestPath, JSON.stringify({ ...request, condition: { pattern: "^nothing-(?<condition>matches)$" } }));
+    const staging = () => readdirSync(tmpdir()).filter((f) => f.startsWith("ebo-atlas-tables-")).sort();
+    const stagingBefore = staging();
     await assert.rejects(buildAtlasBundle(requestPath, join(root, "bundle-4"), { embed }), /does not match the condition pattern/u, "a naming mistake is an error, not a synthesized arm");
+    assert.deepEqual(staging(), stagingBefore, "a failed build removes its streamed table staging (resolved native content)");
     assert.ok(readFileSync(join(out, "manifest.json"), "utf8").includes('"schemaVersion": "ebo.atlas-bundle/v1"'));
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -108,4 +113,13 @@ test("lane usage: final records without token dimensions are not usage, and thei
   assert.deepEqual([durationOnly.lane.usage_semantics, durationOnly.lane.tokens_total], ["none", null], "no token evidence is unavailable, not zero");
   const withIncrements = laneData(attempt, [], [event({ resourceSemantics: "increment", inputTokens: 10, outputTokens: 5 }), event({ resourceSemantics: "cumulative-final", totalCostUsd: 0.5 })]);
   assert.deepEqual([withIncrements.lane.usage_semantics, withIncrements.lane.tokens_total, withIncrements.lane.cost_usd], ["per-turn", 15, 0.5]);
+});
+
+test("native record digests: a line record hashes its line, any other locator the whole file's bytes", () => {
+  const file = Buffer.from('{"a":1}\n{"b":2}\n');
+  assert.deepEqual(nativeRecordDigest(file, "line:2"), { sha256: createHash("sha256").update('{"b":2}').digest("hex"), text: '{"b":2}', chars: 7 });
+  assert.equal(nativeRecordDigest(file, "line:9"), undefined);
+  assert.equal(nativeRecordDigest(file, "")!.sha256, createHash("sha256").update(file).digest("hex"));
+  assert.equal(nativeRecordDigest(Buffer.from([0x1f, 0x8b, 0, 1]), "#/workspace")!.binary, true, "binary files keep their digest, not their text");
+  assert.equal(nativeRecordDigest(null, "line:1"), undefined);
 });

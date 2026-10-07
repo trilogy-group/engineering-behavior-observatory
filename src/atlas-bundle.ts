@@ -9,7 +9,7 @@ import { loadAtlas, queryAtlas, type AtlasSource, type AtlasView } from "./atlas
 import { Field, List, makeVector, Table, tableToIPC, Utf8, vectorFromArray } from "apache-arrow";
 import { buildViews, validateClaims, type ClaimsSource } from "./atlas-claims.js";
 import { DEFAULT_FIREWORKS_MODEL, embedTexts, LOCAL_EMBEDDING_MODEL } from "./atlas-embeddings.js";
-import { assessmentDoc, attemptEvidence, NativeLines } from "./atlas-evidence.js";
+import { assessmentDoc, attemptEvidence, NativeLines, nativeRecordDigest } from "./atlas-evidence.js";
 import { laneData, type LaneMeta } from "./atlas-lanes.js";
 import { ATLAS_UNITS_VERSION, deriveUnits, type AtlasUnit } from "./atlas-units.js";
 import type { BehaviorAssertion } from "./behavior-assertions.js";
@@ -137,7 +137,8 @@ function readRequest(path: string): AtlasBundleRequest {
   if (errors.length) throw new Error(errors.map(({ field, message }) => `${field}: ${message}`).join("\n"));
   if (new Set(request.cohorts.map(({ id }) => id)).size !== request.cohorts.length) throw new Error("Atlas bundle cohort ids must be unique.");
   if (request.condition) {
-    const pattern = new RegExp(request.condition.pattern, "u");
+    // The condition pattern is study configuration (trusted, at most 1000 characters by the request schema).
+    const pattern = new RegExp(request.condition.pattern, "u"); // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
     if (!/\(\?<condition>/u.test(request.condition.pattern)) throw new Error(`Condition pattern ${String(pattern)} needs a named group "condition".`);
   }
   return request;
@@ -153,16 +154,17 @@ function contentResolver(evidence: RetainedBehaviorEvidence) {
     const base = marker === -1 ? reference.recordLocator : reference.recordLocator.slice(0, marker);
     const key = `${reference.artifactId}\0${base === "" ? "#" : base}`;
     if (!records.has(key)) return { status: "missing-record" };
-    let current = records.get(key);
-    for (const segment of (marker === -1 ? "" : reference.recordLocator.slice(marker + 1)).split("/").slice(1)) {
-      const token = segment.replace(/~1/gu, "/").replace(/~0/gu, "~");
-      if (Array.isArray(current)) current = current[Number(token)];
-      else if (current !== null && typeof current === "object") current = (current as Record<string, unknown>)[token];
-      else return { status: "bad-pointer" };
-      if (current === undefined) return { status: "bad-pointer" };
-    }
-    return { status: "resolved", value: current };
+    const tokens = (marker === -1 ? "" : reference.recordLocator.slice(marker + 1)).split("/").slice(1).map((t) => t.replace(/~1/gu, "/").replace(/~0/gu, "~"));
+    const value = ownPointer(records.get(key), tokens);
+    return value === undefined ? { status: "bad-pointer" } : { status: "resolved", value };
   };
+}
+
+/** A JSON pointer over own properties only: a segment such as __proto__ never reaches an inherited object. */
+export function ownPointer(value: unknown, tokens: readonly string[]): unknown {
+  if (!tokens.length) return value;
+  const [token, ...rest] = tokens;
+  return value !== null && typeof value === "object" && Object.hasOwn(value, token!) ? ownPointer((value as Record<string, unknown>)[token!], rest) : undefined;
 }
 
 function eventRow(event: UniformEvent, index: number, resolve: ReturnType<typeof contentResolver>): Row {
@@ -193,8 +195,9 @@ function eventRow(event: UniformEvent, index: number, resolve: ReturnType<typeof
     is_error: typeof attrs.isError === "boolean" ? attrs.isError : null,
     parent_event_key: parent.status === "known" && parent.value ? `${event.attemptId}/${parent.value}` : null,
     attributes_json: JSON.stringify(attrs), content_status: event.content.status, content_ref_count: refs.length, content_resolution: resolution,
-    text: text || null, text_chars: text.length, text_sha256: text ? sha256(text) : null, content_json: contentJson,
-    content_json_chars: contentJson?.length ?? 0,
+    // Sizes only for content that resolved; unresolved content is unavailable, not an empty payload.
+    text: text || null, text_chars: resolved.length ? text.length : null, text_sha256: text ? sha256(text) : null, content_json: contentJson,
+    content_json_chars: contentJson === null || contentJson === undefined ? null : contentJson.length,
   };
 }
 
@@ -214,6 +217,8 @@ class TableSink {
     this.counts.set(name, (this.counts.get(name) ?? 0) + 1);
   }
   close() { for (const fd of this.fds.values()) closeSync(fd); this.fds.clear(); }
+  /** Close and remove the staging directory (it holds resolved native content); safe to call more than once. */
+  dispose() { this.close(); rmSync(this.staging, { recursive: true, force: true }); }
 }
 
 async function writeTables(tables: Record<string, Row[]>, directory: string, sink: TableSink) {
@@ -262,23 +267,25 @@ export async function buildAtlasBundle(requestPath: string, destination: string,
   if (existsSync(destination) && readdirSync(destination).length) throw new Error(`Atlas bundle output ${destination} is not empty; choose a new directory.`);
   mkdirSync(dirname(resolve(destination)), { recursive: true });
   const outputRoot = mkdtempSync(join(dirname(resolve(destination)), `.${basename(destination)}.partial-`));
+  const sink = new TableSink();
   try {
-    const manifest = await writeAtlasBundle(request, requestPath, outputRoot, options);
+    const manifest = await writeAtlasBundle(request, requestPath, outputRoot, sink, options);
     if (existsSync(destination)) rmSync(destination, { recursive: true });
     renameSync(outputRoot, destination);
     return manifest;
   } catch (error) {
     rmSync(outputRoot, { recursive: true, force: true });
     throw error;
+  } finally {
+    sink.dispose();
   }
 }
 
-async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string, outputRoot: string,
+async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string, outputRoot: string, sink: TableSink,
   options: { now?: () => Date; embed?: typeof embedTexts }): Promise<AtlasBundleManifest> {
   const base = dirname(resolve(requestPath));
-  const condition = request.condition ? new RegExp(request.condition.pattern, "u") : undefined;
+  const condition = request.condition ? new RegExp(request.condition.pattern, "u") : undefined; // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
   const tables: Record<string, Row[]> = Object.fromEntries(Object.keys(ATLAS_TABLES).filter((name) => !STREAMED.has(name)).map((name) => [name, []]));
-  const sink = new TableSink();
   const stream = (name: string, row: Row) => sink.push(name, row);
   const cohorts: AtlasBundleManifest["cohorts"] = [];
   const attempts = new Map<string, { entry: CorpusIndexEntry; bundleRoot: string; cohorts: Set<string> }>();
@@ -294,7 +301,11 @@ async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string
     const view: AtlasView = await queryAtlas(source);
     // Keep the report, not the view's cases (they carry native records for display).
     reports.set(cohort.id, { title: view.title, generatedAt: view.generatedAt, report: view.report } as AtlasView);
-    for (const entry of source.input.corpusEntries.filter(({ manifestKind }) => manifestKind === "run")) {
+    // Members are the (run, attempt) identities the cohort's selection policy keeps (every selected attempt has at
+    // least one case): superseded retries, their observations and their assessments stay out, as they stay out of
+    // the certified report.
+    const selected = new Set(view.cases.map(({ runId, attemptId }) => `${runId}\0${attemptId}`));
+    for (const entry of source.input.corpusEntries.filter(({ manifestKind, runId, attemptId }) => manifestKind === "run" && selected.has(`${runId}\0${attemptId}`))) {
       const bundleRoot = resolve(source.corpusRoot, dirname(entry.manifestPath));
       // Cohorts may carry their own corpus copies: one attempt, one manifest digest, whichever copy is read.
       const known = attempts.get(entry.attemptId!) ?? { entry, bundleRoot, cohorts: new Set<string>() };
@@ -302,12 +313,12 @@ async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string
       known.cohorts.add(cohort.id);
       attempts.set(entry.attemptId!, known);
     }
-    for (const { document } of source.input.observationSets) {
+    for (const { document } of source.input.observationSets.filter(({ document: d }) => selected.has(`${d.runId}\0${d.attemptId}`))) {
       const previous = observationSets.get(document.attemptId);
       if (previous && canonicalizeMetadata(previous) !== canonicalizeMetadata(document)) throw new Error(`Attempt ${document.attemptId} has two different observation sets.`);
       observationSets.set(document.attemptId, document);
     }
-    for (const c of source.cases.filter((x) => x.assertion && x.assertionDigest)) {
+    for (const c of view.cases.filter((x) => x.assertion && x.assertionDigest)) {
       const original = source.input.assertions.find(({ document }) => `sha256:${digestMetadata(document).value}` === c.assertionDigest)!.document;
       const entry = assertions.get(original.id) ?? { assertion: original, digest: c.assertionDigest!, review: c.review, cohorts: new Set<string>() };
       if (entry.digest !== c.assertionDigest) throw new Error(`Assertion ${original.id} differs between cohorts.`);
@@ -560,7 +571,7 @@ async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string
   if (request.claims) {
     const db = await DuckDBInstance.create(":memory:", extensionsOff);
     const c = await db.connect();
-    const lines = new Map<string, string[]>();
+    const files = new Map<string, Buffer | null>();
     try {
       for (const name of ["assessments", "attempts", "assessment_cohorts", "attempt_cohorts", "citations"]) await c.run(`CREATE VIEW ${name} AS SELECT * FROM ${tablePath(name)}`);
       await c.run(`CREATE VIEW units AS SELECT * FROM ${tablePath("units")} WHERE embed`);
@@ -568,9 +579,9 @@ async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string
       const claims = await validateClaims(JSON.parse(readFileSync(resolve(base, request.claims), "utf8")) as ClaimsSource, {
         connection: c, certified, reports: Object.fromEntries([...reports].map(([id, view]) => [id, { report: view.report }])),
         assessments: assessmentDocs as never, audits: audits as never, attempts: attemptsById, viewIds,
-        readLine: (path, locator) => {
-          if (!lines.has(path)) { try { lines.set(path, readFileSync(resolve(base, path), "utf8").split("\n")); } catch { lines.set(path, []); } }
-          return lines.get(path)![Number(/^line:(\d+)/u.exec(locator)?.[1] ?? 0) - 1];
+        recordSha256: (path, locator) => {
+          if (!files.has(path)) { try { files.set(path, readFileSync(resolve(base, path))); } catch { files.set(path, null); } }
+          return nativeRecordDigest(files.get(path)!, locator)?.sha256;
         },
       });
       writeFileSync(join(outputRoot, "claims.json"), JSON.stringify(claims));

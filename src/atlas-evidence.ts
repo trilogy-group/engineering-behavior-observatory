@@ -14,7 +14,22 @@ import type { UniformEvent } from "./uniform-events.js";
  * line. Audit verdicts compare the final message's check claims with captured checks; they read command and message
  * text and are exploratory, as the viewer says.
  */
-export type NativeRecordDoc = { artifact: string; locator: string; resolved: boolean; path?: string; sha256?: string; chars?: number; truncated?: boolean; text?: string; part?: string; event_key?: string };
+export type NativeRecordDoc = { artifact: string; locator: string; resolved: boolean; path?: string; sha256?: string; chars?: number; truncated?: boolean; text?: string; binary?: boolean; part?: string; event_key?: string };
+
+/**
+ * The digest a native record is cited by: a line record (`line:N`) hashes that line's UTF-8 text; any other locator
+ * names the whole file record (workspace, verifier, telemetry, manifest evidence), which hashes the file's bytes.
+ */
+export function nativeRecordDigest(file: Buffer | null, locator: string): { sha256: string; text?: string; chars: number; binary?: boolean } | undefined {
+  if (file === null) return undefined;
+  const line = /^line:(\d+)/u.exec(locator);
+  if (line) {
+    const raw = file.toString("utf8").split("\n")[Number(line[1]) - 1];
+    return raw === undefined ? undefined : { sha256: createHash("sha256").update(raw).digest("hex"), text: raw, chars: raw.length };
+  }
+  const binary = file.subarray(0, 8192).includes(0);
+  return { sha256: createHash("sha256").update(file).digest("hex"), chars: file.length, ...(binary ? { binary: true } : { text: file.toString("utf8") }) };
+}
 
 const CHECK_WORD = /\b(tsc|typecheck|type-check|types?|lint|eslint|tests?|test:ci|jest|suites?|build|coverage)\b/iu;
 const PASS_WORD = /\b(pass(?:es|ed|ing)?|clean|green|succeed(?:s|ed)?|ok|0 errors|no errors|exit(?:ed)? 0|100%)/iu;
@@ -50,7 +65,14 @@ export class NativeLines {
   record(artifact: string, locator: string, part?: string, eventKey?: string): NativeRecordDoc {
     const match = /^line:(\d+)/u.exec(locator);
     const relativePath = this.files.get(artifact);
-    if (!match || !relativePath) return { artifact, locator, resolved: false, ...(part ? { part } : {}), ...(eventKey ? { event_key: eventKey } : {}) };
+    if (!relativePath) return { artifact, locator, resolved: false, ...(part ? { part } : {}), ...(eventKey ? { event_key: eventKey } : {}) };
+    if (!match) {
+      let file: Buffer | null = null;
+      try { file = readFileSync(join(this.bundleRoot, relativePath)); } catch { file = null; }
+      const digest = nativeRecordDigest(file, locator);
+      return digest ? { artifact, locator, path: `${this.displayRoot}/${relativePath}`, resolved: true, ...digest, truncated: false, ...(part ? { part } : {}), ...(eventKey ? { event_key: eventKey } : {}) }
+        : { artifact, locator, resolved: false, ...(part ? { part } : {}), ...(eventKey ? { event_key: eventKey } : {}) };
+    }
     if (!this.cache.has(artifact)) {
       let lines: string[] | null = null;
       try { lines = readFileSync(join(this.bundleRoot, relativePath), "utf8").split("\n"); } catch { lines = null; }
