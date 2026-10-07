@@ -5,7 +5,9 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { buildAtlasBundle, type AtlasBundleRequest } from "../src/atlas-bundle.js";
-import { buildPacket, verifyPacket, type PacketManifest } from "../src/atlas-packet.js";
+import { tableFromIPC } from "apache-arrow";
+import { buildPacket, sharedText, verifyPacket, withoutHiddenReasoning, type PacketManifest } from "../src/atlas-packet.js";
+import { verifyAtlasBundle as verifyPacketBundle } from "../src/atlas-bundle.js";
 import { createAtlasFixture } from "./atlas-fixture.js";
 
 test("evidence packets: three variants, verification, withholding and claims that must validate", async () => {
@@ -44,6 +46,11 @@ test("evidence packets: three variants, verification, withholding and claims tha
     assert.equal(existsSync(join(root, "packet-restricted", "evidence")), false);
     const restrictedAssessments = readFileSync(join(root, "packet-restricted", "viewer/bundle/assessments.json"), "utf8");
     assert.equal(/"text":/u.test(restrictedAssessments.replace(/"claims":\[[^\]]*\]/gu, "")), false, "cited native text is withheld");
+    // Shared variants drop local paths and keep no write paths in restricted units.
+    const partnerAssessments = readFileSync(join(root, "packet-partner", "viewer/bundle/assessments.json"), "utf8");
+    assert.equal(/"(path|bundle|bundle_root)":/u.test(partnerAssessments), false, "local paths are dropped from shared documents");
+    const restrictedUnits = tableFromIPC(readFileSync(join(root, "packet-restricted", "viewer/bundle/units.arrow")));
+    assert.ok(Array.from({ length: restrictedUnits.numRows }, (_, i) => restrictedUnits.getChild("writes")!.get(i)?.length ?? 0).every((n) => n === 0), "restricted units carry no write paths");
     // The RO-Crate is generated from the manifest and lists every file.
     const crate = JSON.parse(readFileSync(join(root, "packet-internal", "ro-crate-metadata.json"), "utf8")) as { "@graph": Array<{ "@id": string }> };
     assert.ok(internal.files.every(({ path }) => crate["@graph"].some((n) => n["@id"] === path)));
@@ -53,6 +60,16 @@ test("evidence packets: three variants, verification, withholding and claims tha
     const tampered = verifyPacket(join(root, "packet-internal"));
     assert.deepEqual([tampered.ok, tampered.changed, tampered.unlisted], [false, ["index.html"], ["extra.txt"]]);
     await assert.rejects(buildPacket(join(root, "bundle"), join(root, "packet-internal"), { variant: "internal", viewerRoot: viewer }), /not empty/u);
+
+    // A manifest path that escapes its root is rejected before anything is read or written.
+    const manifestPath = join(root, "bundle", "manifest.json");
+    const original = readFileSync(manifestPath, "utf8");
+    const escaped = JSON.parse(original) as { files: Array<{ path: string }> };
+    escaped.files[0]!.path = "../outside.json";
+    writeFileSync(manifestPath, JSON.stringify(escaped));
+    assert.throws(() => verifyPacketBundle(join(root, "bundle")), /not a contained relative path/u);
+    await assert.rejects(buildPacket(join(root, "bundle"), join(root, "packet-escape"), { variant: "internal", viewerRoot: viewer }), /not a contained relative path/u);
+    writeFileSync(manifestPath, original);
 
     // A claim that no longer recomputes: internal packets show it; partner and restricted packets refuse to build.
     writeFileSync(join(root, "claims.json"), JSON.stringify({ ...claims, claims: [{ ...claims.claims[0], numbers: [{ ...claims.claims[0]!.numbers[0], value: 8 }] }] }));
@@ -64,4 +81,11 @@ test("evidence packets: three variants, verification, withholding and claims tha
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("shared native records drop hidden reasoning blocks and fields", () => {
+  assert.equal(sharedText("cd /Users/alex/repo && ls /home/sam/x C:\\Users\\kim\\y /root/z"), "cd ~/repo && ls ~/x ~\\y ~/z");
+  assert.equal(sharedText(`${"-".repeat(5)}BEGIN RSA PRIVATE KEY${"-".repeat(5)}\nMIIE\n${"-".repeat(5)}END RSA PRIVATE KEY${"-".repeat(5)}`).includes("MIIE"), false);
+  const record = { type: "assistant", message: { content: [{ type: "thinking", thinking: "private", signature: "sig" }, { type: "text", text: "visible" }], reasoning_content: "private" } };
+  assert.deepEqual(withoutHiddenReasoning(record), { type: "assistant", message: { content: [{ type: "text", text: "visible" }] } });
 });

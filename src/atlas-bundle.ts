@@ -610,10 +610,17 @@ async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string
 }
 
 /** Recompute every listed file's size and digest; report changed, missing and unlisted files. */
+/** A manifest path must stay inside its root: relative, forward slashes, no empty, `.` or `..` segments. */
+export function assertContainedPath(path: string): void {
+  if (!path || path.startsWith("/") || path.includes("\\") || /^[A-Za-z]:/u.test(path) || path.split("/").some((s) => s === "" || s === "." || s === ".."))
+    throw new Error(`Manifest path ${JSON.stringify(path)} is not a contained relative path.`);
+}
+
 export function verifyAtlasBundle(root: string): { ok: boolean; changed: string[]; missing: string[]; unlisted: string[] } {
   const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8")) as AtlasBundleManifest;
   const errors = validateArtifact("atlas bundle", manifest);
   if (errors.length) throw new Error(errors.map(({ field, message }) => `${field}: ${message}`).join("\n"));
+  for (const { path } of manifest.files) assertContainedPath(path);
   const listed = new Set(manifest.files.map(({ path }) => path));
   const walk = (dir: string): string[] => readdirSync(join(root, dir), { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]);
   const present = walk("").map((p) => p.replace(/\\/gu, "/")).filter((p) => p !== "manifest.json");
