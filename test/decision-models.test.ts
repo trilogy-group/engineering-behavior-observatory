@@ -232,6 +232,11 @@ test("claim checks route unsupported or uncertain claims to review and bind to t
   failedDecision.checks = failedDecision.checks.slice(0, 1);
   failedDecision.coverage = { claims: 2, checked: 1, failedDecisions: 1, supported: 1, flagged: 0 };
   assert.throws(() => validateClaimChecks(failedDecision, assertion), /was not asked about claim "typed"/u, "a failed decision is bound to its claim too");
+  const confident = structuredClone(checks);
+  const raised = { ...confident.checks[1]!.answer, confidence: 0.99 } as typeof confident.checks[number]["answer"];
+  confident.decisions[1]!.answers = { support: raised };
+  Object.assign(confident.checks[1]!, { answer: raised, accepted: true, flagged: true });
+  assert.throws(() => validateClaimChecks(confident, assertion), /retained provider response/u, "routing follows the provider's own response");
   const misstated = structuredClone(checks);
   (misstated.decisions[1]!.request.state as { claim: { text: string } }).claim.text = "Something else.";
   assert.throws(() => validateClaimChecks(misstated, assertion), /not asked about claim|different claim/u, "each decision must be about its own claim");
@@ -333,6 +338,21 @@ test("question set 1.1: silent success is a rule rating, source changes between 
   duplicated.ratings = duplicated.ratings.filter(({ source, occurrenceId, questionId }) => !(source === "fallback" && occurrenceId === lostPair.occurrenceId && questionId === lostPair.questionId));
   duplicated.coverage.fallback = duplicated.coverage.fallback! - 1;
   assert.throws(() => validateOccurrenceRatings(duplicated), /does not answer exactly the questions it asked/u);
+  const fabricated = structuredClone(ratings);
+  fabricated.decisions[0]!.request.state = { fabricated: true };
+  for (const record of fabricated.fallbackDecisions ?? []) {
+    for (const item of record.request.items) if (item.occurrenceId === fabricated.decisionOccurrences![0]) item.state = { fabricated: true };
+  }
+  validateOccurrenceRatings(fabricated);
+  assert.throws(() => verifyRatingRules(fabricated, observationSet, events, ({ recordLocator }) => content[recordLocator]), /not asked the state and questions/u,
+    "a decision must have seen the state the native records establish");
+  const unanswered = structuredClone(ratings);
+  const twoQuestions = unanswered.decisions.findIndex(({ answers }) => Object.keys(answers ?? {}).length >= 2);
+  delete (unanswered.decisions[twoQuestions]!.answers as Record<string, unknown>).targeted;
+  assert.throws(() => validateOccurrenceRatings(unanswered), /retained provider response/u, "every asked question keeps its answer");
+  const otherModel = structuredClone(ratings);
+  otherModel.requestedModel = "jev-9";
+  assert.throws(() => validateOccurrenceRatings(otherModel), /another provider or model/u);
   const restated = structuredClone(ratings);
   const restatedRating = restated.ratings.find(({ source }) => source === "fallback")!;
   const restatedItem = restated.fallbackDecisions![restatedRating.fallback!]!.request.items.find(({ occurrenceId }) => occurrenceId === restatedRating.occurrenceId)!;

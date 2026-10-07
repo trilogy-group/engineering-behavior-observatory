@@ -1,6 +1,6 @@
 import { canonicalizeMetadata, digestMetadata, validateArtifact } from "./artifacts.js";
 import { validateBehaviorAssertion, type BehaviorAssertion } from "./behavior-assertions.js";
-import { decide, resolveDecisionModel, type DecideOptions, type DecisionAnswer, type DecisionProviderConfig, type DecisionQuestion, type DecisionRecord } from "./decision-models.js";
+import { decide, verifyDecisionRecord, resolveDecisionModel, type DecideOptions, type DecisionAnswer, type DecisionProviderConfig, type DecisionQuestion, type DecisionRecord } from "./decision-models.js";
 import { boundedEvidence } from "./evidence-projection.js";
 import { createRetainedBehaviorEvidence } from "./retained-evidence.js";
 import type { NormalizationInput } from "./uniform-events.js";
@@ -130,6 +130,10 @@ export async function checkRetainedClaims(
 export function validateClaimChecks(document: ClaimChecks, assertion?: BehaviorAssertion, capture?: NormalizationInput<unknown>): void {
   const errors = validateArtifact("claim checks", document);
   if (errors.length > 0) throw new Error(errors.map(({ field, message }) => `${field}: ${message}`).join("\n"));
+  for (const decision of document.decisions) {
+    verifyDecisionRecord(decision);
+    if (decision.provider !== document.provider || decision.requestedModel !== document.requestedModel) throw new Error("A decision record comes from another provider or model than the artifact names.");
+  }
   if (assertion !== undefined && document.assertion.digest !== `sha256:${digestMetadata(assertion).value}`) {
     throw new Error("Claim checks belong to a different assertion.");
   }

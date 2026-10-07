@@ -1,7 +1,7 @@
 import { canonicalizeMetadata, digestMetadata, validateArtifact } from "./artifacts.js";
 import { runCodexStructuredTurn, type CodexTurnSettings } from "./codex-judge.js";
 import type { SemanticJudgeBackendResult } from "./semantic-judge.js";
-import { decide, resolveDecisionModel, type DecideOptions, type DecisionAnswer, type DecisionProviderConfig, type DecisionQuestion, type DecisionRecord } from "./decision-models.js";
+import { decide, verifyDecisionRecord, resolveDecisionModel, type DecideOptions, type DecisionAnswer, type DecisionProviderConfig, type DecisionQuestion, type DecisionRecord } from "./decision-models.js";
 import { findCommand, type Occurrence, type OccurrenceType } from "./occurrences.js";
 import { createRetainedBehaviorEvidence } from "./retained-evidence.js";
 import { createStructuralObservationSet, nativeContentResolver, type StructuralObservationSet } from "./structural-observations.js";
@@ -344,6 +344,54 @@ const RULE_RATINGS = {
 /** Output that carries nothing: empty, or a harness's own no-output marker. */
 const EMPTY_OUTPUT = /^\s*(?:\(?\s*(?:no output|bash completed with no output)\s*\)?)?\s*$/iu;
 
+/**
+ * What question set 1.1 does with one occurrence: the rule ratings recorded facts establish, and the state and
+ * questions a decision model is asked (none when rules decide everything). Rating and verification both use it.
+ */
+export function occurrenceRequest(
+  occurrence: Occurrence,
+  allOccurrences: readonly Occurrence[],
+  eventsById: ReadonlyMap<string, UniformEvent>,
+  resolveContent: (reference: NativeEvidenceReference) => unknown,
+): { rules: Array<keyof typeof RULE_RATINGS>; state?: Record<string, unknown>; questions: Record<string, DecisionQuestion> } {
+  const questions = { ...occurrenceQuestions(occurrence.type) ?? {} };
+  if (occurrence.type === "failure-response" && occurrence.attributes.nextOutcome === "none") return { rules: ["noResponse"], questions: {} };
+  // Supporting facts use every source change, whichever types are rated. Changes strictly between two events are
+  // ordered natively within one order domain and by time otherwise; "unknown" when no order can be established.
+  const changes = allOccurrences.filter(({ type }) => type === "source-change").map(({ eventIds }) => eventsById.get(eventIds[0]!));
+  const between = (fromId: unknown, toId: unknown): number | "unknown" => {
+    const from = eventsById.get(String(fromId));
+    const to = eventsById.get(String(toId));
+    if (from === undefined || to === undefined) return "unknown";
+    let count = 0;
+    for (const change of changes) {
+      const after = change === undefined ? undefined : eventOrder(from, change);
+      const before = change === undefined ? undefined : eventOrder(change, to);
+      if (after === undefined || before === undefined) return "unknown";
+      if (after < 0 && before < 0) count += 1;
+    }
+    return count;
+  };
+  const facts: Record<string, unknown> = {};
+  if (occurrence.type === "repeated-operation") facts.sourceChangesBetween = between(occurrence.attributes.firstEventId, occurrence.eventIds[0]);
+  if (occurrence.type === "failure-response") {
+    facts.sourceChangesBetween = occurrence.attributes.lastFailureEventId === undefined ? "unknown"
+      : between(occurrence.attributes.lastFailureEventId, occurrence.attributes.responseEventId);
+  }
+  const { state, omittedCharacters } = occurrenceState(occurrence, eventsById, resolveContent, facts);
+  const rules: Array<keyof typeof RULE_RATINGS> = [];
+  if (occurrence.type === "validation-run") {
+    // Facts the questions must not lean on: the outcome question reads the output itself.
+    state.facts = { checkKinds: occurrence.attributes.checkKinds ?? [] };
+    if (silentSuccess(state)) {
+      rules.push("silentSuccess");
+      delete questions.outcome;
+    }
+  }
+  if (omittedCharacters > 0) state.omittedCharacters = omittedCharacters;
+  return Object.keys(questions).length === 0 ? { rules, questions } : { rules, state, questions };
+}
+
 /** -1 when `left` precedes `right`, 1 when it follows, 0 for the same event; undefined when the order is unknown. */
 function eventOrder(left: UniformEvent, right: UniformEvent): number | undefined {
   if (left.id === right.id) return 0;
@@ -380,30 +428,31 @@ export function verifyRatingRules(
   if (ratings.ratings.some(({ occurrenceId }) => !ids.has(occurrenceId)) || (ratings.decisionOccurrences ?? []).some((id) => !ids.has(id))) {
     throw new Error("Occurrence ratings name occurrences outside the rated population.");
   }
-  if (!legacy && ratings.coverage.occurrences !== population.length) throw new Error("Occurrence ratings coverage differs from the rated population.");
+  const ruleKey = ({ occurrenceId, rule }: { occurrenceId: string; rule?: string }) => `${occurrenceId}\0${rule ?? ""}`;
+  const actual = new Set(ratings.ratings.filter(({ source }) => source === "rule").map(ruleKey));
   const expected = new Set<string>();
-  for (const occurrence of population) {
-    if (occurrence.type === "failure-response" && occurrence.attributes.nextOutcome === "none") expected.add(`${occurrence.id}\0${RULE_RATINGS.noResponse.rule}`);
-    if (occurrence.type === "validation-run" && !legacy && silentSuccess(occurrenceState(occurrence, eventsById, resolveContent).state)) {
-      expected.add(`${occurrence.id}\0${RULE_RATINGS.silentSuccess.rule}`);
+  if (legacy) {
+    for (const occurrence of population) {
+      if (occurrence.type === "failure-response" && occurrence.attributes.nextOutcome === "none") expected.add(ruleKey({ occurrenceId: occurrence.id, rule: RULE_RATINGS.noResponse.rule }));
+    }
+  } else {
+    if (ratings.coverage.occurrences !== population.length) throw new Error("Occurrence ratings coverage differs from the rated population.");
+    const owners = ratings.decisionOccurrences!;
+    for (const occurrence of population) {
+      // Rebuild exactly what the occurrence should have been asked; its one decision must match it.
+      const request = occurrenceRequest(occurrence, observations.occurrences ?? [], eventsById, resolveContent);
+      for (const key of request.rules) expected.add(ruleKey({ occurrenceId: occurrence.id, rule: RULE_RATINGS[key].rule }));
+      const index = owners.indexOf(occurrence.id);
+      const decision = index < 0 ? undefined : ratings.decisions[index];
+      if ((request.state === undefined) !== (decision === undefined) || (decision !== undefined
+          && (canonicalizeMetadata(decision.request.state) !== canonicalizeMetadata(request.state)
+            || canonicalizeMetadata(decision.request.questions) !== canonicalizeMetadata(request.questions)))) {
+        throw new Error(`Occurrence "${occurrence.id}" was not asked the state and questions its native records establish.`);
+      }
     }
   }
-  const actual = new Set(ratings.ratings.filter(({ source }) => source === "rule").map(({ occurrenceId, rule }) => `${occurrenceId}\0${rule ?? ""}`));
   if (actual.size !== expected.size || [...actual].some((key) => !expected.has(key))) {
     throw new Error("Rule ratings differ from the ones the observation set and native records establish.");
-  }
-  if (legacy) return;
-  // Every question of every rated occurrence is decided once: by rule, or asked in that occurrence's one decision.
-  const owners = ratings.decisionOccurrences!;
-  for (const occurrence of population) {
-    const questions = Object.keys(occurrenceQuestions(occurrence.type, ratings.questionSetVersion) ?? {});
-    const ruled = ratings.ratings.filter(({ source, occurrenceId }) => source === "rule" && occurrenceId === occurrence.id).map(({ questionId }) => questionId);
-    const index = owners.indexOf(occurrence.id);
-    const asked = index < 0 ? [] : Object.keys(ratings.decisions[index]!.request.questions);
-    const covered = [...ruled, ...asked].sort();
-    if (canonicalizeMetadata(covered) !== canonicalizeMetadata([...new Set(covered)]) || canonicalizeMetadata(covered) !== canonicalizeMetadata([...questions].sort())) {
-      throw new Error(`Occurrence "${occurrence.id}" is not rated on every question exactly once.`);
-    }
   }
 }
 
@@ -458,51 +507,18 @@ export async function rateOccurrences(
   const occurrenceTypes = [...new Set((rebuilt.occurrences ?? []).map(({ type }) => type))]
     .filter((type) => occurrenceQuestions(type) !== undefined && (options.types === undefined || options.types.includes(type)));
   const occurrences = (rebuilt.occurrences ?? []).filter(({ type }) => occurrenceTypes.includes(type));
-  // Supporting facts use every source change, whichever types are rated.
-  const changes = (rebuilt.occurrences ?? []).filter(({ type }) => type === "source-change").map(({ eventIds }) => eventsById.get(eventIds[0]!));
   const decisionOccurrences: string[] = [];
   const ratings: OccurrenceRating[] = [];
   const decisions: DecisionRecord[] = [];
   const jobs: Array<() => Promise<void>> = [];
   const states = new Map<string, { state: Record<string, unknown>; questions: Record<string, DecisionQuestion> }>();
   for (const occurrence of occurrences) {
-    const questions = occurrenceQuestions(occurrence.type);
-    if (questions === undefined) continue;
-    const rule = (key: keyof typeof RULE_RATINGS) => ratings.push({ occurrenceId: occurrence.id, occurrenceType: occurrence.type,
-      questionId: RULE_RATINGS[key].questionId, source: "rule", label: RULE_RATINGS[key].label, accepted: true, rule: RULE_RATINGS[key].rule });
-    if (occurrence.type === "failure-response" && occurrence.attributes.nextOutcome === "none") { rule("noResponse"); continue; }
-    // Source changes strictly between two events, by native order within one order domain and by time otherwise;
-    // "unknown" when an order cannot be established (for example equal timestamps across domains).
-    const between = (fromId: unknown, toId: unknown): number | "unknown" => {
-      const from = eventsById.get(String(fromId));
-      const to = eventsById.get(String(toId));
-      if (from === undefined || to === undefined) return "unknown";
-      let count = 0;
-      for (const change of changes) {
-        const after = change === undefined ? undefined : eventOrder(from, change);
-        const before = change === undefined ? undefined : eventOrder(change, to);
-        if (after === undefined || before === undefined) return "unknown";
-        if (after < 0 && before < 0) count += 1;
-      }
-      return count;
-    };
-    const facts: Record<string, unknown> = {};
-    if (occurrence.type === "repeated-operation") facts.sourceChangesBetween = between(occurrence.attributes.firstEventId, occurrence.eventIds[0]);
-    if (occurrence.type === "failure-response") {
-      facts.sourceChangesBetween = occurrence.attributes.lastFailureEventId === undefined ? "unknown"
-        : between(occurrence.attributes.lastFailureEventId, occurrence.attributes.responseEventId);
+    const request = occurrenceRequest(occurrence, rebuilt.occurrences ?? [], eventsById, resolveContent);
+    for (const key of request.rules) {
+      ratings.push({ occurrenceId: occurrence.id, occurrenceType: occurrence.type, questionId: RULE_RATINGS[key].questionId, source: "rule", label: RULE_RATINGS[key].label, accepted: true, rule: RULE_RATINGS[key].rule });
     }
-    const { state, omittedCharacters } = occurrenceState(occurrence, eventsById, resolveContent, facts);
-    const asked = { ...questions };
-    if (occurrence.type === "validation-run") {
-      // Facts the questions must not lean on: the outcome question reads the output itself.
-      state.facts = { checkKinds: occurrence.attributes.checkKinds ?? [] };
-      if (silentSuccess(state)) {
-        rule("silentSuccess");
-        delete asked.outcome;
-      }
-    }
-    if (omittedCharacters > 0) state.omittedCharacters = omittedCharacters;
+    if (request.state === undefined) continue;
+    const { state, questions: asked } = request;
     states.set(occurrence.id, { state, questions: asked });
     if (Object.keys(asked).length === 0) continue;
     const index = jobs.length;
@@ -575,6 +591,10 @@ export async function rateOccurrences(
 export function validateOccurrenceRatings(document: OccurrenceRatings): void {
   const errors = validateArtifact("occurrence ratings", document);
   if (errors.length > 0) throw new Error(errors.map(({ field, message }) => `${field}: ${message}`).join("\n"));
+  for (const decision of document.decisions) {
+    verifyDecisionRecord(decision);
+    if (decision.provider !== document.provider || decision.requestedModel !== document.requestedModel) throw new Error("A decision record comes from another provider or model than the artifact names.");
+  }
   const deferred = new Map<string, number>();
   for (const rating of document.ratings) {
     if (!rating.occurrenceId.startsWith(`${document.attemptId}/occ/${rating.occurrenceType}/`)) throw new Error(`Rating for "${rating.occurrenceId}" belongs to another attempt or type.`);
