@@ -42,7 +42,7 @@ function pointer(document: unknown, path: string): unknown {
 export async function validateClaims(source: ClaimsSource, context: {
   connection: DuckDBConnection; certified: Record<string, { cells: CertifiedCell[] }>; reports: Record<string, unknown>;
   assessments: readonly AssessmentDoc[]; audits: Record<string, AuditDoc>; attempts: Record<string, { model_id: string | null; harness_id: string | null }>;
-  viewIds: ReadonlySet<string>; readLine: (path: string, locator: string) => string | undefined;
+  viewIds: ReadonlySet<string>; recordSha256: (path: string, locator: string) => string | undefined;
 }) {
   const failures: string[] = [];
   const byId = new Map(context.assessments.map((a) => [a.id, a]));
@@ -86,8 +86,8 @@ export async function validateClaims(source: ClaimsSource, context: {
       if (!a) { failures.push(`${claim.id}: supporting assessment ${id} is not in this bundle`); continue; }
       for (const c of a.citations) {
         total++;
-        const line = c.native.resolved && c.native.path ? context.readLine(c.native.path, c.native.locator) : undefined;
-        if (line !== undefined && createHash("sha256").update(line).digest("hex") === c.native.sha256) resolved++;
+        const digest = c.native.resolved && c.native.path ? context.recordSha256(c.native.path, c.native.locator) : undefined;
+        if (digest !== undefined && digest === c.native.sha256) resolved++;
         else failures.push(`${claim.id}: citation ${c.event_key} of ${id} does not resolve to its native line`);
       }
       supportRows.push({ id, attempt_id: a.attempt_id, short: a.short, condition: a.condition, trial_id: a.trial_id, dimension: a.dimension, outcome: a.outcome, citations: a.citations.length });
