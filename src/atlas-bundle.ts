@@ -309,7 +309,8 @@ async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string
       const bundleRoot = resolve(source.corpusRoot, dirname(entry.manifestPath));
       // Cohorts may carry their own corpus copies: one attempt, one manifest digest, whichever copy is read.
       const known = attempts.get(entry.attemptId!) ?? { entry, bundleRoot, cohorts: new Set<string>() };
-      if (known.entry.manifestDigest !== entry.manifestDigest) throw new Error(`Attempt ${entry.attemptId!} has two different run manifests across cohorts.`);
+      // Atlas tables key attempts by attempt id: the same id in two different runs fails the build, never merges them.
+      if (known.entry.manifestDigest !== entry.manifestDigest) throw new Error(`Attempt id ${entry.attemptId!} appears in two different run bundles (runs ${known.entry.runId ?? "?"} and ${entry.runId ?? "?"}); attempt ids must be unique in an Atlas bundle.`);
       known.cohorts.add(cohort.id);
       attempts.set(entry.attemptId!, known);
     }
@@ -321,7 +322,7 @@ async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string
     for (const c of view.cases.filter((x) => x.assertion && x.assertionDigest)) {
       const original = source.input.assertions.find(({ document }) => `sha256:${digestMetadata(document).value}` === c.assertionDigest)!.document;
       const entry = assertions.get(original.id) ?? { assertion: original, digest: c.assertionDigest!, review: c.review, cohorts: new Set<string>() };
-      if (entry.digest !== c.assertionDigest) throw new Error(`Assertion ${original.id} differs between cohorts.`);
+      if (entry.digest !== c.assertionDigest) throw new Error(`Assertion id ${original.id} names two different assertions (attempts ${entry.assertion.attemptId} and ${original.attemptId}); assertion ids must be unique in an Atlas bundle.`);
       entry.cohorts.add(cohort.id);
       assertions.set(original.id, entry);
     }
