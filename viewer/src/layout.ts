@@ -91,10 +91,11 @@ export async function prepareCloud(unitsBytes: Uint8Array, getEmbeddings: () => 
       continue;
     }
     status(`Laying out ${members.length.toLocaleString()} ${family}…`);
-    // Identical texts embed identically; lay out each distinct text once and place its units together.
+    // Identical vectors (identical texts) are laid out once and their units placed together. The key is the vector,
+    // not the text: a restricted packet replaces texts with structural labels but keeps the vectors.
     const unique = new Map<string, number>(), uniqueOf = new Int32Array(members.length), firstRow: number[] = [];
     members.forEach((row, i) => {
-      const t = rows[row]!.embed_text;
+      const t = data.subarray(row * d, (row + 1) * d).join(",");
       if (!unique.has(t)) { unique.set(t, unique.size); firstRow.push(row); }
       uniqueOf[i] = unique.get(t)!;
     });
