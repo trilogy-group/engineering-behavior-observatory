@@ -60,7 +60,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       if (prompt === "foreign") { emit({ method: "turn/completed", params: { threadId: "foreign", turn: { id: "judge-turn", status: "completed" } } }); return; }
       if (prompt === "tool") { emit({ id: 999, method: "item/tool/call", params: {} }); return; }
       const response = { judgment: { disposition: "abstained", assessment: null, confidence: null, reason: "Synthetic evidence absent.", missingEvidenceCapability: null,
-        rationale: "Synthetic test.", alternativeExplanation: "No conclusion is supported.", citations: [] } };
+        rationale: "Synthetic test.", alternativeExplanation: "No conclusion is supported.", claims: [], citations: [] } };
       emit({ method: "item/completed", params: { threadId: "judge-thread", turnId: "judge-turn", item: { type: "agentMessage", id: "answer", text: prompt === "malformed" || prompt.includes("MALFORMED_OUTPUT_FIXTURE") ? "invalid JSON" : JSON.stringify(response) } } });
       emit({ method: "turn/completed", params: { threadId: "judge-thread", turn: { id: "judge-turn", status: "completed" } } });
     }, 5);

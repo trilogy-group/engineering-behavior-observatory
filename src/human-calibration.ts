@@ -438,7 +438,7 @@ async function loadCandidate(
   const assertionDocument = readJson(assertionPath) as BehaviorAssertion;
   const resolvedEvidence = evidence ?? await createRetainedBehaviorEvidence(bundleRoot);
   const resolvedManifest = manifest ?? readManifest(bundleRoot);
-  await validateBehaviorAssertion(assertionDocument, resolvedEvidence.dataset, resolvedEvidence.resolver);
+  await validateBehaviorAssertion(assertionDocument, resolvedEvidence.dataset, resolvedEvidence.resolver, undefined, resolvedEvidence.capture);
   if (resolvedManifest.run.id !== assertionDocument.runId || resolvedManifest.attempt.id !== assertionDocument.attemptId) {
     throw new Error(`Review assertion "${assertionDocument.id}" belongs to another run bundle.`);
   }
