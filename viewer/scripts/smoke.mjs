@@ -112,7 +112,20 @@ if (await page.evaluate(() => window.ebo.listCloudTools().length > 0)) {
     const after = await page.evaluate(() => ({ viewport: JSON.stringify(window.ebo.getState().cloud.viewport), events: window.__cloudEvents, hash: location.hash.slice(0, 7) }));
     await page.evaluate(() => window.ebo.run("undo"));
     const undone = await page.evaluate(() => JSON.stringify(window.ebo.getState().cloud.viewport));
-    report.directCloud = { changed: after.viewport !== before, events: after.events, hash: after.hash, undone: undone === before };
+    // A gesture followed at once by a command: two history entries, undone one at a time.
+    await page.waitForTimeout(800);
+    const g0 = await page.evaluate(() => JSON.stringify(window.ebo.getState()));
+    await page.mouse.wheel(0, -300);
+    await page.waitForTimeout(100);
+    await page.evaluate(() => window.ebo.run("openTab", { tab: "assessments" }));
+    const interleaved = await page.evaluate(async (start) => {
+      await window.ebo.run("undo");
+      const afterOne = window.ebo.getState();
+      await window.ebo.run("undo");
+      return { tabRestoredFirst: afterOne.shell.tab !== "assessments", bothUndone: JSON.stringify(window.ebo.getState()) === start };
+    }, g0);
+    report.directCloud = { changed: after.viewport !== before, events: after.events, hash: after.hash, undone: undone === before, interleaved };
+    if (!interleaved.tabRestoredFirst || !interleaved.bothUndone) failures.push({ interleavedGesture: interleaved });
     if (report.directCloud.changed && (!report.directCloud.events || !report.directCloud.undone)) failures.push({ directCloud: report.directCloud });
   } else report.directCloud = "no canvas in this browser";
 }
@@ -149,7 +162,7 @@ await hostile.route("**/bundle/audit.json", async (route) => {
 });
 await hostile.route("**/bundle/lanes.json", async (route) => {
   const doc = await (await route.fetch()).json();
-  doc.attempts = doc.attempts.map((l) => ({ ...l, tools: payload, errors: payload, compactions: payload }));
+  doc.attempts = doc.attempts.map((l) => ({ ...l, tools: payload, errors: payload, compactions: payload, context_max: payload, cost_usd: payload }));
   await route.fulfill({ json: doc });
 });
 await hostile.goto(url.replace(/#.*$/, ""), { waitUntil: "load" });
