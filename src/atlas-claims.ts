@@ -45,6 +45,8 @@ export async function validateClaims(source: ClaimsSource, context: {
   viewIds: ReadonlySet<string>; recordSha256: (path: string, locator: string) => string | undefined;
 }) {
   const failures: string[] = [];
+  const ids = source.claims.map(({ id }) => id);
+  for (const id of new Set(ids.filter((id, i) => ids.indexOf(id) !== i))) failures.push(`${id}: claim ids must be unique`);
   const byId = new Map(context.assessments.map((a) => [a.id, a]));
   const claims = [];
   for (const claim of source.claims) {

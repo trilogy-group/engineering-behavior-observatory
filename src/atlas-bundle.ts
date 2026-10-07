@@ -207,7 +207,7 @@ function eventRow(event: UniformEvent, index: number, resolve: ReturnType<typeof
  */
 const STREAMED = new Set(["events", "event_relations", "observation_sources", "unit_events", "edges"]);
 class TableSink {
-  readonly staging = mkdtempSync(join(tmpdir(), "ebo-atlas-tables-"));
+  readonly staging = mkdtempSync(join(tmpdir(), `ebo-atlas-tables-${process.pid}-`));
   private fds = new Map<string, number>();
   readonly counts = new Map<string, number>();
   push(name: string, row: Row) {

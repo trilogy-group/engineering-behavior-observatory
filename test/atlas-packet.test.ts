@@ -82,6 +82,13 @@ test("evidence packets: three variants, verification, withholding and claims tha
     await assert.rejects(buildPacket(join(root, "bundle"), join(root, "packet-escape"), { variant: "internal", viewerRoot: viewer }), /not a contained relative path/u);
     writeFileSync(manifestPath, original);
 
+    // Source metadata is shared like any other text: a local path in the study title does not reach the packet.
+    writeFileSync(join(root, "request.json"), JSON.stringify({ ...request, title: "Study at /workspace/acme/private-study" }));
+    await buildAtlasBundle(join(root, "request.json"), join(root, "bundle-titled"));
+    await buildPacket(join(root, "bundle-titled"), join(root, "packet-titled"), { variant: "partner", viewerRoot: viewer });
+    for (const f of ["index.html", "manifest.json", "ro-crate-metadata.json", "README.md"]) assert.equal(readFileSync(join(root, "packet-titled", f), "utf8").includes("/workspace/acme"), false, f);
+    writeFileSync(join(root, "request.json"), JSON.stringify(request));
+
     // A claim that no longer recomputes: internal packets show it; partner and restricted packets refuse to build.
     writeFileSync(join(root, "claims.json"), JSON.stringify({ ...claims, claims: [{ ...claims.claims[0], numbers: [{ ...claims.claims[0]!.numbers[0], value: 8 }] }] }));
     await buildAtlasBundle(join(root, "request.json"), join(root, "bundle-failing"));

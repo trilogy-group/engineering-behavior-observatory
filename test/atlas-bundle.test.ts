@@ -97,7 +97,7 @@ test("an Atlas bundle holds Atlas tables v1 built from the validated cohort, and
     writeFileSync(requestPath, JSON.stringify({ ...request, condition: { pattern: "^(?<arm>.+)$" } }));
     await assert.rejects(buildAtlasBundle(requestPath, join(root, "bundle-3"), { embed }), /named group "condition"/u);
     writeFileSync(requestPath, JSON.stringify({ ...request, condition: { pattern: "^nothing-(?<condition>matches)$" } }));
-    const staging = () => readdirSync(tmpdir()).filter((f) => f.startsWith("ebo-atlas-tables-")).sort();
+    const staging = () => readdirSync(tmpdir()).filter((f) => f.startsWith(`ebo-atlas-tables-${process.pid}-`)).sort();
     const stagingBefore = staging();
     await assert.rejects(buildAtlasBundle(requestPath, join(root, "bundle-4"), { embed }), /does not match the condition pattern/u, "a naming mistake is an error, not a synthesized arm");
     assert.deepEqual(staging(), stagingBefore, "a failed build removes its streamed table staging (resolved native content)");
@@ -142,6 +142,9 @@ test("claims: a certified filter on a dimension the report does not group by fai
     assert.equal(noCell.validated, false, "a selector matching no cell is unavailable, not a certified zero");
     const noOutcome = await validateClaims({ ...claim({}), claims: [{ ...claim({}).claims[0]!, numbers: [{ ...claim({}).claims[0]!.numbers[0]!, value: 0, expr: { cohort: "c", outcome: "constructve" } }] }] }, context);
     assert.match(noOutcome.failures.join(" "), /reports no outcome constructve/u);
+    const twice = claim({ model: "m" });
+    const duplicated = await validateClaims({ ...twice, claims: [twice.claims[0]!, twice.claims[0]!] }, context);
+    assert.match(duplicated.failures.join(" "), /claim ids must be unique/u);
   } finally { connection.closeSync(); db.closeSync(); }
 });
 
