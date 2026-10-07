@@ -151,7 +151,7 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
     assert.equal(packaged.blinding.sourceIdentityPreserved, true);
     assert.ok(packaged.blinding.residualClues.length > 0);
     const abstention = { judgment: { disposition: "abstained", assessment: null, confidence: null,
-      reason: "Synthetic fixture.", missingEvidenceCapability: null, rationale: "Synthetic fixture.", alternativeExplanation: "No claim.", citations: [] } };
+      reason: "Synthetic fixture.", missingEvidenceCapability: null, rationale: "Synthetic fixture.", alternativeExplanation: "No claim.", claims: [], citations: [] } };
     const evaluatorDigest = (evaluator: SemanticJudgeRequest["evaluator"]) => parseSemanticJudgeResponse(
       abstention, { ...request, evaluator }, packaged, "fixture-runtime").evaluator.configurationDigest;
     assert.equal(evaluatorDigest(request.evaluator), evaluatorDigest({ ...request.evaluator, backend: "claude-agent-sdk" }));
@@ -245,6 +245,7 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
       missingEvidenceCapability: null,
       rationale: "The retained event supports the requested dimension.",
       alternativeExplanation: "The event may cover only one part of the task.",
+      claims: [{ id: "fact-1", text: "The retained result reports completion.", citations: [citation], workspace: null }],
       citations: [citation],
     };
     const first = await run(root, "proposal-a", bundleRoot, observations, request, completed(assessed));
@@ -318,7 +319,7 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
       missingEvidenceCapability: "family:validation",
       rationale: "No additional validation event was selected.",
       alternativeExplanation: "The omitted evidence might establish the behavior.",
-      citations: [],
+      claims: [], citations: [],
     }));
     assert.equal(abstained.status, "proposed");
 
@@ -335,7 +336,7 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
         missingEvidenceCapability: "test logs",
         rationale: "The selected evidence is insufficient.",
         alternativeExplanation: "Another source could resolve the gap.",
-        citations: [],
+        claims: [], citations: [],
       }],
     ] as const;
     for (const [name, response] of failures) {
@@ -373,7 +374,7 @@ test("packages bounded blinded untrusted evidence and retains deterministic prop
         missingEvidenceCapability: null,
         rationale: "No assessment is safe.",
         alternativeExplanation: "A larger input might support assessment.",
-        citations: [],
+        claims: [], citations: [],
       }).run(prompt, tight);
     }));
     assert.equal(bounded.status, "proposed");
@@ -452,7 +453,7 @@ test("configures the Claude Agent SDK backend with no tools, settings, plugins, 
           missingEvidenceCapability: null,
           rationale: "bounded",
           alternativeExplanation: "none",
-          citations: [],
+          claims: [], citations: [],
         } });
       },
     } as unknown as ReturnType<typeof import("@anthropic-ai/claude-agent-sdk").query>;
@@ -524,7 +525,7 @@ test("retains bounded received SDK messages and result accounting when the provi
         missingEvidenceCapability: null,
         rationale: "bounded",
         alternativeExplanation: "none",
-        citations: [],
+        claims: [], citations: [],
       } });
       throw new Error("provider disconnected");
     },

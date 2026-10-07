@@ -31,6 +31,11 @@ test("classifies every check a command runs per segment and the source paths it 
   assert.deepEqual(checkKindsOf("cd app && pnpm exec jest src/a.test.ts; npx tsc --noEmit | tail -5"), ["test", "typecheck"]);
   assert.deepEqual(checkKindsOf("bash -lc 'pnpm lint && pnpm build'"), ["lint", "build"]);
   assert.deepEqual(checkKindsOf("cat tsc-output.txt && grep -r test src"), []);
+  assert.deepEqual(checkKindsOf("cat SKILL.md; npx playwright --version 2>/dev/null; ls /root/.cache"), [], "a version query is not a check run");
+  assert.deepEqual(checkKindsOf("npx playwright install chromium && npx tsc --version"), []);
+  assert.deepEqual(checkKindsOf("npx jest --listTests && pnpm exec playwright show-report"), []);
+  assert.deepEqual(checkKindsOf("npx playwright test e2e/login.spec.ts"), ["test"]);
+  assert.deepEqual(checkKindsOf("npx jest add"), ["test"], "a test selector named like a setup command is still a run");
   assert.deepEqual(shellWrites("node -e \"require('fs').writeFileSync('src/app.tsx', s)\""), ["src/app.tsx"]);
   assert.deepEqual(shellWrites("sed -i 's/a/b/' src/lib/util.ts && cat src/lib/util.ts > /tmp/out.log"), ["src/lib/util.ts"]);
   assert.deepEqual(shellWrites("pnpm test 2>&1 | tail"), []);
@@ -63,7 +68,7 @@ test("extracts instance-sized occurrences that cite only their own events", () =
   const [chain] = of("failure-response");
   assert.equal(of("failure-response").length, 1);
   assert.deepEqual(chain!.eventIds, ["event-10", "event-11", "event-20", "event-21", "event-40", "event-41"], "two failures of Bash, then its next call");
-  assert.deepEqual(chain!.attributes, { toolName: "Bash", failures: 2, nextOutcome: "passed" });
+  assert.deepEqual(chain!.attributes, { toolName: "Bash", failures: 2, lastFailureEventId: "event-21", nextOutcome: "passed", responseEventId: "event-40" });
   assert.equal(chain!.id, "attempt/occ/failure-response/event-10");
   assert.equal(chain!.rule.heuristic, false);
 
@@ -123,6 +128,8 @@ test("a failure response starts after the failure, in the same session", () => {
   });
   const [chain] = occurrences.filter(({ type }) => type === "failure-response");
   assert.deepEqual(chain!.eventIds, ["event-1", "event-4", "event-8", "event-9"], "the running parallel call and the other session's call are not responses");
+  assert.equal(chain!.attributes.lastFailureEventId, "event-4");
+  assert.equal(chain!.attributes.responseEventId, "event-8");
 });
 
 test("a partial compaction stays separate and spans use parsed timestamps", () => {

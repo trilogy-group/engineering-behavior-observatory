@@ -559,7 +559,7 @@ function sanitizeValue(
     return { ...value, value: REDACTED_ANY_VALUE };
   }
   const sourceFieldCount = Object.keys(value).length;
-  const output: Record<string, unknown> = {};
+  const output: Record<string, unknown> = Object.create(null);
   for (const [key, entry] of Object.entries(value)) {
     if (HIDDEN_FIELDS.has(normalizeFieldName(key))) {
       increment(counts, "removed-field");
@@ -598,12 +598,12 @@ function stripCodexReasoning(
   if (kind !== "session") return value;
   if (Array.isArray(value)) return value.map((entry) => stripCodexReasoning(entry, kind, counts));
   if (!isRecord(value)) return value;
-  const reasoningItem = value.type === "reasoning";
+  const reasoningItem = value.type === "reasoning" || value.channel === "analysis";
   const reasoningDelta = value.method === CODEX_REASONING_DELTA_METHOD;
   const cursorReasoning = typeof value.type === "string" && CURSOR_REASONING_TYPES.has(normalizeFieldName(value.type));
   const cursorCheckpoint = typeof value.agentId === "string" && typeof value.blobId === "string" && typeof value.dataBase64 === "string";
   const payloadContainsReasoning = containsCodexReasoning(value.payload);
-  const output: Record<string, unknown> = {};
+  const output: Record<string, unknown> = Object.create(null);
   for (const [key, entry] of Object.entries(value)) {
     const normalized = normalizeFieldName(key);
     if (reasoningItem && key !== "type" && key !== "id") {
@@ -633,6 +633,11 @@ function stripCodexReasoning(
     output[key] = stripCodexReasoning(entry, kind, counts);
   }
   return output;
+}
+
+/** Reasoning-free derived projection of a native record, without changing identities or paths. */
+export function visibleEvidence(value: unknown): unknown {
+  return stripNativeReasoning(value, "session", new Map());
 }
 
 function stripNativeReasoning(
@@ -677,7 +682,7 @@ function stripDevinReasoning(
   if (Array.isArray(value)) return value.map((entry) => stripDevinReasoning(entry, kind, counts));
   if (!isRecord(value)) return value;
   const thought = value.sessionUpdate === DEVIN_THOUGHT_UPDATE;
-  const output: Record<string, unknown> = {};
+  const output: Record<string, unknown> = Object.create(null);
   for (const [key, entry] of Object.entries(value)) {
     if (thought && key === "content") {
       increment(counts, "removed-field");
@@ -716,10 +721,10 @@ function stripPiReasoning(
   if (!isRecord(value)) return value;
   const privateContent = value.thought === true
     || typeof value.type === "string" && PI_PRIVATE_CONTENT_TYPES.has(normalizeFieldName(value.type));
-  const output: Record<string, unknown> = {};
+  const output: Record<string, unknown> = Object.create(null);
   for (const [key, entry] of Object.entries(value)) {
     const normalized = normalizeFieldName(key);
-    if (PI_PRIVATE_FIELDS.has(normalized) || privateContent && PI_PRIVATE_CONTENT_FIELDS.has(normalized)) {
+    if (HIDDEN_FIELDS.has(normalized) || PI_PRIVATE_FIELDS.has(normalized) || privateContent && PI_PRIVATE_CONTENT_FIELDS.has(normalized)) {
       increment(counts, "removed-field");
       continue;
     }
@@ -735,7 +740,7 @@ function stripCodexReasoningEnvelope(
 ): unknown {
   if (Array.isArray(value)) return value.map((entry) => stripCodexReasoningEnvelope(entry, kind, counts));
   if (!isRecord(value)) return value;
-  const output: Record<string, unknown> = {};
+  const output: Record<string, unknown> = Object.create(null);
   for (const [key, entry] of Object.entries(value)) {
     if (CODEX_REASONING_CONTENT_FIELDS.has(normalizeFieldName(key))) {
       increment(counts, "removed-field");
@@ -749,7 +754,7 @@ function stripCodexReasoningEnvelope(
 function containsCodexReasoning(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(containsCodexReasoning);
   if (!isRecord(value)) return false;
-  return value.type === "reasoning" || value.method === CODEX_REASONING_DELTA_METHOD
+  return value.type === "reasoning" || value.channel === "analysis" || value.method === CODEX_REASONING_DELTA_METHOD
     || Object.values(value).some(containsCodexReasoning);
 }
 
@@ -916,7 +921,7 @@ function valueContainsCodexReasoningContent(value: unknown): boolean {
   }
   if (Array.isArray(value)) return value.some(valueContainsCodexReasoningContent);
   if (!isRecord(value)) return false;
-  if (value.type === "reasoning"
+  if ((value.type === "reasoning" || value.channel === "analysis")
       && Object.keys(value).some((key) => CODEX_REASONING_CONTENT_FIELDS.has(normalizeFieldName(key)))) return true;
   if (value.method === CODEX_REASONING_DELTA_METHOD) {
     for (const container of [value.params, value.payload]) {

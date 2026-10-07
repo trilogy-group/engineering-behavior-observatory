@@ -173,6 +173,28 @@ function validateQuestions(questions: Record<string, DecisionQuestion>): void {
 }
 
 /** Validate a provider response against the questions asked; any mismatch fails the whole call. */
+/**
+ * A completed record's answers, model and usage must be exactly what its retained provider response states for the
+ * questions it asked; a failed record carries no answers.
+ */
+export function verifyDecisionRecord(record: DecisionRecord): void {
+  if (record.status !== "completed") {
+    if (record.answers !== undefined) throw new Error("A failed decision record carries answers.");
+    return;
+  }
+  const parsed = parseDecisionResponse(record.response, record.request.questions);
+  if (JSON.stringify(sortKeys(parsed.answers)) !== JSON.stringify(sortKeys(record.answers)) || parsed.model !== record.model
+      || JSON.stringify(sortKeys(parsed.usage)) !== JSON.stringify(sortKeys(record.usage))) {
+    throw new Error("Decision record answers, model or usage differ from its retained provider response.");
+  }
+}
+
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortKeys((value as Record<string, unknown>)[key])]));
+}
+
 export function parseDecisionResponse(raw: unknown, questions: Record<string, DecisionQuestion>): { model: string; answers: Record<string, DecisionAnswer>; usage: DecisionUsage } {
   const body = asRecord(raw);
   const answers = asRecord(body?.answers);

@@ -39,7 +39,8 @@ export async function checkRetainedEvaluation(bundleRoot: string, outputRoot: st
       backend: { id: backend, version: backend === "claude-agent-sdk" ? probeClaudeAgentSdkCapabilities().sdkVersion : CODEX_APP_SERVER_VERSION,
         run: async () => ({ status: "completed", raw: { synthetic: true }, response: { judgment: { disposition: "assessed", assessment: "constructive",
           confidence: { value: 0.8, scale: "evaluator-reported-0-to-1" }, reason: null, missingEvidenceCapability: null,
-          rationale: "Synthetic fixture only.", alternativeExplanation: "Not a human decision.", citations: [{ eventId: event.id, nativeReference: event.source.nativeReference }] } } }) } });
+          rationale: "Synthetic fixture only.", alternativeExplanation: "Not a human decision.", citations: [{ eventId: event.id, nativeReference: event.source.nativeReference }],
+          claims: [{ id: "fact-1", text: "The cited event is retained.", citations: [{ eventId: event.id, nativeReference: event.source.nativeReference }], workspace: null }] } } }) } });
     assert.equal(result.status, "proposed", JSON.stringify(result));
   }
   const assertion = JSON.parse(readFileSync(join(outputRoot, "claude-agent-sdk/assertion.json"), "utf8")) as BehaviorAssertion;

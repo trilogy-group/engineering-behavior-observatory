@@ -55,6 +55,31 @@
         "attempts": { "type": "integer", "minimum": 0 }
       }
     },
+    "fallbackDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "backend", "model", "effort", "request", "status", "startedAt", "durationMs"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.fallback-record/v1" },
+        "backend": { "const": "codex-app-server" },
+        "model": { "$ref": "#/$defs/identifier" },
+        "effort": { "$ref": "#/$defs/identifier" },
+        "request": {
+          "type": "object", "additionalProperties": false, "required": ["items"],
+          "properties": { "items": { "type": "array", "minItems": 1, "items": {
+            "type": "object", "additionalProperties": false, "required": ["occurrenceId", "state", "questions"],
+            "properties": { "occurrenceId": { "$ref": "#/$defs/identifier" }, "state": {}, "questions": { "type": "object" } }
+          } } }
+        },
+        "status": { "enum": ["completed", "failed"] },
+        "response": {},
+        "error": { "type": "string", "maxLength": 4096 },
+        "rawModelResponse": {},
+        "raw": {},
+        "startedAt": { "type": "string", "format": "date-time" },
+        "durationMs": { "type": "integer", "minimum": 0 }
+      }
+    },
     "rating": {
       "type": "object",
       "additionalProperties": false,
@@ -63,12 +88,14 @@
         "occurrenceId": { "$ref": "#/$defs/identifier" },
         "occurrenceType": { "enum": ["failure-response", "validation-run", "source-change", "repeated-operation", "compaction", "delegation"] },
         "questionId": { "$ref": "#/$defs/identifier" },
-        "source": { "enum": ["model", "rule"] },
+        "source": { "enum": ["model", "rule", "fallback"] },
         "label": { "$ref": "#/$defs/identifier" },
         "answer": { "$ref": "#/$defs/answer" },
         "accepted": { "type": "boolean" },
         "decision": { "type": "integer", "minimum": 0 },
-        "rule": { "$ref": "#/$defs/identifier" }
+        "rule": { "$ref": "#/$defs/identifier" },
+        "fallback": { "type": "integer", "minimum": 0 },
+        "rationale": { "type": "string", "minLength": 1, "maxLength": 1000 }
       }
     },
     "ratings": {
@@ -81,7 +108,7 @@
         "attemptId": { "$ref": "#/$defs/identifier" },
         "observationSetDigest": { "$ref": "#/$defs/digest" },
         "datasetDigest": { "$ref": "#/$defs/digest" },
-        "questionSetVersion": { "const": "1.0.0" },
+        "questionSetVersion": { "enum": ["1.0.0", "1.1.0"] },
         "provider": { "enum": ["typesafe", "fireworks"] },
         "requestedModel": { "$ref": "#/$defs/identifier" },
         "policy": {
@@ -93,11 +120,15 @@
           "type": "object", "additionalProperties": false, "required": ["occurrences", "asked", "failedDecisions", "accepted", "deferred", "byRule"],
           "properties": {
             "occurrences": { "type": "integer", "minimum": 0 }, "asked": { "type": "integer", "minimum": 0 }, "failedDecisions": { "type": "integer", "minimum": 0 },
-            "accepted": { "type": "integer", "minimum": 0 }, "deferred": { "type": "integer", "minimum": 0 }, "byRule": { "type": "integer", "minimum": 0 }
+            "accepted": { "type": "integer", "minimum": 0 }, "deferred": { "type": "integer", "minimum": 0 }, "byRule": { "type": "integer", "minimum": 0 },
+            "fallback": { "type": "integer", "minimum": 0 }, "failedFallbacks": { "type": "integer", "minimum": 0 }
           }
         },
         "ratings": { "type": "array", "maxItems": 1000000, "items": { "$ref": "#/$defs/rating" } },
-        "decisions": { "type": "array", "maxItems": 1000000, "items": { "$ref": "#/$defs/decision" } }
+        "decisions": { "type": "array", "maxItems": 1000000, "items": { "$ref": "#/$defs/decision" } },
+        "fallbackDecisions": { "type": "array", "maxItems": 1000000, "items": { "$ref": "#/$defs/fallbackDecision" } },
+        "occurrenceTypes": { "type": "array", "uniqueItems": true, "items": { "enum": ["failure-response", "validation-run", "source-change", "repeated-operation", "compaction", "delegation"] } },
+        "decisionOccurrences": { "type": "array", "maxItems": 1000000, "items": { "$ref": "#/$defs/identifier" } }
       }
     }
   },

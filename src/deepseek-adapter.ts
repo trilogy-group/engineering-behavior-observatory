@@ -285,6 +285,7 @@ export async function executeDeepSeekHarness(
   let receiptSequence: number | undefined;
   let idleSequence: number | undefined;
   let failure: unknown;
+  let nativeTurnError: string | undefined;
   let stderr: string | undefined;
   let captureError: string | undefined;
   let shutdownResult: { status: "completed" | "failed"; error?: string } = { status: "completed" };
@@ -349,6 +350,9 @@ export async function executeDeepSeekHarness(
       const deadline = totalDeadline === undefined ? inactivityDeadline : Math.min(inactivityDeadline, totalDeadline);
       await retainNotification(await nextNotification(subscription, context.signal, deadline));
     }
+    // Receipt-to-idle proves capture completion, not that the native turn succeeded.
+    nativeTurnError = deepSeekTerminalError(capture.report(), configuration.sessionId);
+    if (nativeTurnError !== undefined) throw new Error(`DeepSeek native turn failed: ${nativeTurnError}`);
     status = "completed";
   } catch (error) {
     failure = error;
@@ -431,7 +435,8 @@ export async function executeDeepSeekHarness(
   };
   return {
     status,
-    ...(status === "failed" ? { failureClass: "infrastructure" as const } : {}),
+    // A native turn error is the task failing; other failures are the harness or its transport.
+    ...(status === "failed" ? { failureClass: nativeTurnError === undefined ? "infrastructure" as const : "task" as const } : {}),
     ...(status === "stopped" ? { stopReason: "budget" as const } : {}),
     ...(report.error === undefined ? {} : { error: report.error }),
     ...(captureError === undefined ? {} : { captureError }),
@@ -467,6 +472,17 @@ export function qualifiedDeepSeekCapture(
 }
 
 /** Reapply the native lifecycle gate while preserving retained physical JSONL locators. */
+/** The native error of a `turn/end` that ended with an error, if the session's turn did. */
+export function deepSeekTerminalError(records: readonly DeepSeekNativeObservation[], sessionId: string): string | undefined {
+  for (const observation of records) {
+    if (observation.kind !== "notification" || observation.method !== "session.event" || nativeSessionId(observation) !== sessionId) continue;
+    const event = nativeSessionEvent(observation);
+    const reason = record(record(event?.data)?.reason);
+    if (event?.type === "turn/end" && reason?.kind === "error") return JSON.stringify(reason.error ?? reason).slice(0, 4096);
+  }
+  return undefined;
+}
+
 export function qualifyRetainedDeepSeekCapture(
   input: QualifiedNativeCapture<DeepSeekNativeObservation>,
   sessionId: string | undefined,

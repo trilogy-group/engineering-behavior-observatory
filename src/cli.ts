@@ -48,7 +48,10 @@ import {
 import { createRetainedStructuralObservationSet } from "./structural-observations.js";
 import { DEFAULT_RATING_POLICY, rateRetainedOccurrences, type OccurrenceRatings } from "./occurrence-ratings.js";
 import { prepareRetainedJudgeRequest, type JudgePrepareSpec } from "./judge-prepare.js";
+import { checkRetainedClaims, DEFAULT_CLAIM_CHECK_POLICY } from "./claim-checks.js";
+import type { BehaviorAssertion as ClaimAssertion } from "./behavior-assertions.js";
 import { DECISION_PROVIDERS, type DecisionProviderId } from "./decision-models.js";
+import type { CodexReasoningEffort } from "./codex.js";
 import type { StructuralObservationSet } from "./structural-observations.js";
 import {
   admitTaskPacket,
@@ -88,8 +91,9 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo atlas serve <request.json> [--port <port>]
        ebo observations create <run-bundle-root> <output.json>
        ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
-       ebo occurrences rate <run-bundle-root> <observations.json> <output.json> --provider <typesafe|fireworks> [--model <id>] [--choice-confidence <0-1>] [--noul-margin <0-0.5>]
+       ebo occurrences rate <run-bundle-root> <observations.json> <output.json> --provider <typesafe|fireworks> [--model <id>] [--choice-confidence <0-1>] [--noul-margin <0-0.5>] [--fallback-model <codex-model> [--fallback-effort <effort>]]
        ebo assertions validate <run-bundle-root> <assertion.json> [review.json]
+       ebo claims check <run-bundle-root> <assertion.json> <output.json> --provider <typesafe|fireworks> [--model <id>] [--choice-confidence <0-1>]
        ebo judge prepare <run-bundle-root> <observations.json> <spec.json> <request.json> [--ratings <ratings.json>]
        ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root> [--ratings <ratings.json>]
        ebo judge batch <batch.json>
@@ -229,6 +233,10 @@ export function main(
 
   if (args[0] === "occurrences" && args[1] === "rate") {
     return runOccurrenceRatingCommand(args.slice(2), write);
+  }
+
+  if (args[0] === "claims" && args[1] === "check") {
+    return runClaimCheckCommand(args.slice(2), write);
   }
 
   if (args[0] === "assertions" && args[1] === "validate") {
@@ -676,18 +684,54 @@ async function runObservationsCommand(args: string[], write: (message: string) =
   return 1;
 }
 
+async function runClaimCheckCommand(args: string[], write: (message: string) => void): Promise<number> {
+  const usage = "Usage: ebo claims check <run-bundle-root> <assertion.json> <output.json> --provider <typesafe|fireworks> [--model <id>] [--choice-confidence <0-1>]\n";
+  const [bundleRoot, assertionPath, outputPath, ...flags] = args;
+  const options: Record<string, string> = {};
+  for (let index = 0; index < flags.length; index += 2) {
+    const flag = flags[index]!;
+    const value = flags[index + 1];
+    if (!["--provider", "--model", "--choice-confidence"].includes(flag) || value === undefined || flag in options) { write(usage); return 1; }
+    options[flag] = value;
+  }
+  const provider = options["--provider"];
+  if (bundleRoot === undefined || assertionPath === undefined || outputPath === undefined || provider === undefined || !(provider in DECISION_PROVIDERS)) { write(usage); return 1; }
+  try {
+    assertDerivedDestination(bundleRoot, outputPath);
+    const confidence = options["--choice-confidence"] === undefined ? DEFAULT_CLAIM_CHECK_POLICY.choiceConfidence : Number(options["--choice-confidence"]);
+    if (!(confidence >= 0 && confidence <= 1)) throw new Error("--choice-confidence must be a number from 0 to 1.");
+    if (existsSync(resolve(outputPath))) throw new Error("Claim checks destination already exists.");
+    // Decision records are appended as calls finish; the partial log is removed once the artifact is written.
+    const partialPath = `${resolve(outputPath)}.decisions.partial.jsonl`;
+    if (existsSync(partialPath)) throw new Error("A partial decision log from an interrupted run exists for this destination; keep it and choose a new destination.");
+    prepareDerivedParent(bundleRoot, partialPath);
+    const checks = await checkRetainedClaims(bundleRoot, readJson(assertionPath) as ClaimAssertion,
+      { provider: provider as DecisionProviderId, ...(options["--model"] === undefined ? {} : { model: options["--model"] }) },
+      { policy: { choiceConfidence: confidence }, onDecision: (record, claimId) => appendFileSync(partialPath, `${JSON.stringify({ claimId, record })}\n`, { mode: 0o600 }) });
+    await writeObservationReport(outputPath, checks, bundleRoot);
+    rmSync(partialPath, { force: true });
+    const { coverage } = checks;
+    write(`Checked ${String(coverage.checked)} of ${String(coverage.claims)} claims: ${String(coverage.supported)} supported, ${String(coverage.flagged)} flagged for review, ${String(coverage.failedDecisions)} failed decision(s).\n`);
+    return coverage.failedDecisions === 0 ? 0 : 1;
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  }
+}
+
 async function runOccurrenceRatingCommand(args: string[], write: (message: string) => void): Promise<number> {
-  const usage = "Usage: ebo occurrences rate <run-bundle-root> <observations.json> <output.json> --provider <typesafe|fireworks> [--model <id>] [--choice-confidence <0-1>] [--noul-margin <0-0.5>]\n";
+  const usage = "Usage: ebo occurrences rate <run-bundle-root> <observations.json> <output.json> --provider <typesafe|fireworks> [--model <id>] [--choice-confidence <0-1>] [--noul-margin <0-0.5>] [--fallback-model <codex-model> [--fallback-effort <effort>]]\n";
   const [bundleRoot, observationsPath, outputPath, ...flags] = args;
   const options: Record<string, string> = {};
   for (let index = 0; index < flags.length; index += 2) {
     const flag = flags[index]!;
     const value = flags[index + 1];
-    if (!["--provider", "--model", "--choice-confidence", "--noul-margin"].includes(flag) || value === undefined || flag in options) { write(usage); return 1; }
+    if (!["--provider", "--model", "--choice-confidence", "--noul-margin", "--fallback-model", "--fallback-effort"].includes(flag) || value === undefined || flag in options) { write(usage); return 1; }
     options[flag] = value;
   }
   const provider = options["--provider"];
-  if (bundleRoot === undefined || observationsPath === undefined || outputPath === undefined || provider === undefined || !(provider in DECISION_PROVIDERS)) { write(usage); return 1; }
+  if (bundleRoot === undefined || observationsPath === undefined || outputPath === undefined || provider === undefined || !(provider in DECISION_PROVIDERS)
+      || (options["--fallback-effort"] !== undefined && options["--fallback-model"] === undefined)) { write(usage); return 1; }
   const fraction = (value: string | undefined, fallback: number, maximum: number) => {
     if (value === undefined) return fallback;
     const parsed = Number(value);
@@ -708,12 +752,16 @@ async function runOccurrenceRatingCommand(args: string[], write: (message: strin
     prepareDerivedParent(bundleRoot, partialPath);
     const ratings = await rateRetainedOccurrences(bundleRoot, observations,
       { provider: provider as DecisionProviderId, ...(options["--model"] === undefined ? {} : { model: options["--model"] }) },
-      { policy, onDecision: (record, occurrenceId) => appendFileSync(partialPath, `${JSON.stringify({ occurrenceId, record })}\n`, { mode: 0o600 }) });
+      { policy,
+        ...(options["--fallback-model"] === undefined ? {} : { fallback: { model: options["--fallback-model"], effort: (options["--fallback-effort"] ?? "medium") as CodexReasoningEffort } }),
+        onDecision: (record, occurrenceId) => appendFileSync(partialPath, `${JSON.stringify({ occurrenceId, record })}\n`, { mode: 0o600 }),
+        onFallback: (record) => appendFileSync(partialPath, `${JSON.stringify({ fallback: record })}\n`, { mode: 0o600 }) });
     await writeObservationReport(outputPath, ratings, bundleRoot);
     rmSync(partialPath, { force: true });
     const { coverage } = ratings;
-    write(`Rated ${String(coverage.asked)} of ${String(coverage.occurrences)} occurrences for attempt ${ratings.attemptId}: ${String(coverage.accepted)} accepted, ${String(coverage.deferred)} deferred, ${String(coverage.byRule)} by rule, ${String(coverage.failedDecisions)} failed decision(s).\n`);
-    return coverage.failedDecisions === 0 ? 0 : 1;
+    const fallback = coverage.fallback === undefined ? "" : `, ${String(coverage.fallback)} answered by the fallback (${String(coverage.failedFallbacks)} failed call(s))`;
+    write(`Rated ${String(coverage.asked)} of ${String(coverage.occurrences)} occurrences for attempt ${ratings.attemptId}: ${String(coverage.accepted)} accepted, ${String(coverage.deferred)} deferred, ${String(coverage.byRule)} by rule${fallback}, ${String(coverage.failedDecisions)} failed decision(s).\n`);
+    return coverage.failedDecisions === 0 && (coverage.failedFallbacks ?? 0) === 0 ? 0 : 1;
   } catch (error) {
     write(`${errorMessage(error)}\n`);
     return 1;

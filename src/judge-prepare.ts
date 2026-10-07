@@ -1,9 +1,9 @@
 import { canonicalizeMetadata, digestMetadata } from "./artifacts.js";
-import { validateOccurrenceRatings, type OccurrenceRatings } from "./occurrence-ratings.js";
+import { validateOccurrenceRatings, verifyRatingRules, type OccurrenceRatings } from "./occurrence-ratings.js";
 import { OCCURRENCE_TYPES, type Occurrence, type OccurrenceType } from "./occurrences.js";
 import { createRetainedBehaviorEvidence } from "./retained-evidence.js";
 import type { SemanticJudgeRequest } from "./semantic-judge.js";
-import { createStructuralObservationSet, type StructuralObservationSet } from "./structural-observations.js";
+import { createStructuralObservationSet, nativeContentResolver, type StructuralObservationSet } from "./structural-observations.js";
 import type { UniformEvent } from "./uniform-events.js";
 
 /**
@@ -72,11 +72,16 @@ export function prepareJudgeRequest(
   for (const event of [firstUser, ...modelMessages.slice(-2)]) if (event !== undefined) take([event.id]);
 
   // Tier 2: failures and what ratings mark as adverse or uncertain.
-  const ratingsByOccurrence = new Map<string, OccurrenceRatings["ratings"]>();
-  for (const rating of ratings?.ratings ?? []) ratingsByOccurrence.set(rating.occurrenceId, [...ratingsByOccurrence.get(rating.occurrenceId) ?? [], rating]);
+  // The effective rating per question: a fallback answer replaces the deferred model answer it resolves.
+  const effective = new Map<string, Map<string, OccurrenceRatings["ratings"][number]>>();
+  for (const rating of ratings?.ratings ?? []) {
+    const questions = effective.get(rating.occurrenceId) ?? new Map();
+    if (rating.source === "fallback" || !questions.has(rating.questionId)) questions.set(rating.questionId, rating);
+    effective.set(rating.occurrenceId, questions);
+  }
   const flagged = (occurrence: Occurrence) => occurrence.type === "failure-response"
     || occurrence.type === "validation-run" && occurrence.attributes.result === "failed"
-    || (ratingsByOccurrence.get(occurrence.id) ?? []).some(({ accepted, label }) => !accepted || ADVERSE_LABELS.has(label));
+    || [...effective.get(occurrence.id)?.values() ?? []].some(({ accepted, label }) => !accepted || ADVERSE_LABELS.has(label));
   for (const occurrence of population.filter(flagged)) takeOccurrence(occurrence);
 
   // Tier 3: the final validation of each check kind.
@@ -150,5 +155,6 @@ export async function prepareRetainedJudgeRequest(
   if (canonicalizeMetadata(rebuilt) !== canonicalizeMetadata(observations)) {
     throw new Error(`Structural observation set for attempt "${observations.attemptId}" is stale; recreate it before preparing.`);
   }
+  if (ratings !== undefined) verifyRatingRules(ratings, rebuilt, dataset.events, nativeContentResolver(outcomeCapture));
   return prepareJudgeRequest(rebuilt, dataset.events, spec, ratings);
 }

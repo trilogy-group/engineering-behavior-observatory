@@ -84,8 +84,9 @@ Observations qualify and normalize retained evidence before extracting structura
 ```sh
 ebo observations create <run-bundle-root> <output.json>
 ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
-ebo occurrences rate <run-bundle-root> <observations.json> <output.json> --provider <typesafe|fireworks> [--model <id>] [--choice-confidence <0-1>] [--noul-margin <0-0.5>]
+ebo occurrences rate <run-bundle-root> <observations.json> <output.json> --provider <typesafe|fireworks> [--model <id>] [--choice-confidence <0-1>] [--noul-margin <0-0.5>] [--fallback-model <codex-model> [--fallback-effort <effort>]]
 ebo assertions validate <run-bundle-root> <assertion.json> [review.json]
+ebo claims check <run-bundle-root> <assertion.json> <output.json> --provider <typesafe|fireworks> [--model <id>] [--choice-confidence <0-1>]
 ebo judge prepare <run-bundle-root> <observations.json> <spec.json> <request.json> [--ratings <ratings.json>]
 ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root> [--ratings <ratings.json>]
 ebo judge batch <batch.json>
@@ -94,7 +95,10 @@ ebo judge batch <batch.json>
 `occurrences rate` calls the named decision-model provider (`TYPESAFE_API_KEY`,
 or `FIREWORKS_API_KEY` with `FIREWORKS_SYSTEMONE_MODEL`). `judge prepare` builds
 a request with the complete occurrence ledger and a recorded selection frame;
-`judge run --ratings` supplies the ratings the request names by digest. See
+`judge run --ratings` supplies the ratings the request names by digest.
+`occurrences rate --fallback-model` asks low-confidence questions again of a
+Codex reasoning model; `claims check` routes a judge assertion's unsupported
+claims to review. See
 [occurrence ratings](../evaluation/occurrence-ratings.md).
 
 `judge batch` runs a declared list of jobs sequentially and stops on failure.

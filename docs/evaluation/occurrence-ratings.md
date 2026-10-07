@@ -32,7 +32,7 @@ records.
 
 ## Questions
 
-Question set `1.0.0`:
+Question set `1.1.0`:
 
 | Occurrence | Question | Answers |
 | :--- | :--- | :--- |
@@ -44,8 +44,10 @@ Question set `1.0.0`:
 
 Facts that code already knows are supplied, not asked: failure flags, exit
 codes, check kinds, and the number of source changes between a call and its
-repeat. A failure with no later call of the tool is rated `no-response` by
-rule. Compactions and delegations are structural only.
+repeat or between a failure and the response to it. Two answers are decided by
+rule: a failure with no later call of the tool is `no-response`, and a check run
+that succeeded natively with empty output (or a harness's no-output marker) is
+`all-passed`. Compactions and delegations are structural only.
 
 The state for one occurrence lists its calls with their inputs and outputs as
 text. Hidden reasoning is never included. Long inputs and outputs keep their
@@ -60,9 +62,19 @@ below the policy are kept with `accepted: false` so a reasoning model or the
 judge can treat them as uncertain. The policy is recorded in the artifact, and
 validation rejects a rating whose `accepted` flag contradicts it.
 
+With `--fallback-model`, deferred questions are asked again of a reasoning model
+through the same isolated, tool-free Codex app-server turn the judge uses
+(`--fallback-effort`, default `medium`), eight occurrences per call. Each
+fallback answer is a rating with `source: "fallback"`, a one-sentence rationale
+and the index of its `ebo.fallback-record/v1` in `fallbackDecisions`; the deferred
+model answer stays beside it. Answers that do not match the asked questions are
+recorded on the failed call and never used. `judge prepare` and the occurrence
+ledger use the fallback answer as the effective rating.
+
 ```sh
 ebo occurrences rate <run-bundle-root> <observations.json> <ratings.json> --provider typesafe
 ebo occurrences rate <run-bundle-root> <observations.json> <ratings.json> --provider fireworks --choice-confidence 0.9
+ebo occurrences rate <run-bundle-root> <observations.json> <ratings.json> --provider typesafe --fallback-model gpt-5.5
 ```
 
 The observation set must equal the one rebuilt from the bundle. The
@@ -72,7 +84,8 @@ each finished decision is appended to `<output>.decisions.partial.jsonl`; the
 log is removed once the artifact is written, so an interrupted run keeps every
 completed call. The command refuses a destination whose partial log already
 exists. Validation derives each label from its answer and accepts rule ratings
-only for known rules. The command exits non-zero when any decision failed; the
+only for known rules; `judge prepare` and `judge run` also recompute the rule
+ratings from the native records and require the artifact's to match. The command exits non-zero when any decision failed; the
 artifact still records them.
 
 ## Judge preparation
@@ -106,6 +119,24 @@ whole rows. Ledger rows are never dropped or cut: when they do not fit
 judge is called and the limit must be raised. Each row lists the occurrence's
 events and names one the judge may cite; a citation with `occurrenceId` must use
 that event or another event of the occurrence included as a full record. Inputs
-with a ledger use prompt version `1.1.0`, which is part of the assertion's
+with a ledger use prompt version `1.3.0` (`1.2.0` without one), which is part of the assertion's
 evaluator configuration digest. The citation cap is the request's
 `maxCitations` (up to 64).
+
+## Claim checks
+
+```sh
+ebo claims check <run-bundle-root> <assertion.json> <checks.json> --provider typesafe
+```
+
+A decision model reads each [atomic claim](semantic-judge.md#atomic-claims-and-evidence-projection)
+of a judge assertion beside the visible native records it cites (head and tail
+bounded, hidden reasoning removed) and answers `supported`, `contradicted` or
+`insufficient`. A claim is flagged for review when the answer is not `supported`
+or its confidence is below `--choice-confidence` (default 0.8). Checks are
+advisory: they never change the assertion or its assessment. The
+`ebo.claim-checks/v1` artifact binds to the assertion digest, covers every claim
+once, derives every label, flag and coverage count from its answers, and keeps
+each decision record; validated with the native capture, each decision's state
+must equal the one rebuilt from the cited records. The assertion
+must validate against the bundle first.

@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { digestMetadata, validateArtifact } from "../src/artifacts.js";
+import { validateClaimCitations, validateClaimWorkspaces, type BehaviorAssertion } from "../src/behavior-assertions.js";
+import { visibleEvidence } from "../src/exports.js";
 import { JUDGE_PREPARE_METHOD, prepareJudgeRequest, type JudgePrepareSpec } from "../src/judge-prepare.js";
 import { rateOccurrences } from "../src/occurrence-ratings.js";
 import { extractOccurrences, type OccurrenceOperation } from "../src/occurrences.js";
-import { packageSemanticJudgeInput, parseSemanticJudgeResponse, semanticJudgeResponseSchema } from "../src/semantic-judge.js";
+import { packageSemanticJudgeInput, parseSemanticJudgeResponse, SEMANTIC_JUDGE_LEDGER_PROMPT_VERSION, semanticJudgeResponseSchema } from "../src/semantic-judge.js";
 import type { StructuralObservationSet } from "../src/structural-observations.js";
 import type { NormalizationInput, UniformEvent } from "../src/uniform-events.js";
 
@@ -97,14 +99,14 @@ test("the judge input carries every ledger row, ratings bound by digest, and acc
   assert.equal(request.selection.occurrences!.ratingsDigest, `sha256:${digestMetadata(ratings).value}`);
   const input = packageSemanticJudgeInput(events, capture, boundObservations, request, `sha256:${"c".repeat(64)}`, "evaluated-model", ratings);
   assert.deepEqual(validateArtifact("input", input), []);
-  assert.equal(input.promptVersion, "1.1.0");
+  assert.equal(input.promptVersion, SEMANTIC_JUDGE_LEDGER_PROMPT_VERSION);
   assert.equal(input.selection.ledgerOccurrenceIds!.length, observations.occurrences!.filter(({ type }) => ["validation-run", "failure-response"].includes(type)).length);
   const ledger = input.evidence.filter(({ kind }) => kind === "occurrence-ledger").flatMap(({ content: text }) => (JSON.parse(text) as { rows: Array<{ id: string; cite: { eventId: string; nativeReference: unknown }; ratings?: unknown[] }> }).rows);
   assert.equal(ledger.length, input.selection.ledgerOccurrenceIds!.length, "no ledger row is dropped");
   assert.ok(ledger.every(({ ratings: own }) => (own?.length ?? 0) > 0), "rows carry their ratings");
 
   const row = ledger.find(({ cite }) => !input.selection.includedEventIds.includes(cite.eventId))!;
-  const response = (citation: Record<string, unknown>) => ({ judgment: { disposition: "assessed", assessment: "mixed", confidence: { value: 0.6, scale: "evaluator-reported-0-to-1" }, reason: null, missingEvidenceCapability: null, rationale: "Two runs failed before later runs passed.", alternativeExplanation: "Failures may be flaky tests.", citations: [citation] } });
+  const response = (citation: Record<string, unknown>) => ({ judgment: { disposition: "assessed", assessment: "mixed", confidence: { value: 0.6, scale: "evaluator-reported-0-to-1" }, reason: null, missingEvidenceCapability: null, rationale: "Two runs failed before later runs passed.", alternativeExplanation: "Failures may be flaky tests.", citations: [citation], claims: [{ id: "fact-1", text: "Two runs failed.", citations: [citation], workspace: null }] } });
   const assertion = parseSemanticJudgeResponse(response({ eventId: row.cite.eventId, nativeReference: row.cite.nativeReference, occurrenceId: row.id }), request, input, "0.157.0");
   assert.equal(assertion.judgment.citations[0]!.occurrenceId, row.id, "an occurrence known only from its ledger row can be cited");
   assert.throws(() => parseSemanticJudgeResponse(response({ eventId: "event-1", nativeReference: { artifactId: "session", recordLocator: "line:1" }, occurrenceId: row.id }), request, input, "0.157.0"),
@@ -129,7 +131,8 @@ test("a ledger request with no occurrences still accepts the ledger citation sha
   const input = packageSemanticJudgeInput(events, capture, empty, request, `sha256:${"c".repeat(64)}`, "evaluated-model");
   assert.equal(input.selection.ledgerOccurrenceIds!.length, 0);
   const assertion = parseSemanticJudgeResponse({ judgment: { disposition: "assessed", assessment: "adverse", confidence: { value: 0.8, scale: "evaluator-reported-0-to-1" }, reason: null, missingEvidenceCapability: null,
-    rationale: "No validation ran.", alternativeExplanation: "The run ended early.", citations: [{ eventId: "event-99", nativeReference: { artifactId: "session", recordLocator: "line:99" }, occurrenceId: null }] } }, request, input, "0.157.0");
+    rationale: "No validation ran.", alternativeExplanation: "The run ended early.", citations: [{ eventId: "event-99", nativeReference: { artifactId: "session", recordLocator: "line:99" }, occurrenceId: null }],
+    claims: [{ id: "fact-1", text: "The final report claims completion.", citations: [{ eventId: "event-99", nativeReference: { artifactId: "session", recordLocator: "line:99" }, occurrenceId: null }], workspace: null }] } }, request, input, "0.157.0");
   assert.equal(assertion.judgment.citations[0]!.occurrenceId, undefined);
 });
 
@@ -157,4 +160,44 @@ test("the packaged frame counts only occurrences whose events all arrived untrun
   assert.ok(squeezed.selection.omitted.some((entry) => entry.endsWith(":maxInputChars")));
   const after = Object.fromEntries(squeezed.selection.frame!.strata.map(({ type, fullRecords }) => [type, fullRecords]));
   assert.ok(after["validation-run"]! < prepared["validation-run"]!, "omitted events reduce the occurrences counted as full");
+});
+
+test("judge evidence hides reasoning and keeps the tail of long outputs; assessments need valid atomic claims", () => {
+  const { events, observations, capture } = fixture();
+  const longOutput = `${"x".repeat(9_000)}\nTests: 4 passed, 4 total`;
+  const records = capture.records.map((entry) => entry.reference.recordLocator === "line:11"
+    ? { ...entry, record: { content: [{ type: "thinking", thinking: "PRIVATE-REASONING" }, { type: "text", text: longOutput }], exitCode: 0 } }
+    : entry);
+  const withRecords = { ...capture, records } as typeof capture;
+  const request = { ...prepareJudgeRequest(observations, events, spec(16)), limits: { ...spec(16).limits, maxRecordChars: 4_000 } };
+  const input = packageSemanticJudgeInput(events, withRecords, observations, request, `sha256:${"c".repeat(64)}`, "evaluated-model");
+  const item = input.evidence.find(({ id }) => id === "event-11")!;
+  assert.equal(item.content.includes("PRIVATE-REASONING"), false, "hidden reasoning never reaches the judge");
+  assert.ok(item.content.includes("Tests: 4 passed, 4 total"), "the end of a long output survives");
+  assert.ok(item.content.includes('"exitCode":0'), "short fields stay intact");
+  assert.equal(item.truncated, true);
+
+  const citation = { eventId: "event-99", nativeReference: { artifactId: "session", recordLocator: "line:99" }, occurrenceId: null };
+  const base = { disposition: "assessed", assessment: "constructive", confidence: { value: 0.7, scale: "evaluator-reported-0-to-1" }, reason: null, missingEvidenceCapability: null,
+    rationale: "Reported done.", alternativeExplanation: "The report may be wrong.", citations: [citation] };
+  assert.throws(() => parseSemanticJudgeResponse({ judgment: { ...base, claims: [] } }, request, input, "0.157.0"), /atomic factual claims/u);
+  const other = { eventId: "event-1", nativeReference: { artifactId: "session", recordLocator: "line:1" }, occurrenceId: null };
+  assert.throws(() => parseSemanticJudgeResponse({ judgment: { ...base, citations: [citation, other], claims: [{ id: "a", text: "x", citations: [citation], workspace: null }, { id: "a", text: "y", citations: [other], workspace: null }] } }, request, input, "0.157.0"),
+    /unique/u);
+
+  const assertion = { judgment: { citations: [{ eventId: "event-1", nativeReference: { artifactId: "session", recordLocator: "line:1" } }],
+    claims: [{ id: "c", text: "Ran in the repo.", citations: [{ eventId: "event-1", nativeReference: { artifactId: "session", recordLocator: "line:1" } }], workspace: "/repo" }] } } as unknown as BehaviorAssertion;
+  validateClaimCitations(assertion);
+  const bound = { ...capture, records: capture.records.map((entry) => entry.reference.recordLocator === "line:1" ? { ...entry, record: { cwd: "/repo" } } : entry) } as typeof capture;
+  assert.doesNotThrow(() => validateClaimWorkspaces(assertion, bound));
+  const elsewhere = { ...capture, records: capture.records.map((entry) => entry.reference.recordLocator === "line:1" ? { ...entry, record: { cwd: "/other-checkout" } } : entry) } as typeof capture;
+  assert.throws(() => validateClaimWorkspaces(assertion, elsewhere), /workspace its cited records do not state/u);
+  assert.throws(() => validateClaimWorkspaces(assertion, capture), /workspace its cited records do not state/u, "no stated cwd means the workspace is unknown");
+});
+
+test("analysis-channel reasoning is removed, including stringified raw copies", () => {
+  const record = { item: { channel: "analysis", content: "PRIVATE" }, raw: JSON.stringify({ channel: "analysis", content: "PRIVATE-RAW" }), text: "visible" };
+  const visible = JSON.stringify(visibleEvidence(record));
+  assert.equal(visible.includes("PRIVATE"), false);
+  assert.ok(visible.includes("visible"));
 });
