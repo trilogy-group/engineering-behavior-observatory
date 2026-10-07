@@ -24,8 +24,10 @@ export function boundedEvidence(value: unknown, maxChars: number): { content: st
 
 function ends(text: string, limit: number): string {
   const marker = `...[OMITTED MIDDLE; originalChars=${text.length}]...`;
-  const head = Math.floor((limit - marker.length) / 2);
-  return text.slice(0, head) + marker + text.slice(-(limit - marker.length - head));
+  const room = Math.max(0, limit - marker.length);
+  const head = Math.floor(room / 2);
+  const tail = room - head;
+  return text.slice(0, head) + marker + (tail === 0 ? "" : text.slice(-tail));
 }
 
 /** Only explicit native cwd fields establish workspace identity. Relative paths do not. */
