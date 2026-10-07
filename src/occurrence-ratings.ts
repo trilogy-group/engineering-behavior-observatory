@@ -344,6 +344,17 @@ const RULE_RATINGS = {
 /** Output that carries nothing: empty, or a harness's own no-output marker. */
 const EMPTY_OUTPUT = /^\s*(?:\(?\s*(?:no output|bash completed with no output)\s*\)?)?\s*$/iu;
 
+/** -1 when `left` precedes `right`, 1 when it follows, 0 for the same event; undefined when the order is unknown. */
+function eventOrder(left: UniformEvent, right: UniformEvent): number | undefined {
+  if (left.id === right.id) return 0;
+  if (left.nativeOrder.status === "known" && right.nativeOrder.status === "known" && left.nativeOrder.domain === right.nativeOrder.domain) {
+    return Math.sign(left.nativeOrder.value - right.nativeOrder.value) || undefined;
+  }
+  const leftTime = left.nativeTime.status === "known" ? Date.parse(left.nativeTime.value) : Number.NaN;
+  const rightTime = right.nativeTime.status === "known" ? Date.parse(right.nativeTime.value) : Number.NaN;
+  return Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime ? Math.sign(leftTime - rightTime) : undefined;
+}
+
 /** A single check call that succeeded natively and printed nothing. */
 function silentSuccess(state: Record<string, unknown>): boolean {
   const calls = state.calls as Array<{ output?: string; nativeResult: string }>;
@@ -447,12 +458,8 @@ export async function rateOccurrences(
   const occurrenceTypes = [...new Set((rebuilt.occurrences ?? []).map(({ type }) => type))]
     .filter((type) => occurrenceQuestions(type) !== undefined && (options.types === undefined || options.types.includes(type)));
   const occurrences = (rebuilt.occurrences ?? []).filter(({ type }) => occurrenceTypes.includes(type));
-  const time = (id: string) => {
-    const event = eventsById.get(id);
-    return event?.nativeTime.status === "known" ? Date.parse(event.nativeTime.value) : Number.NaN;
-  };
   // Supporting facts use every source change, whichever types are rated.
-  const changeTimes = (rebuilt.occurrences ?? []).filter(({ type }) => type === "source-change").map(({ eventIds }) => time(eventIds[0]!));
+  const changes = (rebuilt.occurrences ?? []).filter(({ type }) => type === "source-change").map(({ eventIds }) => eventsById.get(eventIds[0]!));
   const decisionOccurrences: string[] = [];
   const ratings: OccurrenceRating[] = [];
   const decisions: DecisionRecord[] = [];
@@ -464,10 +471,20 @@ export async function rateOccurrences(
     const rule = (key: keyof typeof RULE_RATINGS) => ratings.push({ occurrenceId: occurrence.id, occurrenceType: occurrence.type,
       questionId: RULE_RATINGS[key].questionId, source: "rule", label: RULE_RATINGS[key].label, accepted: true, rule: RULE_RATINGS[key].rule });
     if (occurrence.type === "failure-response" && occurrence.attributes.nextOutcome === "none") { rule("noResponse"); continue; }
-    const between = (fromId: unknown, toId: unknown) => {
-      const from = time(String(fromId));
-      const to = time(String(toId));
-      return Number.isFinite(from) && Number.isFinite(to) ? changeTimes.filter((at) => at > from && at < to).length : "unknown";
+    // Source changes strictly between two events, by native order within one order domain and by time otherwise;
+    // "unknown" when an order cannot be established (for example equal timestamps across domains).
+    const between = (fromId: unknown, toId: unknown): number | "unknown" => {
+      const from = eventsById.get(String(fromId));
+      const to = eventsById.get(String(toId));
+      if (from === undefined || to === undefined) return "unknown";
+      let count = 0;
+      for (const change of changes) {
+        const after = change === undefined ? undefined : eventOrder(from, change);
+        const before = change === undefined ? undefined : eventOrder(change, to);
+        if (after === undefined || before === undefined) return "unknown";
+        if (after < 0 && before < 0) count += 1;
+      }
+      return count;
     };
     const facts: Record<string, unknown> = {};
     if (occurrence.type === "repeated-operation") facts.sourceChangesBetween = between(occurrence.attributes.firstEventId, occurrence.eventIds[0]);
@@ -621,6 +638,10 @@ function validateRatingCompleteness(document: OccurrenceRatings): void {
   });
   (document.fallbackDecisions ?? []).forEach((record, index) => {
     if (record.status !== "completed") return;
+    // A completed call answers exactly the question pairs it was asked, once each.
+    const asked = record.request.items.flatMap(({ occurrenceId, questions }) => Object.keys(questions).map((questionId) => `${occurrenceId}\0${questionId}`)).sort();
+    const answered = fallbackAnswers(record).map(({ occurrenceId, questionId }) => `${occurrenceId}\0${questionId}`).sort();
+    if (canonicalizeMetadata(asked) !== canonicalizeMetadata(answered) || new Set(answered).size !== answered.length) fail(`fallback call ${String(index)} does not answer exactly the questions it asked.`);
     for (const { occurrenceId, questionId } of fallbackAnswers(record)) {
       if (fallback.get(`${occurrenceId}\0${questionId}`)?.fallback !== index) fail(`a completed fallback answer for "${occurrenceId}" has no rating.`);
     }

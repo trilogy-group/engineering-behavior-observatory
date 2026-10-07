@@ -227,9 +227,14 @@ test("claim checks route unsupported or uncertain claims to review and bind to t
   swapped.checks[1]!.flagged = false;
   swapped.coverage = { ...swapped.coverage, supported: 2, flagged: 0 };
   assert.throws(() => validateClaimChecks(swapped, assertion), /every claim once/u, "a check cannot borrow another claim's decision");
+  const failedDecision = structuredClone(checks);
+  failedDecision.decisions[1] = { ...failedDecision.decisions[1]!, status: "failed", answers: undefined, error: "HTTP 500", request: { ...failedDecision.decisions[1]!.request, state: { claim: { text: "Other.", workspace: null }, citedRecords: [] } } } as never;
+  failedDecision.checks = failedDecision.checks.slice(0, 1);
+  failedDecision.coverage = { claims: 2, checked: 1, failedDecisions: 1, supported: 1, flagged: 0 };
+  assert.throws(() => validateClaimChecks(failedDecision, assertion), /was not asked about claim "typed"/u, "a failed decision is bound to its claim too");
   const misstated = structuredClone(checks);
   (misstated.decisions[1]!.request.state as { claim: { text: string } }).claim.text = "Something else.";
-  assert.throws(() => validateClaimChecks(misstated, assertion), /different claim/u, "each decision must be about its own claim");
+  assert.throws(() => validateClaimChecks(misstated, assertion), /not asked about claim|different claim/u, "each decision must be about its own claim");
   validateClaimChecks(checks, assertion, capture);
   const omitted = structuredClone(checks);
   omitted.checks.pop();
@@ -240,7 +245,7 @@ test("claim checks route unsupported or uncertain claims to review and bind to t
   assert.throws(() => validateClaimChecks(recounted, assertion), /coverage differs/u);
   const substituted = structuredClone(checks);
   (substituted.decisions[0]!.request.state as { citedRecords: Array<{ record: string }> }).citedRecords[0]!.record = "Tests: 99 passed";
-  assert.throws(() => validateClaimChecks(substituted, assertion, capture), /differ from the cited native records/u);
+  assert.throws(() => validateClaimChecks(substituted, assertion, capture), /not asked about claim "passed" and its cited records/u);
   const changed = structuredClone(assertion) as typeof assertion;
   (changed.judgment as { rationale: string }).rationale = "edited";
   assert.throws(() => validateClaimChecks(checks, changed), /different assertion/u);
@@ -320,6 +325,14 @@ test("question set 1.1: silent success is a rule rating, source changes between 
   const onlyFailures = await rateOccurrences(observationSet, events, ({ recordLocator }) => content[recordLocator], { provider: "typesafe" }, { fetch: fetchImpl, env, types: ["failure-response"] });
   assert.equal(sent.at(-1)!.state.facts.sourceChangesBetween, 1, "supporting facts count every source change, whichever types are rated");
   verifyRatingRules(onlyFailures, observationSet, events, ({ recordLocator }) => content[recordLocator]);
+  const duplicated = structuredClone(ratings);
+  const multi = duplicated.fallbackDecisions!.findIndex(({ request }) => request.items.flatMap(({ questions }) => Object.keys(questions)).length >= 2);
+  const answers = (duplicated.fallbackDecisions![multi]!.response as { answers: Array<{ occurrenceId: string; questionId: string }> }).answers;
+  const lostPair = answers[1]!;
+  answers[1] = { ...answers[0]! };
+  duplicated.ratings = duplicated.ratings.filter(({ source, occurrenceId, questionId }) => !(source === "fallback" && occurrenceId === lostPair.occurrenceId && questionId === lostPair.questionId));
+  duplicated.coverage.fallback = duplicated.coverage.fallback! - 1;
+  assert.throws(() => validateOccurrenceRatings(duplicated), /does not answer exactly the questions it asked/u);
   const restated = structuredClone(ratings);
   const restatedRating = restated.ratings.find(({ source }) => source === "fallback")!;
   const restatedItem = restated.fallbackDecisions![restatedRating.fallback!]!.request.items.find(({ occurrenceId }) => occurrenceId === restatedRating.occurrenceId)!;
@@ -338,4 +351,32 @@ test("question set 1.1: silent success is a rule rating, source changes between 
     fallback: { ...fallback, run: async () => ({ status: "failed" as const, kind: "timeout" as const, message: "Codex judge exceeded maxWallClockMs.", rawModelResponse: { content: "{\"answers\": [", truncated: false }, raw: { threadId: "t", turnId: "u" } }) } });
   assert.deepEqual(timedOut.fallbackDecisions![0]!.rawModelResponse, { content: "{\"answers\": [", truncated: false }, "partial model output of a failed call is kept");
   assert.deepEqual(timedOut.fallbackDecisions![0]!.raw, { threadId: "t", turnId: "u" });
+});
+
+test("source changes between a failure and its response follow native order, and are unknown when order is", async () => {
+  const at = (sequence: number, attributes: UniformEvent["attributes"], phase: UniformEvent["phase"], second: number, domain = "session") => ({
+    ...event(sequence, attributes, phase), nativeTime: { status: "known" as const, value: new Date(Date.UTC(2026, 9, 6, 0, 0, second)).toISOString() },
+    nativeOrder: { status: "known" as const, value: sequence, domain } });
+  const content: Record<string, unknown> = { "line:1": { input: { command: "pnpm test" } }, "line:2": { content: "fail" }, "line:3": { input: { file_path: "src/a.ts" } }, "line:4": { content: "ok" },
+    "line:5": { input: { command: "pnpm test" } }, "line:6": { content: "pass" } };
+  const op = (id: string, events: UniformEvent[], failed: boolean, toolName = "Bash"): OccurrenceOperation => ({ id, events, toolName, inputDigest: `sha256:${id}`, failed });
+  const factFor = async (editDomain: string) => {
+    // Every event shares one timestamp, as with a coarse receipt clock.
+    const failing = op("a", [at(1, { toolName: "Bash", toolUseId: "a" }, "before", 1), at(2, { toolName: "Bash", toolUseId: "a", isError: true }, "after", 1)], true);
+    const edit = op("e", [at(3, { toolName: "Edit", toolUseId: "e" }, "before", 1, editDomain), at(4, { toolName: "Edit", toolUseId: "e", isError: false }, "after", 1, editDomain)], false, "Edit");
+    const rerun = op("b", [at(5, { toolName: "Bash", toolUseId: "b" }, "before", 1), at(6, { toolName: "Bash", toolUseId: "b", isError: false }, "after", 1)], false);
+    const operations = [failing, edit, rerun];
+    const events = operations.flatMap(({ events: own }) => own);
+    const { occurrences, coverage } = extractOccurrences({ attemptId: "attempt", events, operations, toolCapability: { status: "available" }, delegationCapability: { status: "available" },
+      isCompaction: () => false, resolveContent: ({ recordLocator }) => content[recordLocator] });
+    const observationSet = { runId: "run", attemptId: "attempt", normalization: { datasetDigest: `sha256:${"a".repeat(64)}` }, occurrences, occurrenceCoverage: coverage } as unknown as StructuralObservationSet;
+    let facts: Record<string, unknown> | undefined;
+    await rateOccurrences(observationSet, events, ({ recordLocator }) => content[recordLocator], { provider: "typesafe" }, { env, types: ["failure-response"], fetch: (async (_url: string | URL, init?: RequestInit) => {
+      facts = (JSON.parse(String(init!.body)) as { state: { facts: Record<string, unknown> } }).state.facts;
+      return new Response(JSON.stringify({ model: "m", usage: { input_tokens: 1, output_tokens: 1 }, answers: { response: { type: "choice", choice: "addressed-cause", probabilities: { "addressed-cause": 0.9, "retried-unchanged": 0.04, "different-approach": 0.04, unclear: 0.02 }, confidence: 0.9 } } }));
+    }) as typeof fetch });
+    return facts!.sourceChangesBetween;
+  };
+  assert.equal(await factFor("session"), 1, "native order places the edit between the failure and the re-run despite equal timestamps");
+  assert.equal(await factFor("other"), "unknown", "equal timestamps across order domains cannot be ordered");
 });

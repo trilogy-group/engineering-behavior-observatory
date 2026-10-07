@@ -148,6 +148,17 @@ export function validateClaimChecks(document: ClaimChecks, assertion?: BehaviorA
       flagged: document.checks.filter(({ flagged }) => flagged).length,
     };
     if (canonicalizeMetadata(coverage) !== canonicalizeMetadata(document.coverage)) throw new Error("Claim-check coverage differs from its checks.");
+    // Every decision, completed or failed, was asked the support question about its own claim.
+    document.decisions.forEach((decision, index) => {
+      const claim = claims[index]!;
+      const state = decision.request.state as { claim?: unknown; citedRecords?: Array<{ eventId?: unknown }> } | undefined;
+      if (canonicalizeMetadata(decision.request.questions) !== canonicalizeMetadata({ support: CLAIM_SUPPORT_QUESTION })
+          || canonicalizeMetadata(state?.claim) !== canonicalizeMetadata({ text: claim.text, workspace: claim.workspace })
+          || canonicalizeMetadata(state?.citedRecords?.map(({ eventId }) => eventId)) !== canonicalizeMetadata(claim.citations.map(({ eventId }) => eventId))
+          || (capture !== undefined && canonicalizeMetadata(decision.request.state) !== canonicalizeMetadata(claimState(claim, capture)))) {
+        throw new Error(`Claim-check decision ${String(index)} was not asked about claim "${claim.id}" and its cited records.`);
+      }
+    });
   }
   for (const check of document.checks) {
     const decision = document.decisions[check.decision];
