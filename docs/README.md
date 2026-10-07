@@ -48,6 +48,8 @@ The [evaluation reading path](evaluation/README.md) explains how the parts fit:
   batches, explicit evidence selection, aggregation, and Atlas
 - [Optional human calibration](evaluation/human-calibration.md)
 - [Comparison and aggregation](evaluation/aggregation.md)
+- [Atlas bundles](evaluation/atlas-bundles.md): the tables behind the
+  interactive Atlas viewer
 
 ## Build and look things up
 

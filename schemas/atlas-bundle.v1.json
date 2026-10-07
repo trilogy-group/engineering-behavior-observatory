@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ebo:schema:atlas-bundle:v1",
+  "$defs": {
+    "identifier": { "type": "string", "minLength": 1, "maxLength": 1024, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "id", "title", "cohorts"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.atlas-bundle-request/v1" },
+        "id": { "$ref": "#/$defs/identifier" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "cohorts": {
+          "type": "array", "minItems": 1, "maxItems": 100,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["id", "atlasRequest"],
+            "properties": { "id": { "$ref": "#/$defs/identifier" }, "atlasRequest": { "$ref": "#/$defs/path" } }
+          }
+        },
+        "condition": {
+          "type": "object", "additionalProperties": false, "required": ["pattern"],
+          "properties": { "pattern": { "type": "string", "minLength": 1, "maxLength": 1000 } }
+        }
+      }
+    },
+    "bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "id", "title", "builder", "tablesVersion", "createdAt", "request", "cohorts", "tables", "files"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.atlas-bundle/v1" },
+        "id": { "$ref": "#/$defs/identifier" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "builder": {
+          "type": "object", "additionalProperties": false, "required": ["id", "version"],
+          "properties": { "id": { "const": "ebo-atlas-bundle" }, "version": { "type": "string", "minLength": 1 } }
+        },
+        "tablesVersion": { "type": "string", "minLength": 1 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "request": {
+          "type": "object", "additionalProperties": false, "required": ["digest"],
+          "properties": { "digest": { "$ref": "#/$defs/digest" } }
+        },
+        "cohorts": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["id", "title", "sourceDigest", "cohortDigest", "attempts", "assertions", "report"],
+            "properties": {
+              "id": { "$ref": "#/$defs/identifier" },
+              "title": { "type": "string", "minLength": 1 },
+              "sourceDigest": { "$ref": "#/$defs/digest" },
+              "cohortDigest": { "$ref": "#/$defs/digest" },
+              "attempts": { "type": "integer", "minimum": 0 },
+              "assertions": { "type": "integer", "minimum": 0 },
+              "report": { "$ref": "#/$defs/path" }
+            }
+          }
+        },
+        "tables": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object", "additionalProperties": false, "required": ["path", "rows", "sha256"],
+            "properties": { "path": { "$ref": "#/$defs/path" }, "rows": { "type": "integer", "minimum": 0 }, "sha256": { "$ref": "#/$defs/digest" } }
+          }
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["path", "bytes", "sha256", "role"],
+            "properties": {
+              "path": { "$ref": "#/$defs/path" },
+              "bytes": { "type": "integer", "minimum": 0 },
+              "sha256": { "$ref": "#/$defs/digest" },
+              "role": { "type": "string", "minLength": 1, "maxLength": 100 }
+            }
+          }
+        }
+      }
+    }
+  }
+}
