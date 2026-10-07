@@ -57,7 +57,9 @@ export function run(name: string, args: Record<string, unknown> = {}, source: So
     const def = commands.get(name);
     if (!def) throw new Error(`Unknown viewer command: ${name}`);
     const before = getState();
-    const description = (await def.run(args)) || def.description;
+    depth += 1;
+    let description: string;
+    try { description = (await def.run(args)) || def.description; } finally { depth -= 1; }
     const state = getState();
     if (!def.readOnly && JSON.stringify(before) !== JSON.stringify(state)) history.push(before);
     const event = { command: name, args, source, description, state };
@@ -70,6 +72,21 @@ export function run(name: string, args: Record<string, unknown> = {}, source: So
 
 function emit(event: CommandEvent) {
   bus.dispatchEvent(new CustomEvent("command", { detail: event }));
+}
+
+/** Is a command running? Changes a component makes on its own (outside commands) are recorded separately. */
+export const commandRunning = () => depth > 0;
+let depth = 0;
+
+/**
+ * Record a change a component made through its own controls (for example a pan in the embedding view) as a history
+ * entry and an event, given the state before it.
+ */
+export function recordChange(command: string, description: string, before: Record<string, Json>, source: Source = "user"): void {
+  const state = getState();
+  if (JSON.stringify(before) === JSON.stringify(state)) return;
+  history.push(before);
+  emit({ command, args: null, source, description, state });
 }
 
 /** Every command, including read-only ones, emits an event saying who issued it (user, assistant, url). */

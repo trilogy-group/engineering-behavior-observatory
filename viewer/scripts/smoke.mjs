@@ -94,6 +94,22 @@ report.undo = await page.evaluate(async () => {
 });
 if (!report.undo.highlighted || !report.undo.restored) failures.push({ undo: report.undo });
 
+// A reader's own zoom in the embedding view is recorded: a history entry, an event and the URL.
+if (await page.evaluate(() => window.ebo.listCloudTools().length > 0)) {
+  const box = await page.locator("#atlas canvas").first().boundingBox().catch(() => null);
+  if (box) {
+    const before = await page.evaluate(() => { window.__cloudEvents = 0; window.ebo.subscribe((e) => { if (e.command === "cloudChanged") window.__cloudEvents++; }); return JSON.stringify(window.ebo.getState().cloud.viewport); });
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.wheel(0, -400);
+    await page.waitForTimeout(1200);
+    const after = await page.evaluate(() => ({ viewport: JSON.stringify(window.ebo.getState().cloud.viewport), events: window.__cloudEvents, hash: location.hash.slice(0, 7) }));
+    await page.evaluate(() => window.ebo.run("undo"));
+    const undone = await page.evaluate(() => JSON.stringify(window.ebo.getState().cloud.viewport));
+    report.directCloud = { changed: after.viewport !== before, events: after.events, hash: after.hash, undone: undone === before };
+    if (report.directCloud.changed && (!report.directCloud.events || !report.directCloud.undone)) failures.push({ directCloud: report.directCloud });
+  } else report.directCloud = "no canvas in this browser";
+}
+
 // The cloud: viewport and brush settable and readable through commands (needs WebGPU, so HEADED=1 on macOS).
 const hasCloud = await page.evaluate(() => window.ebo.listCloudTools().length > 0 && window.ebo.getState().cloud !== undefined);
 report.cloudTools = await page.evaluate(() => window.ebo.listCloudTools().map((t) => t.name));

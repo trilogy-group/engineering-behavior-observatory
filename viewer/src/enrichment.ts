@@ -274,9 +274,13 @@ export class ClusterArmPanel {
     this.tip.style.transform = `translate(${x}px, ${y}px)`;
   }
 
-  /** RFC 4180 field: quoted when it holds a comma, quote or line break, with embedded quotes doubled. */
+  /**
+   * RFC 4180 field: quoted when it holds a comma, quote or line break, with embedded quotes doubled. Text that a
+   * spreadsheet would read as a formula (leading = + - @, tab or carriage return) is prefixed with an apostrophe.
+   */
   private static csv(value: unknown) {
-    const s = String(value ?? "");
+    const raw = String(value ?? "");
+    const s = typeof value === "string" && /^[=+\-@\t\r]/u.test(raw) ? `'${raw}` : raw;
     return /[",\r\n]/u.test(s) ? `"${s.replace(/"/gu, '""')}"` : s;
   }
 

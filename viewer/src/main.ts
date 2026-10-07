@@ -16,7 +16,7 @@ import { ClaimsPanel, Drawer, Evidence, MatrixPanel, type AssessDoc, type AuditD
 import { FiguresPanel, type ViewsDoc } from "./views";
 import { tableFromJSON, tableToIPC } from "apache-arrow";
 import {
-  decodeState, describable, describe, encodeState, getState, listCommands, provide, register, run, setState, subscribe, target,
+  commandRunning, decodeState, describable, describe, encodeState, getState, listCommands, provide, recordChange, register, run, setState, subscribe, target,
   type CommandEvent, type Json,
 } from "./registry";
 
@@ -170,6 +170,10 @@ async function main() {
   type EaTool = { name: string; description: string; inputSchema: Record<string, unknown>; execute: (input: any, agent: unknown) => Promise<any> };
   // Cloud state can arrive (from a link or undo) before Embedding Atlas has published its embedding chart; it waits.
   let chartReady: () => void = () => undefined;
+  let refreshing: Promise<void> = Promise.resolve();
+  let committedCloud: Json | null = null;
+  let pendingBefore: Record<string, Json> | null = null;
+  let settle: ReturnType<typeof setTimeout> | undefined;
   const chartReadyPromise = new Promise<void>((resolve) => { chartReady = resolve; });
   let eaTools: EaTool[] = [];
   let atlasState: Record<string, any> = {};
@@ -187,8 +191,21 @@ async function main() {
       embedding: { data: { x: "x", y: "y", text: "embed_text", neighbors: "neighbors", category: colorBy === "none" ? null : colorBy } },
       include: ["condition", "task_id", "unit_kind", "tool_kind", "check_kind", "status", "harness_id", "trial_id", "cited_assessments", "cluster_label", "embed_text"],
     },
-    onPredicateChange: (predicate) => { panel.setPredicate(predicate); lanes?.setPredicate(predicate); },
-    onStateChange: (state) => { atlasState = state as Record<string, any>; if (embeddingChartId()) chartReady(); },
+    onPredicateChange: (predicate) => { refreshing = Promise.all([panel.setPredicate(predicate), lanes?.setPredicate(predicate)]).then(() => undefined); },
+    onStateChange: (state) => {
+      const before = { ...getState(), cloud: committedCloud };
+      atlasState = state as Record<string, any>;
+      if (embeddingChartId()) chartReady();
+      // A pan, brush or legend click in the embedding view itself: one history entry once the gesture settles.
+      // The first viewport Embedding Atlas publishes is its initial layout, not a reader's change.
+      const committed = committedCloud as { viewport?: unknown } | null;
+      if (!committed?.viewport) { committedCloud = getState().cloud ?? null; return; }
+      if (!commandRunning()) {
+        pendingBefore ??= before;
+        clearTimeout(settle);
+        settle = setTimeout(async () => { const b = pendingBefore!; pendingBefore = null; await refreshing; recordChange("cloudChanged", "Changed the cloud view.", b); }, 400);
+      }
+    },
     modelContext: { provideContext: (context: { tools?: EaTool[] }) => { eaTools = context.tools ?? []; } },
   });
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => atlas.update({ colorScheme: dark() ? "dark" : "light" }));
@@ -204,7 +221,8 @@ async function main() {
     if (!id) throw new Error("The embedding chart is not ready.");
     const next = Object.fromEntries(Object.entries({ ...cloudState(), ...patch }).filter(([, v]) => v !== null && v !== undefined));
     await eaTool("chart_set_state", { id, state: next });
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 50));   // let Embedding Atlas publish the predicate, then wait for the panels
+    await refreshing;
   };
   const point = obj({ x: { type: "number" }, y: { type: "number" } });
   register<{ x: number; y: number; scale: number }>({ name: "setViewport", description: "Pan and zoom the cloud: center (x, y) in data units and scale (data units to [-1, 1]).",
@@ -255,6 +273,8 @@ async function main() {
     }
   };
   let writing = false;
+  subscribe((event) => { committedCloud = (event.state as Record<string, Json>).cloud ?? null; });
+  committedCloud = getState().cloud ?? null;
   subscribe((event) => {
     if (event.source === "url") return;
     const fragment = legacy(event) ?? `state=${encodeState(getState())}`;
