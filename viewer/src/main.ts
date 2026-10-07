@@ -14,6 +14,7 @@ import { SwimlanesPanel, type LanesData } from "./lanes";
 import { STOP_WORDS } from "./stopwords";
 import { ClaimsPanel, Drawer, Evidence, MatrixPanel, type AssessDoc, type AuditDoc, type ClaimsDoc, type DrawerView } from "./p3";
 import { FiguresPanel, type ViewsDoc } from "./views";
+import { prepareCloud } from "./layout";
 import { tableFromJSON, tableToIPC } from "apache-arrow";
 import {
   commandRunning, decodeState, onCommandBoundary, describable, describe, encodeState, getState, listCommands, provide, recordChange, register, run, setState, subscribe, target,
@@ -61,15 +62,21 @@ async function main() {
   // Arrow IPC needs no DuckDB extensions, so the viewer also works offline and from packets opened on disk.
   const resp = await fetch(file("units.arrow"));
   if (!resp.ok) throw new Error(`units.arrow not found in the bundle at ${bundleUrl}`);
+  const cloud = await prepareCloud(new Uint8Array(await resp.arrayBuffer()), async () => {
+    const spec = (manifest as { cloud?: { embeddings?: { file: string; dimensions: number } } } | null)?.cloud?.embeddings;
+    if (!spec) return null;
+    const r = await fetch(file(spec.file));
+    return r.ok ? { data: new Float32Array(await r.arrayBuffer()), dimensions: spec.dimensions } : null;
+  }, status);
   const conn = await db.connect();
-  await conn.insertArrowFromIPCStream(new Uint8Array(await resp.arrayBuffer()), { name: "units", create: true });
+  await conn.insertArrowFromIPCStream(cloud.ipc, { name: "units", create: true });
   await conn.close();
 
   // Embedding Atlas labels are { x, y, content, level, priority }; labels.json stores the text as `text`.
   let labels: { x: number; y: number; content: string; level?: number; priority?: number }[] | null = null;
   if (labelMode === "facet") {
-    const raw = await getJson<{ x: number; y: number; text?: string; content?: string; level?: number; priority?: number }[]>("labels.json");
-    labels = raw?.length ? raw.map((l) => ({ x: l.x, y: l.y, content: (l.content ?? l.text ?? "").replace(/`/g, ""), level: l.level ?? 0, priority: l.priority ?? 0 })) : null;
+    const raw = cloud.labels ?? await getJson<{ x: number; y: number; text?: string; content?: string; level?: number; priority?: number }[]>("labels.json");
+    labels = raw?.length ? raw.map((l) => ({ x: l.x, y: l.y, content: (("content" in l ? l.content : undefined) ?? l.text ?? "").replace(/`/g, ""), level: l.level ?? 0, priority: l.priority ?? 0 })) : null;
   }
   const n = rowsOf(await coordinator.query(`SELECT count(*) AS n FROM units`))[0].n;
   status(`${Number(n).toLocaleString()} units${labels ? " · facet labels" : " · auto labels"}`);

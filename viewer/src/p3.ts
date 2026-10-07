@@ -26,7 +26,7 @@ export interface Assessment {
 }
 export interface AttemptMeta { attempt_id: string; short: string; condition: string; task_id: string; trial_id: string; harness_id: string; model_id: string; terminal_state: string; failure_class: string; cohorts: string[]; bundle: string; native_span_seconds: number | null;
   native_record_count?: number | null; unmapped_record_count?: number | null; event_count?: number | null; event_types?: Record<string, number>; units?: number; tool_calls?: number }
-interface CertCell { group: Record<string, string>; category: string; counts: Record<string, number>; denominator: number; assertions: string[] }
+interface CertCell { group: Record<string, string>; category: string; counts: Record<string, number>; denominator: number; assertions: string[]; conditions?: string[] }
 export interface AssessDoc {
   study: string; cohorts: { id: string; title: string; certified: boolean; report: string | null }[]; attempts: AttemptMeta[]; assessments: Assessment[];
   certified: Record<string, { source: string; generated_at: string; group_by: string[]; cells: CertCell[] }>; notes: string[];
@@ -37,7 +37,7 @@ interface AuditAttempt {
   last: Record<string, null | { last: Run; last_ok: Run | null; runs: number; changes_after: number; first_change_after: Run | null }>;
   final: null | { row_id: number; seq: number; text: string; chars: number; claims: { text: string; kinds: string[] }[] };
   verdicts: { kind: string; status: string; text: string }[];
-  failure_chains: { tool: string; failures: number[]; first_step: number; t_ms: number | null; next_same_tool: number | null; next_ok: boolean; signature: string | null }[];
+  failure_chains: { tool: string; failures: number[]; first_step: number; t_ms: number | null; next_same_tool: number | null; next_ok: boolean | null; signature: string | null }[];
   notes: string[];
 }
 export interface AuditDoc { attempts: Record<string, AuditAttempt> }
@@ -168,7 +168,9 @@ export class Evidence {
     if (view.kind === "audit" || view.kind === "chains" || view.kind === "compare") {
       const A = this.audit?.attempts[view.attemptId];
       return { summary: `${view.kind} of ${this.attemptLabel(view.attemptId)}${A ? `: ${A.checks.length} captured checks, ${A.changes.length} source changes, ${A.failure_chains.length} failure chains` : ""}.`,
-        data: { view, verdicts: A?.verdicts ?? [], failureChains: A?.failure_chains.length ?? null } as unknown as Json };
+        // The chains themselves, so a reader (or an assistant) can answer from describe() what the drawer shows.
+        data: { view, verdicts: A?.verdicts ?? [], failureChains: A?.failure_chains.length ?? null,
+          chains: (A?.failure_chains ?? []).map((f) => ({ tool: f.tool, failures: f.failures.length, firstStep: f.first_step, tMs: f.t_ms, signature: f.signature, nextOk: f.next_ok, nextRow: f.next_same_tool })) } as unknown as Json };
     }
     return { summary: `${view.kind} view in the drawer.`, data: view as unknown as Json };
   }
@@ -273,7 +275,7 @@ export class Evidence {
       <h4>Failure chains (${A.failure_chains.length})</h4>
       ${A.failure_chains.length ? `<table class="grid audit"><thead><tr><th>Step</th><th>Tool</th><th class="num">Failures</th><th>Error</th><th>Next call of that tool</th></tr></thead><tbody>
         ${A.failure_chains.map((f, i) => `<tr><td><button class="link" data-row="${num(f.failures[0])}" ${target("openUnit", `${attemptId}:${f.failures[0]}`)}>step ${num(f.first_step)}</button> ${fmtT(f.t_ms)}</td><td>${esc(f.tool)}</td><td class="num">${f.failures.length}</td>
-          <td class="small">${esc(f.signature ?? "")}</td><td>${f.next_same_tool != null ? `<button class="link" data-row="${num(f.next_same_tool)}" ${target("openUnit", `${attemptId}:${f.next_same_tool}`)}>${f.next_ok ? "succeeded" : "failed"}</button> · <button class="link" data-compare="${i}" ${target("openCompare", `${attemptId}:${i}`)}>compare failed vs next</button>` : "none"}</td></tr>`).join("")}</tbody></table>` : `<p class="muted">No failed tool calls captured.</p>`}
+          <td class="small">${esc(f.signature ?? "")}</td><td>${f.next_same_tool != null ? `<button class="link" data-row="${num(f.next_same_tool)}" ${target("openUnit", `${attemptId}:${f.next_same_tool}`)}>${f.next_ok === null ? "outcome unavailable" : f.next_ok ? "succeeded" : "failed"}</button> · <button class="link" data-compare="${i}" ${target("openCompare", `${attemptId}:${i}`)}>compare failed vs next</button>` : "none"}</td></tr>`).join("")}</tbody></table>` : `<p class="muted">No failed tool calls captured.</p>`}
       <h4>How this audit is computed</h4><ul class="small">${A.notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>
       <div class="dr-actions"><button class="btn" data-lanes ${target("focusAttempt", attemptId)}>Show in swimlanes</button></div>`,
       (el) => {
@@ -299,7 +301,7 @@ export class Evidence {
       <p class="dr-meta">${esc(this.attemptLabel(attemptId))} · ${chains.length} chain(s): one or more consecutive failed calls of a tool, then the next call of that tool.</p>
       ${chains.length ? `<table class="grid audit"><thead><tr><th>Step</th><th>Tool</th><th class="num">Failed calls</th><th>Error</th><th>Next call of that tool</th></tr></thead><tbody>
         ${chains.map((f, i) => `<tr><td>step ${num(f.first_step)} · ${fmtT(f.t_ms)}</td><td class="mono">${esc(f.tool)}</td><td class="num">${f.failures.length}</td><td class="small">${esc(f.signature ?? "—")}</td>
-          <td>${f.next_same_tool != null ? `${f.next_ok ? `<span class="ok">succeeded</span>` : `<span class="bad">failed</span>`} · <button class="btn" data-compare="${i}" ${target("openCompare", `${attemptId}:${i}`)}>Compare failed vs next</button>` : "none"}</td></tr>`).join("")}</tbody></table>`
+          <td>${f.next_same_tool != null ? `${f.next_ok === null ? `<span class="muted">outcome unavailable</span>` : f.next_ok ? `<span class="ok">succeeded</span>` : `<span class="bad">failed</span>`} · <button class="btn" data-compare="${i}" ${target("openCompare", `${attemptId}:${i}`)}>Compare failed vs next</button>` : "none"}</td></tr>`).join("")}</tbody></table>`
         : `<p class="muted">No failed tool calls captured in this attempt.</p>`}
       <div class="dr-actions"><button class="btn" data-audit ${target("openAudit", attemptId)}>Attempt audit</button> <button class="btn" data-lanes ${target("focusAttempt", attemptId)}>Show in swimlanes</button></div>`,
       (el) => {
@@ -321,7 +323,7 @@ export class Evidence {
       <p class="dr-meta">${items.length} failed call(s) in ${groups.size} attempt(s). Each chain: consecutive failures of the tool, then the next call of that tool.</p>
       <table class="grid audit"><thead><tr><th>Attempt</th><th class="num">Failed calls</th><th>Chains (first step · failures · next call)</th></tr></thead><tbody>
       ${rows.map((r, i) => `<tr><td>${esc(this.attemptLabel(r.aid))}</td><td class="num">${r.rs.length}</td><td>${r.chains.map((c, j) =>
-        `<div>step ${num(c.first_step)} · ${c.failures.length} failed · ${c.next_same_tool != null ? (c.next_ok ? `<span class="ok">next succeeded</span>` : `<span class="bad">next failed</span>`) : "no later call"} <button class="btn" data-cmp="${i}:${j}" ${target("openCompare", `${r.aid}:${this.chainsOf(r.aid).indexOf(c)}`)}>Compare failed vs next</button></div>`).join("")}</td></tr>`).join("")}
+        `<div>step ${num(c.first_step)} · ${c.failures.length} failed · ${c.next_same_tool != null ? (c.next_ok === null ? `<span class="muted">next outcome unavailable</span>` : c.next_ok ? `<span class="ok">next succeeded</span>` : `<span class="bad">next failed</span>`) : "no later call"} <button class="btn" data-cmp="${i}:${j}" ${target("openCompare", `${r.aid}:${this.chainsOf(r.aid).indexOf(c)}`)}>Compare failed vs next</button></div>`).join("")}</td></tr>`).join("")}
       </tbody></table>`,
       (el) => el.querySelectorAll<HTMLElement>("[data-cmp]").forEach((b) => b.addEventListener("click", () => {
         const [i, j] = b.dataset.cmp!.split(":").map(Number); run("openCompare", { attemptId: rows[i].aid, chain: this.chainsOf(rows[i].aid).indexOf(rows[i].chains[j]) });
@@ -376,7 +378,7 @@ export class Evidence {
       ${pf && pn && pf !== pn ? `<p class="small"><b>Different target:</b> the failed call targets <span class="mono">${esc(pf)}</span>, the next call <span class="mono">${esc(pn)}</span>; the next call's success does not show the failed change was later applied.</p>` : ""}
       <div class="compare">
         <div><h4>Last failed call · arguments</h4>${box(argF)}<h4>Result</h4>${box(pick(last, "result"))}</div>
-        <div><h4>Next ${esc(f.tool)} call (${next == null ? "none" : f.next_ok ? "succeeded" : "failed"}) · arguments</h4>${box(argN)}<h4>Result</h4>${box(pick(next, "result"))}</div>
+        <div><h4>Next ${esc(f.tool)} call (${next == null ? "none" : f.next_ok === null ? "outcome unavailable" : f.next_ok ? "succeeded" : "failed"}) · arguments</h4>${box(argN)}<h4>Result</h4>${box(pick(next, "result"))}</div>
       </div>
       ${judge.length ? `<h4>Judge on recovery in this attempt (model proposal, sampled evidence)</h4>${judge.map((a) => `<p>${outChip(a.outcome)} <button class="link" data-assess="${esc(a.id)}" ${target("openAssessment", a.id)}>open judgment</button></p><p class="prose small">${esc((a.rationale ?? "").slice(0, 600))}${(a.rationale ?? "").length > 600 ? "…" : ""}</p>`).join("")}` : ""}
       <details><summary>Raw native records: last failed call and next call</summary><div class="compare"><div>${recs(last)}</div><div>${recs(next)}</div></div></details>
@@ -426,16 +428,29 @@ export class MatrixPanel {
     return { summary: `${pool.length} judgments, ${this.cohort === "all" ? "all attempts" : `cohort ${this.cohort}`}${this.task !== "all" ? `, task ${this.task}` : ""}.`, data: { cohort: this.cohort, task: this.task, cells } };
   }
   private pool() {
+    // Agreeing judge reruns of one attempt and behavior count once, as in the certified report; disagreeing ones stay.
+    const seen = new Set<string>();
     return this.ev.doc.assessments.filter((a) => (this.cohort === "all" || (a.cohorts[this.cohort] && a.cohorts[this.cohort].included !== false))
-      && (this.task === "all" || a.task_id === this.task));
+      && (this.task === "all" || a.task_id === this.task))
+      .filter((a) => { const k = `${a.attempt_id}\0${a.category}\0${a.outcome}`; if (seen.has(k)) return false; seen.add(k); return true; });
   }
   private arms() { return [...new Set(this.ev.doc.attempts.map((a) => a.condition))].sort(); }
   private cats() { return [...new Set(this.ev.doc.assessments.map((a) => a.category))].sort(); }
   private certCell(cat: string, arm: string) {
     const c = this.ev.doc.certified[this.cohort];
-    if (!c || this.task !== "all") return null;
+    if (!c) return null;
     const m = this.ev.doc.attempts.find((x) => x.condition === arm);
     if (!m) return null;
+    // EBO bundles record each cell's arms. Only cells covering this arm alone are comparable with it; report groups
+    // partition attempts, so the arm's cells (one per task, say) add up to the arm's certified counts.
+    if (c.cells.some((x) => x.conditions)) {
+      const own = c.cells.filter((x) => x.category === cat && x.conditions?.length === 1 && x.conditions[0] === arm && (this.task === "all" || x.group.task === this.task));
+      if (!own.length || (this.task !== "all" && !own.every((x) => "task" in x.group))) return null;
+      const counts: Record<string, number> = {};
+      for (const x of own) for (const [k, v] of Object.entries(x.counts)) counts[k] = (counts[k] ?? 0) + v;
+      return { group: own[0]!.group, category: cat, counts, denominator: own.reduce((sum, x) => sum + x.denominator, 0), assertions: own.flatMap((x) => x.assertions), conditions: [arm] };
+    }
+    if (this.task !== "all") return null;
     return c.cells.find((x) => x.category === cat && (x.group.model ?? m.model_id) === m.model_id && (x.group.harness ?? m.harness_id) === m.harness_id && (!x.group.task || x.group.task === m.task_id)) ?? null;
   }
   render() {

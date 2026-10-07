@@ -84,7 +84,7 @@ export const STRUCTURAL_EXTRACTOR_REGISTRY = [
   registry("total-cost-usd", ["family:runtime"], "Native-reported attempt cost in US dollars; subscription utilization is not inferred."),
   registry("attempt-latency-ms", ["family:outcome"], "Native-reported end-to-end attempt duration in milliseconds."),
 ] as const satisfies readonly ExtractorRegistration[];
-type ToolOperation = {
+export type ToolOperation = {
   id: string;
   events: UniformEvent[];
   toolName?: string;
@@ -318,7 +318,8 @@ function importOutcomes(
   ))];
 }
 
-function toolOperations(events: readonly UniformEvent[]): ToolOperation[] {
+/** Tool calls as operations: each groups the events of one call (call, result, hooks), scoped to its session and agent. */
+export function toolOperations(events: readonly UniformEvent[]): ToolOperation[] {
   const groups = new Map<string, UniformEvent[]>();
   for (const event of events.filter(({ family }) => family === "tool")) {
     const id = operationId(event, events);

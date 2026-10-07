@@ -1178,6 +1178,7 @@ function loadValidators(): Map<string, ValidateFunction> {
   ajv.addSchema(readSchema("aggregation.v1.json"));
   ajv.addSchema(readSchema("occurrence-ratings.v1.json"));
   ajv.addSchema(readSchema("claim-checks.v1.json"));
+  ajv.addSchema(readSchema("atlas-bundle.v1.json"));
   ajv.addSchema(readSchema("deepseek-runtime-composition.v1.schema.json"));
   ajv.addSchema(readSchema("harbor-admission.v1.schema.json"));
   ajv.addSchema(readSchema("harbor-review.v1.schema.json"));
@@ -1209,6 +1210,8 @@ function loadValidators(): Map<string, ValidateFunction> {
     ["ebo.behavior-review/v1", requiredValidator(ajv, "urn:ebo:schema:behavior-assertions:v1#/$defs/review")],
     ["ebo.occurrence-ratings/v1", requiredValidator(ajv, "urn:ebo:schema:occurrence-ratings:v1#/$defs/ratings")],
     ["ebo.claim-checks/v1", requiredValidator(ajv, "urn:ebo:schema:claim-checks:v1#/$defs/checks")],
+    ["ebo.atlas-bundle-request/v1", requiredValidator(ajv, "urn:ebo:schema:atlas-bundle:v1#/$defs/request")],
+    ["ebo.atlas-bundle/v1", requiredValidator(ajv, "urn:ebo:schema:atlas-bundle:v1#/$defs/bundle")],
     ["ebo.semantic-judge-request/v1", requiredValidator(ajv, "urn:ebo:schema:semantic-judge:v1#/$defs/request")],
     ["ebo.semantic-judge-input/v1", requiredValidator(ajv, "urn:ebo:schema:semantic-judge:v1#/$defs/input")],
     ["ebo.semantic-judgment/v1", requiredValidator(ajv, "urn:ebo:schema:semantic-judge:v1#/$defs/judgment")],
