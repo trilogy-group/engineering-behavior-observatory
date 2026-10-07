@@ -27,7 +27,7 @@ flowchart TD
 | 3. Evaluate behavior with an LLM judge | [Assertions](behavior-assertions.md), [semantic judge](semantic-judge.md), [batch runbook](../guides/behavioral-evaluation.md) | Evidence-grounded model assessment or abstention |
 | Optional: human-intervention experiment | [Human calibration](human-calibration.md) | Separately attributed human decisions and agreement populations |
 | 5. Compare declared conditions | [Aggregation](aggregation.md) | Descriptive distributions, matched differences, exclusions and caveats |
-| 6. Explore or report | [Behavior Atlas](../guides/atlas.md), [Atlas bundles](atlas-bundles.md) | Local drilldown, reproducible report, and the tables behind the interactive viewer |
+| 6. Explore or report | [Behavior Atlas](../guides/atlas.md), [Atlas bundles](atlas-bundles.md), [evidence packets](evidence-packets.md) | Local drilldown, reproducible report, the tables behind the interactive viewer, and verifiable partner packets |
 
 The judge backend is independent of the evaluated harness: choose the Claude
 Agent SDK or native Codex backend explicitly. EBO retains the evaluator, rubric,

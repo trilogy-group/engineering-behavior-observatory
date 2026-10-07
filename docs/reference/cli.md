@@ -135,6 +135,14 @@ ebo atlas bundle verify <bundle-dir>
 `atlas bundle build` writes an [Atlas bundle](../evaluation/atlas-bundles.md)
 from validated cohorts; `atlas bundle verify` rechecks its files.
 
+```sh
+ebo packet build <bundle-dir> <output-dir> --variant internal|partner|restricted
+ebo packet verify <packet-dir>
+```
+
+`packet build` writes an [evidence packet](../evaluation/evidence-packets.md)
+from a bundle; `packet verify` rechecks every file against its manifest.
+
 `atlas serve --bundle` shows one Atlas bundle in the interactive viewer at
 `http://127.0.0.1:13012` (see the [Behavior Atlas guide](../guides/atlas.md#interactive-viewer)).
 

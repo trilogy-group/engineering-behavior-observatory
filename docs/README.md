@@ -50,6 +50,8 @@ The [evaluation reading path](evaluation/README.md) explains how the parts fit:
 - [Comparison and aggregation](evaluation/aggregation.md)
 - [Atlas bundles](evaluation/atlas-bundles.md): the tables behind the
   interactive Atlas viewer
+- [Evidence packets](evaluation/evidence-packets.md): partner-ready folders
+  in internal, partner and restricted variants
 
 ## Build and look things up
 

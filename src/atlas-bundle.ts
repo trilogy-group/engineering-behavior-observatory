@@ -56,6 +56,8 @@ export type AtlasBundleManifest = {
   request: { digest: `sha256:${string}` };
   cohorts: Array<{ id: string; title: string; sourceDigest: string; cohortDigest: string; attempts: number; assertions: number; report: string }>;
   unitsVersion: typeof ATLAS_UNITS_VERSION;
+  /** A packet's shared copy of a bundle names the bundle it was derived from and the variant. */
+  derivedFrom?: { bundle: string; manifestSha256: `sha256:${string}`; variant: "partner" | "restricted" };
   /** The cloud's units and their embeddings; the viewer lays them out with Embedding Atlas (UMAP and clustering). */
   cloud: { units: number; embeddings: { file: string; provider: "local" | "fireworks"; model: string; dimensions: number } };
   tables: Record<string, { path: string; rows: number; sha256: `sha256:${string}` }>;
@@ -207,7 +209,7 @@ function eventRow(event: UniformEvent, index: number, resolve: ReturnType<typeof
  */
 const STREAMED = new Set(["events", "event_relations", "observation_sources", "unit_events", "edges"]);
 class TableSink {
-  readonly staging = mkdtempSync(join(tmpdir(), "ebo-atlas-tables-"));
+  readonly staging = mkdtempSync(join(tmpdir(), `ebo-atlas-tables-${process.pid}-`));
   private fds = new Map<string, number>();
   readonly counts = new Map<string, number>();
   push(name: string, row: Row) {
@@ -612,17 +614,24 @@ async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string
   return manifest;
 }
 
-/** Recompute every listed file's size and digest; report changed, missing and unlisted files. */
+/** A manifest path must stay inside its root: relative, forward slashes, no empty, `.` or `..` segments. */
+export function assertContainedPath(path: string): void {
+  if (!path || path.startsWith("/") || path.includes("\\") || /^[A-Za-z]:/u.test(path) || path.split("/").some((s) => s === "" || s === "." || s === ".."))
+    throw new Error(`Manifest path ${JSON.stringify(path)} is not a contained relative path.`);
+}
+
 /** An id used as a file name must be one path segment of safe characters. */
 function fileName(id: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(id)) throw new Error(`Id ${JSON.stringify(id)} cannot name a bundle file (letters, digits, ".", "_", "-").`);
   return id;
 }
 
+/** Recompute every listed file's size and digest; report changed, missing and unlisted files. */
 export function verifyAtlasBundle(root: string): { ok: boolean; changed: string[]; missing: string[]; unlisted: string[] } {
   const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8")) as AtlasBundleManifest;
   const errors = validateArtifact("atlas bundle", manifest);
   if (errors.length) throw new Error(errors.map(({ field, message }) => `${field}: ${message}`).join("\n"));
+  for (const { path } of manifest.files) assertContainedPath(path);
   const listed = new Set(manifest.files.map(({ path }) => path));
   const walk = (dir: string): string[] => readdirSync(join(root, dir), { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]);
   const present = walk("").map((p) => p.replace(/\\/gu, "/")).filter((p) => p !== "manifest.json");

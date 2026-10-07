@@ -1025,6 +1025,23 @@ function stringContainsLocalIdentifier(value: string): boolean {
   return matched;
 }
 
+/**
+ * The export pipeline's local-identifier rule as a reusable step: absolute local paths become `[LOCAL_PATH]` and
+ * user assignments `[LOCAL_USER]`. Used by evidence packets for their shared variants.
+ */
+export function redactLocalIdentifiers(text: string): string {
+  let output = text.replace(LOCAL_PATH, (_match, prefix: unknown) => `${typeof prefix === "string" ? prefix : ""}[LOCAL_PATH]`);
+  for (const pattern of LOCAL_IDENTIFIER_PATTERNS) {
+    output = output.replace(pattern, (_match, prefix: unknown, suffix: unknown) => `${typeof prefix === "string" ? prefix : ""}[LOCAL_USER]${typeof suffix === "string" ? suffix : ""}`);
+  }
+  return output;
+}
+
+/** The export pipeline's final absolute-local-path scan. */
+export function containsPortableLocalPath(text: string, mediaType = "text/plain"): boolean {
+  return containsLocalPath(text, mediaType);
+}
+
 function containsLocalPath(text: string, mediaType: string): boolean {
   if (mediaType === "application/json") {
     return valueContainsLocalPath(parseJson(Buffer.from(text), "Portable JSON final scan"));
@@ -1235,12 +1252,16 @@ function policyRecord(policy: PortableExportPolicy): Record<string, unknown> {
 }
 
 function effectiveSensitiveValues(policy: PortableExportPolicy): string[] {
-  const environment = Object.entries(process.env)
+  return [...new Set([...(policy.sensitiveValues ?? []).filter((value) => value !== ""), ...environmentSensitiveValues()])]
+    .sort((left, right) => right.length - left.length);
+}
+
+/** The export pipeline's environment rule: every environment value of 8 or more characters is sensitive. */
+export function environmentSensitiveValues(env: NodeJS.ProcessEnv = process.env): string[] {
+  return [...new Set(Object.entries(env)
     .filter(([key, value]) => value !== undefined && value.length >= 8
       && !["logname", "user", "username"].includes(normalizeFieldName(key)))
-    .map(([, value]) => value!);
-  return [...new Set([...(policy.sensitiveValues ?? []).filter((value) => value !== ""), ...environment])]
-    .sort((left, right) => right.length - left.length);
+    .map(([, value]) => value!))].sort((left, right) => right.length - left.length);
 }
 
 function validatePolicy(policy: PortableExportPolicy): void {

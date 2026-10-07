@@ -48,6 +48,7 @@ import {
 import { createRetainedStructuralObservationSet } from "./structural-observations.js";
 import { serveAtlasBundle } from "./atlas-viewer.js";
 import { buildAtlasBundle, verifyAtlasBundle } from "./atlas-bundle.js";
+import { buildPacket, verifyPacket, type PacketVariant } from "./atlas-packet.js";
 import { DEFAULT_RATING_POLICY, rateRetainedOccurrences, type OccurrenceRatings } from "./occurrence-ratings.js";
 import { prepareRetainedJudgeRequest, type JudgePrepareSpec } from "./judge-prepare.js";
 import { checkRetainedClaims, DEFAULT_CLAIM_CHECK_POLICY } from "./claim-checks.js";
@@ -94,6 +95,8 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo atlas serve --bundle <bundle-dir> [--port <port>]
        ebo atlas bundle build <request.json> <output-root>
        ebo atlas bundle verify <bundle-dir>
+       ebo packet build <bundle-dir> <output-dir> --variant internal|partner|restricted
+       ebo packet verify <packet-dir>
        ebo observations create <run-bundle-root> <output.json>
        ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
        ebo occurrences rate <run-bundle-root> <observations.json> <output.json> --provider <typesafe|fireworks> [--model <id>] [--choice-confidence <0-1>] [--noul-margin <0-0.5>] [--fallback-model <codex-model> [--fallback-effort <effort>]]
@@ -207,6 +210,27 @@ export function main(
     return runAggregationCommand(args.slice(2), write);
   }
 
+  if (args[0] === "packet") {
+    return (async () => {
+    try {
+      if (args[1] === "build" && args.length === 6 && args[4] === "--variant") {
+        const manifest = await buildPacket(args[2]!, args[3]!, { variant: args[5] as PacketVariant });
+        write(`Built ${manifest.packet.variant} packet ${manifest.packet.id}: ${manifest.files.length} files, ${manifest.withheld.length} withheld\n`);
+        return 0;
+      }
+      if (args[1] === "verify" && args.length === 3) {
+        const result = verifyPacket(args[2]!);
+        write(`${JSON.stringify(result, null, 2)}\n`);
+        return result.ok ? 0 : 1;
+      }
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      return 1;
+    }
+    process.stderr.write("Usage: ebo packet build <bundle-dir> <output-dir> --variant internal|partner|restricted | ebo packet verify <packet-dir>\n");
+    return 2;
+    })();
+  }
   if (args[0] === "atlas") {
     return (async () => {
     try {
