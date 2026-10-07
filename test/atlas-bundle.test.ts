@@ -138,6 +138,10 @@ test("claims: a certified filter on a dimension the report does not group by fai
     const bad = await validateClaims(claim({ model: "m", trial: "1" }), context);
     assert.equal(bad.validated, false);
     assert.match(bad.failures[0]!, /not grouped by trial/u);
+    const noCell = await validateClaims({ ...claim({ model: "other" }), claims: [{ ...claim({}).claims[0]!, numbers: [{ ...claim({}).claims[0]!.numbers[0]!, value: 0, expr: { cohort: "c", where: { model: "other" }, outcome: "constructive" } }] }] }, context);
+    assert.equal(noCell.validated, false, "a selector matching no cell is unavailable, not a certified zero");
+    const noOutcome = await validateClaims({ ...claim({}), claims: [{ ...claim({}).claims[0]!, numbers: [{ ...claim({}).claims[0]!.numbers[0]!, value: 0, expr: { cohort: "c", outcome: "constructve" } }] }] }, context);
+    assert.match(noOutcome.failures.join(" "), /reports no outcome constructve/u);
   } finally { connection.closeSync(); db.closeSync(); }
 });
 

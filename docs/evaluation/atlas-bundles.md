@@ -35,8 +35,10 @@ and reviews. A stale or invalid source fails the build. Paths are relative to
 the request file. `condition` names study arms with a regular expression over
 each run bundle's directory name; without it an arm is `<model> · <harness>`.
 
-With a `condition` pattern, every run bundle must match it. An attempt that
-appears in several cohorts must have the same run manifest digest in each. The
+With a `condition` pattern, every run bundle must match it. Atlas tables key
+attempts by attempt id and assessments by assertion id, so each must be unique
+in a bundle: an attempt that appears in several cohorts must have the same run
+manifest digest in each, and a reused id fails the build. The
 bundle is built in a temporary sibling directory and published by rename only
 after its manifest validates; the destination must be new or empty, and a bundle
 is never overwritten.
