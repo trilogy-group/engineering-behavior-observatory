@@ -171,7 +171,7 @@ export function attemptEvidence(input: EvidenceInput) {
     const failures = touched.filter((u) => u !== responseUnit);
     if (!failures.length) return [];
     return [{ tool: String(o.attributes.toolName ?? failures[0]!.tool_name ?? "tool"), failures: failures.map((u) => u.row_id), first_step: stepOf.get(failures[0]!.unit_id)!,
-      t_ms: base(failures[0]!).t_ms, next_same_tool: responseUnit?.row_id ?? null, next_ok: o.attributes.nextOutcome === "passed",
+      t_ms: base(failures[0]!).t_ms, next_same_tool: responseUnit?.row_id ?? null, next_ok: o.attributes.nextOutcome === "passed" ? true : o.attributes.nextOutcome === "failed" ? false : null,
       signature: failures.map((u) => u.error_signature).find((s): s is string => s !== null) ?? null, occurrence_id: o.id }];
   });
 

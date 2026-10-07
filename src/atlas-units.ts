@@ -222,7 +222,14 @@ export function deriveUnits({ attemptId, events, occurrences, resolveContent }: 
     const unique = refs.filter(({ ref }) => { const k = `${ref.nativeReference.artifactId}\0${ref.nativeReference.recordLocator}\0${ref.role ?? ""}`; if (seenRefs.has(k)) return false; seenRefs.add(k); return true; });
     const TOOL_ROLES: Record<string, { input: boolean; field: string }> = { "tool-input": { input: true, field: "args" }, "tool-result": { input: false, field: "result" }, "tool-error": { input: false, field: "result" } };
     const roleOf = (ref: { role?: string }) => (ref.role === undefined ? undefined : TOOL_ROLES[ref.role]);
-    const pick = (value: unknown, field: string) => (value !== null && typeof value === "object" && field in value ? (value as Record<string, unknown>)[field] : value);
+    // The role's field, at the top level or inside a retained wrapper's payload message (Cursor native records).
+    const pick = (value: unknown, field: string): unknown => {
+      if (value === null || typeof value !== "object") return value;
+      const record = value as Record<string, unknown>;
+      if (field in record) return record[field];
+      const message = (record.payload as Record<string, unknown> | undefined)?.message;
+      return message !== null && typeof message === "object" && field in message ? (message as Record<string, unknown>)[field] : value;
+    };
     const isInput = ({ event, ref }: { event: UniformEvent; ref: { role?: string } }) => roleOf(ref)?.input ?? event.phase !== "after";
     const resolveRef = ({ ref }: { ref: { role?: string; nativeReference: NativeEvidenceReference } }) => {
       const value = resolveContent(ref.nativeReference), role = roleOf(ref);

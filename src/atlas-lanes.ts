@@ -38,13 +38,17 @@ export function laneData(attempt: Attempt, units: readonly AtlasUnit[], events: 
   const increments: Array<{ t: number | null; a: Readonly<Record<string, unknown>> }> = [];
   const snapshots: Array<[number, number]> = [];
   const final = { records: 0, tokens: 0, cost: null as number | null };
+  let incrementCost: number | null = null;   // per-request cost (Pi); a final cost, when reported, is preferred
   for (const event of events) {
     const t = event.nativeTime.status === "known" ? ms(event.nativeTime.value) : null;
     if (t !== null) carried = t;
     const a = event.attributes as Readonly<Record<string, unknown>>;
     const semantics = a.resourceSemantics;
     // Untimed usage (Cursor events carry no native time) still counts; it only has no place on the timeline.
-    if (semantics === "increment") increments.push({ t: carried, a });
+    if (semantics === "increment") {
+      increments.push({ t: carried, a });
+      if (typeof a.totalCostUsd === "number") incrementCost = (incrementCost ?? 0) + a.totalCostUsd;
+    }
     else if (semantics === "cumulative-snapshot" && carried !== null) snapshots.push([carried, total(a)]);
     // A final record counts only when it carries token dimensions (a duration- or cost-only final is not usage).
     else if (semantics === "cumulative-final") {
@@ -74,7 +78,7 @@ export function laneData(attempt: Attempt, units: readonly AtlasUnit[], events: 
     // A token total from increments only when every increment is complete (a total, or input and output): Agent SDK
     // increments carry no per-request output, so an interrupted attempt without a final result has no total.
     tokens_total: final.records ? final.tokens : completeIncrements ? incrementTotal : snapshots.length && !increments.length ? snapshots.at(-1)![1] : null,
-    cost_usd: final.cost === null ? null : Math.round(final.cost * 1e4) / 1e4,
+    cost_usd: final.cost !== null ? Math.round(final.cost * 1e4) / 1e4 : incrementCost !== null ? Math.round(incrementCost * 1e4) / 1e4 : null,
     context_max: context.length ? Math.max(...context.map(([, v]) => v)) : null,
     output_tokens: outputPerRequest ? "per-request" : final.records ? "final-only" : "none",
   };
