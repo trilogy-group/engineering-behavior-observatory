@@ -434,7 +434,7 @@ async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string
     const evidenceDocs = attemptEvidence({ attemptId, short, condition: arm, trialId: entry.trialId ?? null, cohorts: [...memberOf].sort(), units: rowsOfAttempt,
       links: derived.links, events: evidence.dataset.events, occurrences: observationSets.get(attemptId)?.occurrences ?? [], native, resolveContent: contentOf });
     audits[attemptId] = evidenceDocs.audit;
-    writeFileSync(join(outputRoot, "native", `${attemptId}.json`), JSON.stringify(evidenceDocs.native));
+    writeFileSync(join(outputRoot, "native", `${fileName(attemptId)}.json`), JSON.stringify(evidenceDocs.native));
     const attemptRow = { attempt_id: attemptId, task_id: entry.taskId ?? null, condition: arm, trial_id: entry.trialId ?? null, harness_id: entry.harnessId ?? null,
       model_id: entry.modelId ?? null, terminal_state: entry.terminalState ?? null, failure_class: entry.failureClass ?? null, capture_qualification: entry.captureQualification ?? null };
     const lane = laneData(attemptRow, rowsOfAttempt, evidence.dataset.events);
@@ -613,6 +613,12 @@ async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string
 }
 
 /** Recompute every listed file's size and digest; report changed, missing and unlisted files. */
+/** An id used as a file name must be one path segment of safe characters. */
+function fileName(id: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(id)) throw new Error(`Id ${JSON.stringify(id)} cannot name a bundle file (letters, digits, ".", "_", "-").`);
+  return id;
+}
+
 export function verifyAtlasBundle(root: string): { ok: boolean; changed: string[]; missing: string[]; unlisted: string[] } {
   const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8")) as AtlasBundleManifest;
   const errors = validateArtifact("atlas bundle", manifest);

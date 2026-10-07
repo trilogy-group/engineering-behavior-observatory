@@ -160,3 +160,10 @@ test("lane usage: untimed increments count toward the total without a place on t
   const lanes = laneData(attempt, [], [untimed({ resourceSemantics: "increment", inputTokens: 7, outputTokens: 3 })]);
   assert.deepEqual([lanes.lane.usage_semantics, lanes.lane.tokens_total, lanes.usage], ["per-turn", 10, undefined]);
 });
+
+test("lane cost: per-request cost adds up when no final cost is reported", () => {
+  const event = (attributes: Record<string, unknown>) => ({ nativeTime: { status: "known", value: "2026-10-07T00:00:00.000Z" }, attributes }) as never;
+  const attempt = { attempt_id: "a", task_id: null, condition: null, trial_id: null, harness_id: null, model_id: null, terminal_state: null, failure_class: null, capture_qualification: null };
+  const lane = laneData(attempt, [], [event({ resourceSemantics: "increment", totalTokens: 5, totalCostUsd: 0.25 }), event({ resourceSemantics: "increment", totalTokens: 5, totalCostUsd: 0.5 })]).lane;
+  assert.equal(lane.cost_usd, 0.75);
+});
