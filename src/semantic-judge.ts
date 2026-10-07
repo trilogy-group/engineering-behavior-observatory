@@ -28,6 +28,7 @@ import { readBoundedFile } from "./scheduler.js";
 import { createStructuralObservationSet, validateStructuralObservationSet, type StructuralObservationSet } from "./structural-observations.js";
 import { UNIFORM_EVENT_FAMILIES } from "./uniform-events.js";
 import { OCCURRENCE_TYPES, type OccurrenceType } from "./occurrences.js";
+import { boundedEvidence } from "./evidence-projection.js";
 import { validateOccurrenceRatings, type OccurrenceRatings } from "./occurrence-ratings.js";
 import type { NativeEvidenceReference, NormalizationInput, UniformEvent } from "./uniform-events.js";
 
@@ -934,14 +935,13 @@ function evidenceItem(
   maxChars: number,
   citation?: SemanticJudgeEvidenceItem["citation"],
 ): SemanticJudgeEvidenceItem {
-  const serialized = canonicalizeMetadata(value);
-  const truncated = serialized.length > maxChars;
+  // Hidden reasoning never reaches the judge, and long strings keep their head and tail (test summaries sit at the
+  // end) while exit codes, paths and other short fields stay intact.
   return {
     kind,
     id,
     ...(citation === undefined ? {} : { citation: structuredClone(citation) }),
-    content: truncated ? `${serialized.slice(0, maxChars - 24)}...[TRUNCATED:${serialized.length}]` : serialized,
-    truncated,
+    ...boundedEvidence(value, maxChars),
   };
 }
 

@@ -50,6 +50,10 @@ for await (const line of createInterface({ input: process.stdin })) {
       }, 10));
       continue;
     }
+    if (prompt === "terminal-error") {
+      emit({ method: "turn/completed", params: { threadId: "judge-thread", turn: { id: "judge-turn", status: "failed", error: { message: "Provider capacity exhausted", codexErrorInfo: "responseStreamDisconnected" } } } });
+      continue;
+    }
     if (prompt === "timeout") continue;
     if (prompt === "exit") process.exit(2);
     setTimeout(() => {

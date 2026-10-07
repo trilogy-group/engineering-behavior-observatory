@@ -670,7 +670,7 @@ function harnessContext(
 
 function configuration(
   composition: DeepSeekRuntimeComposition,
-  scenario: "success" | "interrupt" | "contaminated" | "slow-initialize" | "spaced",
+  scenario: "success" | "interrupt" | "contaminated" | "slow-initialize" | "spaced" | "terminal-error",
   secret = "",
 ): DeepSeekHarnessConfiguration {
   return {
@@ -790,4 +790,19 @@ test("maps tool identity, failure flag and the bash exit trailer onto tool event
   assert.equal(result!.attributes.callId, "call-1", "results carry the call identity from the message source");
   assert.equal(result!.attributes.isError, false);
   assert.equal(result!.attributes.exitCode, 1, "the harness reports a non-zero exit only in its trailer");
+});
+
+test("a native terminal error is a failed task with complete capture", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ebo-deepseek-terminal-"));
+  const composition = fixtureComposition("minimal");
+  const capture = new DeepSeekNativeCapture(join(root, "session.jsonl"));
+  try {
+    const execution = await executeDeepSeekHarness(harnessContext(undefined, undefined, undefined, composition.workspaceCwd), configuration(composition, "terminal-error"), capture);
+    await capture.close();
+    assert.equal(execution.status, "failed");
+    const report = execution.evidence as DeepSeekCaptureReport;
+    assert.equal(report.status, "failed");
+    assert.match(JSON.stringify(report), /Capacity exhausted/);
+    assert.equal(qualifiedDeepSeekCapture("run", "attempt", report).qualification, "qualified");
+  } finally { await capture.close(); rmSync(root, { recursive: true, force: true }); }
 });

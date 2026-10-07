@@ -349,6 +349,9 @@ export async function executeDeepSeekHarness(
       const deadline = totalDeadline === undefined ? inactivityDeadline : Math.min(inactivityDeadline, totalDeadline);
       await retainNotification(await nextNotification(subscription, context.signal, deadline));
     }
+    // Receipt-to-idle proves capture completion, not that the native turn succeeded.
+    const terminalError = deepSeekTerminalError(capture.report(), configuration.sessionId);
+    if (terminalError !== undefined) throw new Error(`DeepSeek native turn failed: ${terminalError}`);
     status = "completed";
   } catch (error) {
     failure = error;
@@ -467,6 +470,17 @@ export function qualifiedDeepSeekCapture(
 }
 
 /** Reapply the native lifecycle gate while preserving retained physical JSONL locators. */
+/** The native error of a `turn/end` that ended with an error, if the session's turn did. */
+export function deepSeekTerminalError(records: readonly DeepSeekNativeObservation[], sessionId: string): string | undefined {
+  for (const observation of records) {
+    if (observation.kind !== "notification" || observation.method !== "session.event" || nativeSessionId(observation) !== sessionId) continue;
+    const event = nativeSessionEvent(observation);
+    const reason = record(record(event?.data)?.reason);
+    if (event?.type === "turn/end" && reason?.kind === "error") return JSON.stringify(reason.error ?? reason).slice(0, 4096);
+  }
+  return undefined;
+}
+
 export function qualifyRetainedDeepSeekCapture(
   input: QualifiedNativeCapture<DeepSeekNativeObservation>,
   sessionId: string | undefined,
