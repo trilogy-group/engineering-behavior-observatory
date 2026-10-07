@@ -111,6 +111,7 @@ export class FiguresPanel {
   }
   async focus(id: string | null) {
     this.focused = id;
+    if (id === null && !this.rendered) return;
     await this.render();
     this.root.querySelectorAll(".fig.on").forEach((x) => x.classList.remove("on"));
     const el = id === null ? null : this.root.querySelector<HTMLElement>(`#fig-${CSS.escape(id)}`);

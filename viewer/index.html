@@ -3,6 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Bundle content is untrusted: no inline scripts or event-handler attributes, no remote scripts, no plugins, data
+         only from this origin. 'unsafe-eval' is required by a bundled dependency (new Function). An Agent Mode endpoint,
+         when a packet enables one, is the only addition to connect-src. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; object-src 'none'; base-uri 'none'; form-action 'none'" />
     <title>EBO Atlas</title>
   </head>
   <body>

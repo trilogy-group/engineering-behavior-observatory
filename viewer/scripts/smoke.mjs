@@ -5,7 +5,8 @@
 //      SCHEME=light|dark, WAIT=ms (load timeout).
 // Checks: no page errors; every visible control outside the cloud maps to a registered command; every panel describes
 // itself; the viewer state round-trips through the URL for every tab; the cloud viewport and brush are settable and
-// readable (when the cloud renders). Prints a JSON report and exits 1 on any failure.
+// readable (when the cloud renders); hostile bundle content (markup in assessment, audit and lane fields) neither runs
+// nor injects elements. Prints a JSON report and exits 1 on any failure.
 import { chromium } from "playwright";
 
 const url = process.argv[2] ?? "http://127.0.0.1:13012/";
@@ -93,6 +94,40 @@ if (hasCloud) {
     failures.push({ cloud: String(e?.message ?? e) });
   }
 } else report.cloud = "embedding chart not ready (no WebGPU in this browser?)";
+
+// Hostile bundle content: rewrite bundle JSON in flight with markup payloads, then open the views that render them.
+const payload = `x"><img data-pwned src=x onerror="window.__pwned=1"><span class="`;
+const hostile = await browser.newPage({ viewport: { width: 1600, height: 1100 } });
+hostile.on("pageerror", (e) => errors.push(`hostile pageerror: ${e.message}`));
+await hostile.route("**/bundle/assessments.json", async (route) => {
+  const doc = await (await route.fetch()).json();
+  doc.assessments = doc.assessments.map((a) => ({ ...a, outcome: payload, confidence: payload, dimension: payload }));
+  await route.fulfill({ json: doc });
+});
+await hostile.route("**/bundle/audit.json", async (route) => {
+  const doc = await (await route.fetch()).json();
+  for (const a of Object.values(doc.attempts)) { a.steps = payload; a.verdicts = [{ kind: "test", status: payload, text: payload }]; }
+  await route.fulfill({ json: doc });
+});
+await hostile.route("**/bundle/lanes.json", async (route) => {
+  const doc = await (await route.fetch()).json();
+  doc.attempts = doc.attempts.map((l) => ({ ...l, tools: payload, errors: payload, compactions: payload }));
+  await route.fulfill({ json: doc });
+});
+await hostile.goto(url.replace(/#.*$/, ""), { waitUntil: "load" });
+await hostile.waitForFunction(() => document.body.dataset.eboReady === "1", null, { timeout: Number(process.env.WAIT ?? 60000) });
+await hostile.evaluate(async () => {
+  await window.ebo.run("openTab", { tab: "assessments" });
+  const id = document.querySelector("table.jl tbody tr")?.dataset.id;
+  if (id) await window.ebo.run("openAssessment", { id });
+  await window.ebo.run("openTab", { tab: "lanes" });
+  const attempt = document.querySelector(".lane-label")?.dataset.lane;
+  if (attempt) await window.ebo.run("openAudit", { attemptId: attempt });
+});
+await hostile.waitForTimeout(500);
+report.hostile = await hostile.evaluate(() => ({ executed: window.__pwned === 1, injected: document.querySelectorAll("[data-pwned]").length }));
+if (report.hostile.executed || report.hostile.injected) failures.push({ hostile: report.hostile });
+await hostile.close();
 
 await page.screenshot({ path: out });
 console.log(JSON.stringify({ ...report, errors, failures }, null, 2));

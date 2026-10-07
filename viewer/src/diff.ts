@@ -1,7 +1,7 @@
 // Aligned diff of two attempts: LCS over their action signatures (tool category + command head, plus the target
 // for reads and edits; compactions included, free-text messages excluded). Divergent runs are where one attempt did
 // something the other did not at that point in the shared sequence.
-import { CATS, esc, fmtDur, unitTitle, type LaneMeta, type SwimlanesPanel, type Unit } from "./lanes";
+import { CATS, cls, esc, fmtDur, num, unitTitle, type LaneMeta, type SwimlanesPanel, type Unit } from "./lanes";
 import { run, target } from "./registry";
 
 export type Op = { t: "=" | "-" | "+"; a?: Unit; b?: Unit };
@@ -63,8 +63,8 @@ export function renderDiff(view: HTMLElement, A: LaneMeta, B: LaneMeta, r: Align
   let strip = "";
   r.ops.forEach((o, i) => {
     const x = (i * cw).toFixed(2), w = Math.max(0.8, cw - (cw > 3 ? 0.6 : 0)).toFixed(2);
-    if (o.a) strip += `<rect class="m-tool cat-${o.a.unit_kind === "compaction" ? "comp" : o.a.cat}${o.t === "=" ? " matched" : ""}" data-row="${o.a.row_id}" x="${x}" y="16" width="${w}" height="18"/>`;
-    if (o.b) strip += `<rect class="m-tool cat-${o.b.unit_kind === "compaction" ? "comp" : o.b.cat}${o.t === "=" ? " matched" : ""}" data-row="${o.b.row_id}" x="${x}" y="52" width="${w}" height="18"/>`;
+    if (o.a) strip += `<rect class="m-tool cat-${o.a.unit_kind === "compaction" ? "comp" : cls(o.a.cat)}${o.t === "=" ? " matched" : ""}" data-row="${num(o.a.row_id)}" x="${x}" y="16" width="${w}" height="18"/>`;
+    if (o.b) strip += `<rect class="m-tool cat-${o.b.unit_kind === "compaction" ? "comp" : cls(o.b.cat)}${o.t === "=" ? " matched" : ""}" data-row="${num(o.b.row_id)}" x="${x}" y="52" width="${w}" height="18"/>`;
   });
   r.segments.forEach((s, n) => {
     const x = s.i0 * cw, w = Math.max(2, (s.i1 - s.i0 + 1) * cw);
@@ -82,7 +82,7 @@ export function renderDiff(view: HTMLElement, A: LaneMeta, B: LaneMeta, r: Align
       <div class="diff-cats">
         <table><thead><tr><th>Category</th><th class="num">A</th><th class="num">B</th><th>B − A</th></tr></thead><tbody>
         ${keys.map((k) => { const d = (cb[k] ?? 0) - (ca[k] ?? 0), w = Math.abs(d) / maxC * 80;
-          return `<tr><td><span class="sw cat-${k === "compaction" ? "comp" : k}"></span> ${esc(k)}</td><td class="num">${ca[k] ?? 0}</td><td class="num">${cb[k] ?? 0}</td>
+          return `<tr><td><span class="sw cat-${k === "compaction" ? "comp" : cls(k)}"></span> ${esc(k)}</td><td class="num">${ca[k] ?? 0}</td><td class="num">${cb[k] ?? 0}</td>
             <td class="dbar"><span class="${d >= 0 ? "pos" : "neg"}" style="width:${w.toFixed(0)}px"></span> ${d > 0 ? "+" : ""}${d}</td></tr>`; }).join("")}
         </tbody></table>
       </div>

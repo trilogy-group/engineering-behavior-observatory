@@ -16,7 +16,7 @@ interface ClusterRow { id: number; family: string; label: string; size: number; 
 
 const FAMILIES = ["all", "messages", "episodes", "tools"] as const;
 const fmtPct = (x: number) => (x >= 0.1 ? (x * 100).toFixed(0) : x >= 0.01 ? (x * 100).toFixed(1) : (x * 100).toFixed(2)) + "%";
-const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 export class ClusterArmPanel {
   private predicate: string | null = null;
@@ -32,7 +32,7 @@ export class ClusterArmPanel {
   private tip: HTMLDivElement;
 
   constructor(private root: HTMLElement, private coordinator: Coordinator, private onHighlight: (ids: number[] | null) => void,
-              private onOpenLanes?: (clusterId: number, label: string) => void) {
+              private onOpenLanes?: (clusterId: number, label: string) => Promise<void> | void) {
     this.tip = document.createElement("div");
     this.tip.className = "tip";
     this.tip.hidden = true;
@@ -51,7 +51,7 @@ export class ClusterArmPanel {
       args: { type: "object", required: ["id"], properties: { id: { type: ["integer", "null"] } }, additionalProperties: false },
       run: async ({ id }) => { await this.select(id); return id === null ? "Cleared the cluster selection." : `Selected cluster ${id}.`; } });
     register({ name: "showClusterInLanes", description: "Show the selected cluster in the swimlanes.", args: none,
-      run: () => { const r = this.rows.find((x) => x.id === this.selected); if (r) this.onOpenLanes?.(r.id, r.label); return r ? `Swimlanes focus cluster ${r.id}.` : "No cluster selected."; } });
+      run: async () => { const r = this.rows.find((x) => x.id === this.selected); if (r) await this.onOpenLanes?.(r.id, r.label); return r ? `Swimlanes focus cluster ${r.id}.` : "No cluster selected."; } });
     register({ name: "exportClusterTable", description: "Download the cluster × arm table as CSV.", args: none, readOnly: true,
       run: () => { this.downloadCsv(); return "Downloaded clusters-by-arm.csv."; } });
     provide({ key: "clusters", get: () => ({ family: this.family, sort: this.sort, withinHarness: this.stratify, selected: this.selected }),
@@ -202,13 +202,13 @@ export class ClusterArmPanel {
       const t = Math.abs(c.z) >= 2 ? Math.min(1, Math.abs(lr) / 2) : 0;
       const fill = t > 0 ? `--t:${(0.15 + 0.6 * t).toFixed(2)}` : "--t:0";
       const dir = c.z >= 3 ? "▲" : c.z <= -3 ? "▼" : "";
-      return `<td class="cell ${c.z > 0 ? "pos" : "neg"}" style="${fill}" data-cluster="${r.id}" data-arm="${esc(arm)}">
+      return `<td class="cell ${c.z > 0 ? "pos" : "neg"}" style="${fill}" data-cluster="${Number(r.id)}" data-arm="${esc(arm)}">
         <span class="share">${fmtPct(c.share)} <span class="dir">${dir}</span></span>
         <span class="meta">${c.o.toLocaleString()} units · ${c.k}/${c.kArm} attempts</span></td>`;
     }).join("");
-    return `<tr data-cluster="${r.id}" ${target("selectCluster", r.id)} class="${this.selected === r.id ? "selected" : ""}" tabindex="0" aria-selected="${this.selected === r.id}">
+    return `<tr data-cluster="${Number(r.id)}" ${target("selectCluster", r.id)} class="${this.selected === r.id ? "selected" : ""}" tabindex="0" aria-selected="${this.selected === r.id}">
       <th scope="row" class="c-label" title="${esc(r.label)}"><span class="lbl">${esc(r.label.replace(/`/g, ""))}</span></th>
-      <td><span class="fam ${r.family}">${r.family}</span></td>
+      <td><span class="fam ${String(r.family ?? "").replace(/[^A-Za-z0-9_-]/g, "_")}">${esc(r.family)}</span></td>
       <td class="num">${r.size.toLocaleString()}</td>${cells}</tr>`;
   }
 

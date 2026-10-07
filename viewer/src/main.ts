@@ -151,7 +151,7 @@ async function main() {
   provide({ key: "shell", get: () => ({ tab, focusPanel: layout.classList.contains("focus-panel") }),
     apply: async (st: { tab: Tab; focusPanel: boolean }) => { setPanelFocus(st.focusPanel); await showTab(st.tab); } });
   provide({ key: "claims", get: () => ({ focused: claimsPanel?.focused ?? null }), apply: (st: { focused: string | null }) => { claimsPanel?.focus(st.focused); } });
-  provide({ key: "figures", get: () => ({ focused: figures?.focused ?? null }), apply: async (st: { focused: string | null }) => { if (st.focused !== null) await figures?.focus(st.focused); } });
+  provide({ key: "figures", get: () => ({ focused: figures?.focused ?? null }), apply: async (st: { focused: string | null }) => { await figures?.focus(st.focused); } });
 
   host.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((b) => {
     b.addEventListener("click", () => run("openTab", { tab: b.dataset.tab }));

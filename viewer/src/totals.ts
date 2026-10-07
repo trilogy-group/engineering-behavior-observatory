@@ -1,7 +1,7 @@
 // Totals view of the swimlanes panel: for the chosen task, (1) all-arm totals by action category and by tool name with
 // per-attempt means and ranges, and (2) what happens in the N actions after an anchor (compaction or failed call)
 // compared with the rest of each attempt. Exploratory: computed in the browser over the unit table.
-import { CATS, esc, type LaneMeta, type Unit } from "./lanes";
+import { CATS, cls, esc, type LaneMeta, type Unit } from "./lanes";
 import type { Evidence } from "./p3";
 import { run, target } from "./registry";
 
@@ -40,7 +40,8 @@ export function renderTotals(view: HTMLElement, task: string, lanes: LaneMeta[],
   const catCount = (id: string, key: string) => acts(id).filter((u) => catOf(u) === key).length;
   const cell = (xs: number[]) => { const s = stats(xs); return `<td class="num"><b>${s.sum.toLocaleString()}</b><span class="meta">${s.mean.toFixed(0)} / attempt · ${s.min}–${s.max}</span></td>`; };
   const toolNames = [...new Set(lanes.flatMap((l) => acts(l.attempt_id).filter((u) => u.unit_kind === "tool").map((u) => u.tool_name ?? "tool")))];
-  const toolTotal = (name: string) => lanes.reduce((a, l) => a + acts(l.attempt_id).filter((u) => u.tool_name === name).length, 0);
+  const toolOf = (u: Unit) => u.tool_name ?? "tool";
+  const toolTotal = (name: string) => lanes.reduce((a, l) => a + acts(l.attempt_id).filter((u) => u.unit_kind === "tool" && toolOf(u) === name).length, 0);
   toolNames.sort((a, b) => toolTotal(b) - toolTotal(a));
   const tbl1 = `<table class="grid tot"><thead><tr><th>Action category</th>${arms.map((a) => `<th class="num">${esc(a)}<span class="meta">${lanesOf(a).length} attempts</span></th>`).join("")}</tr></thead><tbody>
     ${rows().map((r) => `<tr><th scope="row"><span class="sw cat-${r.key === "compaction" ? "comp" : r.key}"></span> ${esc(r.label)}</th>${arms.map((a) => cell(lanesOf(a).map((l) => catCount(l.attempt_id, r.key)))).join("")}</tr>`).join("")}
@@ -48,7 +49,7 @@ export function renderTotals(view: HTMLElement, task: string, lanes: LaneMeta[],
     <tr><th scope="row">failed tool calls</th>${arms.map((a) => cell(lanesOf(a).map((l) => acts(l.attempt_id).filter((u) => u.status === "error").length))).join("")}</tr>
     </tbody></table>`;
   const tbl2 = `<table class="grid tot"><thead><tr><th>Tool (native name)</th>${arms.map((a) => `<th class="num">${esc(a)}</th>`).join("")}</tr></thead><tbody>
-    ${toolNames.slice(0, 12).map((t) => `<tr><th scope="row" class="mono">${esc(t)}</th>${arms.map((a) => cell(lanesOf(a).map((l) => acts(l.attempt_id).filter((u) => u.tool_name === t).length))).join("")}</tr>`).join("")}
+    ${toolNames.slice(0, 12).map((t) => `<tr><th scope="row" class="mono">${esc(t)}</th>${arms.map((a) => cell(lanesOf(a).map((l) => acts(l.attempt_id).filter((u) => u.unit_kind === "tool" && toolOf(u) === t).length))).join("")}</tr>`).join("")}
     </tbody></table>`;
 
   // (2) after-anchor windows vs the rest
@@ -73,7 +74,7 @@ export function renderTotals(view: HTMLElement, task: string, lanes: LaneMeta[],
     return `<td class="num" title="${esc(k)}: ${pct(sp)} in windows vs ${pct(sr)} elsewhere">${pct(sp)} <span class="muted">vs ${pct(sr)}</span>
       <span class="dbar"><span class="${d >= 0 ? "pos" : "neg"}" style="width:${w.toFixed(0)}px"></span> ${d >= 0 ? "+" : ""}${d.toFixed(0)} pp</span></td>`;
   };
-  const tbl3 = `<table class="grid tot win"><thead><tr><th>Arm / attempt</th><th class="num">Anchors</th><th class="num">Tool calls in windows / elsewhere</th>${keys.map((k) => `<th class="num"><span class="sw cat-${k}"></span> ${esc(k)}</th>`).join("")}</tr></thead><tbody>
+  const tbl3 = `<table class="grid tot win"><thead><tr><th>Arm / attempt</th><th class="num">Anchors</th><th class="num">Tool calls in windows / elsewhere</th>${keys.map((k) => `<th class="num"><span class="sw cat-${cls(k)}"></span> ${esc(k)}</th>`).join("")}</tr></thead><tbody>
     ${winRows.map((w) => `<tr class="arm-row" data-arm="${esc(w.a)}" ${target("highlightRows", `window:${w.a}`)} tabindex="0"><th scope="row">${esc(w.a)}</th><td class="num">${w.anchors}</td><td class="num">${w.post.length} / ${w.rest.length}</td>${keys.map((k) => dcell(w.post, w.rest, k)).join("")}</tr>
       ${w.per.map((x) => `<tr class="att-row" data-att="${esc(x.l.attempt_id)}" ${target("highlightRows", `window:${x.l.attempt_id}`)} tabindex="0"><td class="indent">trial ${esc(x.l.trial_id)} <span class="mono muted">${esc(x.l.attempt_id.slice(0, 8))}</span></td><td class="num">${x.anchors}</td><td class="num">${x.p.length} / ${x.r.length}</td>${keys.map((k) => dcell(x.p, x.r, k)).join("")}</tr>`).join("")}`).join("")}
     </tbody></table>`;

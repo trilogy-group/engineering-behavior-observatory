@@ -2,7 +2,7 @@
 // records; attempt audit; unit native records). Data from p3/build.py and p3/claims.py under data/<study>/p3/.
 // Matrix counts are computed in the browser from the assessment records (exploratory) and compared with the EBO Atlas
 // report tallies where the study has them (certified).
-import { esc, fmtDur } from "./lanes";
+import { cls, esc, fmtDur, num } from "./lanes";
 import { describable, provide, register, run, target, type Json } from "./registry";
 
 /** What the drawer shows, as data: enough to reopen it exactly (state round-trip, undo, links). */
@@ -49,7 +49,7 @@ export interface EvidenceHooks { highlight: (rows: number[] | null) => void; sho
 
 const SHOW_MAX = 200_000;   // rendering safeguard for very long native lines (the data itself is never truncated)
 const fmtT = (ms: number | null | undefined) => (ms == null ? "—" : fmtDur(ms));
-const outChip = (o: string) => `<span class="oc oc-${o}">${esc(o)}</span>`;
+const outChip = (o: string) => `<span class="oc oc-${cls(o)}">${esc(o)}</span>`;
 const short = (h?: string) => (h ? h.slice(0, 12) : "");
 
 /** Right-side drawer for evidence. One view at a time; Back returns to the previous view. */
@@ -187,7 +187,7 @@ export class Evidence {
     let body = r.text ?? "";
     if (!r.truncated) { try { body = JSON.stringify(JSON.parse(body), null, 1); } catch { /* not JSON */ } }
     return `<div class="rec"><div class="rec-h"><b>${esc(r.part ?? "")}</b> ${esc(r.path ?? r.artifact)} <span class="mono">${esc(r.locator)}</span>
-      · ${(r.chars ?? 0).toLocaleString()} chars${r.truncated ? " (middle omitted)" : ""} · sha256 <span class="mono" title="${esc(r.sha256 ?? "")}">${short(r.sha256)}…</span></div>
+      · ${Number(r.chars ?? 0).toLocaleString()} chars${r.truncated ? " (middle omitted)" : ""} · sha256 <span class="mono" title="${esc(r.sha256 ?? "")}">${short(r.sha256)}…</span></div>
       ${body.length > SHOW_MAX ? `<pre class="rec-t">${esc(body.slice(0, SHOW_MAX))}</pre><p class="small muted">Showing the first ${SHOW_MAX.toLocaleString()} of ${body.length.toLocaleString()} chars (display only; the record is complete). <button class="link" data-full="${esc(r.sha256 ?? "")}">Show full record</button></p><template data-full-text="${esc(r.sha256 ?? "")}">${esc(body)}</template>`
         : `<pre class="rec-t">${esc(body)}</pre>`}</div>`;
   }
@@ -198,12 +198,12 @@ export class Evidence {
     const u = nat?.units?.[String(row)];
     const cites = this.assessmentsOf(attemptId).filter((a) => a.citations.some((c) => c.row_id === row));
     this.drawer.open({ kind: "unit", attemptId, row }, title ?? `Record · ${this.attemptLabel(attemptId)}`, () => `
-      <p class="dr-meta">${esc(this.attemptLabel(attemptId))} · unit row ${row}${u ? ` · <span class="mono">${esc(u.unit_id)}</span>` : ""}</p>
+      <p class="dr-meta">${esc(this.attemptLabel(attemptId))} · unit row ${num(row)}${u ? ` · <span class="mono">${esc(u.unit_id)}</span>` : ""}</p>
       <div class="dr-actions"><button class="btn" data-lanes ${target("focusAttempt", attemptId)}>Show in swimlanes</button> <button class="btn" data-cloud ${target("highlightRows", `unit:${row}`)}>Highlight in cloud</button> <button class="btn" data-audit ${target("openAudit", attemptId)}>Attempt audit</button></div>
       ${cites.length ? `<p>Cited by: ${cites.map((a) => `<button class="link" data-assess="${esc(a.id)}" ${target("openAssessment", a.id)}>${esc(a.dimension)} · ${outChip(a.outcome)}</button>`).join(" ")}</p>` : ""}
       <h4>Native records</h4>
-      ${u ? u.parts.map((p: NativeRec) => this.recordHtml(p)).join("") + (u.omitted_parts ? `<p class="muted">${u.omitted_parts} more native lines for this unit not shown (long stream).</p>` : "") +
-        (u.hook_copies_omitted ? `<p class="muted">${u.hook_copies_omitted} hook record(s) repeating this call/result not shown.</p>` : "")
+      ${u ? u.parts.map((p: NativeRec) => this.recordHtml(p)).join("") + (u.omitted_parts ? `<p class="muted">${num(u.omitted_parts)} more native lines for this unit not shown (long stream).</p>` : "") +
+        (u.hook_copies_omitted ? `<p class="muted">${num(u.hook_copies_omitted)} hook record(s) repeating this call/result not shown.</p>` : "")
         : nat ? `<p class="muted">No native record for this unit (episodes summarize many records; open a tool or message instead).</p>`
               : `<p class="muted">Native records are not part of this packet variant (withheld under policy; their digests are listed in the packet manifest).</p>`}
       <p class="muted small">Native lines are read from the corpus file named above; the SHA-256 is of the full line. Long lines keep their head and tail.</p>`,
@@ -221,7 +221,7 @@ export class Evidence {
     const coh = Object.entries(a.cohorts).map(([c, v]) => `${c}${v.included === false ? " (excluded)" : ""}${v.disputed ? " (disputed)" : ""}`).join(", ");
     this.drawer.open({ kind: "assessment", id }, `Assessment · ${a.dimension}`, () => `
       <p class="dr-meta">${esc(this.attemptLabel(a.attempt_id))}</p>
-      <p class="dr-big">${outChip(a.outcome)} <b>${esc(a.dimension)}</b>${a.confidence != null ? ` · confidence ${a.confidence}` : ""}</p>
+      <p class="dr-big">${outChip(a.outcome)} <b>${esc(a.dimension)}</b>${a.confidence != null ? ` · confidence ${num(a.confidence)}` : ""}</p>
       <dl class="kv"><dt>Evaluator</dt><dd>${esc(a.evaluator)}</dd><dt>Rubric</dt><dd>${esc(a.rubric)}</dd>
         <dt>Review</dt><dd>${esc(a.review ?? "unreviewed (model proposal)")}</dd><dt>Cohorts</dt><dd>${esc(coh || "—")}</dd>
         <dt>Assertion</dt><dd class="mono small">${esc(a.id)}</dd></dl>
@@ -230,7 +230,7 @@ export class Evidence {
       <h4>Cited evidence (${a.citations.length})</h4>
       <p class="muted small">Each citation is a native record the judge pointed to. Open it to read the line; the unit links it to the swimlanes and cloud.</p>
       <ol class="cites">${a.citations.map((c) => `<li>
-        ${c.row_id != null ? `<button class="link" data-row="${c.row_id}" ${target("openUnit", `${a.attempt_id}:${c.row_id}`)}>${esc(c.unit_kind ?? "unit")}${c.step ? ` · step ${c.step}` : ""}${c.seq != null ? ` · unit #${c.seq}` : ""}</button>${c.link && c.link !== "event" ? ` <span class="muted small" title="The cited record is not one of the unit's own events; linked to the ${c.link === "time" ? "nearest unit in time (≤5 s)" : "nearest preceding unit in the same native file"}">≈ linked by ${esc(c.link)}</span>` : ""}` : `<span class="muted">not linked to a unit</span>`}
+        ${c.row_id != null ? `<button class="link" data-row="${num(c.row_id)}" ${target("openUnit", `${a.attempt_id}:${c.row_id}`)}>${esc(c.unit_kind ?? "unit")}${c.step ? ` · step ${num(c.step)}` : ""}${c.seq != null ? ` · unit #${num(c.seq)}` : ""}</button>${c.link && c.link !== "event" ? ` <span class="muted small" title="The cited record is not one of the unit's own events; linked to the ${c.link === "time" ? "nearest unit in time (≤5 s)" : "nearest preceding unit in the same native file"}">≈ linked by ${esc(c.link)}</span>` : ""}` : `<span class="muted">not linked to a unit</span>`}
         <span class="mono small">${esc(c.native.artifact)} ${esc(c.native.locator)}</span>
         ${c.native.resolved ? `<span class="ok">resolved</span>` : `<span class="bad">unresolved</span>`}
         <details><summary>native line</summary>${this.recordHtml({ ...c.native, part: "" })}</details></li>`).join("")}</ol>
@@ -247,33 +247,33 @@ export class Evidence {
     const A = this.audit?.attempts[attemptId];
     const m = this.meta.get(attemptId);
     if (!A || !m) return;
-    const runCell = (r: Run | null | undefined) => r ? `<button class="link" data-row="${r.row_id}" ${target("openUnit", `${attemptId}:${r.row_id}`)}>step ${r.step}</button> · ${fmtT(r.t_ms)}${r.status === "error" ? ` · <span class="bad">failed</span>` : ""}${r.exit_code != null ? ` · exit ${r.exit_code}` : ""}${r.output_redirected ? ` · <span class="muted">output redirected</span>` : ""}` : `<span class="muted">none captured</span>`;
+    const runCell = (r: Run | null | undefined) => r ? `<button class="link" data-row="${num(r.row_id)}" ${target("openUnit", `${attemptId}:${r.row_id}`)}>step ${num(r.step)}</button> · ${fmtT(r.t_ms)}${r.status === "error" ? ` · <span class="bad">failed</span>` : ""}${r.exit_code != null ? ` · exit ${r.exit_code}` : ""}${r.output_redirected ? ` · <span class="muted">output redirected</span>` : ""}` : `<span class="muted">none captured</span>`;
     const finalHtml = () => {
       if (!A.final) return `<p class="muted">No final assistant message captured.</p>`;
       let t = esc(A.final.text);
       for (const c of A.final.claims) { const s = esc(c.text); if (s && t.includes(s)) t = t.split(s).join(`<mark>${s}</mark>`); }
-      return `<p class="muted small">${A.final.chars.toLocaleString()} chars · <button class="link" data-row="${A.final.row_id}" ${target("openUnit", `${attemptId}:${A.final.row_id}`)}>open native record</button> · highlighted: lines that name a check with a pass word</p><pre class="rec-t final">${t}</pre>`;
+      return `<p class="muted small">${Number(A.final.chars).toLocaleString()} chars · <button class="link" data-row="${num(A.final.row_id)}" ${target("openUnit", `${attemptId}:${A.final.row_id}`)}>open native record</button> · highlighted: lines that name a check with a pass word</p><pre class="rec-t final">${t}</pre>`;
     };
     const asm = this.assessmentsOf(attemptId);
     this.drawer.open({ kind: "audit", attemptId }, `Audit · trial ${m.trial_id} ${m.short}`, () => `
       <dl class="kv"><dt>Attempt</dt><dd class="mono small">${esc(m.attempt_id)}</dd><dt>Arm</dt><dd>${esc(m.condition)} (${esc(m.harness_id)} · ${esc(m.model_id)})</dd>
         <dt>Task / trial</dt><dd>${esc(m.task_id)} · trial ${esc(m.trial_id)}</dd><dt>Cohorts</dt><dd>${esc(m.cohorts.join(", ") || "—")}</dd>
         <dt>Terminal</dt><dd>${esc(m.terminal_state)}${m.failure_class && m.failure_class !== "none" ? ` (${esc(m.failure_class)})` : ""}</dd>
-        <dt>Steps</dt><dd>${A.steps} actions (tool calls + compactions)</dd></dl>
+        <dt>Steps</dt><dd>${num(A.steps)} actions (tool calls + compactions)</dd></dl>
       ${asm.length ? `<p>Judge: ${asm.map((a) => `<button class="link" data-assess="${esc(a.id)}" ${target("openAssessment", a.id)}>${esc(a.dimension)} ${outChip(a.outcome)}</button>`).join(" ")}</p>` : ""}
       <h4>Final claims vs captured checks</h4>
-      ${A.verdicts.length ? `<ul class="verdicts">${A.verdicts.map((v) => `<li class="v-${v.status}"><b>${esc(v.status.replace(/-/g, " "))}</b> · ${esc(v.text)}</li>`).join("")}</ul>` : `<p class="muted">No check is both claimed and out of date, and no unclaimed check is stale.</p>`}
+      ${A.verdicts.length ? `<ul class="verdicts">${A.verdicts.map((v) => `<li class="v-${cls(v.status)}"><b>${esc(v.status.replace(/-/g, " "))}</b> · ${esc(v.text)}</li>`).join("")}</ul>` : `<p class="muted">No check is both claimed and out of date, and no unclaimed check is stale.</p>`}
       <table class="grid audit"><thead><tr><th>Check</th><th>Last run</th><th>Last passing run</th><th class="num">Runs</th><th>Source changes after last run</th></tr></thead><tbody>
-      ${(["typecheck", "lint", "test", "build"] as const).map((k) => { const L = A.last[k]; return `<tr><th scope="row">${k}</th><td>${runCell(L?.last)}</td><td>${runCell(L?.last_ok)}</td><td class="num">${L?.runs ?? 0}</td>
-        <td>${L ? (L.changes_after ? `<b>${L.changes_after}</b> · first <button class="link" data-row="${L.first_change_after!.row_id}" ${target("openUnit", `${attemptId}:${L.first_change_after!.row_id}`)}>step ${L.first_change_after!.step}</button> ${esc((L.first_change_after!.paths ?? []).slice(0, 2).join(", "))}` : "0") : "—"}</td></tr>`; }).join("")}
+      ${(["typecheck", "lint", "test", "build"] as const).map((k) => { const L = A.last[k]; return `<tr><th scope="row">${k}</th><td>${runCell(L?.last)}</td><td>${runCell(L?.last_ok)}</td><td class="num">${num(L?.runs ?? 0)}</td>
+        <td>${L ? (L.changes_after ? `<b>${num(L.changes_after)}</b> · first <button class="link" data-row="${num(L.first_change_after!.row_id)}" ${target("openUnit", `${attemptId}:${L.first_change_after!.row_id}`)}>step ${num(L.first_change_after!.step)}</button> ${esc((L.first_change_after!.paths ?? []).slice(0, 2).join(", "))}` : "0") : "—"}</td></tr>`; }).join("")}
       </tbody></table>
-      <details><summary>All captured checks (${A.checks.length})</summary><ol class="runs">${A.checks.map((c) => `<li><button class="link" data-row="${c.row_id}" ${target("openUnit", `${attemptId}:${c.row_id}`)}>step ${c.step}</button> ${fmtT(c.t_ms)} · ${esc((c.kinds ?? []).join(" + "))}${c.status === "error" ? ` · <span class="bad">failed</span>` : ""} <code>${esc(c.command ?? "")}</code></li>`).join("")}</ol></details>
-      <details><summary>All source changes (${A.changes.length})</summary><ol class="runs">${A.changes.map((c) => `<li><button class="link" data-row="${c.row_id}" ${target("openUnit", `${attemptId}:${c.row_id}`)}>step ${c.step}</button> ${fmtT(c.t_ms)} · ${esc(c.how ?? "")} · ${esc((c.paths ?? []).join(", "))}</li>`).join("")}</ol></details>
+      <details><summary>All captured checks (${A.checks.length})</summary><ol class="runs">${A.checks.map((c) => `<li><button class="link" data-row="${num(c.row_id)}" ${target("openUnit", `${attemptId}:${c.row_id}`)}>step ${num(c.step)}</button> ${fmtT(c.t_ms)} · ${esc((c.kinds ?? []).join(" + "))}${c.status === "error" ? ` · <span class="bad">failed</span>` : ""} <code>${esc(c.command ?? "")}</code></li>`).join("")}</ol></details>
+      <details><summary>All source changes (${A.changes.length})</summary><ol class="runs">${A.changes.map((c) => `<li><button class="link" data-row="${num(c.row_id)}" ${target("openUnit", `${attemptId}:${c.row_id}`)}>step ${num(c.step)}</button> ${fmtT(c.t_ms)} · ${esc(c.how ?? "")} · ${esc((c.paths ?? []).join(", "))}</li>`).join("")}</ol></details>
       <h4>Final message (full)</h4>${finalHtml()}
       <h4>Failure chains (${A.failure_chains.length})</h4>
       ${A.failure_chains.length ? `<table class="grid audit"><thead><tr><th>Step</th><th>Tool</th><th class="num">Failures</th><th>Error</th><th>Next call of that tool</th></tr></thead><tbody>
-        ${A.failure_chains.map((f, i) => `<tr><td><button class="link" data-row="${f.failures[0]}" ${target("openUnit", `${attemptId}:${f.failures[0]}`)}>step ${f.first_step}</button> ${fmtT(f.t_ms)}</td><td>${esc(f.tool)}</td><td class="num">${f.failures.length}</td>
-          <td class="small">${esc(f.signature ?? "")}</td><td>${f.next_same_tool != null ? `<button class="link" data-row="${f.next_same_tool}" ${target("openUnit", `${attemptId}:${f.next_same_tool}`)}>${f.next_ok ? "succeeded" : "failed"}</button> · <button class="link" data-compare="${i}" ${target("openCompare", `${attemptId}:${i}`)}>compare failed vs next</button>` : "none"}</td></tr>`).join("")}</tbody></table>` : `<p class="muted">No failed tool calls captured.</p>`}
+        ${A.failure_chains.map((f, i) => `<tr><td><button class="link" data-row="${num(f.failures[0])}" ${target("openUnit", `${attemptId}:${f.failures[0]}`)}>step ${num(f.first_step)}</button> ${fmtT(f.t_ms)}</td><td>${esc(f.tool)}</td><td class="num">${f.failures.length}</td>
+          <td class="small">${esc(f.signature ?? "")}</td><td>${f.next_same_tool != null ? `<button class="link" data-row="${num(f.next_same_tool)}" ${target("openUnit", `${attemptId}:${f.next_same_tool}`)}>${f.next_ok ? "succeeded" : "failed"}</button> · <button class="link" data-compare="${i}" ${target("openCompare", `${attemptId}:${i}`)}>compare failed vs next</button>` : "none"}</td></tr>`).join("")}</tbody></table>` : `<p class="muted">No failed tool calls captured.</p>`}
       <h4>How this audit is computed</h4><ul class="small">${A.notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>
       <div class="dr-actions"><button class="btn" data-lanes ${target("focusAttempt", attemptId)}>Show in swimlanes</button></div>`,
       (el) => {
@@ -298,7 +298,7 @@ export class Evidence {
     this.drawer.open({ kind: "chains", attemptId }, `Failure chains · ${this.attemptLabel(attemptId)}`, () => `
       <p class="dr-meta">${esc(this.attemptLabel(attemptId))} · ${chains.length} chain(s): one or more consecutive failed calls of a tool, then the next call of that tool.</p>
       ${chains.length ? `<table class="grid audit"><thead><tr><th>Step</th><th>Tool</th><th class="num">Failed calls</th><th>Error</th><th>Next call of that tool</th></tr></thead><tbody>
-        ${chains.map((f, i) => `<tr><td>step ${f.first_step} · ${fmtT(f.t_ms)}</td><td class="mono">${esc(f.tool)}</td><td class="num">${f.failures.length}</td><td class="small">${esc(f.signature ?? "—")}</td>
+        ${chains.map((f, i) => `<tr><td>step ${num(f.first_step)} · ${fmtT(f.t_ms)}</td><td class="mono">${esc(f.tool)}</td><td class="num">${f.failures.length}</td><td class="small">${esc(f.signature ?? "—")}</td>
           <td>${f.next_same_tool != null ? `${f.next_ok ? `<span class="ok">succeeded</span>` : `<span class="bad">failed</span>`} · <button class="btn" data-compare="${i}" ${target("openCompare", `${attemptId}:${i}`)}>Compare failed vs next</button>` : "none"}</td></tr>`).join("")}</tbody></table>`
         : `<p class="muted">No failed tool calls captured in this attempt.</p>`}
       <div class="dr-actions"><button class="btn" data-audit ${target("openAudit", attemptId)}>Attempt audit</button> <button class="btn" data-lanes ${target("focusAttempt", attemptId)}>Show in swimlanes</button></div>`,
@@ -369,8 +369,8 @@ export class Evidence {
     const pf = pathOf(argF), pn = pathOf(argN);
     const box = (t: string | null) => t == null ? `<p class="muted small">Not extractable from a complete line; see the raw records below.</p>` : `<pre class="rec-t">${esc(t.length > 6000 ? t.slice(0, 6000) + "\n…" : t)}</pre>`;
     const judge = this.assessmentsOf(attemptId).filter((a) => a.dimension === "error-recognition-recovery");
-    this.drawer.open({ kind: "compare", attemptId, chain }, `Failure chain · ${f.tool} · step ${f.first_step}`, () => `
-      <p class="dr-meta">${esc(this.attemptLabel(attemptId))} · ${f.failures.length} consecutive failed ${esc(f.tool)} call(s) from step ${f.first_step} (${fmtT(f.t_ms)})${f.signature ? ` · <span class="mono small">${esc(f.signature)}</span>` : ""}</p>
+    this.drawer.open({ kind: "compare", attemptId, chain }, `Failure chain · ${f.tool} · step ${num(f.first_step)}`, () => `
+      <p class="dr-meta">${esc(this.attemptLabel(attemptId))} · ${f.failures.length} consecutive failed ${esc(f.tool)} call(s) from step ${num(f.first_step)} (${fmtT(f.t_ms)})${f.signature ? ` · <span class="mono small">${esc(f.signature)}</span>` : ""}</p>
       <p class="muted small">Observed in the native records (not the judge's reading). Left: the last failed call of the chain; right: the next call of the same tool.</p>
       ${keys.length ? `<table class="grid audit"><thead><tr><th>Argument</th><th>Last failed call</th><th>Next call</th></tr></thead><tbody>${keys.map((k) => `<tr><td class="mono">${esc(k)}</td><td>${esc(sf?.[k] ?? "—")}</td><td>${esc(sn?.[k] ?? "—")}</td></tr>`).join("")}</tbody></table>` : ""}
       ${pf && pn && pf !== pn ? `<p class="small"><b>Different target:</b> the failed call targets <span class="mono">${esc(pf)}</span>, the next call <span class="mono">${esc(pn)}</span>; the next call's success does not show the failed change was later applied.</p>` : ""}
@@ -480,7 +480,7 @@ export class MatrixPanel {
         <div class="table-wrap jl-wrap"><p class="sub">${this.sel ? `${esc(this.sel.cat)} × ${esc(this.sel.arm)} · <button class="link" data-clear ${target("selectMatrixCell", "all")}>show all</button>` : "All judgments"} (${list.length})</p>
           <table class="grid jl"><thead><tr><th>Arm</th><th>Task</th><th>Trial</th><th>Attempt</th><th>Behavior</th><th>Outcome</th><th class="num">Conf.</th><th class="num">Cites</th><th>Rationale (start)</th></tr></thead>
           <tbody>${list.map((a) => `<tr data-id="${esc(a.id)}" ${target("openAssessment", a.id)} tabindex="0"><td>${esc(a.condition)}</td><td>${esc(a.task_id)}</td><td>${esc(a.trial_id)}</td><td class="mono">${esc(a.short)}</td><td>${esc(a.dimension)}</td>
-            <td>${outChip(a.outcome)}</td><td class="num">${a.confidence ?? "—"}</td><td class="num">${a.citations.length}</td><td class="small">${esc((a.rationale ?? "").slice(0, 140))}${(a.rationale ?? "").length > 140 ? "…" : ""}</td></tr>`).join("")}</tbody></table></div>
+            <td>${outChip(a.outcome)}</td><td class="num">${a.confidence == null ? "—" : num(a.confidence)}</td><td class="num">${a.citations.length}</td><td class="small">${esc((a.rationale ?? "").slice(0, 140))}${(a.rationale ?? "").length > 140 ? "…" : ""}</td></tr>`).join("")}</tbody></table></div>
       </div>`;
     this.root.querySelector<HTMLSelectElement>("[data-cohort]")!.addEventListener("change", (e) => run("setMatrixCohort", { cohort: (e.target as HTMLSelectElement).value }));
     this.root.querySelector<HTMLSelectElement>("[data-task]")?.addEventListener("change", (e) => run("setMatrixTask", { task: (e.target as HTMLSelectElement).value }));
@@ -516,10 +516,10 @@ export class ClaimsPanel {
         <h3><span class="cid">${esc(c.id)}</span> ${esc(c.text)} ${c.ok ? `<span class="ok">✓ resolves</span>` : `<span class="bad">✕ fails</span>`}</h3>
         <p class="muted small">${esc(c.type)} · source section: ${esc(c.source_section)}${c.cohort ? ` · cohort ${esc(c.cohort)}` : ""}</p>
         <table class="grid nums"><thead><tr><th>Number</th><th class="num">Stated</th><th class="num">Computed</th><th>Kind</th><th>How</th></tr></thead><tbody>
-          ${c.numbers.map((n) => `<tr><td>${esc(n.label)}</td><td class="num">${n.value}</td><td class="num">${n.computed}${n.ok ? "" : ` <span class="bad">≠</span>`}</td><td><span class="tag-${n.kind === "certified" ? "c" : "x"}">${esc(n.kind)}</span></td><td class="mono small">${esc(n.how)}</td></tr>`).join("")}
+          ${c.numbers.map((n) => `<tr><td>${esc(n.label)}</td><td class="num">${num(n.value)}</td><td class="num">${num(n.computed)}${n.ok ? "" : ` <span class="bad">≠</span>`}</td><td><span class="tag-${n.kind === "certified" ? "c" : "x"}">${esc(n.kind)}</span></td><td class="mono small">${esc(n.how)}</td></tr>`).join("")}
         </tbody></table>
-        <p>Supporting judgments (${c.support.length}) · cited native records ${c.citations_resolved}/${c.citations_total} resolved:</p>
-        <ul class="sup">${c.support.map((s) => `<li><button class="link" data-assess="${esc(s.id)}" ${target("openAssessment", s.id)}>${esc(s.condition)} · trial ${esc(s.trial_id)} · ${esc(s.short)} · ${esc(s.dimension)}</button> ${outChip(s.outcome)} · ${s.citations} citations</li>`).join("")}</ul>
+        <p>Supporting judgments (${c.support.length}) · cited native records ${num(c.citations_resolved)}/${num(c.citations_total)} resolved:</p>
+        <ul class="sup">${c.support.map((s) => `<li><button class="link" data-assess="${esc(s.id)}" ${target("openAssessment", s.id)}>${esc(s.condition)} · trial ${esc(s.trial_id)} · ${esc(s.short)} · ${esc(s.dimension)}</button> ${outChip(s.outcome)} · ${num(s.citations)} citations</li>`).join("")}</ul>
         ${c.caveat ? `<p class="caveat">${esc(c.caveat)}</p>` : ""}</article>`).join("")}</div>`;
     this.root.querySelectorAll<HTMLElement>("[data-assess]").forEach((b) => b.addEventListener("click", () => run("openAssessment", { id: b.dataset.assess })));
     if (this.focused) this.focus(this.focused);

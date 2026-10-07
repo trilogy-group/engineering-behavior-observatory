@@ -41,7 +41,11 @@ export const CAT_SQL = `CASE WHEN unit_kind <> 'tool' THEN unit_kind
   WHEN tool_kind = 'shell' THEN 'shell' ELSE 'other' END`;
 const FAILURE_OCC = ["failure-then-same-tool", "failure-then-other-tool", "consecutive-failure", "response-to-failure"];
 
-export const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+export const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+/** A class-name token from bundle data: anything outside [A-Za-z0-9_-] becomes "_" (bundle content is untrusted). */
+export const cls = (s: unknown) => String(s ?? "").replace(/[^A-Za-z0-9_-]/g, "_");
+/** A number from bundle data for markup; anything else renders as NaN, never as markup. */
+export const num = (x: unknown) => String(Number(x));
 const fmtTok = (n: number | null) => n == null ? "" : n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(0) + "k" : String(n);
 export const fmtDur = (ms: number) => {
   const s = Math.round(ms / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
@@ -195,16 +199,16 @@ export class SwimlanesPanel {
     if (!lane) return;
     this.mode = "lanes";
     this.armFilter = lane.condition;
-    if (lane.task_id !== this.task) { this.task = lane.task_id; await this.load(); } else this.render();
     this.selectedRow = row ?? null;
+    if (row == null) this.onHighlight(null);
+    if (lane.task_id !== this.task) { this.task = lane.task_id; await this.load(); } else this.render();
     if (row != null) {
-      this.render();
       const el = this.root.querySelector<SVGElement>(`.lanes-svg [data-row="${row}"]`);
       const plot = this.root.querySelector<HTMLElement>(".lanes-plot");
       if (el && plot) { const x = Number(el.getAttribute("x") ?? el.getAttribute("x1") ?? 0); plot.scrollLeft = Math.max(0, x - plot.clientWidth / 3); }
       this.onHighlight([row]);
     }
-    this.root.querySelector(`.lane-label[data-lane="${attemptId}"]`)?.scrollIntoView({ block: "nearest" });
+    this.root.querySelector(`.lane-label[data-lane="${CSS.escape(attemptId)}"]`)?.scrollIntoView({ block: "nearest" });
   }
 
   private emphasized(u: Unit) {
@@ -305,16 +309,16 @@ export class SwimlanesPanel {
         const pickedIdx = this.picked.indexOf(l.attempt_id);
         const tok = [l.cost_usd != null ? `$${l.cost_usd.toFixed(2)}` : "", l.context_max ? `ctx ≤${fmtTok(l.context_max)}` : ""].filter(Boolean).join(" · ");
         const tokTitle = `${l.tokens_total != null ? fmtTok(l.tokens_total) + " tokens processed" : "no token usage reported"}${l.cost_usd != null ? ` · $${l.cost_usd.toFixed(2)}` : ""}${l.context_max ? ` · largest context of one request ${l.context_max.toLocaleString()}` : ""} · usage source: ${l.usage_semantics}`;
-        labels += `<div class="lane-label ${pickedIdx >= 0 ? "picked" : ""}" style="height:${LANE_H}px" data-lane="${l.attempt_id}">
-          <label class="pick"><input type="checkbox" data-pick="${l.attempt_id}" ${target("toggleLanePick", l.attempt_id)} ${pickedIdx >= 0 ? "checked" : ""} aria-label="Select trial ${esc(l.trial_id)} for alignment">${pickedIdx >= 0 ? `<b>${"AB"[pickedIdx]}</b>` : ""}</label>
+        labels += `<div class="lane-label ${pickedIdx >= 0 ? "picked" : ""}" style="height:${LANE_H}px" data-lane="${esc(l.attempt_id)}">
+          <label class="pick"><input type="checkbox" data-pick="${esc(l.attempt_id)}" ${target("toggleLanePick", l.attempt_id)} ${pickedIdx >= 0 ? "checked" : ""} aria-label="Select trial ${esc(l.trial_id)} for alignment">${pickedIdx >= 0 ? `<b>${"AB"[pickedIdx]}</b>` : ""}</label>
           <div class="ll-main"><span class="ll-title">trial ${esc(l.trial_id)}${l.terminal_state !== "completed" ? ` <span class="badge">${esc(l.terminal_state)}</span>` : ""} <span class="muted" title="${esc(tokTitle)}">${tok}</span></span>
-          <span class="ll-meta">${fmtDur(l.t_end_ms - l.t_start_ms)} · ${l.tools} tools · ${l.errors} err${l.compactions ? ` · <span title="${l.compactions} compactions">┆${l.compactions}</span>` : ""}</span>
+          <span class="ll-meta">${fmtDur(l.t_end_ms - l.t_start_ms)} · ${num(l.tools)} tools · ${num(l.errors)} err${l.compactions ? ` · <span title="${num(l.compactions)} compactions">┆${num(l.compactions)}</span>` : ""}</span>
           <span class="ll-id" title="${esc(`${l.attempt_id} · cohorts: ${(this.ev?.meta.get(l.attempt_id)?.cohorts ?? []).join(", ") || "—"} · token usage source: ${l.usage_semantics === "none" ? "none recorded (not zero)" : l.usage_semantics}`)}"><span class="mono">${esc(l.attempt_id.slice(0, 8))}</span>${(this.ev?.meta.get(l.attempt_id)?.cohorts ?? []).map((c) => ` <span class="coh">${esc(c)}</span>`).join("")} · ${l.usage_semantics === "none" ? "<span class=\"no-usage\">no usage recorded</span>" : `usage: ${esc(l.usage_semantics)}`}</span></div>
-          ${this.ev?.audit && this.ev.chainsOf(l.attempt_id).length ? `<button class="icon-btn fail-btn" data-chains="${l.attempt_id}" ${target("openChains", l.attempt_id)} title="Failure chains: failed calls and the next call of the same tool">✕ ${this.ev.chainsOf(l.attempt_id).length}</button>` : ""}
-          ${this.ev?.audit ? `<button class="icon-btn" data-audit="${l.attempt_id}" ${target("openAudit", l.attempt_id)} title="Audit: checks vs source changes vs final claims, failure chains, final message">Audit</button>` : ""}
-          <button class="icon-btn" data-lane-hl="${l.attempt_id}" ${target("highlightAttempt", l.attempt_id)} title="Highlight this attempt in the cloud" aria-label="Highlight attempt in cloud">◎</button>
+          ${this.ev?.audit && this.ev.chainsOf(l.attempt_id).length ? `<button class="icon-btn fail-btn" data-chains="${esc(l.attempt_id)}" ${target("openChains", l.attempt_id)} title="Failure chains: failed calls and the next call of the same tool">✕ ${this.ev.chainsOf(l.attempt_id).length}</button>` : ""}
+          ${this.ev?.audit ? `<button class="icon-btn" data-audit="${esc(l.attempt_id)}" ${target("openAudit", l.attempt_id)} title="Audit: checks vs source changes vs final claims, failure chains, final message">Audit</button>` : ""}
+          <button class="icon-btn" data-lane-hl="${esc(l.attempt_id)}" ${target("highlightAttempt", l.attempt_id)} title="Highlight this attempt in the cloud" aria-label="Highlight attempt in cloud">◎</button>
         </div>`;
-        body += `<g transform="translate(0,${y})" data-lane="${l.attempt_id}"><rect x="0" y="0" width="${W}" height="${LANE_H}" class="lane-bg"/>`;
+        body += `<g transform="translate(0,${y})" data-lane="${esc(l.attempt_id)}"><rect x="0" y="0" width="${W}" height="${LANE_H}" class="lane-bg"/>`;
         // token ribbon (behind the tool row)
         const usage = series(l.attempt_id);
         if (usage?.length && this.axis === "time") {
@@ -323,7 +327,7 @@ export class SwimlanesPanel {
           body += `<path class="ribbon" d="M0,${b} L${pts.join(" L")} L${pts.at(-1)!.split(",")[0]},${b} Z"/>`;
         }
         let failRun: number[] | null = null, failRows: number[] = [];
-        const failBand = (r: number[]) => `<rect class="band-fail-svg hit-fail" data-fail="${l.attempt_id}|${failRows.join(",")}" x="${r[0].toFixed(1)}" y="${ROW.mark[1] - 4}" width="${Math.max(4, r[1] - r[0]).toFixed(1)}" height="6"><title>Failure chain: click for the failed call vs the next call of that tool</title></rect>`;
+        const failBand = (r: number[]) => `<rect class="band-fail-svg hit-fail" data-fail="${esc(l.attempt_id)}|${failRows.map(num).join(",")}" x="${r[0].toFixed(1)}" y="${ROW.mark[1] - 4}" width="${Math.max(4, r[1] - r[0]).toFixed(1)}" height="6"><title>Failure chain: click for the failed call vs the next call of that tool</title></rect>`;
         let nextStep = 0;                       // messages on the Steps axis go before the next action
         for (const u of us) {
           if (stepIdx.has(u.row_id)) nextStep = stepIdx.get(u.row_id)! + 1;
@@ -332,20 +336,20 @@ export class SwimlanesPanel {
           if (u.unit_kind === "episode") continue;
           const x0 = X(u), x1 = Math.max(X(u, true), x0 + (this.axis === "time" ? 1.5 : Math.max(1, sw - (sw > 3 ? 1 : 0))));
           if (u.unit_kind === "message") {
-            body += `<rect class="m-msg${dim}${sel}" data-row="${u.row_id}" x="${x0.toFixed(1)}" y="${ROW.msg[0]}" width="1.5" height="${ROW.msg[1] - ROW.msg[0]}"/>`;
-            body += `<rect class="hit" data-row="${u.row_id}" x="${(x0 - 2.5).toFixed(1)}" y="0" width="6.5" height="${ROW.msg[1] + 1}"/>`;
+            body += `<rect class="m-msg${dim}${sel}" data-row="${num(u.row_id)}" x="${x0.toFixed(1)}" y="${ROW.msg[0]}" width="1.5" height="${ROW.msg[1] - ROW.msg[0]}"/>`;
+            body += `<rect class="hit" data-row="${num(u.row_id)}" x="${(x0 - 2.5).toFixed(1)}" y="0" width="6.5" height="${ROW.msg[1] + 1}"/>`;
           } else if (u.unit_kind === "compaction") {
-            body += `<line class="m-comp${dim}" data-row="${u.row_id}" x1="${x0.toFixed(1)}" x2="${x0.toFixed(1)}" y1="0" y2="${LANE_H}"/><rect class="hit" data-row="${u.row_id}" x="${(x0 - 3).toFixed(1)}" y="0" width="6" height="${LANE_H}"/>`;
+            body += `<line class="m-comp${dim}" data-row="${num(u.row_id)}" x1="${x0.toFixed(1)}" x2="${x0.toFixed(1)}" y1="0" y2="${LANE_H}"/><rect class="hit" data-row="${num(u.row_id)}" x="${(x0 - 3).toFixed(1)}" y="0" width="6" height="${LANE_H}"/>`;
           } else {
-            body += `<rect class="m-tool cat-${u.cat}${dim}${sel}" data-row="${u.row_id}" x="${x0.toFixed(1)}" y="${ROW.tool[0]}" width="${(x1 - x0).toFixed(1)}" height="${ROW.tool[1] - ROW.tool[0]}" rx="1"/>`;
-            if (x1 - x0 < 4) body += `<rect class="hit" data-row="${u.row_id}" x="${(x0 - (4 - (x1 - x0)) / 2).toFixed(1)}" y="${ROW.tool[0]}" width="4" height="${ROW.tool[1] - ROW.tool[0]}"/>`;
+            body += `<rect class="m-tool cat-${cls(u.cat)}${dim}${sel}" data-row="${num(u.row_id)}" x="${x0.toFixed(1)}" y="${ROW.tool[0]}" width="${(x1 - x0).toFixed(1)}" height="${ROW.tool[1] - ROW.tool[0]}" rx="1"/>`;
+            if (x1 - x0 < 4) body += `<rect class="hit" data-row="${num(u.row_id)}" x="${(x0 - (4 - (x1 - x0)) / 2).toFixed(1)}" y="${ROW.tool[0]}" width="4" height="${ROW.tool[1] - ROW.tool[0]}"/>`;
             const occ = u.occ ? u.occ.split(",") : [];
             if (occ.some((o) => FAILURE_OCC.includes(o)) || u.status === "error") { if (!failRun) { failRun = [x0, x1]; failRows = []; } failRun[1] = x1; failRows.push(u.row_id); }
             else if (failRun) { body += failBand(failRun); failRun = null; }
             if (occ.includes("repeated-operation")) body += `<rect class="band-rep-svg${dim}" x="${x0.toFixed(1)}" y="${ROW.mark[1]}" width="${Math.max(1.5, x1 - x0).toFixed(1)}" height="2"/>`;
-            if (u.status === "error") body += `<text class="m-err${dim}" data-row="${u.row_id}" x="${x0.toFixed(1)}" y="${ROW.mark[0] + 6}">✕</text>`;
+            if (u.status === "error") body += `<text class="m-err${dim}" data-row="${num(u.row_id)}" x="${x0.toFixed(1)}" y="${ROW.mark[0] + 6}">✕</text>`;
           }
-          if (u.cited || this.ev?.citedRows.has(u.row_id)) body += `<text class="m-cite${dim}" data-row="${u.row_id}" x="${x0.toFixed(1)}" y="${ROW.msg[1] + 1}">▾</text><rect class="hit" data-row="${u.row_id}" x="${(x0 - 2).toFixed(1)}" y="${ROW.msg[1] - 8}" width="9" height="10"/>`;
+          if (u.cited || this.ev?.citedRows.has(u.row_id)) body += `<text class="m-cite${dim}" data-row="${num(u.row_id)}" x="${x0.toFixed(1)}" y="${ROW.msg[1] + 1}">▾</text><rect class="hit" data-row="${num(u.row_id)}" x="${(x0 - 2).toFixed(1)}" y="${ROW.msg[1] - 8}" width="9" height="10"/>`;
         }
         if (failRun) body += failBand(failRun);
         body += `</g>`;
