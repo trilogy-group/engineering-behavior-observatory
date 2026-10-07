@@ -37,7 +37,7 @@ function pointer(document: unknown, path: string): unknown {
   let current = document;
   for (const raw of path.split("/").slice(1)) {
     const key = raw.replace(/~1/gu, "/").replace(/~0/gu, "~");
-    current = Array.isArray(current) ? current[Number(key)] : current !== null && typeof current === "object" ? (current as Record<string, unknown>)[key] : undefined;
+    current = current !== null && typeof current === "object" && Object.hasOwn(current, key) ? (current as Record<string, unknown>)[key] : undefined;
   }
   return current;
 }

@@ -137,7 +137,8 @@ function readRequest(path: string): AtlasBundleRequest {
   if (errors.length) throw new Error(errors.map(({ field, message }) => `${field}: ${message}`).join("\n"));
   if (new Set(request.cohorts.map(({ id }) => id)).size !== request.cohorts.length) throw new Error("Atlas bundle cohort ids must be unique.");
   if (request.condition) {
-    const pattern = new RegExp(request.condition.pattern, "u");
+    // The condition pattern is study configuration (trusted, at most 1000 characters by the request schema).
+    const pattern = new RegExp(request.condition.pattern, "u"); // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
     if (!/\(\?<condition>/u.test(request.condition.pattern)) throw new Error(`Condition pattern ${String(pattern)} needs a named group "condition".`);
   }
   return request;
@@ -156,9 +157,9 @@ function contentResolver(evidence: RetainedBehaviorEvidence) {
     let current = records.get(key);
     for (const segment of (marker === -1 ? "" : reference.recordLocator.slice(marker + 1)).split("/").slice(1)) {
       const token = segment.replace(/~1/gu, "/").replace(/~0/gu, "~");
-      if (Array.isArray(current)) current = current[Number(token)];
-      else if (current !== null && typeof current === "object") current = (current as Record<string, unknown>)[token];
-      else return { status: "bad-pointer" };
+      // Own properties only: a pointer segment such as __proto__ never reaches an inherited object.
+      if (current === null || typeof current !== "object" || !Object.hasOwn(current, token)) return { status: "bad-pointer" };
+      current = (current as Record<string, unknown>)[token];
       if (current === undefined) return { status: "bad-pointer" };
     }
     return { status: "resolved", value: current };
@@ -276,7 +277,7 @@ export async function buildAtlasBundle(requestPath: string, destination: string,
 async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string, outputRoot: string,
   options: { now?: () => Date; embed?: typeof embedTexts }): Promise<AtlasBundleManifest> {
   const base = dirname(resolve(requestPath));
-  const condition = request.condition ? new RegExp(request.condition.pattern, "u") : undefined;
+  const condition = request.condition ? new RegExp(request.condition.pattern, "u") : undefined; // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
   const tables: Record<string, Row[]> = Object.fromEntries(Object.keys(ATLAS_TABLES).filter((name) => !STREAMED.has(name)).map((name) => [name, []]));
   const sink = new TableSink();
   const stream = (name: string, row: Row) => sink.push(name, row);
