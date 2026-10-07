@@ -74,6 +74,8 @@
         "status": { "enum": ["completed", "failed"] },
         "response": {},
         "error": { "type": "string", "maxLength": 4096 },
+        "rawModelResponse": {},
+        "raw": {},
         "startedAt": { "type": "string", "format": "date-time" },
         "durationMs": { "type": "integer", "minimum": 0 }
       }

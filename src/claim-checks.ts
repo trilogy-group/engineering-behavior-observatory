@@ -135,6 +135,13 @@ export function validateClaimChecks(document: ClaimChecks, assertion?: BehaviorA
     const decision = document.decisions[check.decision];
     const answer = decision?.answers?.support;
     if (assertion !== undefined && !claimIds.has(check.claimId)) throw new Error(`Claim check names unknown claim "${check.claimId}".`);
+    // The decision must have been asked about this claim: its text, workspace and cited events.
+    const claim = assertion?.judgment.claims?.find(({ id }) => id === check.claimId);
+    const state = decision?.request.state as { claim?: unknown; citedRecords?: Array<{ eventId?: unknown }> } | undefined;
+    if (claim !== undefined && (canonicalizeMetadata(state?.claim) !== canonicalizeMetadata({ text: claim.text, workspace: claim.workspace })
+        || canonicalizeMetadata(state?.citedRecords?.map(({ eventId }) => eventId)) !== canonicalizeMetadata(claim.citations.map(({ eventId }) => eventId)))) {
+      throw new Error(`Claim check for "${check.claimId}" was decided for a different claim.`);
+    }
     if (decision?.status !== "completed" || answer?.type !== "choice" || canonicalizeMetadata(answer) !== canonicalizeMetadata(check.answer)
         || canonicalizeMetadata(decision.request.questions) !== canonicalizeMetadata({ support: CLAIM_SUPPORT_QUESTION })) {
       throw new Error(`Claim check for "${check.claimId}" differs from its decision record or question.`);

@@ -212,6 +212,12 @@ test("claim checks route unsupported or uncertain claims to review and bind to t
   const forged = structuredClone(checks);
   forged.checks[1]!.flagged = false;
   assert.throws(() => validateClaimChecks(forged, assertion), /contradicts its answer/u);
+  const swapped = structuredClone(checks);
+  swapped.checks[1]!.decision = 0;
+  swapped.checks[1]!.answer = swapped.checks[0]!.answer;
+  swapped.checks[1]!.label = "supported";
+  swapped.checks[1]!.flagged = false;
+  assert.throws(() => validateClaimChecks(swapped, assertion), /different claim/u, "a check cannot borrow another claim's decision");
   const changed = structuredClone(assertion) as typeof assertion;
   (changed.judgment as { rationale: string }).rationale = "edited";
   assert.throws(() => validateClaimChecks(checks, changed), /different assertion/u);
@@ -286,4 +292,8 @@ test("question set 1.1: silent success is a rule rating, source changes between 
   assert.equal(broken.ratings.filter(({ source }) => source === "fallback").length, 0, "answers that do not match the questions are recorded, never used");
   assert.ok((broken.coverage.failedFallbacks ?? 0) > 0);
   assert.match(broken.fallbackDecisions![0]!.error!, /do not match/u);
+  const timedOut = await rateOccurrences(observationSet, events, ({ recordLocator }) => content[recordLocator], { provider: "typesafe" }, { fetch: fetchImpl, env,
+    fallback: { ...fallback, run: async () => ({ status: "failed" as const, kind: "timeout" as const, message: "Codex judge exceeded maxWallClockMs.", rawModelResponse: { content: "{\"answers\": [", truncated: false }, raw: { threadId: "t", turnId: "u" } }) } });
+  assert.deepEqual(timedOut.fallbackDecisions![0]!.rawModelResponse, { content: "{\"answers\": [", truncated: false }, "partial model output of a failed call is kept");
+  assert.deepEqual(timedOut.fallbackDecisions![0]!.raw, { threadId: "t", turnId: "u" });
 });

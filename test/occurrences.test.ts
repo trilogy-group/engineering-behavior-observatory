@@ -35,6 +35,7 @@ test("classifies every check a command runs per segment and the source paths it 
   assert.deepEqual(checkKindsOf("npx playwright install chromium && npx tsc --version"), []);
   assert.deepEqual(checkKindsOf("npx jest --listTests && pnpm exec playwright show-report"), []);
   assert.deepEqual(checkKindsOf("npx playwright test e2e/login.spec.ts"), ["test"]);
+  assert.deepEqual(checkKindsOf("npx jest add"), ["test"], "a test selector named like a setup command is still a run");
   assert.deepEqual(shellWrites("node -e \"require('fs').writeFileSync('src/app.tsx', s)\""), ["src/app.tsx"]);
   assert.deepEqual(shellWrites("sed -i 's/a/b/' src/lib/util.ts && cat src/lib/util.ts > /tmp/out.log"), ["src/lib/util.ts"]);
   assert.deepEqual(shellWrites("pnpm test 2>&1 | tail"), []);

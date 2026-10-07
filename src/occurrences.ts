@@ -265,15 +265,16 @@ function segments(command: string): string[][] {
   });
 }
 
-/** Flags and subcommands that query or set up a check tool instead of running checks. */
+/** Flags that query a check tool instead of running checks, and Playwright's non-test subcommands. */
 const NON_RUN_FLAGS = new Set(["--version", "-V", "--help", "-h", "--listTests", "--list-tests", "--showConfig", "--show-config", "--list", "--init"]);
-const NON_RUN_SUBCOMMANDS = new Set(["install", "uninstall", "show-report", "show-trace", "codegen", "init", "add", "remove", "merge-reports", "clear-cache"]);
+const PLAYWRIGHT_NON_TEST_SUBCOMMANDS = new Set(["install", "install-deps", "uninstall", "show-report", "show-trace", "codegen", "open", "screenshot", "pdf", "merge-reports", "clear-cache", "init"]);
 
 export function checkKindsOf(command: string): string[] {
   const kinds: string[] = [];
   for (const tokens of segments(command)) {
     const program = tokens[0]!.split("/").at(-1)!;
-    if (tokens.some((token) => NON_RUN_FLAGS.has(token)) || tokens.slice(1, 4).some((token) => NON_RUN_SUBCOMMANDS.has(token))) continue;
+    const playwright = tokens.slice(0, 4).findIndex((token) => token.split("/").at(-1) === "playwright");
+    if (tokens.some((token) => NON_RUN_FLAGS.has(token)) || playwright >= 0 && PLAYWRIGHT_NON_TEST_SUBCOMMANDS.has(tokens[playwright + 1] ?? "")) continue;
     const words: string[] = [];
     if (["tsc", "vue-tsc", "mypy", "pyright"].includes(program)) words.push("typecheck");
     else if (["eslint", "biome", "ruff", "stylelint"].includes(program)) words.push("lint");

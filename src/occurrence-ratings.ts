@@ -47,6 +47,9 @@ export type FallbackRecord = {
   status: "completed" | "failed";
   response?: unknown;
   error?: string;
+  /** For a failed call: the partial model output and the backend's bounded native evidence, when available. */
+  rawModelResponse?: unknown;
+  raw?: unknown;
   startedAt: string;
   durationMs: number;
 };
@@ -594,7 +597,9 @@ async function askFallback(
           return true;
         });
         Object.assign(record, valid ? { status: "completed", response: result.response } : { response: result.response, error: "Fallback answers do not match the deferred questions." });
-      } else record.error = result.message.slice(0, 4096);
+      } else {
+        Object.assign(record, { error: result.message.slice(0, 4096), ...(result.rawModelResponse === undefined ? {} : { rawModelResponse: result.rawModelResponse }), ...(result.raw === undefined ? {} : { raw: result.raw }) });
+      }
       records[index] = record;
       onFallback?.(record);
       if (record.status !== "completed") continue;
