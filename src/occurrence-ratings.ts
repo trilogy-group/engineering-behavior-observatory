@@ -496,7 +496,7 @@ export async function rateOccurrences(
 export function validateOccurrenceRatings(document: OccurrenceRatings): void {
   const errors = validateArtifact("occurrence ratings", document);
   if (errors.length > 0) throw new Error(errors.map(({ field, message }) => `${field}: ${message}`).join("\n"));
-  const deferred = new Set<string>();
+  const deferred = new Map<string, number>();
   for (const rating of document.ratings) {
     if (!rating.occurrenceId.startsWith(`${document.attemptId}/occ/${rating.occurrenceType}/`)) throw new Error(`Rating for "${rating.occurrenceId}" belongs to another attempt or type.`);
     const key = `${rating.occurrenceId}\0${rating.questionId}`;
@@ -513,7 +513,7 @@ export function validateOccurrenceRatings(document: OccurrenceRatings): void {
       // Labels are derived from answers, never trusted as stored.
       if (rating.label !== answerLabel(answer)) throw new Error(`Rating label for "${rating.occurrenceId}" differs from its answer.`);
       if (rating.accepted !== acceptedByPolicy(answer, document.policy)) throw new Error(`Rating for "${rating.occurrenceId}" contradicts the acceptance policy.`);
-      if (!rating.accepted) deferred.add(key);
+      if (!rating.accepted) deferred.set(key, rating.decision!);
     } else if (rating.source === "rule") {
       const known = Object.values(RULE_RATINGS).some((rule) => rule.occurrenceType === rating.occurrenceType && rule.questionId === rating.questionId
         && rule.label === rating.label && rule.rule === rating.rule);
@@ -525,7 +525,9 @@ export function validateOccurrenceRatings(document: OccurrenceRatings): void {
       const item = record?.request.items.find(({ occurrenceId }) => occurrenceId === rating.occurrenceId);
       const answered = record?.status === "completed" ? fallbackAnswers(record).find((entry) => entry.occurrenceId === rating.occurrenceId && entry.questionId === rating.questionId) : undefined;
       const question = occurrenceQuestions(rating.occurrenceType, document.questionSetVersion)?.[rating.questionId];
-      if (!deferred.has(key) || question === undefined || canonicalizeMetadata(item?.questions[rating.questionId]) !== canonicalizeMetadata(question)
+      // The fallback must have seen the same state as the deferred model decision it resolves.
+      const deferredState = deferred.has(key) ? document.decisions[deferred.get(key)!]?.request.state : undefined;
+      if (!deferred.has(key) || canonicalizeMetadata(item?.state) !== canonicalizeMetadata(deferredState) || question === undefined || canonicalizeMetadata(item?.questions[rating.questionId]) !== canonicalizeMetadata(question)
           || !questionLabels(question).includes(rating.label) || answered === undefined || answered.label !== rating.label
           || answered.rationale !== rating.rationale || rating.accepted !== true || rating.answer !== undefined) {
         throw new Error(`Fallback rating for "${rating.occurrenceId}" differs from its record or has no deferred model rating.`);

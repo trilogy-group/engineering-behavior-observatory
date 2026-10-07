@@ -106,7 +106,7 @@ export async function checkClaims(
     checks: done,
     decisions,
   };
-  validateClaimChecks(result, assertion);
+  validateClaimChecks(result, assertion, capture);
   return result;
 }
 
@@ -123,8 +123,11 @@ export async function checkRetainedClaims(
   return checkClaims(assertion, capture, config, options);
 }
 
-/** Schema validation plus bindings: the assertion digest, labels derived from answers, and the policy. */
-export function validateClaimChecks(document: ClaimChecks, assertion?: BehaviorAssertion): void {
+/**
+ * Schema validation plus bindings: the assertion digest, each decision's claim, labels derived from answers and the
+ * policy. With the native capture, each decision's state must equal the one rebuilt from the cited records.
+ */
+export function validateClaimChecks(document: ClaimChecks, assertion?: BehaviorAssertion, capture?: NormalizationInput<unknown>): void {
   const errors = validateArtifact("claim checks", document);
   if (errors.length > 0) throw new Error(errors.map(({ field, message }) => `${field}: ${message}`).join("\n"));
   if (assertion !== undefined && document.assertion.digest !== `sha256:${digestMetadata(assertion).value}`) {
@@ -141,6 +144,9 @@ export function validateClaimChecks(document: ClaimChecks, assertion?: BehaviorA
     if (claim !== undefined && (canonicalizeMetadata(state?.claim) !== canonicalizeMetadata({ text: claim.text, workspace: claim.workspace })
         || canonicalizeMetadata(state?.citedRecords?.map(({ eventId }) => eventId)) !== canonicalizeMetadata(claim.citations.map(({ eventId }) => eventId)))) {
       throw new Error(`Claim check for "${check.claimId}" was decided for a different claim.`);
+    }
+    if (claim !== undefined && capture !== undefined && canonicalizeMetadata(decision?.request.state) !== canonicalizeMetadata(claimState(claim, capture))) {
+      throw new Error(`Claim check for "${check.claimId}" was decided on records that differ from the cited native records.`);
     }
     if (decision?.status !== "completed" || answer?.type !== "choice" || canonicalizeMetadata(answer) !== canonicalizeMetadata(check.answer)
         || canonicalizeMetadata(decision.request.questions) !== canonicalizeMetadata({ support: CLAIM_SUPPORT_QUESTION })) {

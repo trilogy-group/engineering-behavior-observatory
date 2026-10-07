@@ -218,6 +218,10 @@ test("claim checks route unsupported or uncertain claims to review and bind to t
   swapped.checks[1]!.label = "supported";
   swapped.checks[1]!.flagged = false;
   assert.throws(() => validateClaimChecks(swapped, assertion), /different claim/u, "a check cannot borrow another claim's decision");
+  validateClaimChecks(checks, assertion, capture);
+  const substituted = structuredClone(checks);
+  (substituted.decisions[0]!.request.state as { citedRecords: Array<{ record: string }> }).citedRecords[0]!.record = "Tests: 99 passed";
+  assert.throws(() => validateClaimChecks(substituted, assertion, capture), /differ from the cited native records/u);
   const changed = structuredClone(assertion) as typeof assertion;
   (changed.judgment as { rationale: string }).rationale = "edited";
   assert.throws(() => validateClaimChecks(checks, changed), /different assertion/u);
@@ -283,6 +287,11 @@ test("question set 1.1: silent success is a rule rating, source changes between 
     .find(({ occurrenceId, questionId }) => occurrenceId === fallbackRating.occurrenceId && questionId === fallbackRating.questionId)!.label = "banana";
   fallbackRating.label = "banana";
   assert.throws(() => validateOccurrenceRatings(banana), /Fallback rating/u, "a fallback label must be one the question allows");
+  const restated = structuredClone(ratings);
+  const restatedRating = restated.ratings.find(({ source }) => source === "fallback")!;
+  const restatedItem = restated.fallbackDecisions![restatedRating.fallback!]!.request.items.find(({ occurrenceId }) => occurrenceId === restatedRating.occurrenceId)!;
+  restatedItem.state = { fabricated: true };
+  assert.throws(() => validateOccurrenceRatings(restated), /Fallback rating/u, "the fallback must have seen the deferred decision's state");
   const legacy = structuredClone(ratings);
   legacy.questionSetVersion = "1.0.0";
   assert.throws(() => validateOccurrenceRatings(legacy), /question set/u, "1.0 artifacts are checked against the 1.0 questions");

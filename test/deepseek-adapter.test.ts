@@ -800,6 +800,7 @@ test("a native terminal error is a failed task with complete capture", async () 
     const execution = await executeDeepSeekHarness(harnessContext(undefined, undefined, undefined, composition.workspaceCwd), configuration(composition, "terminal-error"), capture);
     await capture.close();
     assert.equal(execution.status, "failed");
+    assert.equal(execution.failureClass, "task", "a native turn error is the task failing, not the harness");
     const report = execution.evidence as DeepSeekCaptureReport;
     assert.equal(report.status, "failed");
     assert.match(JSON.stringify(report), /Capacity exhausted/);

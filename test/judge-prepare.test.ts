@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { digestMetadata, validateArtifact } from "../src/artifacts.js";
 import { validateClaimCitations, validateClaimWorkspaces, type BehaviorAssertion } from "../src/behavior-assertions.js";
+import { visibleEvidence } from "../src/exports.js";
 import { JUDGE_PREPARE_METHOD, prepareJudgeRequest, type JudgePrepareSpec } from "../src/judge-prepare.js";
 import { rateOccurrences } from "../src/occurrence-ratings.js";
 import { extractOccurrences, type OccurrenceOperation } from "../src/occurrences.js";
@@ -192,4 +193,11 @@ test("judge evidence hides reasoning and keeps the tail of long outputs; assessm
   const elsewhere = { ...capture, records: capture.records.map((entry) => entry.reference.recordLocator === "line:1" ? { ...entry, record: { cwd: "/other-checkout" } } : entry) } as typeof capture;
   assert.throws(() => validateClaimWorkspaces(assertion, elsewhere), /workspace its cited records do not state/u);
   assert.throws(() => validateClaimWorkspaces(assertion, capture), /workspace its cited records do not state/u, "no stated cwd means the workspace is unknown");
+});
+
+test("analysis-channel reasoning is removed, including stringified raw copies", () => {
+  const record = { item: { channel: "analysis", content: "PRIVATE" }, raw: JSON.stringify({ channel: "analysis", content: "PRIVATE-RAW" }), text: "visible" };
+  const visible = JSON.stringify(visibleEvidence(record));
+  assert.equal(visible.includes("PRIVATE"), false);
+  assert.ok(visible.includes("visible"));
 });

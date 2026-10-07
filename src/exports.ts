@@ -754,7 +754,7 @@ function stripCodexReasoningEnvelope(
 function containsCodexReasoning(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(containsCodexReasoning);
   if (!isRecord(value)) return false;
-  return value.type === "reasoning" || value.method === CODEX_REASONING_DELTA_METHOD
+  return value.type === "reasoning" || value.channel === "analysis" || value.method === CODEX_REASONING_DELTA_METHOD
     || Object.values(value).some(containsCodexReasoning);
 }
 
@@ -921,7 +921,7 @@ function valueContainsCodexReasoningContent(value: unknown): boolean {
   }
   if (Array.isArray(value)) return value.some(valueContainsCodexReasoningContent);
   if (!isRecord(value)) return false;
-  if (value.type === "reasoning"
+  if ((value.type === "reasoning" || value.channel === "analysis")
       && Object.keys(value).some((key) => CODEX_REASONING_CONTENT_FIELDS.has(normalizeFieldName(key)))) return true;
   if (value.method === CODEX_REASONING_DELTA_METHOD) {
     for (const container of [value.params, value.payload]) {
