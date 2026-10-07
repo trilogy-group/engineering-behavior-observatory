@@ -214,9 +214,22 @@ export function deriveUnits({ attemptId, events, occurrences, resolveContent }: 
   for (const operation of toolOperations(events) as ToolOperation[]) {
     const ordered = [...operation.events].sort((a, b) => index.get(a.id)! - index.get(b.id)!);
     const unit = blank("tool", ordered[0]!);
-    const calls = ordered.filter(({ phase }) => phase !== "after"), results = ordered.filter(({ phase }) => phase === "after");
-    const input = calls.flatMap(contentOf);
-    const output = results.flatMap(contentOf);
+    const results = ordered.filter(({ phase }) => phase === "after");
+    // Content references with a role (Cursor: tool-input, tool-result, tool-error on one whole record) are split by
+    // role, each taking its own field of the record; without roles, the call side is input and the result side output.
+    const refs = ordered.flatMap((event) => (event.content.status === "known" ? event.content.value.map((ref) => ({ event, ref })) : []));
+    const seenRefs = new Set<string>();
+    const unique = refs.filter(({ ref }) => { const k = `${ref.nativeReference.artifactId}\0${ref.nativeReference.recordLocator}\0${ref.role ?? ""}`; if (seenRefs.has(k)) return false; seenRefs.add(k); return true; });
+    const TOOL_ROLES: Record<string, { input: boolean; field: string }> = { "tool-input": { input: true, field: "args" }, "tool-result": { input: false, field: "result" }, "tool-error": { input: false, field: "result" } };
+    const roleOf = (ref: { role?: string }) => (ref.role === undefined ? undefined : TOOL_ROLES[ref.role]);
+    const pick = (value: unknown, field: string) => (value !== null && typeof value === "object" && field in value ? (value as Record<string, unknown>)[field] : value);
+    const isInput = ({ event, ref }: { event: UniformEvent; ref: { role?: string } }) => roleOf(ref)?.input ?? event.phase !== "after";
+    const resolveRef = ({ ref }: { ref: { role?: string; nativeReference: NativeEvidenceReference } }) => {
+      const value = resolveContent(ref.nativeReference), role = roleOf(ref);
+      return value === undefined || !role ? value : pick(value, role.field);
+    };
+    const input = unique.filter(isInput).map(resolveRef).filter((v) => v !== undefined);
+    const output = unique.filter((x) => !isInput(x)).map(resolveRef).filter((v) => v !== undefined);
     const outputText = output.flatMap((v) => resultText(v)).join("\n");
     unit.tool_name = operation.toolName ?? null;
     unit.tool_kind = toolKind(operation.toolName);
