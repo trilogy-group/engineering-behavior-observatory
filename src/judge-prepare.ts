@@ -72,11 +72,16 @@ export function prepareJudgeRequest(
   for (const event of [firstUser, ...modelMessages.slice(-2)]) if (event !== undefined) take([event.id]);
 
   // Tier 2: failures and what ratings mark as adverse or uncertain.
-  const ratingsByOccurrence = new Map<string, OccurrenceRatings["ratings"]>();
-  for (const rating of ratings?.ratings ?? []) ratingsByOccurrence.set(rating.occurrenceId, [...ratingsByOccurrence.get(rating.occurrenceId) ?? [], rating]);
+  // The effective rating per question: a fallback answer replaces the deferred model answer it resolves.
+  const effective = new Map<string, Map<string, OccurrenceRatings["ratings"][number]>>();
+  for (const rating of ratings?.ratings ?? []) {
+    const questions = effective.get(rating.occurrenceId) ?? new Map();
+    if (rating.source === "fallback" || !questions.has(rating.questionId)) questions.set(rating.questionId, rating);
+    effective.set(rating.occurrenceId, questions);
+  }
   const flagged = (occurrence: Occurrence) => occurrence.type === "failure-response"
     || occurrence.type === "validation-run" && occurrence.attributes.result === "failed"
-    || (ratingsByOccurrence.get(occurrence.id) ?? []).some(({ accepted, label }) => !accepted || ADVERSE_LABELS.has(label));
+    || [...effective.get(occurrence.id)?.values() ?? []].some(({ accepted, label }) => !accepted || ADVERSE_LABELS.has(label));
   for (const occurrence of population.filter(flagged)) takeOccurrence(occurrence);
 
   // Tier 3: the final validation of each check kind.

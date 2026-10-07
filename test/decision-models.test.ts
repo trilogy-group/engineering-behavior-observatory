@@ -214,3 +214,64 @@ test("claim checks route unsupported or uncertain claims to review and bind to t
   (changed.judgment as { rationale: string }).rationale = "edited";
   assert.throws(() => validateClaimChecks(checks, changed), /different assertion/u);
 });
+
+test("question set 1.1: silent success is a rule rating, source changes between failure and response are a fact, deferred answers go to the fallback", async () => {
+  const at = (sequence: number, attributes: UniformEvent["attributes"], phase: UniformEvent["phase"]) => event(sequence, attributes, phase);
+  const content: Record<string, unknown> = {
+    "line:1": { input: { command: "pnpm exec jest src/a.test.ts" } }, "line:2": { content: "Tests: 1 failed" },
+    "line:3": { input: { file_path: "src/a.ts" } }, "line:4": { content: "ok" },
+    "line:5": { input: { command: "pnpm exec jest src/a.test.ts" } }, "line:6": { content: "Tests: 1 passed" },
+    "line:7": { input: { command: "npx tsc --noEmit" } }, "line:8": { content: "(Bash completed with no output)" },
+  };
+  const op = (id: string, events: UniformEvent[], failed: boolean, toolName = "Bash"): OccurrenceOperation => ({ id, events, toolName, inputDigest: `sha256:${id}`, failed });
+  const failing = op("a", [at(1, { toolName: "Bash", toolUseId: "a" }, "before"), at(2, { toolName: "Bash", toolUseId: "a", isError: true }, "after")], true);
+  const edit = op("e", [at(3, { toolName: "Edit", toolUseId: "e" }, "before"), at(4, { toolName: "Edit", toolUseId: "e", isError: false }, "after")], false, "Edit");
+  const rerun = op("b", [at(5, { toolName: "Bash", toolUseId: "b" }, "before"), at(6, { toolName: "Bash", toolUseId: "b", isError: false }, "after")], false);
+  const silent = op("c", [at(7, { toolName: "Bash", toolUseId: "c" }, "before"), at(8, { toolName: "Bash", toolUseId: "c", isError: false }, "after")], false);
+  const operations = [failing, edit, rerun, silent];
+  const events = operations.flatMap(({ events: own }) => own);
+  const { occurrences, coverage } = extractOccurrences({
+    attemptId: "attempt", events, operations, toolCapability: { status: "available" }, delegationCapability: { status: "available" },
+    isCompaction: () => false, resolveContent: ({ recordLocator }) => content[recordLocator],
+  });
+  const observationSet = { runId: "run", attemptId: "attempt", normalization: { datasetDigest: `sha256:${"a".repeat(64)}` }, occurrences, occurrenceCoverage: coverage } as unknown as StructuralObservationSet;
+  const sent: Array<{ state: { facts: Record<string, unknown> }; questions: Record<string, unknown> }> = [];
+  const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init!.body)) as { state: { facts: Record<string, unknown> }; questions: Record<string, DecisionQuestion> };
+    sent.push(body);
+    // Low confidence everywhere, so every model answer is deferred to the fallback.
+    const answers = Object.fromEntries(Object.entries(body.questions).map(([id, question]) => question.type === "noul" ? [id, { type: "noul", noul: 0.6 }]
+      : [id, { type: "choice", choice: Object.keys((question as { criteria: Record<string, string> }).criteria)[0], probabilities: Object.fromEntries(Object.keys((question as { criteria: Record<string, string> }).criteria).map((key, index, all) => [key, index === 0 ? 0.5 : 0.5 / (all.length - 1)])), confidence: 0.5 }]));
+    return new Response(JSON.stringify({ model: "jev-1.13.0", answers, usage: { input_tokens: 5, output_tokens: 1 } }));
+  }) as typeof fetch;
+  const prompts: string[] = [];
+  const fallback = { model: "reasoner", effort: "low" as const, batchSize: 2, run: async (prompt: string, schema: Record<string, unknown>) => {
+    prompts.push(prompt);
+    const items = (JSON.parse(prompt.slice(prompt.indexOf("<STATE_DATA>\n") + 13, prompt.indexOf("\n</STATE_DATA>"))) as { items: Array<{ occurrenceId: string; questions: Record<string, { type: string; criteria?: Record<string, string> }> }> }).items;
+    assert.ok(JSON.stringify(schema).includes('"rationale"'));
+    return { status: "completed" as const, raw: {}, response: { answers: items.flatMap(({ occurrenceId, questions }) => Object.entries(questions).map(([questionId, question]) => ({
+      occurrenceId, questionId, label: question.type === "noul" ? "no" : Object.keys(question.criteria!)[1]!, rationale: "Read from the state." }))) } };
+  } };
+  const records: unknown[] = [];
+  const ratings = await rateOccurrences(observationSet, events, ({ recordLocator }) => content[recordLocator], { provider: "typesafe" }, { fetch: fetchImpl, env, fallback, onFallback: (record) => records.push(record) });
+  validateOccurrenceRatings(ratings);
+  const failureState = sent.find(({ questions }) => "response" in questions)!;
+  assert.equal(failureState.state.facts.sourceChangesBetween, 1, "the edit between the failure and the re-run is a fact");
+  const silentRatings = ratings.ratings.filter(({ occurrenceId }) => occurrenceId.endsWith("/event-7"));
+  assert.deepEqual(silentRatings.filter(({ questionId }) => questionId === "outcome").map(({ source, label }) => [source, label]), [["rule", "all-passed"]], "exit success with no output is a pass by rule, not asked");
+  assert.ok(sent.every(({ questions }) => !("outcome" in questions) || !JSON.stringify(questions).includes("silent")));
+  const fallbacks = ratings.ratings.filter(({ source }) => source === "fallback");
+  assert.equal(fallbacks.length, ratings.coverage.deferred, "every deferred answer has a fallback answer");
+  assert.ok(fallbacks.every(({ rationale, accepted }) => rationale === "Read from the state." && accepted));
+  assert.equal(records.length, Math.ceil(new Set(fallbacks.map(({ occurrenceId }) => occurrenceId)).size / 2));
+  assert.equal(ratings.coverage.failedFallbacks, 0);
+  const forged = structuredClone(ratings);
+  forged.ratings.find(({ source }) => source === "fallback")!.label = "unclear";
+  assert.throws(() => validateOccurrenceRatings(forged), /Fallback rating/u);
+
+  const broken = await rateOccurrences(observationSet, events, ({ recordLocator }) => content[recordLocator], { provider: "typesafe" }, { fetch: fetchImpl, env,
+    fallback: { ...fallback, run: async () => ({ status: "completed" as const, raw: {}, response: { answers: [] } }) } });
+  assert.equal(broken.ratings.filter(({ source }) => source === "fallback").length, 0, "answers that do not match the questions are recorded, never used");
+  assert.ok((broken.coverage.failedFallbacks ?? 0) > 0);
+  assert.match(broken.fallbackDecisions![0]!.error!, /do not match/u);
+});

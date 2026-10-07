@@ -5,7 +5,7 @@ import type { AdapterCapability, NativeEvidenceReference, UniformAttributeValue,
  * repeated operation, one compaction, one delegation. Each cites exactly its own events. Rules that read command
  * text are labeled heuristic.
  */
-export const OCCURRENCE_RULES_VERSION = "1.0.0";
+export const OCCURRENCE_RULES_VERSION = "1.1.0";
 export const OCCURRENCE_TYPES = ["failure-response", "validation-run", "source-change", "repeated-operation", "compaction", "delegation"] as const;
 export type OccurrenceType = typeof OCCURRENCE_TYPES[number];
 
@@ -85,8 +85,9 @@ export function extractOccurrences(input: OccurrenceInput): { occurrences: Occur
       const failedAt = failures.flatMap(({ events }) => events).sort(compareEvents).at(-1)!;
       const next = scoped.slice(end).find((operation) => operation.toolName === first.toolName && compareEvents(operation.events[0]!, failedAt) > 0);
       add("failure-response", false, [...failures, ...(next === undefined ? [] : [next])].flatMap(({ events }) => events), {
-        toolName: first.toolName, failures: failures.length,
+        toolName: first.toolName, failures: failures.length, lastFailureEventId: failedAt.id,
         nextOutcome: next === undefined ? "none" : details.get(next.id)!.result,
+        responseEventId: next?.events[0]!.id,
       });
       index = end;
     }
@@ -264,10 +265,15 @@ function segments(command: string): string[][] {
   });
 }
 
+/** Flags and subcommands that query or set up a check tool instead of running checks. */
+const NON_RUN_FLAGS = new Set(["--version", "-V", "--help", "-h", "--listTests", "--list-tests", "--showConfig", "--show-config", "--list", "--init"]);
+const NON_RUN_SUBCOMMANDS = new Set(["install", "uninstall", "show-report", "show-trace", "codegen", "init", "add", "remove", "merge-reports", "clear-cache"]);
+
 export function checkKindsOf(command: string): string[] {
   const kinds: string[] = [];
   for (const tokens of segments(command)) {
     const program = tokens[0]!.split("/").at(-1)!;
+    if (tokens.some((token) => NON_RUN_FLAGS.has(token)) || tokens.slice(1, 4).some((token) => NON_RUN_SUBCOMMANDS.has(token))) continue;
     const words: string[] = [];
     if (["tsc", "vue-tsc", "mypy", "pyright"].includes(program)) words.push("typecheck");
     else if (["eslint", "biome", "ruff", "stylelint"].includes(program)) words.push("lint");

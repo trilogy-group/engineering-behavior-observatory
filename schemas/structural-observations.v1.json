@@ -59,7 +59,7 @@
           "required": ["id", "version", "requiredCapabilities"],
           "properties": {
             "id": { "$ref": "#/$defs/identifier" },
-            "version": { "enum": ["1.0.0", "1.1.0"] },
+            "version": { "enum": ["1.0.0", "1.1.0", "1.2.0"] },
             "requiredCapabilities": {
               "type": "array",
               "maxItems": 8,
@@ -109,7 +109,7 @@
           "required": ["id", "version", "heuristic"],
           "properties": {
             "id": { "$ref": "#/$defs/identifier" },
-            "version": { "const": "1.0.0" },
+            "version": { "enum": ["1.0.0", "1.1.0"] },
             "heuristic": { "type": "boolean" }
           }
         },
@@ -155,7 +155,7 @@
         "runId": { "$ref": "#/$defs/identifier" },
         "attemptId": { "$ref": "#/$defs/identifier" },
         "assessmentMode": { "enum": ["observational", "verified", "unknown"] },
-        "extractorVersion": { "enum": ["1.0.0", "1.1.0"] },
+        "extractorVersion": { "enum": ["1.0.0", "1.1.0", "1.2.0"] },
         "normalization": {
           "type": "object",
           "additionalProperties": false,

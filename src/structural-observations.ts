@@ -20,7 +20,7 @@ import type {
   UniformEventFamily,
 } from "./uniform-events.js";
 
-export const STRUCTURAL_EXTRACTOR_VERSION = "1.1.0";
+export const STRUCTURAL_EXTRACTOR_VERSION = "1.2.0";
 export { CLAUDE_AGENT_SDK_NORMALIZATION_ADAPTER_VERSION } from "./agent-sdk-normalizer.js";
 
 type RequiredCapability = `family:${UniformEventFamily}` | "evidence:nativeOrder";
