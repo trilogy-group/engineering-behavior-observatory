@@ -35,7 +35,7 @@ export function laneData(attempt: Attempt, units: readonly AtlasUnit[], events: 
   const ends = units.map((u) => ms(u.t_end) ?? ms(u.t_start)).filter((t): t is number => t !== null);
   const steps = units.filter((u) => u.unit_kind !== "episode");
   let carried: number | null = null;
-  const increments: Array<{ t: number; a: Readonly<Record<string, unknown>> }> = [];
+  const increments: Array<{ t: number | null; a: Readonly<Record<string, unknown>> }> = [];
   const snapshots: Array<[number, number]> = [];
   const final = { records: 0, tokens: 0, cost: null as number | null };
   for (const event of events) {
@@ -43,7 +43,8 @@ export function laneData(attempt: Attempt, units: readonly AtlasUnit[], events: 
     if (t !== null) carried = t;
     const a = event.attributes as Readonly<Record<string, unknown>>;
     const semantics = a.resourceSemantics;
-    if (semantics === "increment" && carried !== null) increments.push({ t: carried, a });
+    // Untimed usage (Cursor events carry no native time) still counts; it only has no place on the timeline.
+    if (semantics === "increment") increments.push({ t: carried, a });
     else if (semantics === "cumulative-snapshot" && carried !== null) snapshots.push([carried, total(a)]);
     // A final record counts only when it carries token dimensions (a duration- or cost-only final is not usage).
     else if (semantics === "cumulative-final") {
@@ -54,12 +55,14 @@ export function laneData(attempt: Attempt, units: readonly AtlasUnit[], events: 
     }
   }
   let usage: Array<[number, number]> | undefined;
+  let incrementTotal = 0;
   if (increments.length) {
-    let sum = 0;
-    usage = increments.map(({ t, a }) => [t, (sum += total(a))]);
+    const series: Array<[number, number]> = [];
+    for (const { t, a } of increments) { incrementTotal += total(a); if (t !== null) series.push([t, incrementTotal]); }
+    usage = series;
   } else if (snapshots.length) usage = snapshots;
-  const context = increments.filter(({ a }) => (a.usageScope ?? "assistant") === "assistant")
-    .map(({ t, a }) => [t, n(a.inputTokens) + n(a.cacheReadInputTokens) + n(a.cacheCreationInputTokens) + n(a.cacheWriteInputTokens)] as [number, number]);
+  const context = increments.filter(({ t, a }) => t !== null && (a.usageScope ?? "assistant") === "assistant")
+    .map(({ t, a }) => [t!, n(a.inputTokens) + n(a.cacheReadInputTokens) + n(a.cacheCreationInputTokens) + n(a.cacheWriteInputTokens)] as [number, number]);
   const outputPerRequest = increments.some(({ a }) => typeof a.outputTokens === "number");
   const completeIncrements = increments.length > 0 && increments.every(({ a }) => typeof a.totalTokens === "number" || (typeof a.inputTokens === "number" && typeof a.outputTokens === "number"));
   const lane: LaneMeta = {
@@ -67,13 +70,13 @@ export function laneData(attempt: Attempt, units: readonly AtlasUnit[], events: 
     t_start_ms: starts.length ? Math.min(...starts) : null, t_end_ms: ends.length ? Math.max(...ends) : null,
     units: steps.length, tools: steps.filter((u) => u.unit_kind === "tool").length, errors: steps.filter((u) => u.status === "error").length,
     compactions: steps.filter((u) => u.unit_kind === "compaction").length, cited_units: 0,
-    usage_semantics: usage ? "per-turn" : final.records ? "final-only" : "none",
+    usage_semantics: increments.length || snapshots.length ? "per-turn" : final.records ? "final-only" : "none",
     // A token total from increments only when every increment is complete (a total, or input and output): Agent SDK
     // increments carry no per-request output, so an interrupted attempt without a final result has no total.
-    tokens_total: final.records ? final.tokens : completeIncrements ? usage?.at(-1)?.[1] ?? null : snapshots.length && !increments.length ? usage?.at(-1)?.[1] ?? null : null,
+    tokens_total: final.records ? final.tokens : completeIncrements ? incrementTotal : snapshots.length && !increments.length ? snapshots.at(-1)![1] : null,
     cost_usd: final.cost === null ? null : Math.round(final.cost * 1e4) / 1e4,
     context_max: context.length ? Math.max(...context.map(([, v]) => v)) : null,
     output_tokens: outputPerRequest ? "per-request" : final.records ? "final-only" : "none",
   };
-  return { lane, ...(usage ? { usage } : {}), ...(context.length ? { context } : {}) };
+  return { lane, ...(usage?.length ? { usage } : {}), ...(context.length ? { context } : {}) };
 }

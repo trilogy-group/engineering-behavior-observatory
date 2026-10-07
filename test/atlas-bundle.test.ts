@@ -153,3 +153,10 @@ test("lane usage: a final with one token dimension is not a token total", () => 
   const complete = laneData(attempt, [], [event({ resourceSemantics: "increment", inputTokens: 10, outputTokens: 2 })]).lane;
   assert.equal(complete.tokens_total, 12);
 });
+
+test("lane usage: untimed increments count toward the total without a place on the timeline", () => {
+  const untimed = (attributes: Record<string, unknown>) => ({ nativeTime: { status: "unknown" }, attributes }) as never;
+  const attempt = { attempt_id: "a", task_id: null, condition: null, trial_id: null, harness_id: null, model_id: null, terminal_state: null, failure_class: null, capture_qualification: null };
+  const lanes = laneData(attempt, [], [untimed({ resourceSemantics: "increment", inputTokens: 7, outputTokens: 3 })]);
+  assert.deepEqual([lanes.lane.usage_semantics, lanes.lane.tokens_total, lanes.usage], ["per-turn", 10, undefined]);
+});

@@ -321,7 +321,9 @@ async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string
     }
     for (const c of view.cases.filter((x) => x.assertion && x.assertionDigest)) {
       const original = source.input.assertions.find(({ document }) => `sha256:${digestMetadata(document).value}` === c.assertionDigest)!.document;
+      // Review state is per cohort (each cohort has its own calibration inputs); the scalar says so when they differ.
       const entry = assertions.get(original.id) ?? { assertion: original, digest: c.assertionDigest!, review: c.review, cohorts: new Set<string>() };
+      if (entry.cohorts.size && entry.review !== c.review) entry.review = "varies by cohort";
       if (entry.digest !== c.assertionDigest) throw new Error(`Assertion id ${original.id} names two different assertions (attempts ${entry.assertion.attemptId} and ${original.attemptId}); assertion ids must be unique in an Atlas bundle.`);
       entry.cohorts.add(cohort.id);
       assertions.set(original.id, entry);
