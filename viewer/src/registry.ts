@@ -47,7 +47,8 @@ export function getState(): Record<string, Json> {
 
 /** Apply a full or partial state, provider by provider, in registration order. */
 export async function setState(state: Record<string, Json>, source: Source = "system"): Promise<void> {
-  for (const provider of providers.values()) if (provider.key in state) await provider.apply(state[provider.key]);
+  depth += 1;
+  try { for (const provider of providers.values()) if (provider.key in state) await provider.apply(state[provider.key]); } finally { depth -= 1; }
   emit({ command: "setState", args: null, source, description: "Restored a viewer state.", state: getState() });
 }
 

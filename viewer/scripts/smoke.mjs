@@ -70,7 +70,9 @@ for (const tab of tabs) {
   if (tab === "clusters") await page.evaluate(() => window.ebo.run("setViewport", { x: 0.25, y: -0.5, scale: 0.75 }).catch(() => undefined));
   const before = await page.evaluate(() => window.ebo.getState());
   const encoded = await page.evaluate(() => window.ebo.encodeState(window.ebo.getState()));
+  // A fragment-only navigation does not reload the page; reload so the state is restored into a fresh viewer.
   await page.goto(`${url.replace(/#.*$/, "")}#state=${encoded}`, { waitUntil: "load" });
+  await page.reload({ waitUntil: "load" });
   await ready();
   await page.waitForTimeout(500);
   // A restored cloud state waits for Embedding Atlas to publish its chart; give it the time a reader would.
@@ -79,6 +81,10 @@ for (const tab of tabs) {
   const same = JSON.stringify(before) === JSON.stringify(after);
   report.roundTrip[tab] = same;
   if (!same) failures.push({ roundTrip: tab, before, after });
+  // Restoring a URL is not a reader's change: nothing to undo afterwards.
+  await page.waitForTimeout(600);
+  const undone = await page.evaluate(async () => { const s = JSON.stringify(window.ebo.getState()); const e = await window.ebo.run("undo"); return { nothing: e.description === "Nothing to undo.", same: JSON.stringify(window.ebo.getState()) === s }; });
+  if (!undone.nothing || !undone.same) failures.push({ restoredThenUndo: tab, ...undone });
   await page.evaluate(() => window.ebo.run("closeDrawer"));
 }
 
@@ -99,6 +105,7 @@ if (await page.evaluate(() => window.ebo.listCloudTools().length > 0)) {
   const box = await page.locator("#atlas canvas").first().boundingBox().catch(() => null);
   if (box) {
     const before = await page.evaluate(() => { window.__cloudEvents = 0; window.ebo.subscribe((e) => { if (e.command === "cloudChanged") window.__cloudEvents++; }); return JSON.stringify(window.ebo.getState().cloud.viewport); });
+    await page.waitForTimeout(800);   // past the window in which Embedding Atlas reports a command's own changes
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.wheel(0, -400);
     await page.waitForTimeout(1200);

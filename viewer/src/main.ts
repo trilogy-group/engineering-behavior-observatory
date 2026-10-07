@@ -174,6 +174,7 @@ async function main() {
   let committedCloud: Json | null = null;
   let pendingBefore: Record<string, Json> | null = null;
   let settle: ReturnType<typeof setTimeout> | undefined;
+  let quietUntil = 0;
   const chartReadyPromise = new Promise<void>((resolve) => { chartReady = resolve; });
   let eaTools: EaTool[] = [];
   let atlasState: Record<string, any> = {};
@@ -200,7 +201,10 @@ async function main() {
       // The first viewport Embedding Atlas publishes is its initial layout, not a reader's change.
       const committed = committedCloud as { viewport?: unknown } | null;
       if (!committed?.viewport) { committedCloud = getState().cloud ?? null; return; }
-      if (!commandRunning()) {
+      // Embedding Atlas reports changes asynchronously: what arrives during or just after a command or a restored
+      // state belongs to it, not to the reader.
+      if (commandRunning() || Date.now() < quietUntil) { committedCloud = getState().cloud ?? null; return; }
+      {
         pendingBefore ??= before;
         clearTimeout(settle);
         settle = setTimeout(async () => { const b = pendingBefore!; pendingBefore = null; await refreshing; recordChange("cloudChanged", "Changed the cloud view.", b); }, 400);
@@ -238,7 +242,13 @@ async function main() {
     run: async ({ categories }) => { await setCloudState({ legend: categories.length ? { selection: categories } : null }); return categories.length ? `Legend selection: ${categories.join(", ")}.` : "Cleared the legend selection."; } });
   register<{ tool: string; input?: Record<string, unknown> }>({ name: "cloudTool", description: "Run one of Embedding Atlas's own tools (see listCloudTools), e.g. chart_set_state or data_query.",
     args: obj({ tool: { type: "string" }, input: { type: "object" } }, ["tool"]),
-    run: async ({ tool, input }) => { const result = await eaTool(tool, input ?? {}); lastCloudResult = result; return `Ran Embedding Atlas tool ${tool}.`; } });
+    run: async ({ tool, input }) => {
+      const result = await eaTool(tool, input ?? {});
+      await new Promise((r) => setTimeout(r, 50));   // a tool that changes the predicate settles like the named cloud commands
+      await refreshing;
+      lastCloudResult = result;
+      return `Ran Embedding Atlas tool ${tool}.`;
+    } });
   let lastCloudResult: unknown = null;
   provide({ key: "highlight", get: () => ({ rows: highlighted }), apply: (st: { rows: number[] | null }) => { highlight(st.rows); } });
   provide({ key: "cloud", get: () => {
@@ -273,7 +283,7 @@ async function main() {
     }
   };
   let writing = false;
-  subscribe((event) => { committedCloud = (event.state as Record<string, Json>).cloud ?? null; });
+  subscribe((event) => { committedCloud = (event.state as Record<string, Json>).cloud ?? null; if (event.command !== "cloudChanged") quietUntil = Date.now() + 500; });
   committedCloud = getState().cloud ?? null;
   subscribe((event) => {
     if (event.source === "url") return;

@@ -417,7 +417,9 @@ export class MatrixPanel {
     const pool = this.pool(), arms = this.arms(), cats = this.cats();
     const cells = cats.flatMap((cat) => arms.map((arm) => {
       const xs = pool.filter((a) => a.category === cat && a.condition === arm);
-      const counts = Object.fromEntries(OUTCOMES.map((o) => [o, xs.filter((a) => a.outcome === o).length]));
+      const counts: Record<string, number> = Object.fromEntries(OUTCOMES.map((o) => [o, xs.filter((a) => a.outcome === o).length]));
+      const unknown = xs.filter((a) => !(OUTCOMES as readonly string[]).includes(a.outcome)).length;
+      if (unknown) counts.unknown = unknown;
       const cert = this.certCell(cat, arm);
       return { category: cat, arm, judgments: xs.length, counts, certified: cert ? OUTCOMES.every((o) => (cert.counts[o] ?? 0) === counts[o]) && cert.denominator === xs.length : false };
     }));
@@ -446,6 +448,7 @@ export class MatrixPanel {
       const n = xs.length, k = attemptsIn(arm);
       if (!k) return `<td class="mx na">—</td>`;
       const counts = Object.fromEntries(OUTCOMES.map((o) => [o, xs.filter((a) => a.outcome === o).length]));
+      const unknown = xs.filter((a) => !(OUTCOMES as readonly string[]).includes(a.outcome)).length;
       const cert = this.certCell(cat, arm);
       let mark = `<span class="tag-x" title="Computed in the browser from the judge assertions">exploratory</span>`;
       if (cert) {
@@ -454,7 +457,7 @@ export class MatrixPanel {
           : `<span class="tag-d" title="EBO report: ${esc(JSON.stringify(cert.counts))} of ${cert.denominator}">differs from EBO</span>`;
       }
       const bar = OUTCOMES.map((o) => counts[o] ? `<span class="sb oc-${o}" style="flex:${counts[o]}"></span>` : "").join("");
-      const txt = OUTCOMES.filter((o) => counts[o]).map((o) => `${counts[o]} ${OUT_SHORT[o]}`).join(" · ") || "0";
+      const txt = [...OUTCOMES.filter((o) => counts[o]).map((o) => `${counts[o]} ${OUT_SHORT[o]}`), ...(unknown ? [`${unknown} unknown outcome`] : [])].join(" · ") || "0";
       const on = this.sel && this.sel.cat === cat && this.sel.arm === arm ? " on" : "";
       return `<td class="mx${on}" data-cat="${esc(cat)}" data-arm="${esc(arm)}" ${target("selectMatrixCell", `${cat}|${arm}`)} tabindex="0" title="${esc(OUTCOMES.map((o) => `${o}: ${counts[o]}`).join(", "))}">
         <div class="sbar" aria-hidden="true">${bar}</div><span class="mx-n">${txt}</span>

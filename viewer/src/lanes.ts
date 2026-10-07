@@ -289,7 +289,8 @@ export class SwimlanesPanel {
     for (const l of lanes) (groups.get(l.condition) ?? groups.set(l.condition, []).get(l.condition)!).push(l);
 
     // x scales: time = elapsed since the lane's first unit, shared domain so lanes compare; step = action index.
-    const laneStart = (id: string) => Math.min(...(this.byLane.get(id) ?? []).filter((u) => u.t0_ms != null).map((u) => u.t0_ms!));
+    // A lane whose units are all untimed starts at 0 and keeps its marks at the origin rather than losing them.
+    const laneStart = (id: string) => { const ts = (this.byLane.get(id) ?? []).filter((u) => u.t0_ms != null).map((u) => u.t0_ms!); return ts.length ? Math.min(...ts) : 0; };
     // Steps = actions (tool calls + compactions), the same numbering as the audit, the diff and tooltips; messages sit between them.
     const steps = (id: string) => (this.byLane.get(id) ?? []).filter((u) => u.unit_kind === "tool" || u.unit_kind === "compaction");
     const maxDur = Math.max(1, ...lanes.map((l) => Math.max(...(this.byLane.get(l.attempt_id) ?? []).map((u) => u.t1_ms ?? 0)) - laneStart(l.attempt_id)));
