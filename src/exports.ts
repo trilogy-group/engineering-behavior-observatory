@@ -1252,12 +1252,16 @@ function policyRecord(policy: PortableExportPolicy): Record<string, unknown> {
 }
 
 function effectiveSensitiveValues(policy: PortableExportPolicy): string[] {
-  const environment = Object.entries(process.env)
+  return [...new Set([...(policy.sensitiveValues ?? []).filter((value) => value !== ""), ...environmentSensitiveValues()])]
+    .sort((left, right) => right.length - left.length);
+}
+
+/** The export pipeline's environment rule: every environment value of 8 or more characters is sensitive. */
+export function environmentSensitiveValues(env: NodeJS.ProcessEnv = process.env): string[] {
+  return [...new Set(Object.entries(env)
     .filter(([key, value]) => value !== undefined && value.length >= 8
       && !["logname", "user", "username"].includes(normalizeFieldName(key)))
-    .map(([, value]) => value!);
-  return [...new Set([...(policy.sensitiveValues ?? []).filter((value) => value !== ""), ...environment])]
-    .sort((left, right) => right.length - left.length);
+    .map(([, value]) => value!))].sort((left, right) => right.length - left.length);
 }
 
 function validatePolicy(policy: PortableExportPolicy): void {

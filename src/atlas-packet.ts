@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 import { closeSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
-import { tableFromIPC, tableToIPC, Table, vectorFromArray, Utf8, type Vector } from "apache-arrow";
+import { makeVector, tableFromIPC, tableToIPC, Table, vectorFromArray, Utf8, type Vector } from "apache-arrow";
 
 import { assertContainedPath, ATLAS_TABLES, flattenText, verifyAtlasBundle, type AtlasBundleManifest } from "./atlas-bundle.js";
 import { ATLAS_VIEWER_ROOT } from "./atlas-viewer.js";
-import { containsPortableLocalHomePath, containsPortableLocalPath, containsPortableSecretPattern, redactLocalIdentifiers, visibleEvidence } from "./exports.js";
+import { containsPortableLocalHomePath, containsPortableLocalPath, containsPortableSecretPattern, environmentSensitiveValues, redactLocalIdentifiers, visibleEvidence } from "./exports.js";
 import { isSecretFieldName, redactSecrets, SECRET_PLACEHOLDER } from "./redaction.js";
 
 /**
@@ -38,11 +38,15 @@ export type PacketManifest = {
   files: Array<{ path: string; sha256: `sha256:${string}`; bytes: number; mediaType: string; layer: Layer; redactions?: number }>;
   withheld: Array<{ path: string; layer: Layer; sha256: `sha256:${string}`; reason: string }>;
   assistant: { enabled: false; endpoint: null; model: null; dataPolicy: null };
+  /** The RO-Crate description generated from the rest of this manifest, bound by its digest. */
+  roCrate?: { path: "ro-crate-metadata.json"; sha256: `sha256:${string}` };
 };
 
 const sha256 = (data: Buffer | string) => `sha256:${createHash("sha256").update(data).digest("hex")}` as const;
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/gu, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const slug = (s: string) => s.replace(/[^A-Za-z0-9._-]+/gu, "-").slice(0, 120);
+/** A page name for an id: readable, with a digest suffix so distinct ids never share a page. */
+const pageName = (id: string) => `${slug(id).slice(0, 80)}-${createHash("sha256").update(id).digest("hex").slice(0, 10)}`;
 
 /**
  * Sanitize a JSON value for a shared variant, with key context: a secret-named field's string value is replaced
@@ -78,7 +82,8 @@ function shareNativeRecord<T extends { text?: string; sha256?: string; chars?: n
 const NATIVE_KEYS = new Set(["native", "parts"]);
 
 const REASONING_BLOCKS = new Set(["thinking", "redacted_thinking", "reasoning"]);
-const REASONING_FIELDS = new Set(["thinking", "thinkingsignature", "reasoning", "reasoningcontent", "reasoningdetails", "reasoningsignature", "encryptedcontent", "encryptedthinking", "signature"]);
+// Reasoning-named fields only; a plain `signature` stays (thinking blocks, with theirs, are removed whole).
+const REASONING_FIELDS = new Set(["thinking", "thinkingsignature", "reasoning", "reasoningcontent", "reasoningdetails", "reasoningsignature", "encryptedcontent", "encryptedthinking"]);
 /**
  * Hidden reasoning removed: EBO's visible-evidence projection (Codex, Pi, Cursor, Devin), plus model content blocks
  * of type thinking / redacted_thinking / reasoning and reasoning-named fields (Claude and others).
@@ -113,8 +118,18 @@ const secrets = (s: string) => redactSecrets(s).text;
 export const WITHHELD_BY_SCAN = "[REDACTED_SECRET: text withheld by the final secret scan]";
 // Home directories after any quoting the home-path scan recognizes (backticks, file://), before the general rule.
 const HOME = /(^|[\s`"'=:(+\-]|file:\/\/)(\/(?:Users|home)\/[^/\s`"']+|[A-Za-z]:\\+Users\\+[^\\\s`"']+|\/root)(?=[/\\\s`"',;:)}\]]|$)/giu;
+// Environment values of the building process are sensitive, as in portable exports (longest first).
+let environmentValues: string[] | undefined;
+/** Re-read the environment values that shared text must not contain (each packet build starts here). */
+export function refreshSharedEnvironment(): void { environmentValues = environmentSensitiveValues(); }
+const withoutEnvironment = (s: string) => {
+  environmentValues ??= environmentSensitiveValues();
+  let out = s;
+  for (const value of environmentValues) if (out.includes(value)) out = out.replaceAll(value, SECRET_PLACEHOLDER);
+  return out;
+};
 export const sharedText = (s: string) => {
-  const t = redactLocalIdentifiers(secrets(s).replace(HOME, (_, prefix: string) => `${prefix}[LOCAL_PATH]`));
+  const t = redactLocalIdentifiers(secrets(withoutEnvironment(s)).replace(HOME, (_, prefix: string) => `${prefix}[LOCAL_PATH]`));
   return containsPortableSecretPattern(t, "text/plain") || containsPortableLocalPath(t) || containsPortableLocalHomePath(t) ? WITHHELD_BY_SCAN : t;
 };
 /** Code in prose: fenced blocks and code spans. */
@@ -204,18 +219,21 @@ function restrictUnits(bytes: Buffer): Buffer {
   const replaced: Record<string, Vector<Utf8>> = {
     embed_text: vectorFromArray(Array.from({ length: n }, (_, i) => label(i)), new Utf8()),
     command_head: vectorFromArray(Array.from({ length: n }, (_, i) => (get("tool_kind", i) as string | null)), new Utf8()),
+    command: vectorFromArray(new Array<string | null>(n).fill(null), new Utf8()),
     target: vectorFromArray(new Array<string | null>(n).fill(null), new Utf8()),
     error_signature: vectorFromArray(new Array<string | null>(n).fill(null), new Utf8()),
   };
   const emptyLists = vectorFromArray(Array.from({ length: n }, () => [] as string[]), table.getChild("writes")!.type);
   // Source paths a unit wrote are paths too: empty in the restricted variant.
-  const columns = Object.fromEntries(table.schema.fields.map((f) => [f.name, f.name === "writes" ? emptyLists : replaced[f.name] ?? table.getChild(f.name)!]));
+  const embedChars = makeVector(Float64Array.from({ length: n }, (_, i) => label(i).length));
+  const columns = Object.fromEntries(table.schema.fields.map((f) => [f.name, f.name === "writes" ? emptyLists : f.name === "embed_chars" ? embedChars : replaced[f.name] ?? table.getChild(f.name)!]));
   return Buffer.from(tableToIPC(new Table(columns), "stream"));
 }
 
 export async function buildPacket(bundleRoot: string, destination: string, options: { variant: PacketVariant; viewerRoot?: string; now?: () => Date }): Promise<PacketManifest> {
   const { variant } = options;
   if (!["internal", "partner", "restricted"].includes(variant)) throw new Error(`Unknown packet variant ${variant}.`);
+  refreshSharedEnvironment();
   const integrity = verifyAtlasBundle(bundleRoot);
   if (!integrity.ok) throw new Error(`The Atlas bundle does not verify: ${JSON.stringify(integrity)}.`);
   const bundle = JSON.parse(readFileSync(join(bundleRoot, "manifest.json"), "utf8")) as AtlasBundleManifest;
@@ -270,7 +288,8 @@ async function writePacket({ bundleRoot, bundle, out, variant, viewerRoot, now }
       layerOf.set(target, layer);
       continue;
     }
-    if (role === "cloud-units") { put(target, layer, variant === "restricted" ? restrictUnits(readFileSync(source)) : Buffer.from(tableToIPC(redactArrow(readFileSync(source), transform, variant), "stream"))); continue; }
+    // Restricted units are reduced to structural labels first; both shared variants then sanitize and scan every string.
+    if (role === "cloud-units") { const bytes = variant === "restricted" ? restrictUnits(readFileSync(source)) : readFileSync(source); put(target, layer, Buffer.from(tableToIPC(redactArrow(bytes, transform, variant), "stream"))); continue; }
     if (extname(path) === ".json") {
       const count = { n: 0 };
       let value = JSON.parse(readFileSync(source, "utf8")) as unknown;
@@ -290,10 +309,10 @@ async function writePacket({ bundleRoot, bundle, out, variant, viewerRoot, now }
   const audits = read<{ attempts: Record<string, { short: string; condition: string; trial_id: string | null; verdicts: Array<{ status: string; text: string }>; failure_chains: unknown[]; checks: unknown[]; changes: unknown[] }> }>("audit.json");
   const study = bundle.title;
   const outcomeCell = (o: string) => `<span class="tag">${esc(o)}</span>`;
-  const evalHref = (id: string, depth: number) => `${"../".repeat(depth)}evaluations/${slug(id)}.html`;
+  const evalHref = (id: string, depth: number) => `${"../".repeat(depth)}evaluations/${pageName(id)}.html`;
   const viewerLink = (fragment: string, depth: number, text: string) => `<a href="${"../".repeat(depth)}viewer/index.html#${esc(fragment)}">${esc(text)}</a>`;
 
-  const claimsList = (claimsDoc?.claims ?? []).map((c) => `<li><a href="claims/${slug(c.id)}.html">${esc(c.id)}</a> ${esc(c.text)} ${c.ok ? `<span class="ok">✓ recomputes</span>` : `<span class="bad">✕ does not hold</span>`}</li>`).join("");
+  const claimsList = (claimsDoc?.claims ?? []).map((c) => `<li><a href="claims/${pageName(c.id)}.html">${esc(c.id)}</a> ${esc(c.text)} ${c.ok ? `<span class="ok">✓ recomputes</span>` : `<span class="bad">✕ does not hold</span>`}</li>`).join("");
   put("index.html", "L0", page(`${study}: evidence packet`, `
 <p>${esc(study)}. This packet links each claim to the judge evaluations that support it, the metrics behind its numbers and the native evidence the judges cited. Pages work from disk; the interactive viewer needs the folder served over HTTP (for example <code>ebo atlas serve --bundle viewer/bundle</code>, or any static server).</p>
 ${claimsDoc ? `<div class="banner">Claims: ${claimsDoc.validated ? `<span class="ok">every number recomputes and every cited native line re-hashes</span>` : `<span class="bad">${esc(claimsDoc.failures.length)} validation failure(s); internal variant only</span>`}</div><h2>Claims</h2><ul>${claimsList}</ul>` : `<div class="banner">No claims are authored for this study yet.</div>`}
@@ -304,7 +323,7 @@ ${claimsDoc ? `<div class="banner">Claims: ${claimsDoc.validated ? `<span class=
 
   put("claims/index.html", "L1", page("Claims", claimsDoc?.claims.length ? `<ul>${claimsList.replaceAll('href="claims/', 'href="')}</ul>` : `<p>No claims are authored for this study yet.</p>`, 1, variant));
   for (const c of claimsDoc?.claims ?? []) {
-    put(`claims/${slug(c.id)}.html`, "L1", page(`${c.id}: ${c.text}`, `
+    put(`claims/${pageName(c.id)}.html`, "L1", page(`${c.id}: ${c.text}`, `
 <p class="muted">${esc(c.type)} · source section: ${esc(c.source_section)}${c.cohort ? ` · cohort ${esc(c.cohort)}` : ""} · ${c.ok ? `<span class="ok">recomputes</span>` : `<span class="bad">does not hold</span>`}</p>
 <table><tr><th>Number</th><th class="num">Stated</th><th class="num">Computed</th><th>Kind</th><th>How</th></tr>${c.numbers.map((n) => `<tr><td>${esc(n.label)}</td><td class="num">${esc(n.value)}</td><td class="num">${esc(n.computed ?? "unavailable")}${n.ok ? "" : ` <span class="bad">≠</span>`}</td><td>${esc(n.kind)}</td><td class="muted">${esc(n.how)}</td></tr>`).join("")}</table>
 <h2>Supporting evaluations (${esc(c.support.length)})</h2><ul>${c.support.map((s) => `<li><a href="${evalHref(s.id, 1)}">${esc(s.condition)} · trial ${esc(s.trial_id)} · ${esc(s.dimension)}</a> ${outcomeCell(s.outcome)} · ${esc(s.citations)} citations</li>`).join("")}</ul>
@@ -315,15 +334,15 @@ ${(c.views ?? []).length ? `<p>Figures: ${(c.views ?? []).map((v) => viewerLink(
 
   const list = assessments?.assessments ?? [];
   put("evaluations/index.html", "L2", page("Behavior evaluations", `<p class="muted">One judge assessment per attempt and behavior dimension; unreviewed model proposals over selected evidence.</p>
-<table><tr><th>Arm</th><th>Trial</th><th>Attempt</th><th>Behavior</th><th>Outcome</th><th class="num">Citations</th></tr>${list.map((a) => `<tr><td>${esc(a.condition)}</td><td>${esc(a.trial_id)}</td><td>${esc(a.short)}</td><td><a href="${slug(a.id)}.html">${esc(a.dimension)}</a></td><td>${outcomeCell(a.outcome)}</td><td class="num">${esc(a.citations.length)}</td></tr>`).join("")}</table>`, 1, variant));
+<table><tr><th>Arm</th><th>Trial</th><th>Attempt</th><th>Behavior</th><th>Outcome</th><th class="num">Citations</th></tr>${list.map((a) => `<tr><td>${esc(a.condition)}</td><td>${esc(a.trial_id)}</td><td>${esc(a.short)}</td><td><a href="${pageName(a.id)}.html">${esc(a.dimension)}</a></td><td>${outcomeCell(a.outcome)}</td><td class="num">${esc(a.citations.length)}</td></tr>`).join("")}</table>`, 1, variant));
   for (const a of list) {
-    put(`evaluations/${slug(a.id)}.html`, "L2", page(`${a.dimension}: ${a.condition} trial ${a.trial_id ?? "?"}`, `
+    put(`evaluations/${pageName(a.id)}.html`, "L2", page(`${a.dimension}: ${a.condition} trial ${a.trial_id ?? "?"}`, `
 <p>${outcomeCell(a.outcome)}${a.confidence != null ? ` · confidence ${esc(a.confidence)}` : ""} · ${esc(a.evaluator)} · rubric ${esc(a.rubric)} · review: ${esc(a.review)}</p>
 <h2>Rationale</h2><p>${esc(a.rationale ?? "—")}</p>${a.alternative ? `<h2>Alternative explanation</h2><p>${esc(a.alternative)}</p>` : ""}
 ${a.claims?.length ? `<h2>Factual claims</h2><ul>${a.claims.map((c) => `<li>${esc(c.text)}${c.workspace ? ` <span class="muted">(workspace ${esc(c.workspace)})</span>` : ""}</li>`).join("")}</ul>` : ""}
 <h2>Cited evidence (${esc(a.citations.length)})</h2><ol>${a.citations.map((c) => `<li><span class="muted">${esc(c.unit_kind ?? "event")}${c.step ? ` · step ${esc(c.step)}` : ""} · ${esc(c.native.artifact)} ${esc(c.native.locator)}${c.native.sha256 ? ` · sha256 ${esc(c.native.sha256.slice(0, 12))}…` : ""}</span>
 ${c.native.text !== undefined ? `<pre>${esc(c.native.text)}</pre>` : `<p class="muted">Native line withheld in this variant (digest listed above).</p>`}</li>`).join("")}</ol>
-<p>${viewerLink(`assessment=${a.id}`, 1, "Open in the viewer")}${variant === "restricted" ? "" : ` · <a href="../evidence/${slug(a.attempt_id)}.html">Attempt audit</a>`}</p>`, 1, variant));
+<p>${viewerLink(`assessment=${a.id}`, 1, "Open in the viewer")}${variant === "restricted" ? "" : ` · <a href="../evidence/${pageName(a.attempt_id)}.html">Attempt audit</a>`}</p>`, 1, variant));
   }
 
   const reports = bundle.cohorts.map((c) => ({ c, doc: read<{ report: { groups: Array<{ dimensions: Record<string, string>; behaviors?: Array<{ behavior: { categoryId: string }; assessments: Array<{ assessment: string; measurement: { numerator: { value: number }; denominator: { value: number } } }> }> }> } }>(c.report) }));
@@ -332,9 +351,9 @@ ${c.native.text !== undefined ? `<pre>${esc(c.native.text)}</pre>` : `<p class="
 <table><tr><th>Group</th><th>Behavior</th><th>Assessment</th><th class="num">Count</th><th class="num">Of</th></tr>${(doc?.report.groups ?? []).flatMap((g) => (g.behaviors ?? []).flatMap((b) => b.assessments.map((x) => `<tr><td>${esc(Object.values(g.dimensions).join(" · "))}</td><td>${esc(b.behavior.categoryId)}</td><td>${esc(x.assessment)}</td><td class="num">${esc(x.measurement.numerator.value)}</td><td class="num">${esc(x.measurement.denominator.value)}</td></tr>`))).join("")}</table>`).join(""), 1, variant));
 
   if (variant !== "restricted" && audits) {
-    put("evidence/index.html", "L4", page("Qualified evidence", `<table><tr><th>Arm</th><th>Trial</th><th>Attempt</th><th>Verdicts</th><th class="num">Failure chains</th></tr>${Object.entries(audits.attempts).map(([id, a]) => `<tr><td>${esc(a.condition)}</td><td>${esc(a.trial_id)}</td><td><a href="${slug(id)}.html">${esc(a.short)}</a></td><td>${esc(a.verdicts.map((v) => v.status).join(", ") || "—")}</td><td class="num">${esc(a.failure_chains.length)}</td></tr>`).join("")}</table>`, 1, variant));
+    put("evidence/index.html", "L4", page("Qualified evidence", `<table><tr><th>Arm</th><th>Trial</th><th>Attempt</th><th>Verdicts</th><th class="num">Failure chains</th></tr>${Object.entries(audits.attempts).map(([id, a]) => `<tr><td>${esc(a.condition)}</td><td>${esc(a.trial_id)}</td><td><a href="${pageName(id)}.html">${esc(a.short)}</a></td><td>${esc(a.verdicts.map((v) => v.status).join(", ") || "—")}</td><td class="num">${esc(a.failure_chains.length)}</td></tr>`).join("")}</table>`, 1, variant));
     for (const [id, a] of Object.entries(audits.attempts)) {
-      put(`evidence/${slug(id)}.html`, "L4", page(`Audit: ${a.condition} trial ${a.trial_id ?? "?"} (${a.short})`, `
+      put(`evidence/${pageName(id)}.html`, "L4", page(`Audit: ${a.condition} trial ${a.trial_id ?? "?"} (${a.short})`, `
 <h2>Final claims vs captured checks</h2>${a.verdicts.length ? `<ul>${a.verdicts.map((v) => `<li><b>${esc(v.status)}</b> · ${esc(v.text)}</li>`).join("")}</ul>` : `<p class="muted">No check is both claimed and out of date, and no unclaimed check is stale.</p>`}
 <p>${esc(a.checks.length)} captured checks · ${esc(a.changes.length)} source changes · ${esc(a.failure_chains.length)} failure chains. Exploratory: audits read command and message text.</p>
 <p>${viewerLink(`audit=${id}`, 1, "Open the full audit in the viewer")} · ${viewerLink(`attempt=${id}`, 1, "Swimlane")}</p>`, 1, variant));
@@ -370,8 +389,10 @@ ${c.native.text !== undefined ? `<pre>${esc(c.native.text)}</pre>` : `<p class="
       bundle: { id: bundle.id, createdAt: bundle.createdAt, manifestSha256: sha256(readFileSync(join(bundleRoot, "manifest.json"))) } },
     layers: LAYERS, files, withheld, assistant: { enabled: false, endpoint: null, model: null, dataPolicy: null },
   };
+  const crate = `${JSON.stringify(roCrate(manifest), null, 2)}\n`;
+  manifest.roCrate = { path: "ro-crate-metadata.json", sha256: sha256(crate) };
+  writeFileSync(join(out, "ro-crate-metadata.json"), crate);
   writeFileSync(join(out, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-  writeFileSync(join(out, "ro-crate-metadata.json"), `${JSON.stringify(roCrate(manifest), null, 2)}\n`);
   return manifest;
 }
 
@@ -435,7 +456,11 @@ export function verifyPacket(root: string): { ok: boolean; changed: string[]; mi
   // The RO-Crate description is generated from the manifest: it must equal that generation exactly.
   const crate = join(root, "ro-crate-metadata.json");
   if (!existsSync(crate)) missing.push("ro-crate-metadata.json");
-  else if (readFileSync(crate, "utf8") !== `${JSON.stringify(roCrate(manifest), null, 2)}\n`) changed.push("ro-crate-metadata.json");
+  else {
+    const { roCrate: binding, ...rest } = manifest;
+    const text = readFileSync(crate, "utf8");
+    if (text !== `${JSON.stringify(roCrate(rest as PacketManifest), null, 2)}\n` || !binding || sha256(text) !== binding.sha256) changed.push("ro-crate-metadata.json");
+  }
   return { ok: !missing.length && !changed.length && !unlisted.length, changed, missing, unlisted };
 }
 
@@ -453,7 +478,11 @@ try {
     const d = r.ok ? "sha256:" + hex(await crypto.subtle.digest("SHA-256", await r.arrayBuffer())) : null;
     if (d === f.sha256) ok++; else { const li = document.createElement("li"); li.textContent = (d ? "changed: " : "missing: ") + f.path; bad.append(li); }
   }
-  out.className = ok === m.files.length ? "ok" : "bad";
-  out.textContent = ok + " of " + m.files.length + " files match the manifest" + (m.withheld.length ? "; " + m.withheld.length + " files are withheld in this variant (listed with their digests)." : ".");
+  // The generated RO-Crate description is bound by its digest in the manifest.
+  let crateOk = false;
+  if (m.roCrate) { const r = await fetch(m.roCrate.path); crateOk = r.ok && "sha256:" + hex(await crypto.subtle.digest("SHA-256", await r.arrayBuffer())) === m.roCrate.sha256; }
+  if (!crateOk) { const li = document.createElement("li"); li.textContent = "changed or missing: ro-crate-metadata.json"; bad.append(li); }
+  out.className = ok === m.files.length && crateOk ? "ok" : "bad";
+  out.textContent = ok + " of " + m.files.length + " files match the manifest" + (crateOk ? "; the RO-Crate description matches" : "; the RO-Crate description does not match") + (m.withheld.length ? "; " + m.withheld.length + " files are withheld in this variant (listed with their digests)." : ".");
 } catch (e) { out.className = "bad"; out.textContent = "Could not verify: " + e.message + " (open this page over HTTP)."; }
 </script></body></html>`;

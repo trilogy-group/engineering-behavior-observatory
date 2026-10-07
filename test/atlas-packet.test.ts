@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import { buildAtlasBundle, type AtlasBundleRequest } from "../src/atlas-bundle.js";
 import { tableFromIPC } from "apache-arrow";
-import { buildPacket, sharedText, verifyPacket, withoutHiddenReasoning, type PacketManifest } from "../src/atlas-packet.js";
+import { buildPacket, refreshSharedEnvironment, sharedText, verifyPacket, withoutHiddenReasoning, type PacketManifest } from "../src/atlas-packet.js";
 import { verifyAtlasBundle as verifyPacketBundle } from "../src/atlas-bundle.js";
 import { createAtlasFixture } from "./atlas-fixture.js";
 
@@ -31,7 +31,8 @@ test("evidence packets: three variants, verification, withholding and claims tha
     for (const variant of ["internal", "partner", "restricted"] as const) {
       built[variant] = await buildPacket(join(root, "bundle"), join(root, `packet-${variant}`), { variant, viewerRoot: viewer });
       assert.deepEqual(verifyPacket(join(root, `packet-${variant}`)), { ok: true, changed: [], missing: [], unlisted: [] }, variant);
-      for (const page of ["index.html", "claims/C1.html", "evaluations/index.html", "metrics/index.html", "verify.html", "viewer/index.html", "ro-crate-metadata.json"])
+      assert.ok(readdirSync(join(root, `packet-${variant}`, "claims")).some((f) => /^C1-[0-9a-f]{10}\.html$/u.test(f)), `${variant}: claim page`);
+      for (const page of ["index.html", "claims/index.html", "evaluations/index.html", "metrics/index.html", "verify.html", "viewer/index.html", "ro-crate-metadata.json"])
         assert.ok(existsSync(join(root, `packet-${variant}`, page)), `${variant}: ${page}`);
       assert.deepEqual(built[variant]!.assistant, { enabled: false, endpoint: null, model: null, dataPolicy: null }, "the assistant slot is reserved and disabled");
     }
@@ -51,6 +52,10 @@ test("evidence packets: three variants, verification, withholding and claims tha
     assert.equal(/"(path|bundle|bundle_root)":/u.test(partnerAssessments), false, "local paths are dropped from shared documents");
     const restrictedUnits = tableFromIPC(readFileSync(join(root, "packet-restricted", "viewer/bundle/units.arrow")));
     assert.ok(Array.from({ length: restrictedUnits.numRows }, (_, i) => restrictedUnits.getChild("writes")!.get(i)?.length ?? 0).every((n) => n === 0), "restricted units carry no write paths");
+    const commands = restrictedUnits.getChild("command");
+    assert.ok(commands === null || Array.from({ length: restrictedUnits.numRows }, (_, i) => commands.get(i)).every((c) => c === null), "restricted units carry no raw commands");
+    const embedChars = restrictedUnits.getChild("embed_chars");
+    assert.ok(embedChars === null || Array.from({ length: restrictedUnits.numRows }, (_, i) => Number(embedChars.get(i)) === String(restrictedUnits.getChild("embed_text")!.get(i)).length).every(Boolean));
     // The RO-Crate is generated from the manifest and lists every file.
     const crate = JSON.parse(readFileSync(join(root, "packet-internal", "ro-crate-metadata.json"), "utf8")) as { "@graph": Array<{ "@id": string }> };
     assert.ok(internal.files.every(({ path }) => crate["@graph"].some((n) => n["@id"] === path)));
@@ -81,7 +86,8 @@ test("evidence packets: three variants, verification, withholding and claims tha
     writeFileSync(join(root, "claims.json"), JSON.stringify({ ...claims, claims: [{ ...claims.claims[0], numbers: [{ ...claims.claims[0]!.numbers[0], value: 8 }] }] }));
     await buildAtlasBundle(join(root, "request.json"), join(root, "bundle-failing"));
     await buildPacket(join(root, "bundle-failing"), join(root, "packet-failing-internal"), { variant: "internal", viewerRoot: viewer });
-    assert.match(readFileSync(join(root, "packet-failing-internal", "claims", "C1.html"), "utf8"), /does not hold/u);
+    const failingPage = readdirSync(join(root, "packet-failing-internal", "claims")).find((f) => f.startsWith("C1-"))!;
+    assert.match(readFileSync(join(root, "packet-failing-internal", "claims", failingPage), "utf8"), /does not hold/u);
     await assert.rejects(buildPacket(join(root, "bundle-failing"), join(root, "packet-failing-partner"), { variant: "partner", viewerRoot: viewer }), /needs validated claims/u);
     assert.equal(existsSync(join(root, "packet-failing-partner")), false);
   } finally {
@@ -94,4 +100,10 @@ test("shared native records drop hidden reasoning blocks and fields", () => {
   assert.equal(sharedText(`${"-".repeat(5)}BEGIN RSA PRIVATE KEY${"-".repeat(5)}\nMIIE\n${"-".repeat(5)}END RSA PRIVATE KEY${"-".repeat(5)}`).includes("MIIE"), false);
   const record = { type: "assistant", message: { content: [{ type: "thinking", thinking: "private", signature: "sig" }, { type: "text", text: "visible" }], reasoning_content: "private" } };
   assert.deepEqual(withoutHiddenReasoning(record), { type: "assistant", message: { content: [{ type: "text", text: "visible" }] } });
+  assert.deepEqual(withoutHiddenReasoning({ result: { signature: "verified" } }), { result: { signature: "verified" } }, "an ordinary signature field is evidence");
+  process.env.EBO_PACKET_TEST_HOST = "build-host.internal.example";
+  try {
+    refreshSharedEnvironment();
+    assert.equal(sharedText("ssh build-host.internal.example"), "ssh [REDACTED_SECRET]", "environment values are sensitive, as in portable exports");
+  } finally { delete process.env.EBO_PACKET_TEST_HOST; refreshSharedEnvironment(); }
 });
