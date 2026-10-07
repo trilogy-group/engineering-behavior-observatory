@@ -126,7 +126,9 @@
         },
         "ratings": { "type": "array", "maxItems": 1000000, "items": { "$ref": "#/$defs/rating" } },
         "decisions": { "type": "array", "maxItems": 1000000, "items": { "$ref": "#/$defs/decision" } },
-        "fallbackDecisions": { "type": "array", "maxItems": 1000000, "items": { "$ref": "#/$defs/fallbackDecision" } }
+        "fallbackDecisions": { "type": "array", "maxItems": 1000000, "items": { "$ref": "#/$defs/fallbackDecision" } },
+        "occurrenceTypes": { "type": "array", "uniqueItems": true, "items": { "enum": ["failure-response", "validation-run", "source-change", "repeated-operation", "compaction", "delegation"] } },
+        "decisionOccurrences": { "type": "array", "maxItems": 1000000, "items": { "$ref": "#/$defs/identifier" } }
       }
     }
   },
