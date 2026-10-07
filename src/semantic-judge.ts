@@ -26,11 +26,11 @@ import {
 } from "./artifacts.js";
 import { probeClaudeAgentSdkCapabilities } from "./agent-sdk.js";
 import { readBoundedFile } from "./scheduler.js";
-import { createStructuralObservationSet, validateStructuralObservationSet, type StructuralObservationSet } from "./structural-observations.js";
+import { createStructuralObservationSet, nativeContentResolver, validateStructuralObservationSet, type StructuralObservationSet } from "./structural-observations.js";
 import { UNIFORM_EVENT_FAMILIES } from "./uniform-events.js";
 import { OCCURRENCE_TYPES, type OccurrenceType } from "./occurrences.js";
 import { boundedEvidence } from "./evidence-projection.js";
-import { validateOccurrenceRatings, type OccurrenceRatings } from "./occurrence-ratings.js";
+import { validateOccurrenceRatings, verifyRatingRules, type OccurrenceRatings } from "./occurrence-ratings.js";
 import type { NativeEvidenceReference, NormalizationInput, UniformEvent } from "./uniform-events.js";
 
 type DigestString = `sha256:${string}`;
@@ -263,6 +263,7 @@ export async function runAgentSdkSemanticJudge(
     if (digest(options.ratings) !== ratingsDigest || options.ratings.observationSetDigest !== digest(observations)) {
       throw new Error("Occurrence ratings differ from the request digest or the current observation set.");
     }
+    verifyRatingRules(options.ratings, observations, evidence.dataset.events, nativeContentResolver(evidence.outcomeCapture));
   }
   const input = packageSemanticJudgeInput(
     evidence.dataset.events,

@@ -341,6 +341,38 @@ const RULE_RATINGS = {
 /** Output that carries nothing: empty, or a harness's own no-output marker. */
 const EMPTY_OUTPUT = /^\s*(?:\(?\s*(?:no output|bash completed with no output)\s*\)?)?\s*$/iu;
 
+/** A single check call that succeeded natively and printed nothing. */
+function silentSuccess(state: Record<string, unknown>): boolean {
+  const calls = state.calls as Array<{ output?: string; nativeResult: string }>;
+  return calls.length === 1 && calls[0]!.nativeResult === "passed" && EMPTY_OUTPUT.test(calls[0]!.output ?? "");
+}
+
+/**
+ * Recompute the rule ratings an artifact must contain from the observation set and native records, and require the
+ * artifact's rule ratings to be exactly those: a rule rating is a recorded fact, so it is never taken on trust.
+ */
+export function verifyRatingRules(
+  ratings: OccurrenceRatings,
+  observations: StructuralObservationSet,
+  events: readonly UniformEvent[],
+  resolveContent: (reference: NativeEvidenceReference) => unknown,
+): void {
+  const eventsById = new Map(events.map((event) => [event.id, event]));
+  const expected = new Set<string>();
+  const rated = new Set(ratings.ratings.map(({ occurrenceId }) => occurrenceId));
+  for (const occurrence of observations.occurrences ?? []) {
+    if (!rated.has(occurrence.id)) continue;
+    if (occurrence.type === "failure-response" && occurrence.attributes.nextOutcome === "none") expected.add(`${occurrence.id}\0${RULE_RATINGS.noResponse.rule}`);
+    if (occurrence.type === "validation-run" && ratings.questionSetVersion !== "1.0.0" && silentSuccess(occurrenceState(occurrence, eventsById, resolveContent).state)) {
+      expected.add(`${occurrence.id}\0${RULE_RATINGS.silentSuccess.rule}`);
+    }
+  }
+  const actual = new Set(ratings.ratings.filter(({ source }) => source === "rule").map(({ occurrenceId, rule }) => `${occurrenceId}\0${rule ?? ""}`));
+  if (actual.size !== expected.size || [...actual].some((key) => !expected.has(key))) {
+    throw new Error("Rule ratings differ from the ones the observation set and native records establish.");
+  }
+}
+
 /** Whether an answer meets the acceptance policy. */
 export function acceptedByPolicy(answer: DecisionAnswer, policy: RatingPolicy): boolean {
   return answer.type === "noul" ? Math.abs(answer.noul - 0.5) >= policy.noulMargin : answer.confidence >= policy.choiceConfidence;
@@ -421,8 +453,7 @@ export async function rateOccurrences(
     if (occurrence.type === "validation-run") {
       // Facts the questions must not lean on: the outcome question reads the output itself.
       state.facts = { checkKinds: occurrence.attributes.checkKinds ?? [] };
-      const calls = state.calls as Array<{ output?: string; nativeResult: string }>;
-      if (calls.length === 1 && calls[0]!.nativeResult === "passed" && EMPTY_OUTPUT.test(calls[0]!.output ?? "")) {
+      if (silentSuccess(state)) {
         rule("silentSuccess");
         delete asked.outcome;
       }

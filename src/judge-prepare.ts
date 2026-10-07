@@ -1,9 +1,9 @@
 import { canonicalizeMetadata, digestMetadata } from "./artifacts.js";
-import { validateOccurrenceRatings, type OccurrenceRatings } from "./occurrence-ratings.js";
+import { validateOccurrenceRatings, verifyRatingRules, type OccurrenceRatings } from "./occurrence-ratings.js";
 import { OCCURRENCE_TYPES, type Occurrence, type OccurrenceType } from "./occurrences.js";
 import { createRetainedBehaviorEvidence } from "./retained-evidence.js";
 import type { SemanticJudgeRequest } from "./semantic-judge.js";
-import { createStructuralObservationSet, type StructuralObservationSet } from "./structural-observations.js";
+import { createStructuralObservationSet, nativeContentResolver, type StructuralObservationSet } from "./structural-observations.js";
 import type { UniformEvent } from "./uniform-events.js";
 
 /**
@@ -155,5 +155,6 @@ export async function prepareRetainedJudgeRequest(
   if (canonicalizeMetadata(rebuilt) !== canonicalizeMetadata(observations)) {
     throw new Error(`Structural observation set for attempt "${observations.attemptId}" is stale; recreate it before preparing.`);
   }
+  if (ratings !== undefined) verifyRatingRules(ratings, rebuilt, dataset.events, nativeContentResolver(outcomeCapture));
   return prepareJudgeRequest(rebuilt, dataset.events, spec, ratings);
 }

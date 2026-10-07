@@ -8,6 +8,7 @@ import {
   occurrenceState,
   rateOccurrences,
   validateOccurrenceRatings,
+  verifyRatingRules,
 } from "../src/occurrence-ratings.js";
 import { extractOccurrences, type OccurrenceOperation } from "../src/occurrences.js";
 import type { StructuralObservationSet } from "../src/structural-observations.js";
@@ -211,14 +212,26 @@ test("claim checks route unsupported or uncertain claims to review and bind to t
   validateClaimChecks(checks, assertion);
   const forged = structuredClone(checks);
   forged.checks[1]!.flagged = false;
+  forged.coverage.flagged = 0;
   assert.throws(() => validateClaimChecks(forged, assertion), /contradicts its answer/u);
   const swapped = structuredClone(checks);
   swapped.checks[1]!.decision = 0;
   swapped.checks[1]!.answer = swapped.checks[0]!.answer;
   swapped.checks[1]!.label = "supported";
   swapped.checks[1]!.flagged = false;
-  assert.throws(() => validateClaimChecks(swapped, assertion), /different claim/u, "a check cannot borrow another claim's decision");
+  swapped.coverage = { ...swapped.coverage, supported: 2, flagged: 0 };
+  assert.throws(() => validateClaimChecks(swapped, assertion), /every claim once/u, "a check cannot borrow another claim's decision");
+  const misstated = structuredClone(checks);
+  (misstated.decisions[1]!.request.state as { claim: { text: string } }).claim.text = "Something else.";
+  assert.throws(() => validateClaimChecks(misstated, assertion), /different claim/u, "each decision must be about its own claim");
   validateClaimChecks(checks, assertion, capture);
+  const omitted = structuredClone(checks);
+  omitted.checks.pop();
+  omitted.coverage = { ...omitted.coverage, checked: 1, flagged: 0 };
+  assert.throws(() => validateClaimChecks(omitted, assertion), /every claim once/u, "a check cannot be dropped");
+  const recounted = structuredClone(checks);
+  recounted.coverage.flagged = 0;
+  assert.throws(() => validateClaimChecks(recounted, assertion), /coverage differs/u);
   const substituted = structuredClone(checks);
   (substituted.decisions[0]!.request.state as { citedRecords: Array<{ record: string }> }).citedRecords[0]!.record = "Tests: 99 passed";
   assert.throws(() => validateClaimChecks(substituted, assertion, capture), /differ from the cited native records/u);
@@ -287,6 +300,12 @@ test("question set 1.1: silent success is a rule rating, source changes between 
     .find(({ occurrenceId, questionId }) => occurrenceId === fallbackRating.occurrenceId && questionId === fallbackRating.questionId)!.label = "banana";
   fallbackRating.label = "banana";
   assert.throws(() => validateOccurrenceRatings(banana), /Fallback rating/u, "a fallback label must be one the question allows");
+  verifyRatingRules(ratings, observationSet, events, ({ recordLocator }) => content[recordLocator]);
+  const invented = structuredClone(ratings);
+  const noisy = occurrences.find(({ type, eventIds }) => type === "validation-run" && eventIds[0] === "event-5")!;
+  invented.ratings.push({ occurrenceId: noisy.id, occurrenceType: "validation-run", questionId: "outcome", source: "rule", label: "all-passed", accepted: true, rule: "native success with empty output" });
+  validateOccurrenceRatings(invented);
+  assert.throws(() => verifyRatingRules(invented, observationSet, events, ({ recordLocator }) => content[recordLocator]), /Rule ratings differ/u, "a pass by rule must follow from the native records");
   const restated = structuredClone(ratings);
   const restatedRating = restated.ratings.find(({ source }) => source === "fallback")!;
   const restatedItem = restated.fallbackDecisions![restatedRating.fallback!]!.request.items.find(({ occurrenceId }) => occurrenceId === restatedRating.occurrenceId)!;

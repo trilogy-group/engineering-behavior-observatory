@@ -84,7 +84,8 @@ each finished decision is appended to `<output>.decisions.partial.jsonl`; the
 log is removed once the artifact is written, so an interrupted run keeps every
 completed call. The command refuses a destination whose partial log already
 exists. Validation derives each label from its answer and accepts rule ratings
-only for known rules. The command exits non-zero when any decision failed; the
+only for known rules; `judge prepare` and `judge run` also recompute the rule
+ratings from the native records and require the artifact's to match. The command exits non-zero when any decision failed; the
 artifact still records them.
 
 ## Judge preparation
@@ -134,6 +135,8 @@ bounded, hidden reasoning removed) and answers `supported`, `contradicted` or
 `insufficient`. A claim is flagged for review when the answer is not `supported`
 or its confidence is below `--choice-confidence` (default 0.8). Checks are
 advisory: they never change the assertion or its assessment. The
-`ebo.claim-checks/v1` artifact binds to the assertion digest, derives every
-label and flag from its answer, and keeps each decision record. The assertion
+`ebo.claim-checks/v1` artifact binds to the assertion digest, covers every claim
+once, derives every label, flag and coverage count from its answers, and keeps
+each decision record; validated with the native capture, each decision's state
+must equal the one rebuilt from the cited records. The assertion
 must validate against the bundle first.

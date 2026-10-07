@@ -134,6 +134,21 @@ export function validateClaimChecks(document: ClaimChecks, assertion?: BehaviorA
     throw new Error("Claim checks belong to a different assertion.");
   }
   const claimIds = new Set((assertion?.judgment.claims ?? []).map(({ id }) => id));
+  if (assertion !== undefined) {
+    // Every claim was asked exactly once, in order, and every completed decision has exactly one check.
+    const claims = assertion.judgment.claims ?? [];
+    const completed = document.decisions.flatMap((decision, index) => decision?.status === "completed" ? [index] : []);
+    if (document.decisions.length !== claims.length || canonicalizeMetadata(document.checks.map(({ decision }) => decision)) !== canonicalizeMetadata(completed)
+        || document.checks.some(({ claimId, decision }) => claims[decision]?.id !== claimId)) {
+      throw new Error("Claim checks must cover every claim once, with one check per completed decision.");
+    }
+    const coverage = {
+      claims: claims.length, checked: document.checks.length, failedDecisions: document.decisions.length - completed.length,
+      supported: document.checks.filter(({ label, accepted }) => label === "supported" && accepted).length,
+      flagged: document.checks.filter(({ flagged }) => flagged).length,
+    };
+    if (canonicalizeMetadata(coverage) !== canonicalizeMetadata(document.coverage)) throw new Error("Claim-check coverage differs from its checks.");
+  }
   for (const check of document.checks) {
     const decision = document.decisions[check.decision];
     const answer = decision?.answers?.support;
