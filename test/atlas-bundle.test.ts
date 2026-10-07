@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import { tableFromIPC } from "apache-arrow";
 
 import { ATLAS_TABLES, buildAtlasBundle, flattenText, verifyAtlasBundle, type AtlasBundleRequest } from "../src/atlas-bundle.js";
 import { loadAtlas } from "../src/atlas.js";
+import { laneData } from "../src/atlas-lanes.js";
 import { main } from "../src/cli.js";
 import { createAtlasFixture } from "./atlas-fixture.js";
 
@@ -78,12 +79,33 @@ test("an Atlas bundle holds Atlas tables v1 built from the validated cohort, and
     assert.equal(await main(["atlas", "bundle", "verify", out], () => undefined), 1);
 
     await assert.rejects(buildAtlasBundle(requestPath, out, { embed }), /not empty/u, "a bundle is never overwritten");
+    // A failed build (here the embedding provider) leaves nothing at the destination and no partial directory.
+    const failed = join(root, "bundle-failed");
+    await assert.rejects(buildAtlasBundle(requestPath, failed, { embed: async () => { throw new Error("provider unavailable"); } }), /provider unavailable/u);
+    assert.equal(existsSync(failed), false);
+    assert.deepEqual(readdirSync(root).filter((f) => f.includes(".partial-")), []);
+    // Without a provider in the request, embeddings are local: no network, deterministic.
+    const local = join(root, "bundle-local");
+    const localManifest = await buildAtlasBundle(requestPath, local);
+    assert.equal(localManifest.cloud.embeddings.provider, "local");
+    assert.deepEqual(readFileSync(join(local, "embeddings.f32")), readFileSync(join(local, "embeddings.f32")));
     writeFileSync(requestPath, JSON.stringify({ ...request, cohorts: [...request.cohorts, request.cohorts[0]] }));
     await assert.rejects(buildAtlasBundle(requestPath, join(root, "bundle-2"), { embed }), /unique/u);
     writeFileSync(requestPath, JSON.stringify({ ...request, condition: { pattern: "^(?<arm>.+)$" } }));
     await assert.rejects(buildAtlasBundle(requestPath, join(root, "bundle-3"), { embed }), /named group "condition"/u);
+    writeFileSync(requestPath, JSON.stringify({ ...request, condition: { pattern: "^nothing-(?<condition>matches)$" } }));
+    await assert.rejects(buildAtlasBundle(requestPath, join(root, "bundle-4"), { embed }), /does not match the condition pattern/u, "a naming mistake is an error, not a synthesized arm");
     assert.ok(readFileSync(join(out, "manifest.json"), "utf8").includes('"schemaVersion": "ebo.atlas-bundle/v1"'));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("lane usage: final records without token dimensions are not usage, and their cost still counts", () => {
+  const event = (attributes: Record<string, unknown>) => ({ nativeTime: { status: "known", value: "2026-10-07T00:00:00.000Z" }, attributes }) as never;
+  const attempt = { attempt_id: "a", task_id: null, condition: null, trial_id: null, harness_id: null, model_id: null, terminal_state: null, failure_class: null, capture_qualification: null };
+  const durationOnly = laneData(attempt, [], [event({ resourceSemantics: "cumulative-final", durationMs: 1200 })]);
+  assert.deepEqual([durationOnly.lane.usage_semantics, durationOnly.lane.tokens_total], ["none", null], "no token evidence is unavailable, not zero");
+  const withIncrements = laneData(attempt, [], [event({ resourceSemantics: "increment", inputTokens: 10, outputTokens: 5 }), event({ resourceSemantics: "cumulative-final", totalCostUsd: 0.5 })]);
+  assert.deepEqual([withIncrements.lane.usage_semantics, withIncrements.lane.tokens_total, withIncrements.lane.cost_usd], ["per-turn", 15, 0.5]);
 });

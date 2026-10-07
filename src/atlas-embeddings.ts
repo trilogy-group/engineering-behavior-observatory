@@ -6,16 +6,47 @@ import { redactSecrets } from "./redaction.js";
 
 /**
  * Unit embeddings for the Atlas cloud. The bundle carries one vector per embedded unit; the viewer lays them out
- * with Embedding Atlas's own UMAP and clustering. Vectors are cached per (model, dimensions, text digest), so a
- * rebuild embeds only new or changed text. Only `embed_text` is sent: behavior summaries and message text capped for
- * embedding, never tool output or file contents.
+ * with Embedding Atlas's own UMAP and clustering.
+ *
+ * The default is local: TF-IDF over the units' words, feature-hashed into the requested dimensions, with no network
+ * call. A remote provider (Fireworks) is used only when the bundle request names it, and then only `embed_text`
+ * leaves the machine (behavior summaries and message text capped for embedding, never tool output or file contents),
+ * with secrets redacted first. Remote vectors are cached per (model, dimensions, text digest).
  */
-export type EmbeddingConfig = { provider: "fireworks"; model: string; dimensions: number; cache: string };
-export const DEFAULT_EMBEDDING_MODEL = "accounts/fireworks/models/qwen3-embedding-8b";
+export type EmbeddingConfig = { provider: "local" | "fireworks"; model: string; dimensions: number; cache: string };
+export const DEFAULT_FIREWORKS_MODEL = "accounts/fireworks/models/qwen3-embedding-8b";
+export const LOCAL_EMBEDDING_MODEL = "ebo-hashed-tfidf-1";
+
+const words = (text: string) => text.toLowerCase().match(/`[^`]{1,60}`|[a-z][a-z0-9_./:-]{1,40}/gu) ?? [];
+const fnv = (s: string) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); } return h >>> 0; };
+
+/** Local embeddings: TF-IDF weights of each text's words, feature-hashed (signed) into `dimensions`, L2-normalized. */
+export function localEmbeddings(texts: readonly string[], dimensions: number): Float32Array {
+  const df = new Map<string, number>();
+  const tokenized = texts.map((t) => { const w = words(t); for (const x of new Set(w)) df.set(x, (df.get(x) ?? 0) + 1); return w; });
+  const out = new Float32Array(texts.length * dimensions);
+  tokenized.forEach((w, i) => {
+    const tf = new Map<string, number>();
+    for (const x of w) tf.set(x, (tf.get(x) ?? 0) + 1);
+    let norm = 0;
+    for (const [x, n] of tf) {
+      const h = fnv(x), slot = h % dimensions, sign = h & 0x80000000 ? -1 : 1;
+      const weight = (1 + Math.log(n)) * Math.log((1 + texts.length) / (1 + df.get(x)!)) * sign;
+      out[i * dimensions + slot]! += weight;
+    }
+    for (let j = 0; j < dimensions; j++) norm += out[i * dimensions + j]! ** 2;
+    norm = Math.sqrt(norm) || 1;
+    for (let j = 0; j < dimensions; j++) out[i * dimensions + j]! /= norm;
+  });
+  return out;
+}
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 
 export async function embedTexts(texts: readonly string[], config: EmbeddingConfig, options: { env?: NodeJS.ProcessEnv; fetch?: typeof fetch; batch?: number; concurrency?: number } = {}): Promise<Float32Array> {
+  if (config.provider === "local") return localEmbeddings(texts, config.dimensions);
+  // What leaves the machine is the redacted text; vectors are cached by that text.
+  texts = texts.map((t) => redactSecrets(t).text);
   const env = options.env ?? process.env;
   const key = env.FIREWORKS_API_KEY;
   const cacheFile = join(config.cache, `${sha(`${config.provider}\0${config.model}\0${config.dimensions}`).slice(0, 16)}.json`);

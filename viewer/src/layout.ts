@@ -82,7 +82,14 @@ export async function prepareCloud(unitsBytes: Uint8Array, getEmbeddings: () => 
   let offset = 0;
   for (const [fi, family] of FAMILIES.entries()) {
     const members = rows.filter((r) => r.family === family).map((r) => r.row_id);
-    if (members.length < 10) continue;
+    if (!members.length) continue;
+    if (members.length < 10) {
+      // Too few units for UMAP: a deterministic circle, in seq order, with the family label above it.
+      members.forEach((row, i) => { x[row] = offset + 1 + Math.cos((2 * Math.PI * i) / members.length); y[row] = 1 + Math.sin((2 * Math.PI * i) / members.length); });
+      labels.push({ x: offset + 1, y: 2.5, text: family.toUpperCase(), level: 0, priority: 1e9 });
+      offset += 3.5;
+      continue;
+    }
     status(`Laying out ${members.length.toLocaleString()} ${family}…`);
     // Identical texts embed identically; lay out each distinct text once and place its units together.
     const unique = new Map<string, number>(), uniqueOf = new Int32Array(members.length), firstRow: number[] = [];

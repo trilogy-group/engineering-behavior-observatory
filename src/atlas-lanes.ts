@@ -45,8 +45,9 @@ export function laneData(attempt: Attempt, units: readonly AtlasUnit[], events: 
     const semantics = a.resourceSemantics;
     if (semantics === "increment" && carried !== null) increments.push({ t: carried, a });
     else if (semantics === "cumulative-snapshot" && carried !== null) snapshots.push([carried, total(a)]);
+    // A final record counts only when it carries token dimensions (a duration- or cost-only final is not usage).
     else if (semantics === "cumulative-final") {
-      final.records += 1; final.tokens += total(a);
+      if (["totalTokens", "inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"].some((k) => typeof a[k] === "number")) { final.records += 1; final.tokens += total(a); }
       if (typeof a.totalCostUsd === "number") final.cost = (final.cost ?? 0) + a.totalCostUsd;
     }
   }

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
@@ -7,7 +7,8 @@ import { DuckDBInstance } from "@duckdb/node-api";
 import { canonicalizeMetadata, digestMetadata, validateArtifact } from "./artifacts.js";
 import { loadAtlas, queryAtlas, type AtlasSource, type AtlasView } from "./atlas.js";
 import { Field, List, makeVector, Table, tableToIPC, Utf8, vectorFromArray } from "apache-arrow";
-import { DEFAULT_EMBEDDING_MODEL, embedTexts } from "./atlas-embeddings.js";
+import { buildViews, validateClaims, type ClaimsSource } from "./atlas-claims.js";
+import { DEFAULT_FIREWORKS_MODEL, embedTexts, LOCAL_EMBEDDING_MODEL } from "./atlas-embeddings.js";
 import { assessmentDoc, attemptEvidence, NativeLines } from "./atlas-evidence.js";
 import { laneData, type LaneMeta } from "./atlas-lanes.js";
 import { ATLAS_UNITS_VERSION, deriveUnits, type AtlasUnit } from "./atlas-units.js";
@@ -35,8 +36,14 @@ export type AtlasBundleRequest = {
   cohorts: ReadonlyArray<{ id: string; atlasRequest: string }>;
   /** Study arms: a regular expression over each run bundle's directory name with a named group `condition`. */
   condition?: { pattern: string };
-  /** Unit embeddings for the cloud (Fireworks, needs FIREWORKS_API_KEY for text not yet cached). */
-  embeddings?: { model?: string; dimensions?: number; cache?: string };
+  /** Study-authored claims (validated, never generated) and a directory of view specs. */
+  claims?: string;
+  views?: string;
+  /**
+   * Unit embeddings for the cloud. Local (no network) unless the request names a remote provider: `fireworks` sends
+   * each unit's redacted `embed_text` to Fireworks (FIREWORKS_API_KEY) and caches the vectors.
+   */
+  embeddings?: { provider?: "local" | "fireworks"; model?: string; dimensions?: number; cache?: string };
 };
 
 export type AtlasBundleManifest = {
@@ -50,7 +57,7 @@ export type AtlasBundleManifest = {
   cohorts: Array<{ id: string; title: string; sourceDigest: string; cohortDigest: string; attempts: number; assertions: number; report: string }>;
   unitsVersion: typeof ATLAS_UNITS_VERSION;
   /** The cloud's units and their embeddings; the viewer lays them out with Embedding Atlas (UMAP and clustering). */
-  cloud: { units: number; embeddings: { file: string; model: string; dimensions: number } };
+  cloud: { units: number; embeddings: { file: string; provider: "local" | "fireworks"; model: string; dimensions: number } };
   tables: Record<string, { path: string; rows: number; sha256: `sha256:${string}` }>;
   files: Array<{ path: string; bytes: number; sha256: `sha256:${string}`; role: string }>;
 };
@@ -191,27 +198,51 @@ function eventRow(event: UniformEvent, index: number, resolve: ReturnType<typeof
   };
 }
 
-async function writeTables(tables: Record<string, Row[]>, directory: string) {
+/**
+ * Rows of the large tables (events with their native content, relations, unit links, edges) go to disk as they are
+ * produced; a study's native content can far exceed memory.
+ */
+const STREAMED = new Set(["events", "event_relations", "observation_sources", "unit_events", "edges"]);
+class TableSink {
+  readonly staging = mkdtempSync(join(tmpdir(), "ebo-atlas-tables-"));
+  private fds = new Map<string, number>();
+  readonly counts = new Map<string, number>();
+  push(name: string, row: Row) {
+    let fd = this.fds.get(name);
+    if (fd === undefined) { fd = openSync(join(this.staging, `${name}.ndjson`), "w"); this.fds.set(name, fd); }
+    writeSync(fd, `${JSON.stringify(Object.fromEntries(ATLAS_TABLES[name]!.map(([column]) => [column, row[column] ?? null])))}\n`);
+    this.counts.set(name, (this.counts.get(name) ?? 0) + 1);
+  }
+  close() { for (const fd of this.fds.values()) closeSync(fd); this.fds.clear(); }
+}
+
+async function writeTables(tables: Record<string, Row[]>, directory: string, sink: TableSink) {
   mkdirSync(directory, { recursive: true });
-  const staging = mkdtempSync(join(tmpdir(), "ebo-atlas-tables-"));
+  const staging = sink.staging;
+  sink.close();
   const db = await DuckDBInstance.create(":memory:", { autoinstall_known_extensions: "false", autoload_known_extensions: "false" });
   const connection = await db.connect();
   const quote = (s: string) => `'${s.replace(/'/gu, "''")}'`;
   try {
     const out: AtlasBundleManifest["tables"] = {};
     for (const [name, columns] of Object.entries(ATLAS_TABLES)) {
-      const rows = tables[name] ?? [];
       const ndjson = join(staging, `${name}.ndjson`);
-      // One line at a time: a study's native content can exceed the largest single string V8 allows.
-      const fd = openSync(ndjson, "w");
-      try { for (const row of rows) writeSync(fd, `${JSON.stringify(Object.fromEntries(columns.map(([column]) => [column, row[column] ?? null])))}\n`); } finally { closeSync(fd); }
+      let count: number;
+      if (STREAMED.has(name)) count = sink.counts.get(name) ?? 0;
+      else {
+        // One line at a time: a study's native content can exceed the largest single string V8 allows.
+        const rows = tables[name] ?? [];
+        const fd = openSync(ndjson, "w");
+        try { for (const row of rows) writeSync(fd, `${JSON.stringify(Object.fromEntries(columns.map(([column]) => [column, row[column] ?? null])))}\n`); } finally { closeSync(fd); }
+        count = rows.length;
+      }
       const path = join(directory, `${name}.parquet`);
       const spec = `{${columns.map(([column, type]) => `${column}: ${quote(type)}`).join(", ")}}`;
-      const select = rows.length
+      const select = count
         ? `SELECT ${columns.map(([column]) => column).join(", ")} FROM read_json(${quote(ndjson)}, format = 'newline_delimited', columns = ${spec}, maximum_object_size = 1073741824)`
         : `SELECT ${columns.map(([column, type]) => `CAST(NULL AS ${type}) AS ${column}`).join(", ")} WHERE false`;
       await connection.run(`COPY (${select}) TO ${quote(path)} (FORMAT parquet, COMPRESSION zstd)`);
-      out[name] = { path: `tables/${name}.parquet`, rows: rows.length, sha256: sha256(readFileSync(path)) };
+      out[name] = { path: `tables/${name}.parquet`, rows: count, sha256: sha256(readFileSync(path)) };
     }
     return out;
   } finally {
@@ -221,13 +252,34 @@ async function writeTables(tables: Record<string, Row[]>, directory: string) {
   }
 }
 
-export async function buildAtlasBundle(requestPath: string, outputRoot: string,
+/**
+ * Build into a temporary sibling and publish it by rename only after the manifest validates, so a failed build
+ * (invalid source, DuckDB, embedding provider) never leaves a partial bundle at the destination.
+ */
+export async function buildAtlasBundle(requestPath: string, destination: string,
   options: { now?: () => Date; embed?: typeof embedTexts } = {}): Promise<AtlasBundleManifest> {
   const request = readRequest(requestPath);
-  if (existsSync(outputRoot) && readdirSync(outputRoot).length) throw new Error(`Atlas bundle output ${outputRoot} is not empty; choose a new directory.`);
+  if (existsSync(destination) && readdirSync(destination).length) throw new Error(`Atlas bundle output ${destination} is not empty; choose a new directory.`);
+  mkdirSync(dirname(resolve(destination)), { recursive: true });
+  const outputRoot = mkdtempSync(join(dirname(resolve(destination)), `.${basename(destination)}.partial-`));
+  try {
+    const manifest = await writeAtlasBundle(request, requestPath, outputRoot, options);
+    if (existsSync(destination)) rmSync(destination, { recursive: true });
+    renameSync(outputRoot, destination);
+    return manifest;
+  } catch (error) {
+    rmSync(outputRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string, outputRoot: string,
+  options: { now?: () => Date; embed?: typeof embedTexts }): Promise<AtlasBundleManifest> {
   const base = dirname(resolve(requestPath));
   const condition = request.condition ? new RegExp(request.condition.pattern, "u") : undefined;
-  const tables: Record<string, Row[]> = Object.fromEntries(Object.keys(ATLAS_TABLES).map((name) => [name, []]));
+  const tables: Record<string, Row[]> = Object.fromEntries(Object.keys(ATLAS_TABLES).filter((name) => !STREAMED.has(name)).map((name) => [name, []]));
+  const sink = new TableSink();
+  const stream = (name: string, row: Row) => sink.push(name, row);
   const cohorts: AtlasBundleManifest["cohorts"] = [];
   const attempts = new Map<string, { entry: CorpusIndexEntry; bundleRoot: string; cohorts: Set<string> }>();
   const observationSets = new Map<string, StructuralObservationSet>();
@@ -240,7 +292,8 @@ export async function buildAtlasBundle(requestPath: string, outputRoot: string,
     const atlasPath = resolve(base, cohort.atlasRequest);
     const source: AtlasSource = await loadAtlas(atlasPath);
     const view: AtlasView = await queryAtlas(source);
-    reports.set(cohort.id, view);
+    // Keep the report, not the view's cases (they carry native records for display).
+    reports.set(cohort.id, { title: view.title, generatedAt: view.generatedAt, report: view.report } as AtlasView);
     for (const entry of source.input.corpusEntries.filter(({ manifestKind }) => manifestKind === "run")) {
       const bundleRoot = resolve(source.corpusRoot, dirname(entry.manifestPath));
       // Cohorts may carry their own corpus copies: one attempt, one manifest digest, whichever copy is read.
@@ -288,6 +341,13 @@ export async function buildAtlasBundle(requestPath: string, outputRoot: string,
     const key = `${attemptId}/${eventId}`;
     extractorsOf.set(key, (extractorsOf.get(key) ?? new Set()).add(observation.extractor.id));
   }
+  // With a condition pattern every run bundle must match it; a naming mistake is an error, not a synthesized arm.
+  const armOf = (name: string, entry: CorpusIndexEntry) => {
+    if (!condition) return `${entry.modelId ?? "unavailable"} · ${entry.harnessId ?? "unavailable"}`;
+    const arm = condition.exec(name)?.groups?.condition;
+    if (!arm) throw new Error(`Run bundle ${name} does not match the condition pattern ${request.condition!.pattern}.`);
+    return arm;
+  };
   const eventKeys = new Set<string>();
   const cloud: Array<AtlasUnit & Row & { row_id: number; t0_ms: number | null; t1_ms: number | null; timed: boolean }> = [];
   const audits: Record<string, unknown> = {};
@@ -308,24 +368,29 @@ export async function buildAtlasBundle(requestPath: string, outputRoot: string,
         condition: null, terminal_state: entry.terminalState ?? null, cited_assertions: cites.map(({ id }) => id), cited_assessments: cites.map(({ label }) => label),
         cited: cites.length > 0, observation_extractors: [...new Set(keys.flatMap((k) => [...extractorsOf.get(k) ?? []]))].sort() });
     }
-    for (const link of derived.links) tables.unit_events!.push(link);
-    const rows = evidence.dataset.events.map((event, index) => eventRow(event, index, resolveContent));
-    const times = rows.map(({ event_time }) => event_time).filter((t): t is string => typeof t === "string" && Number.isFinite(Date.parse(t))).sort((a, b) => Date.parse(a) - Date.parse(b));
+    for (const link of derived.links) stream("unit_events", link);
+    // Event rows carry the resolved native content; each is written as soon as it is built, never held.
+    const times = evidence.dataset.events.flatMap((e) => (e.nativeTime.status === "known" && Number.isFinite(Date.parse(e.nativeTime.value)) ? [e.nativeTime.value] : []))
+      .sort((a, b) => Date.parse(a) - Date.parse(b));
     const first = times[0], last = times.at(-1);
-    for (const row of rows) {
+    for (const [index, event] of evidence.dataset.events.entries()) {
+      const row = eventRow(event, index, resolveContent);
       if (eventKeys.has(String(row.event_key))) throw new Error(`Duplicate event key ${String(row.event_key)}.`);
       eventKeys.add(String(row.event_key));
       if (first && typeof row.event_time === "string") row.t_rel_seconds = (Date.parse(row.event_time) - Date.parse(first)) / 1000;
-      tables.events!.push(row);
+      stream("events", row);
+      stream("edges", { src_type: "event", src_id: row.event_key, rel: "part-of", dst_type: "attempt", dst_id: attemptId });
+      if (row.parent_event_key) stream("edges", { src_type: "event", src_id: row.event_key, rel: "child-of", dst_type: "event", dst_id: row.parent_event_key });
     }
     for (const event of evidence.dataset.events) for (const relation of event.relations.known) {
-      tables.event_relations!.push({ src_event_key: `${attemptId}/${event.id}`, kind: relation.kind, dst_event_key: `${attemptId}/${relation.eventId}`, attempt_id: attemptId });
+      stream("event_relations", { src_event_key: `${attemptId}/${event.id}`, kind: relation.kind, dst_event_key: `${attemptId}/${relation.eventId}`, attempt_id: attemptId });
+      stream("edges", { src_type: "event", src_id: `${attemptId}/${event.id}`, rel: relation.kind, dst_type: "event", dst_id: `${attemptId}/${relation.eventId}` });
     }
     const name = basename(bundleRoot);
     tables.attempts!.push({ attempt_id: attemptId, run_id: entry.runId ?? null, bundle_id: entry.bundleId ?? null, model_id: entry.modelId ?? null,
       model_provider: entry.modelProvider ?? null, harness_id: entry.harnessId ?? null, harness_version: entry.harnessVersion ?? null, task_id: entry.taskId ?? null,
       fixture_id: entry.fixtureId ?? null, trial_id: entry.trialId ?? null,
-      condition: condition?.exec(name)?.groups?.condition ?? `${entry.modelId ?? "unavailable"} · ${entry.harnessId ?? "unavailable"}`,
+      condition: armOf(name, entry),
       assessment_mode: entry.assessmentMode ?? null, capture_qualification: entry.captureQualification ?? null, terminal_state: entry.terminalState ?? null,
       failure_class: entry.failureClass ?? null, stop_reason: entry.stopReason ?? null, adapter_id: evidence.dataset.adapter.id, adapter_version: evidence.dataset.adapter.version,
       dataset_digest: observationSets.get(attemptId)?.normalization.datasetDigest ?? null, manifest_digest: entry.manifestDigest ?? null,
@@ -386,7 +451,10 @@ export async function buildAtlasBundle(requestPath: string, outputRoot: string,
         value_json: JSON.stringify(value.value ?? null), value_num: typeof value.value === "number" ? value.value : null, unit: value.unit ?? null,
         denominator_scope: denominator.scope, denominator_value: denominator.value, denominator_unit: denominator.unit,
         source_record_count: observation.sourceRecordCount, source_event_count: sources.length });
-      for (const eventId of sources) tables.observation_sources!.push({ observation_id: observation.id, attempt_id: attemptId, event_id: eventId, event_key: `${attemptId}/${eventId}` });
+      for (const eventId of sources) {
+        stream("observation_sources", { observation_id: observation.id, attempt_id: attemptId, event_id: eventId, event_key: `${attemptId}/${eventId}` });
+        stream("edges", { src_type: "observation", src_id: observation.id, rel: "derived-from", dst_type: "event", dst_id: `${attemptId}/${eventId}` });
+      }
     }
     for (const occurrence of set.occurrences ?? []) {
       tables.occurrences!.push({ occurrence_id: occurrence.id, attempt_id: attemptId, type: occurrence.type, rule_id: occurrence.rule.id, rule_version: occurrence.rule.version,
@@ -416,27 +484,21 @@ export async function buildAtlasBundle(requestPath: string, outputRoot: string,
     });
   }
 
-  const edges = tables.edges!;
-  const edge = (src_type: string, src_id: unknown, rel: unknown, dst_type: string, dst_id: unknown) => edges.push({ src_type, src_id: String(src_id), rel: String(rel), dst_type, dst_id: String(dst_id) });
+  const edge = (src_type: string, src_id: unknown, rel: unknown, dst_type: string, dst_id: unknown) => stream("edges", { src_type, src_id: String(src_id), rel: String(rel), dst_type, dst_id: String(dst_id) });
   for (const r of tables.attempt_cohorts!) edge("attempt", r.attempt_id, "member-of", "cohort", r.cohort_id);
-  for (const r of tables.events!) {
-    edge("event", r.event_key, "part-of", "attempt", r.attempt_id);
-    if (r.parent_event_key) edge("event", r.event_key, "child-of", "event", r.parent_event_key);
-  }
-  for (const r of tables.event_relations!) edge("event", r.src_event_key, r.kind, "event", r.dst_event_key);
   for (const r of tables.assessments!) edge("assessment", r.assertion_id, "about", "attempt", r.attempt_id);
   for (const r of tables.citations!) edge("assessment", r.assertion_id, "cites", "event", r.event_key);
   for (const r of tables.observations!) edge("observation", r.observation_id, "about", "attempt", r.attempt_id);
-  for (const r of tables.observation_sources!) edge("observation", r.observation_id, "derived-from", "event", r.event_key);
   for (const r of tables.occurrences!) {
     edge("occurrence", r.occurrence_id, "about", "attempt", r.attempt_id);
     for (const key of JSON.parse(String(r.event_keys)) as string[]) edge("occurrence", r.occurrence_id, "derived-from", "event", key);
   }
 
-  const tableIndex = await writeTables(tables, join(outputRoot, "tables"));
+  const tableIndex = await writeTables(tables, join(outputRoot, "tables"), sink);
 
   // The cloud: units.arrow (Arrow IPC, so DuckDB-WASM needs no extensions) and the embeddings in row order.
-  const embeddingConfig = { provider: "fireworks" as const, model: request.embeddings?.model ?? DEFAULT_EMBEDDING_MODEL,
+  const provider = request.embeddings?.provider ?? "local";
+  const embeddingConfig = { provider, model: request.embeddings?.model ?? (provider === "fireworks" ? DEFAULT_FIREWORKS_MODEL : LOCAL_EMBEDDING_MODEL),
     dimensions: request.embeddings?.dimensions ?? 256, cache: resolve(base, request.embeddings?.cache ?? ".atlas-cache/embeddings") };
   const vectors = await (options.embed ?? embedTexts)(cloud.map((u) => u.embed_text), embeddingConfig);
   writeFileSync(join(outputRoot, "embeddings.f32"), Buffer.from(vectors.buffer, vectors.byteOffset, vectors.byteLength));
@@ -466,23 +528,65 @@ export async function buildAtlasBundle(requestPath: string, outputRoot: string,
       counts: Object.fromEntries(b.assessments.map((a) => [a.assessment, a.measurement.numerator.value])),
       denominator: Math.max(...b.assessments.map((a) => a.measurement.denominator.value)),
       assertions: b.assertions.filter((a) => a.included).map((a) => a.id) }))) }]));
-  writeFileSync(join(outputRoot, "assessments.json"), JSON.stringify({ study: request.id, generated_by: `${ATLAS_BUNDLE_BUILDER.id} ${ATLAS_BUNDLE_BUILDER.version}`,
+  const assessmentsDocument = { study: request.id, generated_by: `${ATLAS_BUNDLE_BUILDER.id} ${ATLAS_BUNDLE_BUILDER.version}`,
     outcomes: ["constructive", "mixed", "adverse", "context-dependent", "abstained"],
     cohorts: [...reports].map(([id, view]) => ({ id, title: view.title, report: `reports/${id}.json`, certified: true })),
     attempts: attemptMeta, assessments: assessmentDocs, certified,
     notes: ["Outcome 'abstained' = disposition abstained (no assessment value).",
-      "Certified tallies are the cohort aggregation reports in this bundle; counts computed in the viewer are exploratory."] }));
+      "Certified tallies are the cohort aggregation reports in this bundle; counts computed in the viewer are exploratory."] };
+  writeFileSync(join(outputRoot, "assessments.json"), JSON.stringify(assessmentsDocument));
+
+  // View receipts over the viewer's host tables; claims over the bundle tables (two connections, as each consumer sees them).
+  const quote = (p: string) => `'${p.replace(/'/gu, "''")}'`;
+  const tablePath = (name: string) => quote(join(outputRoot, "tables", `${name}.parquet`));
+  const extensionsOff = { autoinstall_known_extensions: "false", autoload_known_extensions: "false" };
+  let viewIds = new Set<string>();
+  if (request.views) {
+    const db = await DuckDBInstance.create(":memory:", extensionsOff);
+    const c = await db.connect();
+    try {
+      await c.run(`CREATE TABLE units AS SELECT * FROM ${tablePath("units")} WHERE embed`);
+      await c.run(`CREATE TABLE assessments (id VARCHAR, attempt_id VARCHAR, condition VARCHAR, task_id VARCHAR, trial_id VARCHAR, dimension VARCHAR, outcome VARCHAR, confidence DOUBLE, citations BIGINT, in_primary BOOLEAN)`);
+      for (const a of assessmentDocs as Array<{ id: string; attempt_id: string; condition: string; task_id: string | null; trial_id: string | null; dimension: string; outcome: string; confidence: number | null; citations: unknown[]; cohorts: Record<string, { included?: boolean }> }>) {
+        const prepared = await c.prepare("INSERT INTO assessments VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)");
+        prepared.bind([a.id, a.attempt_id, a.condition, a.task_id, a.trial_id, a.dimension, a.outcome, a.confidence, a.citations.length, a.cohorts.primary?.included === true]);
+        await prepared.run();
+      }
+      const views = await buildViews(resolve(base, request.views), c, request.id);
+      viewIds = new Set(views.views.map(({ id }) => id));
+      writeFileSync(join(outputRoot, "views.json"), JSON.stringify(views));
+    } finally { c.closeSync(); db.closeSync(); }
+  }
+  if (request.claims) {
+    const db = await DuckDBInstance.create(":memory:", extensionsOff);
+    const c = await db.connect();
+    const lines = new Map<string, string[]>();
+    try {
+      for (const name of ["assessments", "attempts", "assessment_cohorts", "attempt_cohorts", "citations"]) await c.run(`CREATE VIEW ${name} AS SELECT * FROM ${tablePath(name)}`);
+      await c.run(`CREATE VIEW units AS SELECT * FROM ${tablePath("units")} WHERE embed`);
+      const attemptsById = Object.fromEntries(tables.attempts!.map((a) => [String(a.attempt_id), { model_id: a.model_id as string | null, harness_id: a.harness_id as string | null }]));
+      const claims = await validateClaims(JSON.parse(readFileSync(resolve(base, request.claims), "utf8")) as ClaimsSource, {
+        connection: c, certified, reports: Object.fromEntries([...reports].map(([id, view]) => [id, { report: view.report }])),
+        assessments: assessmentDocs as never, audits: audits as never, attempts: attemptsById, viewIds,
+        readLine: (path, locator) => {
+          if (!lines.has(path)) { try { lines.set(path, readFileSync(resolve(base, path), "utf8").split("\n")); } catch { lines.set(path, []); } }
+          return lines.get(path)![Number(/^line:(\d+)/u.exec(locator)?.[1] ?? 0) - 1];
+        },
+      });
+      writeFileSync(join(outputRoot, "claims.json"), JSON.stringify(claims));
+    } finally { c.closeSync(); db.closeSync(); }
+  }
   const files = [...readdirSync(join(outputRoot, "reports")).map((f) => ({ path: `reports/${f}`, role: "cohort-report" })),
     ...Object.values(tableIndex).map(({ path }) => ({ path, role: "table" })),
     ...readdirSync(join(outputRoot, "native")).map((f) => ({ path: `native/${f}`, role: "native-records" })),
-    ...[["units.arrow", "cloud-units"], ["embeddings.f32", "cloud-embeddings"], ["lanes.json", "swimlanes"], ["audit.json", "audits"], ["assessments.json", "assessments"]]
-      .map(([path, role]) => ({ path: path!, role: role! }))]
+    ...[["units.arrow", "cloud-units"], ["embeddings.f32", "cloud-embeddings"], ["lanes.json", "swimlanes"], ["audit.json", "audits"], ["assessments.json", "assessments"],
+      ["claims.json", "claims"], ["views.json", "view-specs"]].filter(([path]) => existsSync(join(outputRoot, path!))).map(([path, role]) => ({ path: path!, role: role! }))]
     .map(({ path, role }) => ({ path, role, bytes: statSync(join(outputRoot, path)).size, sha256: sha256(readFileSync(join(outputRoot, path))) }))
     .sort((a, b) => a.path.localeCompare(b.path));
   const manifest: AtlasBundleManifest = {
     schemaVersion: "ebo.atlas-bundle/v1", id: request.id, title: request.title, builder: ATLAS_BUNDLE_BUILDER, tablesVersion: ATLAS_TABLES_VERSION, unitsVersion: ATLAS_UNITS_VERSION,
     createdAt: (options.now ?? (() => new Date()))().toISOString(), request: { digest: `sha256:${digestMetadata(request).value}` },
-    cloud: { units: cloud.length, embeddings: { file: "embeddings.f32", model: embeddingConfig.model, dimensions: embeddingConfig.dimensions } },
+    cloud: { units: cloud.length, embeddings: { file: "embeddings.f32", provider: embeddingConfig.provider, model: embeddingConfig.model, dimensions: embeddingConfig.dimensions } },
     cohorts, tables: tableIndex, files,
   };
   const errors = validateArtifact("atlas bundle", manifest);

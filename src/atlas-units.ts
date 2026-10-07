@@ -122,6 +122,17 @@ export function visibleText(value: unknown, out: string[] = [], depth = 0): stri
   return out;
 }
 
+/** Human-readable text of a tool result: every string leaf except identifiers and signatures, one per line. */
+export function resultText(value: unknown, out: string[] = [], depth = 0): string[] {
+  if (depth > 12) return out;
+  if (typeof value === "string") out.push(value);
+  else if (Array.isArray(value)) for (const v of value) resultText(v, out, depth + 1);
+  else if (value !== null && typeof value === "object") {
+    for (const [k, v] of Object.entries(value)) if (!["signature", "id", "toolCallId", "tool_use_id", "callId"].includes(k)) resultText(v, out, depth + 1);
+  }
+  return out;
+}
+
 function editLines(input: unknown): { added: number; removed: number } {
   let added = 0, removed = 0;
   const walk = (o: unknown, depth = 0): void => {
@@ -206,7 +217,7 @@ export function deriveUnits({ attemptId, events, occurrences, resolveContent }: 
     const calls = ordered.filter(({ phase }) => phase !== "after"), results = ordered.filter(({ phase }) => phase === "after");
     const input = calls.flatMap(contentOf);
     const output = results.flatMap(contentOf);
-    const resultText = output.map((v) => (typeof v === "string" ? v : JSON.stringify(v))).join("\n");
+    const outputText = output.flatMap((v) => resultText(v)).join("\n");
     unit.tool_name = operation.toolName ?? null;
     unit.tool_kind = toolKind(operation.toolName);
     const command = [...input, ...output].map((v) => findCommand(v)).find((v) => v !== undefined);
@@ -222,14 +233,14 @@ export function deriveUnits({ attemptId, events, occurrences, resolveContent }: 
       if (unit.tool_kind === "edit") { const { added, removed } = editLines(input); unit.lines_added = added; unit.lines_removed = removed; }
     }
     const exitCodes = ordered.flatMap(({ attributes }) => (typeof attributes.exitCode === "number" ? [attributes.exitCode] : []));
-    const exitText = EXIT_TEXT.exec(resultText.slice(0, 1500));
+    const exitText = EXIT_TEXT.exec(outputText.slice(0, 1500));
     unit.exit_code = exitCodes.at(-1) ?? (exitText ? Number(exitText[1]) : null);
     const failed = operation.failed || (unit.exit_code !== null && unit.exit_code !== 0);
     unit.status = results.length || operation.failed ? (failed ? "error" : "ok") : null;
-    unit.error_signature = failed ? errorSignature(resultText) : null;
+    unit.error_signature = failed ? errorSignature(outputText) : null;
     unit.input_chars = input.length ? JSON.stringify(input).length : null;
-    unit.output_chars = results.length ? resultText.length : null;
-    unit.output_lines = results.length ? (resultText ? resultText.split("\n").length : 0) : null;
+    unit.output_chars = results.length ? outputText.length : null;
+    unit.output_lines = results.length ? (outputText ? outputText.split("\n").length : 0) : null;
     unit.t_start = time(ordered[0]!);
     unit.t_end = results.length ? time(results.at(-1)!) : null;
     unit.duration_seconds = seconds(unit.t_start, unit.t_end);

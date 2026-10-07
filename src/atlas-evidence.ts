@@ -36,10 +36,13 @@ export function claimLines(text: string): Array<{ text: string; kinds: string[] 
   return out;
 }
 
-/** Native lines of one run bundle, read through its manifest; one file at a time is held in memory. */
+/**
+ * Native lines of one run bundle, read through its manifest. Each file is read once: stored lines can share the
+ * file's string, so re-reading a file per record (units alternate between session and hook files) multiplies memory.
+ */
 export class NativeLines {
   private files = new Map<string, string>();
-  private cache: { artifact: string; lines: string[] | null } | null = null;
+  private cache = new Map<string, string[] | null>();
   constructor(private bundleRoot: string, private displayRoot: string) {
     const manifest = JSON.parse(readFileSync(join(bundleRoot, "manifest.json"), "utf8")) as { evidence?: Array<{ id: string; relativePath?: string }> };
     for (const e of manifest.evidence ?? []) if (e.relativePath) this.files.set(e.id, e.relativePath);
@@ -48,12 +51,12 @@ export class NativeLines {
     const match = /^line:(\d+)/u.exec(locator);
     const relativePath = this.files.get(artifact);
     if (!match || !relativePath) return { artifact, locator, resolved: false, ...(part ? { part } : {}), ...(eventKey ? { event_key: eventKey } : {}) };
-    if (this.cache?.artifact !== artifact) {
+    if (!this.cache.has(artifact)) {
       let lines: string[] | null = null;
       try { lines = readFileSync(join(this.bundleRoot, relativePath), "utf8").split("\n"); } catch { lines = null; }
-      this.cache = { artifact, lines };
+      this.cache.set(artifact, lines);
     }
-    const raw = this.cache.lines?.[Number(match[1]) - 1];
+    const raw = this.cache.get(artifact)?.[Number(match[1]) - 1];
     if (raw === undefined) return { artifact, locator, resolved: false, ...(part ? { part } : {}), ...(eventKey ? { event_key: eventKey } : {}) };
     return { artifact, locator, path: `${this.displayRoot}/${relativePath}`, resolved: true, sha256: createHash("sha256").update(raw).digest("hex"),
       chars: raw.length, truncated: false, text: raw, ...(part ? { part } : {}), ...(eventKey ? { event_key: eventKey } : {}) };
