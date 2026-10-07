@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ebo:schema:claim-checks:v1",
+  "$defs": {
+    "identifier": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claimId", "label", "answer", "accepted", "flagged", "decision"],
+      "properties": {
+        "claimId": { "$ref": "#/$defs/identifier" },
+        "label": { "enum": ["supported", "contradicted", "insufficient"] },
+        "answer": { "$ref": "urn:ebo:schema:occurrence-ratings:v1#/$defs/answer" },
+        "accepted": { "type": "boolean" },
+        "flagged": { "type": "boolean" },
+        "decision": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "runId", "attemptId", "assertion", "questionSetVersion", "provider", "requestedModel", "policy", "createdAt", "coverage", "checks", "decisions"],
+      "properties": {
+        "schemaVersion": { "const": "ebo.claim-checks/v1" },
+        "runId": { "$ref": "#/$defs/identifier" },
+        "attemptId": { "$ref": "#/$defs/identifier" },
+        "assertion": {
+          "type": "object", "additionalProperties": false, "required": ["id", "digest"],
+          "properties": { "id": { "$ref": "#/$defs/identifier" }, "digest": { "$ref": "#/$defs/digest" } }
+        },
+        "questionSetVersion": { "const": "1.0.0" },
+        "provider": { "enum": ["typesafe", "fireworks"] },
+        "requestedModel": { "$ref": "#/$defs/identifier" },
+        "policy": {
+          "type": "object", "additionalProperties": false, "required": ["choiceConfidence"],
+          "properties": { "choiceConfidence": { "type": "number", "minimum": 0, "maximum": 1 } }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "coverage": {
+          "type": "object", "additionalProperties": false, "required": ["claims", "checked", "failedDecisions", "supported", "flagged"],
+          "properties": {
+            "claims": { "type": "integer", "minimum": 0 }, "checked": { "type": "integer", "minimum": 0 }, "failedDecisions": { "type": "integer", "minimum": 0 },
+            "supported": { "type": "integer", "minimum": 0 }, "flagged": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "checks": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/check" } },
+        "decisions": { "type": "array", "maxItems": 64, "items": { "$ref": "urn:ebo:schema:occurrence-ratings:v1#/$defs/decision" } }
+      }
+    }
+  },
+  "$ref": "#/$defs/checks"
+}

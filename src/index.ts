@@ -428,6 +428,8 @@ export {
 } from "./occurrence-ratings.js";
 export type { OccurrenceRating, OccurrenceRatings, RateOptions, RatingPolicy } from "./occurrence-ratings.js";
 export { JUDGE_PREPARE_METHOD, prepareJudgeRequest, prepareRetainedJudgeRequest } from "./judge-prepare.js";
+export { CLAIM_CHECK_QUESTION_SET_VERSION, CLAIM_SUPPORT_QUESTION, checkClaims, checkRetainedClaims, claimState, DEFAULT_CLAIM_CHECK_POLICY, validateClaimChecks } from "./claim-checks.js";
+export type { ClaimCheck, ClaimChecks } from "./claim-checks.js";
 export type { JudgePrepareSpec } from "./judge-prepare.js";
 export type { Occurrence, OccurrenceCoverage, OccurrenceType } from "./occurrences.js";
 export type {

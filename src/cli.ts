@@ -48,6 +48,8 @@ import {
 import { createRetainedStructuralObservationSet } from "./structural-observations.js";
 import { DEFAULT_RATING_POLICY, rateRetainedOccurrences, type OccurrenceRatings } from "./occurrence-ratings.js";
 import { prepareRetainedJudgeRequest, type JudgePrepareSpec } from "./judge-prepare.js";
+import { checkRetainedClaims, DEFAULT_CLAIM_CHECK_POLICY } from "./claim-checks.js";
+import type { BehaviorAssertion as ClaimAssertion } from "./behavior-assertions.js";
 import { DECISION_PROVIDERS, type DecisionProviderId } from "./decision-models.js";
 import type { StructuralObservationSet } from "./structural-observations.js";
 import {
@@ -90,6 +92,7 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
        ebo occurrences rate <run-bundle-root> <observations.json> <output.json> --provider <typesafe|fireworks> [--model <id>] [--choice-confidence <0-1>] [--noul-margin <0-0.5>]
        ebo assertions validate <run-bundle-root> <assertion.json> [review.json]
+       ebo claims check <run-bundle-root> <assertion.json> <output.json> --provider <typesafe|fireworks> [--model <id>] [--choice-confidence <0-1>]
        ebo judge prepare <run-bundle-root> <observations.json> <spec.json> <request.json> [--ratings <ratings.json>]
        ebo judge run <run-bundle-root> <observations.json> <request.json> <output-root> [--ratings <ratings.json>]
        ebo judge batch <batch.json>
@@ -229,6 +232,10 @@ export function main(
 
   if (args[0] === "occurrences" && args[1] === "rate") {
     return runOccurrenceRatingCommand(args.slice(2), write);
+  }
+
+  if (args[0] === "claims" && args[1] === "check") {
+    return runClaimCheckCommand(args.slice(2), write);
   }
 
   if (args[0] === "assertions" && args[1] === "validate") {
@@ -674,6 +681,34 @@ async function runObservationsCommand(args: string[], write: (message: string) =
   }
   write("Usage: ebo observations <create|corpus> ...\n");
   return 1;
+}
+
+async function runClaimCheckCommand(args: string[], write: (message: string) => void): Promise<number> {
+  const usage = "Usage: ebo claims check <run-bundle-root> <assertion.json> <output.json> --provider <typesafe|fireworks> [--model <id>] [--choice-confidence <0-1>]\n";
+  const [bundleRoot, assertionPath, outputPath, ...flags] = args;
+  const options: Record<string, string> = {};
+  for (let index = 0; index < flags.length; index += 2) {
+    const flag = flags[index]!;
+    const value = flags[index + 1];
+    if (!["--provider", "--model", "--choice-confidence"].includes(flag) || value === undefined || flag in options) { write(usage); return 1; }
+    options[flag] = value;
+  }
+  const provider = options["--provider"];
+  if (bundleRoot === undefined || assertionPath === undefined || outputPath === undefined || provider === undefined || !(provider in DECISION_PROVIDERS)) { write(usage); return 1; }
+  try {
+    assertDerivedDestination(bundleRoot, outputPath);
+    const confidence = options["--choice-confidence"] === undefined ? DEFAULT_CLAIM_CHECK_POLICY.choiceConfidence : Number(options["--choice-confidence"]);
+    if (!(confidence >= 0 && confidence <= 1)) throw new Error("--choice-confidence must be a number from 0 to 1.");
+    const checks = await checkRetainedClaims(bundleRoot, readJson(assertionPath) as ClaimAssertion,
+      { provider: provider as DecisionProviderId, ...(options["--model"] === undefined ? {} : { model: options["--model"] }) }, { policy: { choiceConfidence: confidence } });
+    await writeObservationReport(outputPath, checks, bundleRoot);
+    const { coverage } = checks;
+    write(`Checked ${String(coverage.checked)} of ${String(coverage.claims)} claims: ${String(coverage.supported)} supported, ${String(coverage.flagged)} flagged for review, ${String(coverage.failedDecisions)} failed decision(s).\n`);
+    return coverage.failedDecisions === 0 ? 0 : 1;
+  } catch (error) {
+    write(`${errorMessage(error)}\n`);
+    return 1;
+  }
 }
 
 async function runOccurrenceRatingCommand(args: string[], write: (message: string) => void): Promise<number> {

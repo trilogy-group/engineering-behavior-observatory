@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { decide, parseDecisionResponse, type DecisionQuestion } from "../src/decision-models.js";
+import { checkClaims, validateClaimChecks } from "../src/claim-checks.js";
 import {
   acceptedByPolicy,
   occurrenceState,
@@ -180,4 +181,36 @@ test("a failure with no later call is rated by rule without asking the model", a
   const forged = structuredClone(ratings);
   forged.ratings[0]!.label = "addressed-cause";
   assert.throws(() => validateOccurrenceRatings(forged), /not a known rule/u);
+});
+
+test("claim checks route unsupported or uncertain claims to review and bind to the assertion", async () => {
+  const citation = { eventId: "event-1", nativeReference: { artifactId: "session", recordLocator: "line:1" } };
+  const assertion = {
+    schemaVersion: "ebo.behavior-assertion/v1", id: "a-1", runId: "run", attemptId: "attempt", dataset: { schemaVersion: "ebo.normalized-dataset/v1", digest: `sha256:${"d".repeat(64)}` },
+    behavior: { vocabularyVersion: "1.0.0", categoryId: "verification-completion", dimensionId: "verification-completion" }, rubric: { id: "r", version: "1" },
+    evaluator: { id: "openai/x", version: "1", configurationDigest: `sha256:${"e".repeat(64)}` },
+    judgment: { disposition: "assessed", assessment: "constructive", confidence: { value: 0.8, scale: "evaluator-reported-0-to-1" }, rationale: "r", alternativeExplanation: "a", citations: [citation],
+      claims: [{ id: "passed", text: "All tests passed.", citations: [citation], workspace: null }, { id: "typed", text: "Typecheck passed.", citations: [citation], workspace: null }] },
+  } as unknown as Parameters<typeof checkClaims>[0];
+  const capture = { runId: "run", attemptId: "attempt", qualification: "qualified", records: [{ reference: citation.nativeReference, record: { content: [{ type: "thinking", thinking: "SECRET-THOUGHT" }, { type: "text", text: "Tests: 4 passed" }] } }] } as never;
+  const seen: unknown[] = [];
+  const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init!.body)) as { state: { claim: { text: string } } };
+    seen.push(body.state);
+    const supported = body.state.claim.text.startsWith("All");
+    const probabilities = supported ? { supported: 0.95, contradicted: 0.02, insufficient: 0.03 } : { supported: 0.2, contradicted: 0.1, insufficient: 0.7 };
+    return new Response(JSON.stringify({ model: "jev-1.13.0", usage: { input_tokens: 5, output_tokens: 1 },
+      answers: { support: { type: "choice", choice: supported ? "supported" : "insufficient", probabilities, confidence: supported ? 0.95 : 0.7 } } }));
+  }) as typeof fetch;
+  const checks = await checkClaims(assertion, capture, { provider: "typesafe" }, { fetch: fetchImpl, env });
+  assert.deepEqual(checks.checks.map(({ claimId, label, flagged }) => [claimId, label, flagged]), [["passed", "supported", false], ["typed", "insufficient", true]]);
+  assert.deepEqual(checks.coverage, { claims: 2, checked: 2, failedDecisions: 0, supported: 1, flagged: 1 });
+  assert.equal(JSON.stringify(seen).includes("SECRET-THOUGHT"), false, "hidden reasoning is not sent");
+  validateClaimChecks(checks, assertion);
+  const forged = structuredClone(checks);
+  forged.checks[1]!.flagged = false;
+  assert.throws(() => validateClaimChecks(forged, assertion), /contradicts its answer/u);
+  const changed = structuredClone(assertion) as typeof assertion;
+  (changed.judgment as { rationale: string }).rationale = "edited";
+  assert.throws(() => validateClaimChecks(checks, changed), /different assertion/u);
 });
