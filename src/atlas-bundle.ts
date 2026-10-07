@@ -533,12 +533,15 @@ async function writeAtlasBundle(request: AtlasBundleRequest, requestPath: string
 
   writeFileSync(join(outputRoot, "lanes.json"), JSON.stringify(lanes));
   writeFileSync(join(outputRoot, "audit.json"), JSON.stringify({ study: request.id, attempts: audits }));
+  const armOfAttempt = new Map(tables.attempts!.map((a) => [String(a.attempt_id), String(a.condition)]));
   const certified = Object.fromEntries([...reports].map(([id, view]) => [id, { source: `reports/${id}.json`, generated_at: view.generatedAt,
     group_by: (view.report.policy as { groupBy?: unknown }).groupBy ?? null,
     cells: view.report.groups.flatMap((group) => (group.behaviors ?? []).map((b) => ({ group: group.dimensions, category: b.behavior.categoryId,
       counts: Object.fromEntries(b.assessments.map((a) => [a.assessment, a.measurement.numerator.value])),
       denominator: Math.max(...b.assessments.map((a) => a.measurement.denominator.value)),
-      assertions: b.assertions.filter((a) => a.included).map((a) => a.id) }))) }]));
+      assertions: b.assertions.filter((a) => a.included).map((a) => a.id),
+      // The study arms the cell's assessments belong to: the viewer compares a cell with one arm only when it covers that arm alone.
+      conditions: [...new Set(b.assertions.filter((a) => a.included).map((a) => armOfAttempt.get(assertions.get(a.id)?.assertion.attemptId ?? "") ?? "unavailable"))].sort() }))) }]));
   const assessmentsDocument = { study: request.id, generated_by: `${ATLAS_BUNDLE_BUILDER.id} ${ATLAS_BUNDLE_BUILDER.version}`,
     outcomes: ["constructive", "mixed", "adverse", "context-dependent", "abstained"],
     cohorts: [...reports].map(([id, view]) => ({ id, title: view.title, report: `reports/${id}.json`, certified: true })),
