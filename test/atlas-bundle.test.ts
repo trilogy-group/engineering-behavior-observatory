@@ -149,5 +149,7 @@ test("lane usage: a final with one token dimension is not a token total", () => 
   const event = (attributes: Record<string, unknown>) => ({ nativeTime: { status: "known", value: "2026-10-07T00:00:00.000Z" }, attributes }) as never;
   const attempt = { attempt_id: "a", task_id: null, condition: null, trial_id: null, harness_id: null, model_id: null, terminal_state: null, failure_class: null, capture_qualification: null };
   const lane = laneData(attempt, [], [event({ resourceSemantics: "increment", inputTokens: 10 }), event({ resourceSemantics: "cumulative-final", outputTokens: 4 })]).lane;
-  assert.deepEqual([lane.usage_semantics, lane.tokens_total], ["per-turn", 10], "the increments stand; the output-only final does not override them");
+  assert.deepEqual([lane.usage_semantics, lane.tokens_total], ["per-turn", null], "input-only increments and an output-only final are no token total");
+  const complete = laneData(attempt, [], [event({ resourceSemantics: "increment", inputTokens: 10, outputTokens: 2 })]).lane;
+  assert.equal(complete.tokens_total, 12);
 });
