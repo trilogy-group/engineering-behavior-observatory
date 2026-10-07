@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { buildAtlasBundle, type AtlasBundleRequest } from "../src/atlas-bundle.js";
 import { tableFromIPC } from "apache-arrow";
-import { buildPacket, refreshSharedEnvironment, sharedText, verifyPacket, withoutHiddenReasoning, type PacketManifest } from "../src/atlas-packet.js";
+import { buildPacket, refreshSharedEnvironment, sharedJson, sharedText, verifyPacket, withoutHiddenReasoning, type PacketManifest } from "../src/atlas-packet.js";
 import { verifyAtlasBundle as verifyPacketBundle } from "../src/atlas-bundle.js";
 import { createAtlasFixture } from "./atlas-fixture.js";
 
@@ -38,6 +38,7 @@ test("evidence packets: three variants, verification, withholding and claims tha
     }
     const internal = built.internal!, restricted = built.restricted!;
     assert.equal(internal.withheld.length, 0);
+    assert.match(readFileSync(join(root, "packet-internal", "verify.html"), "utf8"), /if \(!contained\(f\.path\)\)/u, "the browser verifier checks each path before fetching it");
     assert.ok(internal.files.some(({ path }) => path.startsWith("viewer/bundle/native/")));
     assert.ok(existsSync(join(root, "packet-internal", "evidence", "index.html")));
     // Restricted: native records, audits and tables are withheld (listed with digests); unit text is structural.
@@ -108,6 +109,7 @@ test("shared native records drop hidden reasoning blocks and fields", () => {
   const record = { type: "assistant", message: { content: [{ type: "thinking", thinking: "private", signature: "sig" }, { type: "text", text: "visible" }], reasoning_content: "private" } };
   assert.deepEqual(withoutHiddenReasoning(record), { type: "assistant", message: { content: [{ type: "text", text: "visible" }] } });
   assert.deepEqual(withoutHiddenReasoning({ result: { signature: "verified" } }), { result: { signature: "verified" } }, "an ordinary signature field is evidence");
+  assert.deepEqual(sharedJson({ password: { value: "plain-value" }, note: "ok" }), { password: "[REDACTED_SECRET]", note: "ok" }, "a secret-named field is replaced whatever it holds");
   process.env.EBO_PACKET_TEST_HOST = "build-host.internal.example";
   try {
     refreshSharedEnvironment();

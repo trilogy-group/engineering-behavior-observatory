@@ -54,8 +54,9 @@ const pageName = (id: string) => `${slug(id).slice(0, 80)}-${createHash("sha256"
  */
 const LOCAL_PATH_FIELDS = new Set(["path", "bundle", "bundle_root", "bundleRoot", "source_path", "report_path", "aggregation_path"]);
 function redactValue(value: unknown, count: { n: number }, transform: (s: string) => string, key?: string): unknown {
+  // A secret-named field is replaced whole, whatever it holds (a string, or an object such as { value: … }).
+  if (key !== undefined && isSecretFieldName(key) && value !== null && value !== undefined && value !== SECRET_PLACEHOLDER) { count.n++; return SECRET_PLACEHOLDER; }
   if (typeof value === "string") {
-    if (key !== undefined && isSecretFieldName(key)) { count.n++; return SECRET_PLACEHOLDER; }
     const t = transform(value); if (t !== value) count.n++; return t;
   }
   if (Array.isArray(value)) return value.map((v) => redactValue(v, count, transform, key));
@@ -64,6 +65,9 @@ function redactValue(value: unknown, count: { n: number }, transform: (s: string
   }
   return value;
 }
+
+/** A JSON value as the partner variant shares it (key-aware secret replacement, local path fields dropped). */
+export const sharedJson = (value: unknown) => redactValue(value, { n: 0 }, sharedText);
 
 /**
  * A native record as shared: hidden reasoning removed (EBO's visible-evidence projection), then sanitized. When
@@ -196,6 +200,7 @@ async function rewriteParquet(source: string, target: string, table: string, tra
         // JSON-valued columns are scanned as JSON (each value), like the export pipeline's final scan.
         for (const [k, v] of Object.entries(out)) if (typeof v === "string") assertShareable(v, `${table}.${k}`, variant, k.endsWith("_json") ? "application/json" : "text/plain");
         if (out.text_chars !== undefined && typeof out.text === "string") out.text_chars = out.text.length;
+        if (out.embed_chars !== undefined && typeof out.embed_text === "string") out.embed_chars = out.embed_text.length;
         if (out.content_json_chars !== undefined && typeof out.content_json === "string") out.content_json_chars = out.content_json.length;
         writeSync(fd, `${JSON.stringify(out)}\n`);
       }
@@ -482,17 +487,20 @@ const VERIFY_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <script type="module">
 const out = document.getElementById("out"), bad = document.getElementById("bad");
 const hex = (b) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
+// Same rule as ebo packet verify: a listed path must be relative and stay inside the packet.
+const contained = (p) => typeof p === "string" && p !== "" && !p.startsWith("/") && !p.includes("\\\\") && !/^[A-Za-z]:/.test(p) && !/^[a-z][a-z0-9+.-]*:/i.test(p) && p.split("/").every((s) => s !== "" && s !== "." && s !== "..");
 try {
   const m = await (await fetch("manifest.json")).json();
   let ok = 0;
   for (const f of m.files) {
+    if (!contained(f.path)) { const li = document.createElement("li"); li.textContent = "outside the packet (not fetched): " + f.path; bad.append(li); continue; }
     const r = await fetch(f.path);
     const d = r.ok ? "sha256:" + hex(await crypto.subtle.digest("SHA-256", await r.arrayBuffer())) : null;
     if (d === f.sha256) ok++; else { const li = document.createElement("li"); li.textContent = (d ? "changed: " : "missing: ") + f.path; bad.append(li); }
   }
   // The generated RO-Crate description is bound by its digest in the manifest.
   let crateOk = false;
-  if (m.roCrate) { const r = await fetch(m.roCrate.path); crateOk = r.ok && "sha256:" + hex(await crypto.subtle.digest("SHA-256", await r.arrayBuffer())) === m.roCrate.sha256; }
+  if (m.roCrate && contained(m.roCrate.path)) { const r = await fetch(m.roCrate.path); crateOk = r.ok && "sha256:" + hex(await crypto.subtle.digest("SHA-256", await r.arrayBuffer())) === m.roCrate.sha256; }
   if (!crateOk) { const li = document.createElement("li"); li.textContent = "changed or missing: ro-crate-metadata.json"; bad.append(li); }
   out.className = ok === m.files.length && crateOk ? "ok" : "bad";
   out.textContent = ok + " of " + m.files.length + " files match the manifest" + (crateOk ? "; the RO-Crate description matches" : "; the RO-Crate description does not match") + (m.withheld.length ? "; " + m.withheld.length + " files are withheld in this variant (listed with their digests)." : ".");
