@@ -136,7 +136,6 @@ export function renderTotals(view: HTMLElement, task: string, lanes: LaneMeta[],
   view.querySelectorAll<HTMLElement>("td.fail-cell").forEach((td) => {
     const act = () => {
       const us = fails.filter((u) => u.condition === td.dataset.arm && sigOf(u) === td.dataset.sig);
-      onHighlight(us.map((u) => u.row_id));
       run("openFailureGroup", { title: `${td.dataset.arm} · ${td.dataset.sig}`, items: us.map((u) => ({ attemptId: u.attempt_id, row: u.row_id })) });
     };
     td.addEventListener("click", act);

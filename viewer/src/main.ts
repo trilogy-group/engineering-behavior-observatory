@@ -168,6 +168,9 @@ async function main() {
 
   // ---- the cloud: Embedding Atlas registers its own tools (chart state: viewport, brush, legend; SQL; screenshots) ----
   type EaTool = { name: string; description: string; inputSchema: Record<string, unknown>; execute: (input: any, agent: unknown) => Promise<any> };
+  // Cloud state can arrive (from a link or undo) before Embedding Atlas has published its embedding chart; it waits.
+  let chartReady: () => void = () => undefined;
+  const chartReadyPromise = new Promise<void>((resolve) => { chartReady = resolve; });
   let eaTools: EaTool[] = [];
   let atlasState: Record<string, any> = {};
   const panel = new ClusterArmPanel(document.getElementById("body-clusters")!, coordinator, highlight,
@@ -185,7 +188,7 @@ async function main() {
       include: ["condition", "task_id", "unit_kind", "tool_kind", "check_kind", "status", "harness_id", "trial_id", "cited_assessments", "cluster_label", "embed_text"],
     },
     onPredicateChange: (predicate) => { panel.setPredicate(predicate); lanes?.setPredicate(predicate); },
-    onStateChange: (state) => { atlasState = state as Record<string, any>; },
+    onStateChange: (state) => { atlasState = state as Record<string, any>; if (embeddingChartId()) chartReady(); },
     modelContext: { provideContext: (context: { tools?: EaTool[] }) => { eaTools = context.tools ?? []; } },
   });
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => atlas.update({ colorScheme: dark() ? "dark" : "light" }));
@@ -225,7 +228,7 @@ async function main() {
       return { viewport: st.viewport ?? null, brush: st.brush ?? null, legend: st.legend?.selection ?? null } as Json;
     },
     apply: async (st: { viewport: unknown; brush: unknown; legend: string[] | null }) => {
-      if (!embeddingChartId()) return;
+      await chartReadyPromise;
       await setCloudState({ viewport: st.viewport, brush: st.brush, legend: st.legend?.length ? { selection: st.legend } : null });
     } });
 

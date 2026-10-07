@@ -274,11 +274,17 @@ export class ClusterArmPanel {
     this.tip.style.transform = `translate(${x}px, ${y}px)`;
   }
 
+  /** RFC 4180 field: quoted when it holds a comma, quote or line break, with embedded quotes doubled. */
+  private static csv(value: unknown) {
+    const s = String(value ?? "");
+    return /[",\r\n]/u.test(s) ? `"${s.replace(/"/gu, '""')}"` : s;
+  }
+
   private downloadCsv() {
     const head = ["cluster_id", "family", "label", "units", "arm", "observed", "expected_" + (this.stratify ? "within_harness" : "pooled"), "share_of_arm_family", "observed_over_expected", "z", "attempts_with_unit", "attempts_in_arm", "filter"];
     const lines = [head.join(",")];
     for (const r of this.visibleRows()) for (const c of r.cells)
-      lines.push([r.id, r.family, JSON.stringify(r.label), r.size, JSON.stringify(c.arm), c.o, c.e.toFixed(3), c.share.toFixed(5), c.ratio.toFixed(4), c.z.toFixed(3), c.k, c.kArm, JSON.stringify(this.predicate ?? "")].join(","));
+      lines.push([r.id, r.family, r.label, r.size, c.arm, c.o, c.e.toFixed(3), c.share.toFixed(5), c.ratio.toFixed(4), c.z.toFixed(3), c.k, c.kArm, this.predicate ?? ""].map(ClusterArmPanel.csv).join(","));
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([lines.join("\n") + "\n"], { type: "text/csv" }));
     a.download = "clusters-by-arm.csv";

@@ -67,12 +67,15 @@ for (const tab of tabs) {
     const first = await page.evaluate(() => document.querySelector("table.jl tbody tr")?.dataset.id ?? null);
     if (first) await page.evaluate((id) => window.ebo.run("openAssessment", { id }), first);
   }
-  const before = await page.evaluate(() => { const s = window.ebo.getState(); delete s.cloud; return s; });
+  if (tab === "clusters") await page.evaluate(() => window.ebo.run("setViewport", { x: 0.25, y: -0.5, scale: 0.75 }).catch(() => undefined));
+  const before = await page.evaluate(() => window.ebo.getState());
   const encoded = await page.evaluate(() => window.ebo.encodeState(window.ebo.getState()));
   await page.goto(`${url.replace(/#.*$/, "")}#state=${encoded}`, { waitUntil: "load" });
   await ready();
   await page.waitForTimeout(500);
-  const after = await page.evaluate(() => { const s = window.ebo.getState(); delete s.cloud; return s; });
+  // A restored cloud state waits for Embedding Atlas to publish its chart; give it the time a reader would.
+  await page.waitForFunction((v) => JSON.stringify(window.ebo.getState().cloud?.viewport ?? null) === v, JSON.stringify(before.cloud?.viewport ?? null), { timeout: 15000 }).catch(() => undefined);
+  const after = await page.evaluate(() => window.ebo.getState());
   const same = JSON.stringify(before) === JSON.stringify(after);
   report.roundTrip[tab] = same;
   if (!same) failures.push({ roundTrip: tab, before, after });

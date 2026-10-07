@@ -128,7 +128,7 @@ export class Evidence {
       run: async ({ attemptId, rows }) => { await this.openChainAt(attemptId, rows); return `Opened the failure chain at attempt ${attemptId.slice(0, 8)}.`; } });
     register<{ title: string; items: { attemptId: string; row: number }[] }>({ name: "openFailureGroup", description: "Open failed calls that share a tool and error, across attempts.",
       args: obj({ title: { type: "string" }, items: { type: "array", items: obj({ attemptId: { type: "string" }, row: { type: "integer" } }) } }),
-      run: ({ title, items }) => { this.openFailures(title, items); return `Opened ${items.length} failed calls: ${title}.`; } });
+      run: ({ title, items }) => { this.hooks.highlight(items.map(({ row }) => row)); this.openFailures(title, items); return `Opened and highlighted ${items.length} failed calls: ${title}.`; } });
     register({ name: "closeDrawer", description: "Close the evidence drawer.", args: obj({}), run: () => { this.drawer.close(); return "Closed the drawer."; } });
     register({ name: "drawerBack", description: "Go back to the previous drawer view.", args: obj({}), run: () => { this.drawer.back(); return "Went back in the drawer."; } });
     register<{ wide: boolean }>({ name: "setDrawerWide", description: "Widen (reading mode) or narrow the drawer.", args: obj({ wide: { type: "boolean" } }),
@@ -321,7 +321,7 @@ export class Evidence {
       <p class="dr-meta">${items.length} failed call(s) in ${groups.size} attempt(s). Each chain: consecutive failures of the tool, then the next call of that tool.</p>
       <table class="grid audit"><thead><tr><th>Attempt</th><th class="num">Failed calls</th><th>Chains (first step · failures · next call)</th></tr></thead><tbody>
       ${rows.map((r, i) => `<tr><td>${esc(this.attemptLabel(r.aid))}</td><td class="num">${r.rs.length}</td><td>${r.chains.map((c, j) =>
-        `<div>step ${c.first_step} · ${c.failures.length} failed · ${c.next_same_tool != null ? (c.next_ok ? `<span class="ok">next succeeded</span>` : `<span class="bad">next failed</span>`) : "no later call"} <button class="btn" data-cmp="${i}:${j}" ${target("openCompare", `${r.aid}:${this.chainsOf(r.aid).indexOf(c)}`)}>Compare failed vs next</button></div>`).join("")}</td></tr>`).join("")}
+        `<div>step ${num(c.first_step)} · ${c.failures.length} failed · ${c.next_same_tool != null ? (c.next_ok ? `<span class="ok">next succeeded</span>` : `<span class="bad">next failed</span>`) : "no later call"} <button class="btn" data-cmp="${i}:${j}" ${target("openCompare", `${r.aid}:${this.chainsOf(r.aid).indexOf(c)}`)}>Compare failed vs next</button></div>`).join("")}</td></tr>`).join("")}
       </tbody></table>`,
       (el) => el.querySelectorAll<HTMLElement>("[data-cmp]").forEach((b) => b.addEventListener("click", () => {
         const [i, j] = b.dataset.cmp!.split(":").map(Number); run("openCompare", { attemptId: rows[i].aid, chain: this.chainsOf(rows[i].aid).indexOf(rows[i].chains[j]) });
