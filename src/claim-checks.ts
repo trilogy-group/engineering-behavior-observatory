@@ -134,7 +134,8 @@ export function validateClaimChecks(document: ClaimChecks, assertion?: BehaviorA
     verifyDecisionRecord(decision);
     if (decision.provider !== document.provider || decision.requestedModel !== document.requestedModel) throw new Error("A decision record comes from another provider or model than the artifact names.");
   }
-  if (assertion !== undefined && document.assertion.digest !== `sha256:${digestMetadata(assertion).value}`) {
+  if (assertion !== undefined && (document.assertion.digest !== `sha256:${digestMetadata(assertion).value}` || document.assertion.id !== assertion.id
+      || document.runId !== assertion.runId || document.attemptId !== assertion.attemptId)) {
     throw new Error("Claim checks belong to a different assertion.");
   }
   const claimIds = new Set((assertion?.judgment.claims ?? []).map(({ id }) => id));

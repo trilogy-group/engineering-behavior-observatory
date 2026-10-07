@@ -656,6 +656,12 @@ function validateRatingCompleteness(document: OccurrenceRatings): void {
       if (model.get(`${owners[index]}\0${questionId}`)?.decision !== index) fail(`an answer of decision ${String(index)} has no rating.`);
     }
   });
+  if (document.fallbackDecisions !== undefined) {
+    // Every deferred answer was sent to the fallback exactly once, in a completed or a failed call.
+    const deferred = document.ratings.filter(({ source, accepted }) => source === "model" && !accepted).map(({ occurrenceId, questionId }) => `${occurrenceId}\0${questionId}`).sort();
+    const sent = document.fallbackDecisions.flatMap(({ request }) => request.items.flatMap(({ occurrenceId, questions }) => Object.keys(questions).map((questionId) => `${occurrenceId}\0${questionId}`))).sort();
+    if (canonicalizeMetadata(deferred) !== canonicalizeMetadata(sent)) fail("the fallback calls do not cover every deferred answer exactly once.");
+  }
   (document.fallbackDecisions ?? []).forEach((record, index) => {
     if (record.status !== "completed") return;
     // A completed call answers exactly the question pairs it was asked, once each.
@@ -744,7 +750,8 @@ async function askFallback(
           seen.add(key);
           return true;
         });
-        Object.assign(record, valid ? { status: "completed", response: result.response } : { response: result.response, error: "Fallback answers do not match the deferred questions." });
+        Object.assign(record, valid ? { status: "completed", response: result.response } : { response: result.response, error: "Fallback answers do not match the deferred questions." },
+          result.rawModelResponse === undefined ? {} : { rawModelResponse: result.rawModelResponse }, result.raw === undefined ? {} : { raw: result.raw });
       } else {
         Object.assign(record, { error: result.message.slice(0, 4096), ...(result.rawModelResponse === undefined ? {} : { rawModelResponse: result.rawModelResponse }), ...(result.raw === undefined ? {} : { raw: result.raw }) });
       }

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { decide, parseDecisionResponse, type DecisionQuestion } from "../src/decision-models.js";
 import { checkClaims, validateClaimChecks } from "../src/claim-checks.js";
+import { canonicalizeMetadata as canonicalize } from "../src/artifacts.js";
 import {
   acceptedByPolicy,
   occurrenceState,
@@ -237,6 +238,9 @@ test("claim checks route unsupported or uncertain claims to review and bind to t
   confident.decisions[1]!.answers = { support: raised };
   Object.assign(confident.checks[1]!, { answer: raised, accepted: true, flagged: true });
   assert.throws(() => validateClaimChecks(confident, assertion), /retained provider response/u, "routing follows the provider's own response");
+  const reindexed = structuredClone(checks);
+  reindexed.attemptId = "another-attempt";
+  assert.throws(() => validateClaimChecks(reindexed, assertion), /different assertion/u, "the envelope identities follow the assertion");
   const misstated = structuredClone(checks);
   (misstated.decisions[1]!.request.state as { claim: { text: string } }).claim.text = "Something else.";
   assert.throws(() => validateClaimChecks(misstated, assertion), /not asked about claim|different claim/u, "each decision must be about its own claim");
@@ -290,7 +294,7 @@ test("question set 1.1: silent success is a rule rating, source changes between 
     prompts.push(prompt);
     const items = (JSON.parse(prompt.slice(prompt.indexOf("<STATE_DATA>\n") + 13, prompt.indexOf("\n</STATE_DATA>"))) as { items: Array<{ occurrenceId: string; questions: Record<string, { type: string; criteria?: Record<string, string> }> }> }).items;
     assert.ok(JSON.stringify(schema).includes('"rationale"'));
-    return { status: "completed" as const, raw: {}, response: { answers: items.flatMap(({ occurrenceId, questions }) => Object.entries(questions).map(([questionId, question]) => ({
+    return { status: "completed" as const, raw: { threadId: "t" }, rawModelResponse: { content: "streamed" }, response: { answers: items.flatMap(({ occurrenceId, questions }) => Object.entries(questions).map(([questionId, question]) => ({
       occurrenceId, questionId, label: question.type === "noul" ? "no" : Object.keys(question.criteria!)[1]!, rationale: "Read from the state." }))) } };
   } };
   const records: unknown[] = [];
@@ -306,6 +310,7 @@ test("question set 1.1: silent success is a rule rating, source changes between 
   assert.ok(fallbacks.every(({ rationale, accepted }) => rationale === "Read from the state." && accepted));
   assert.equal(records.length, Math.ceil(new Set(fallbacks.map(({ occurrenceId }) => occurrenceId)).size / 2));
   assert.equal(ratings.coverage.failedFallbacks, 0);
+  assert.ok(ratings.fallbackDecisions!.every(({ raw, rawModelResponse }) => canonicalize(raw) === '{"threadId":"t"}' && canonicalize(rawModelResponse) === '{"content":"streamed"}'), "completed calls keep their native evidence");
   const forged = structuredClone(ratings);
   forged.ratings.find(({ source }) => source === "fallback")!.label = "unclear";
   assert.throws(() => validateOccurrenceRatings(forged), /Fallback rating/u);
@@ -367,6 +372,10 @@ test("question set 1.1: silent success is a rule rating, source changes between 
   assert.equal(broken.ratings.filter(({ source }) => source === "fallback").length, 0, "answers that do not match the questions are recorded, never used");
   assert.ok((broken.coverage.failedFallbacks ?? 0) > 0);
   assert.match(broken.fallbackDecisions![0]!.error!, /do not match/u);
+  const erased = structuredClone(broken);
+  erased.fallbackDecisions!.splice(0, 1);
+  erased.coverage.failedFallbacks = erased.coverage.failedFallbacks! - 1;
+  assert.throws(() => validateOccurrenceRatings(erased), /cover every deferred answer exactly once/u, "a failed fallback call cannot be erased");
   const timedOut = await rateOccurrences(observationSet, events, ({ recordLocator }) => content[recordLocator], { provider: "typesafe" }, { fetch: fetchImpl, env,
     fallback: { ...fallback, run: async () => ({ status: "failed" as const, kind: "timeout" as const, message: "Codex judge exceeded maxWallClockMs.", rawModelResponse: { content: "{\"answers\": [", truncated: false }, raw: { threadId: "t", turnId: "u" } }) } });
   assert.deepEqual(timedOut.fallbackDecisions![0]!.rawModelResponse, { content: "{\"answers\": [", truncated: false }, "partial model output of a failed call is kept");
