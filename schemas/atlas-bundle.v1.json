@@ -23,13 +23,21 @@
         "condition": {
           "type": "object", "additionalProperties": false, "required": ["pattern"],
           "properties": { "pattern": { "type": "string", "minLength": 1, "maxLength": 1000 } }
+        },
+        "embeddings": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "model": { "type": "string", "minLength": 1 },
+            "dimensions": { "type": "integer", "minimum": 1, "maximum": 8192 },
+            "cache": { "$ref": "#/$defs/path" }
+          }
         }
       }
     },
     "bundle": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "id", "title", "builder", "tablesVersion", "createdAt", "request", "cohorts", "tables", "files"],
+      "required": ["schemaVersion", "id", "title", "builder", "tablesVersion", "unitsVersion", "cloud", "createdAt", "request", "cohorts", "tables", "files"],
       "properties": {
         "schemaVersion": { "const": "ebo.atlas-bundle/v1" },
         "id": { "$ref": "#/$defs/identifier" },
@@ -39,6 +47,17 @@
           "properties": { "id": { "const": "ebo-atlas-bundle" }, "version": { "type": "string", "minLength": 1 } }
         },
         "tablesVersion": { "type": "string", "minLength": 1 },
+        "unitsVersion": { "type": "string", "minLength": 1 },
+        "cloud": {
+          "type": "object", "additionalProperties": false, "required": ["units", "embeddings"],
+          "properties": {
+            "units": { "type": "integer", "minimum": 0 },
+            "embeddings": {
+              "type": "object", "additionalProperties": false, "required": ["file", "model", "dimensions"],
+              "properties": { "file": { "$ref": "#/$defs/path" }, "model": { "type": "string", "minLength": 1 }, "dimensions": { "type": "integer", "minimum": 1, "maximum": 8192 } }
+            }
+          }
+        },
         "createdAt": { "type": "string", "format": "date-time" },
         "request": {
           "type": "object", "additionalProperties": false, "required": ["digest"],

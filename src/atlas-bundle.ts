@@ -1,11 +1,16 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
 
 import { canonicalizeMetadata, digestMetadata, validateArtifact } from "./artifacts.js";
 import { loadAtlas, queryAtlas, type AtlasSource, type AtlasView } from "./atlas.js";
+import { Field, List, makeVector, Table, tableToIPC, Utf8, vectorFromArray } from "apache-arrow";
+import { DEFAULT_EMBEDDING_MODEL, embedTexts } from "./atlas-embeddings.js";
+import { assessmentDoc, attemptEvidence, NativeLines } from "./atlas-evidence.js";
+import { laneData, type LaneMeta } from "./atlas-lanes.js";
+import { ATLAS_UNITS_VERSION, deriveUnits, type AtlasUnit } from "./atlas-units.js";
 import type { BehaviorAssertion } from "./behavior-assertions.js";
 import type { CorpusIndexEntry } from "./corpus.js";
 import { createRetainedBehaviorEvidence, type RetainedBehaviorEvidence } from "./retained-evidence.js";
@@ -30,6 +35,8 @@ export type AtlasBundleRequest = {
   cohorts: ReadonlyArray<{ id: string; atlasRequest: string }>;
   /** Study arms: a regular expression over each run bundle's directory name with a named group `condition`. */
   condition?: { pattern: string };
+  /** Unit embeddings for the cloud (Fireworks, needs FIREWORKS_API_KEY for text not yet cached). */
+  embeddings?: { model?: string; dimensions?: number; cache?: string };
 };
 
 export type AtlasBundleManifest = {
@@ -41,13 +48,16 @@ export type AtlasBundleManifest = {
   createdAt: string;
   request: { digest: `sha256:${string}` };
   cohorts: Array<{ id: string; title: string; sourceDigest: string; cohortDigest: string; attempts: number; assertions: number; report: string }>;
+  unitsVersion: typeof ATLAS_UNITS_VERSION;
+  /** The cloud's units and their embeddings; the viewer lays them out with Embedding Atlas (UMAP and clustering). */
+  cloud: { units: number; embeddings: { file: string; model: string; dimensions: number } };
   tables: Record<string, { path: string; rows: number; sha256: `sha256:${string}` }>;
   files: Array<{ path: string; bytes: number; sha256: `sha256:${string}`; role: string }>;
 };
 
-type Row = Record<string, string | number | boolean | null>;
-type Column = [name: string, type: "VARCHAR" | "BIGINT" | "DOUBLE" | "BOOLEAN"];
-const S = "VARCHAR", I = "BIGINT", F = "DOUBLE", B = "BOOLEAN";
+type Row = Record<string, string | number | boolean | null | string[]>;
+type Column = [name: string, type: "VARCHAR" | "BIGINT" | "DOUBLE" | "BOOLEAN" | "VARCHAR[]"];
+const S = "VARCHAR", I = "BIGINT", F = "DOUBLE", B = "BOOLEAN", L = "VARCHAR[]";
 
 /** Atlas tables v1: the lab's P0 tables plus occurrences. Column order is part of the contract. */
 export const ATLAS_TABLES: Record<string, Column[]> = {
@@ -80,6 +90,14 @@ export const ATLAS_TABLES: Record<string, Column[]> = {
   occurrences: [["occurrence_id", S], ["attempt_id", S], ["type", S], ["rule_id", S], ["rule_version", S], ["heuristic", B],
     ["first_event_key", S], ["event_count", I], ["event_keys", S], ["attributes_json", S]],
   edges: [["src_type", S], ["src_id", S], ["rel", S], ["dst_type", S], ["dst_id", S]],
+  units: [["unit_id", S], ["attempt_id", S], ["seq", I], ["unit_kind", S], ["subkind", S], ["role", S], ["episode_id", S], ["model_id", S],
+    ["harness_id", S], ["task_id", S], ["trial_id", S], ["condition", S], ["terminal_state", S], ["tool_name", S], ["tool_kind", S],
+    ["command", S], ["command_head", S], ["check_kind", S], ["check_kinds", L], ["writes", L], ["target", S], ["status", S], ["exit_code", I],
+    ["duration_seconds", F], ["input_chars", I], ["output_chars", I], ["output_lines", I], ["lines_added", I], ["lines_removed", I],
+    ["error_signature", S], ["tool_count", I], ["error_count", I], ["t_start", S], ["t_end", S], ["event_count", I], ["first_event_key", S],
+    ["cited_assertions", L], ["cited_assessments", L], ["cited", B], ["observation_extractors", L], ["occurrences", L], ["embed", B],
+    ["embed_text", S], ["embed_chars", I]],
+  unit_events: [["unit_id", S], ["event_key", S], ["part", S]],
 };
 
 const NOISE_KEYS = new Set(["id", "entryId", "parentId", "sessionId", "threadId", "turnId", "itemId", "requestId", "toolCallId", "callId",
@@ -184,7 +202,9 @@ async function writeTables(tables: Record<string, Row[]>, directory: string) {
     for (const [name, columns] of Object.entries(ATLAS_TABLES)) {
       const rows = tables[name] ?? [];
       const ndjson = join(staging, `${name}.ndjson`);
-      writeFileSync(ndjson, rows.map((row) => JSON.stringify(Object.fromEntries(columns.map(([column]) => [column, row[column] ?? null])))).join("\n"));
+      // One line at a time: a study's native content can exceed the largest single string V8 allows.
+      const fd = openSync(ndjson, "w");
+      try { for (const row of rows) writeSync(fd, `${JSON.stringify(Object.fromEntries(columns.map(([column]) => [column, row[column] ?? null])))}\n`); } finally { closeSync(fd); }
       const path = join(directory, `${name}.parquet`);
       const spec = `{${columns.map(([column, type]) => `${column}: ${quote(type)}`).join(", ")}}`;
       const select = rows.length
@@ -201,7 +221,8 @@ async function writeTables(tables: Record<string, Row[]>, directory: string) {
   }
 }
 
-export async function buildAtlasBundle(requestPath: string, outputRoot: string, options: { now?: () => Date } = {}): Promise<AtlasBundleManifest> {
+export async function buildAtlasBundle(requestPath: string, outputRoot: string,
+  options: { now?: () => Date; embed?: typeof embedTexts } = {}): Promise<AtlasBundleManifest> {
   const request = readRequest(requestPath);
   if (existsSync(outputRoot) && readdirSync(outputRoot).length) throw new Error(`Atlas bundle output ${outputRoot} is not empty; choose a new directory.`);
   const base = dirname(resolve(requestPath));
@@ -212,11 +233,14 @@ export async function buildAtlasBundle(requestPath: string, outputRoot: string, 
   const observationSets = new Map<string, StructuralObservationSet>();
   const assertions = new Map<string, { assertion: BehaviorAssertion; digest: string; review: string; cohorts: Set<string> }>();
   mkdirSync(join(outputRoot, "reports"), { recursive: true });
+  mkdirSync(join(outputRoot, "native"), { recursive: true });
+  const reports = new Map<string, AtlasView>();
 
   for (const cohort of request.cohorts) {
     const atlasPath = resolve(base, cohort.atlasRequest);
     const source: AtlasSource = await loadAtlas(atlasPath);
     const view: AtlasView = await queryAtlas(source);
+    reports.set(cohort.id, view);
     for (const entry of source.input.corpusEntries.filter(({ manifestKind }) => manifestKind === "run")) {
       const bundleRoot = resolve(source.corpusRoot, dirname(entry.manifestPath));
       // Cohorts may carry their own corpus copies: one attempt, one manifest digest, whichever copy is read.
@@ -250,10 +274,41 @@ export async function buildAtlasBundle(requestPath: string, outputRoot: string, 
       matching_cases: view.matchingCases, group_by: JSON.stringify(source.aggregation.groupBy), operator_narrative: source.request.operatorNarrative ?? null });
   }
 
+  // Units carry which judgments cite them and which structural observations draw on them.
+  const citedBy = new Map<string, Array<{ id: string; label: string }>>();
+  for (const { assertion } of assertions.values()) {
+    const label = `${assertion.behavior.categoryId}:${assertion.judgment.disposition === "assessed" ? assertion.judgment.assessment : "abstained"}`;
+    for (const citation of assertion.judgment.citations) {
+      const key = `${assertion.attemptId}/${citation.eventId}`;
+      citedBy.set(key, [...citedBy.get(key) ?? [], { id: assertion.id, label }]);
+    }
+  }
+  const extractorsOf = new Map<string, Set<string>>();
+  for (const [attemptId, set] of observationSets) for (const observation of set.observations) for (const eventId of observation.sourceEventIds) {
+    const key = `${attemptId}/${eventId}`;
+    extractorsOf.set(key, (extractorsOf.get(key) ?? new Set()).add(observation.extractor.id));
+  }
   const eventKeys = new Set<string>();
+  const cloud: Array<AtlasUnit & Row & { row_id: number; t0_ms: number | null; t1_ms: number | null; timed: boolean }> = [];
+  const audits: Record<string, unknown> = {};
+  const lanes: { attempts: LaneMeta[]; usage: Record<string, Array<[number, number]>>; context: Record<string, Array<[number, number]>> } = { attempts: [], usage: {}, context: {} };
+  const attemptMeta: unknown[] = [];
+  const assessmentDocs: unknown[] = [];
   for (const [attemptId, { entry, bundleRoot, cohorts: memberOf }] of [...attempts].sort(([a], [b]) => a.localeCompare(b))) {
     const evidence = await createRetainedBehaviorEvidence(bundleRoot);
     const resolveContent = contentResolver(evidence);
+    const derived = deriveUnits({ attemptId, events: evidence.dataset.events, occurrences: observationSets.get(attemptId)?.occurrences ?? [],
+      resolveContent: (reference) => { const r = resolveContent(reference); return r.status === "resolved" ? r.value : undefined; } });
+    const linksOf = new Map<string, string[]>();
+    for (const link of derived.links) linksOf.set(link.unit_id, [...linksOf.get(link.unit_id) ?? [], link.event_key]);
+    for (const unit of derived.units) {
+      const keys = unit.unit_kind === "episode" ? derived.units.filter((u) => u.episode_id === unit.unit_id).flatMap((u) => linksOf.get(u.unit_id) ?? []) : linksOf.get(unit.unit_id) ?? [];
+      const cites = [...new Map(keys.flatMap((k) => citedBy.get(k) ?? []).map((c) => [c.id, c])).values()].sort((a, b) => a.id.localeCompare(b.id));
+      tables.units!.push({ ...unit, model_id: entry.modelId ?? null, harness_id: entry.harnessId ?? null, task_id: entry.taskId ?? null, trial_id: entry.trialId ?? null,
+        condition: null, terminal_state: entry.terminalState ?? null, cited_assertions: cites.map(({ id }) => id), cited_assessments: cites.map(({ label }) => label),
+        cited: cites.length > 0, observation_extractors: [...new Set(keys.flatMap((k) => [...extractorsOf.get(k) ?? []]))].sort() });
+    }
+    for (const link of derived.links) tables.unit_events!.push(link);
     const rows = evidence.dataset.events.map((event, index) => eventRow(event, index, resolveContent));
     const times = rows.map(({ event_time }) => event_time).filter((t): t is string => typeof t === "string" && Number.isFinite(Date.parse(t))).sort((a, b) => Date.parse(a) - Date.parse(b));
     const first = times[0], last = times.at(-1);
@@ -278,6 +333,47 @@ export async function buildAtlasBundle(requestPath: string, outputRoot: string, 
       unmapped_record_count: evidence.coverage.records.unmapped, first_event_time: first ?? null, last_event_time: last ?? null,
       native_span_seconds: first && last ? (Date.parse(last) - Date.parse(first)) / 1000 : null });
     for (const cohortId of [...memberOf].sort()) tables.attempt_cohorts!.push({ attempt_id: attemptId, cohort_id: cohortId });
+    const arm = tables.attempts!.at(-1)!.condition as string;
+    for (const unit of tables.units!) if (unit.attempt_id === attemptId) unit.condition = arm;
+
+    // Viewer documents for this attempt: cloud rows, swimlane, audit, native records and assessments.
+    const short = attemptId.slice(0, 8);
+    const ownUnits = tables.units!.filter((u) => u.attempt_id === attemptId) as unknown as Array<AtlasUnit & Row>;
+    let carriedTime: number | null = null;
+    const rowsOfAttempt: Array<AtlasUnit & Row & { row_id: number }> = [];
+    for (const unit of ownUnits.filter((u) => u.embed).sort((a, b) => Number(a.seq) - Number(b.seq))) {
+      const t0 = unit.t_start && Number.isFinite(Date.parse(unit.t_start)) ? Date.parse(unit.t_start) : null;
+      const t1 = unit.t_end && Number.isFinite(Date.parse(unit.t_end)) ? Date.parse(unit.t_end) : null;
+      const row = { ...unit, row_id: cloud.length, t0_ms: t0 ?? carriedTime, t1_ms: t0 === null ? carriedTime : t1 ?? t0, timed: t0 !== null };
+      if (t0 !== null) carriedTime = unit.unit_kind === "episode" ? t0 : t1 ?? t0;
+      cloud.push(row);
+      rowsOfAttempt.push(row);
+    }
+    const native = new NativeLines(bundleRoot, relative(base, bundleRoot));
+    const contentOf = (event: UniformEvent) => (event.content.status === "known"
+      ? event.content.value.map(({ nativeReference }) => resolveContent(nativeReference)).flatMap((r) => (r.status === "resolved" ? [r.value] : [])) : []);
+    const evidenceDocs = attemptEvidence({ attemptId, short, condition: arm, trialId: entry.trialId ?? null, cohorts: [...memberOf].sort(), units: rowsOfAttempt,
+      links: derived.links, events: evidence.dataset.events, occurrences: observationSets.get(attemptId)?.occurrences ?? [], native, resolveContent: contentOf });
+    audits[attemptId] = evidenceDocs.audit;
+    writeFileSync(join(outputRoot, "native", `${attemptId}.json`), JSON.stringify(evidenceDocs.native));
+    const attemptRow = { attempt_id: attemptId, task_id: entry.taskId ?? null, condition: arm, trial_id: entry.trialId ?? null, harness_id: entry.harnessId ?? null,
+      model_id: entry.modelId ?? null, terminal_state: entry.terminalState ?? null, failure_class: entry.failureClass ?? null, capture_qualification: entry.captureQualification ?? null };
+    const lane = laneData(attemptRow, rowsOfAttempt, evidence.dataset.events);
+    lane.lane.cited_units = rowsOfAttempt.filter((u) => u.cited && u.unit_kind !== "episode").length;
+    lanes.attempts.push(lane.lane);
+    if (lane.usage) lanes.usage[attemptId] = lane.usage;
+    if (lane.context) lanes.context[attemptId] = lane.context;
+    const eventTypes: Record<string, number> = {};
+    for (const event of evidence.dataset.events) { const k = `${event.family} · ${String(event.attributes.eventType ?? event.attributes.itemType ?? event.attributes.method ?? event.source.nativeType)}`; eventTypes[k] = (eventTypes[k] ?? 0) + 1; }
+    attemptMeta.push({ ...attemptRow, short, cohorts: [...memberOf].sort(), bundle: relative(base, bundleRoot), native_span_seconds: tables.attempts!.at(-1)!.native_span_seconds,
+      native_record_count: evidence.coverage.records.total, unmapped_record_count: evidence.coverage.records.unmapped, event_count: evidence.dataset.events.length,
+      event_types: eventTypes, units: ownUnits.filter((u) => u.unit_kind !== "episode").length, tool_calls: ownUnits.filter((u) => u.unit_kind === "tool").length });
+    for (const { assertion, review } of [...assertions.values()].filter(({ assertion: a }) => a.attemptId === attemptId)) {
+      const flags = Object.fromEntries(tables.assessment_cohorts!.filter((r) => r.assertion_id === assertion.id)
+        .map((r) => [String(r.cohort_id), { included: r.included === true, disputed: r.disputed === true, review: String(r.review_outcome ?? "") }]));
+      assessmentDocs.push(assessmentDoc(assertion, { short, condition: arm, taskId: entry.taskId ?? null, trialId: entry.trialId ?? null, review,
+        cohorts: Object.keys(flags).length ? flags : Object.fromEntries([...memberOf].map((c) => [c, { included: true }])) }, evidenceDocs.linkCitation, native));
+    }
   }
 
   for (const [attemptId, set] of observationSets) {
@@ -338,13 +434,55 @@ export async function buildAtlasBundle(requestPath: string, outputRoot: string, 
   }
 
   const tableIndex = await writeTables(tables, join(outputRoot, "tables"));
+
+  // The cloud: units.arrow (Arrow IPC, so DuckDB-WASM needs no extensions) and the embeddings in row order.
+  const embeddingConfig = { provider: "fireworks" as const, model: request.embeddings?.model ?? DEFAULT_EMBEDDING_MODEL,
+    dimensions: request.embeddings?.dimensions ?? 256, cache: resolve(base, request.embeddings?.cache ?? ".atlas-cache/embeddings") };
+  const vectors = await (options.embed ?? embedTexts)(cloud.map((u) => u.embed_text), embeddingConfig);
+  writeFileSync(join(outputRoot, "embeddings.f32"), Buffer.from(vectors.buffer, vectors.byteOffset, vectors.byteLength));
+  const strings = (key: string) => cloud.map((u) => (u[key as keyof typeof u] ?? null) as string | null);
+  const numbers = (key: string) => cloud.map((u) => (typeof u[key as keyof typeof u] === "number" ? u[key as keyof typeof u] as number : null));
+  const lists = (key: string) => vectorFromArray(cloud.map((u) => [...(u[key as keyof typeof u] as string[] ?? [])]), new List(new Field("item", new Utf8(), true)));
+  const FAMILY: Record<string, string> = { message: "messages", compaction: "messages", episode: "episodes", tool: "tools" };
+  const cloudTable = new Table({
+    row_id: makeVector(Int32Array.from(cloud.map((u) => u.row_id))),
+    ...Object.fromEntries(["unit_id", "attempt_id", "unit_kind", "subkind", "role", "episode_id", "model_id", "harness_id", "task_id", "trial_id", "condition",
+      "terminal_state", "tool_name", "tool_kind", "command_head", "check_kind", "target", "status", "error_signature", "first_event_key", "embed_text"]
+      .map((key) => [key, vectorFromArray(strings(key), new Utf8())])),
+    family: vectorFromArray(cloud.map((u) => FAMILY[u.unit_kind] ?? "tools"), new Utf8()),
+    ...Object.fromEntries(["seq", "exit_code", "duration_seconds", "input_chars", "output_chars", "output_lines", "lines_added", "lines_removed", "tool_count",
+      "error_count", "event_count", "t0_ms", "t1_ms"].map((key) => [key, vectorFromArray(numbers(key))])),
+    timed: vectorFromArray(cloud.map((u) => u.timed)),
+    cited: vectorFromArray(cloud.map((u) => u.cited === true)),
+    ...Object.fromEntries(["check_kinds", "writes", "occurrences", "cited_assessments"].map((key) => [key, lists(key)])),
+  });
+  writeFileSync(join(outputRoot, "units.arrow"), tableToIPC(cloudTable, "stream"));
+
+  writeFileSync(join(outputRoot, "lanes.json"), JSON.stringify(lanes));
+  writeFileSync(join(outputRoot, "audit.json"), JSON.stringify({ study: request.id, attempts: audits }));
+  const certified = Object.fromEntries([...reports].map(([id, view]) => [id, { source: `reports/${id}.json`, generated_at: view.generatedAt,
+    group_by: (view.report.policy as { groupBy?: unknown }).groupBy ?? null,
+    cells: view.report.groups.flatMap((group) => (group.behaviors ?? []).map((b) => ({ group: group.dimensions, category: b.behavior.categoryId,
+      counts: Object.fromEntries(b.assessments.map((a) => [a.assessment, a.measurement.numerator.value])),
+      denominator: Math.max(...b.assessments.map((a) => a.measurement.denominator.value)),
+      assertions: b.assertions.filter((a) => a.included).map((a) => a.id) }))) }]));
+  writeFileSync(join(outputRoot, "assessments.json"), JSON.stringify({ study: request.id, generated_by: `${ATLAS_BUNDLE_BUILDER.id} ${ATLAS_BUNDLE_BUILDER.version}`,
+    outcomes: ["constructive", "mixed", "adverse", "context-dependent", "abstained"],
+    cohorts: [...reports].map(([id, view]) => ({ id, title: view.title, report: `reports/${id}.json`, certified: true })),
+    attempts: attemptMeta, assessments: assessmentDocs, certified,
+    notes: ["Outcome 'abstained' = disposition abstained (no assessment value).",
+      "Certified tallies are the cohort aggregation reports in this bundle; counts computed in the viewer are exploratory."] }));
   const files = [...readdirSync(join(outputRoot, "reports")).map((f) => ({ path: `reports/${f}`, role: "cohort-report" })),
-    ...Object.values(tableIndex).map(({ path }) => ({ path, role: "table" }))]
+    ...Object.values(tableIndex).map(({ path }) => ({ path, role: "table" })),
+    ...readdirSync(join(outputRoot, "native")).map((f) => ({ path: `native/${f}`, role: "native-records" })),
+    ...[["units.arrow", "cloud-units"], ["embeddings.f32", "cloud-embeddings"], ["lanes.json", "swimlanes"], ["audit.json", "audits"], ["assessments.json", "assessments"]]
+      .map(([path, role]) => ({ path: path!, role: role! }))]
     .map(({ path, role }) => ({ path, role, bytes: statSync(join(outputRoot, path)).size, sha256: sha256(readFileSync(join(outputRoot, path))) }))
     .sort((a, b) => a.path.localeCompare(b.path));
   const manifest: AtlasBundleManifest = {
-    schemaVersion: "ebo.atlas-bundle/v1", id: request.id, title: request.title, builder: ATLAS_BUNDLE_BUILDER, tablesVersion: ATLAS_TABLES_VERSION,
+    schemaVersion: "ebo.atlas-bundle/v1", id: request.id, title: request.title, builder: ATLAS_BUNDLE_BUILDER, tablesVersion: ATLAS_TABLES_VERSION, unitsVersion: ATLAS_UNITS_VERSION,
     createdAt: (options.now ?? (() => new Date()))().toISOString(), request: { digest: `sha256:${digestMetadata(request).value}` },
+    cloud: { units: cloud.length, embeddings: { file: "embeddings.f32", model: embeddingConfig.model, dimensions: embeddingConfig.dimensions } },
     cohorts, tables: tableIndex, files,
   };
   const errors = validateArtifact("atlas bundle", manifest);

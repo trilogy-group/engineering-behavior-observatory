@@ -39,7 +39,8 @@ export const CAT_SQL = `CASE WHEN unit_kind <> 'tool' THEN unit_kind
   WHEN check_kind IN ('test', 'build', 'typecheck', 'lint', 'format') THEN 'check'
   WHEN check_kind = 'inspect' THEN 'inspect' WHEN check_kind = 'vcs' THEN 'vcs'
   WHEN tool_kind = 'shell' THEN 'shell' ELSE 'other' END`;
-const FAILURE_OCC = ["failure-then-same-tool", "failure-then-other-tool", "consecutive-failure", "response-to-failure"];
+// EBO occurrence types (failure-response), and the lab's earlier unit tags for lab bundles.
+const FAILURE_OCC = ["failure-response", "failure-then-same-tool", "failure-then-other-tool", "consecutive-failure", "response-to-failure"];
 
 export const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 /** A class-name token from bundle data: anything outside [A-Za-z0-9_-] becomes "_" (bundle content is untrusted). */
