@@ -61,13 +61,16 @@ export function laneData(attempt: Attempt, units: readonly AtlasUnit[], events: 
   const context = increments.filter(({ a }) => (a.usageScope ?? "assistant") === "assistant")
     .map(({ t, a }) => [t, n(a.inputTokens) + n(a.cacheReadInputTokens) + n(a.cacheCreationInputTokens) + n(a.cacheWriteInputTokens)] as [number, number]);
   const outputPerRequest = increments.some(({ a }) => typeof a.outputTokens === "number");
+  const completeIncrements = increments.length > 0 && increments.every(({ a }) => typeof a.totalTokens === "number" || (typeof a.inputTokens === "number" && typeof a.outputTokens === "number"));
   const lane: LaneMeta = {
     ...attempt,
     t_start_ms: starts.length ? Math.min(...starts) : null, t_end_ms: ends.length ? Math.max(...ends) : null,
     units: steps.length, tools: steps.filter((u) => u.unit_kind === "tool").length, errors: steps.filter((u) => u.status === "error").length,
     compactions: steps.filter((u) => u.unit_kind === "compaction").length, cited_units: 0,
     usage_semantics: usage ? "per-turn" : final.records ? "final-only" : "none",
-    tokens_total: final.records ? final.tokens : usage?.at(-1)?.[1] ?? null,
+    // A token total from increments only when every increment is complete (a total, or input and output): Agent SDK
+    // increments carry no per-request output, so an interrupted attempt without a final result has no total.
+    tokens_total: final.records ? final.tokens : completeIncrements ? usage?.at(-1)?.[1] ?? null : snapshots.length && !increments.length ? usage?.at(-1)?.[1] ?? null : null,
     cost_usd: final.cost === null ? null : Math.round(final.cost * 1e4) / 1e4,
     context_max: context.length ? Math.max(...context.map(([, v]) => v)) : null,
     output_tokens: outputPerRequest ? "per-request" : final.records ? "final-only" : "none",
