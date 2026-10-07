@@ -3,6 +3,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { DuckDBConnection } from "@duckdb/node-api";
 
+import { ownPointer } from "./atlas-bundle.js";
+
 /**
  * Claims and view specs in an Atlas bundle. Claims are authored by the study (never generated) and validated here:
  * every number recomputes to its stated value, every supporting assessment exists and every cited native line still
@@ -34,12 +36,7 @@ async function rowsOf(connection: DuckDBConnection, sql: string): Promise<Array<
 }
 
 function pointer(document: unknown, path: string): unknown {
-  let current = document;
-  for (const raw of path.split("/").slice(1)) {
-    const key = raw.replace(/~1/gu, "/").replace(/~0/gu, "~");
-    current = current !== null && typeof current === "object" && Object.hasOwn(current, key) ? (current as Record<string, unknown>)[key] : undefined;
-  }
-  return current;
+  return ownPointer(document, path.split("/").slice(1).map((t) => t.replace(/~1/gu, "/").replace(/~0/gu, "~")));
 }
 
 export async function validateClaims(source: ClaimsSource, context: {

@@ -154,16 +154,17 @@ function contentResolver(evidence: RetainedBehaviorEvidence) {
     const base = marker === -1 ? reference.recordLocator : reference.recordLocator.slice(0, marker);
     const key = `${reference.artifactId}\0${base === "" ? "#" : base}`;
     if (!records.has(key)) return { status: "missing-record" };
-    let current = records.get(key);
-    for (const segment of (marker === -1 ? "" : reference.recordLocator.slice(marker + 1)).split("/").slice(1)) {
-      const token = segment.replace(/~1/gu, "/").replace(/~0/gu, "~");
-      // Own properties only: a pointer segment such as __proto__ never reaches an inherited object.
-      if (current === null || typeof current !== "object" || !Object.hasOwn(current, token)) return { status: "bad-pointer" };
-      current = (current as Record<string, unknown>)[token];
-      if (current === undefined) return { status: "bad-pointer" };
-    }
-    return { status: "resolved", value: current };
+    const tokens = (marker === -1 ? "" : reference.recordLocator.slice(marker + 1)).split("/").slice(1).map((t) => t.replace(/~1/gu, "/").replace(/~0/gu, "~"));
+    const value = ownPointer(records.get(key), tokens);
+    return value === undefined ? { status: "bad-pointer" } : { status: "resolved", value };
   };
+}
+
+/** A JSON pointer over own properties only: a segment such as __proto__ never reaches an inherited object. */
+export function ownPointer(value: unknown, tokens: readonly string[]): unknown {
+  if (!tokens.length) return value;
+  const [token, ...rest] = tokens;
+  return value !== null && typeof value === "object" && Object.hasOwn(value, token!) ? ownPointer((value as Record<string, unknown>)[token!], rest) : undefined;
 }
 
 function eventRow(event: UniformEvent, index: number, resolve: ReturnType<typeof contentResolver>): Row {
