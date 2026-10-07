@@ -83,7 +83,9 @@ async function main() {
       <button class="focus-btn" data-focus ${target("setPanelFocus")} title="Reading mode: shrink the cloud so the panel gets the window">Expand panel</button>
     </div>
     ${TABS.map((t) => `<div class="tab-body" id="body-${t}" role="tabpanel" aria-labelledby="tab-${t}"></div>`).join("")}`;
-  const highlight = (ids: number[] | null) => atlas.update({ highlight: ids });
+  // The cloud highlight is viewer state (undo, URL), not only a rendering detail.
+  let highlighted: number[] | null = null;
+  const highlight = (ids: number[] | null) => { highlighted = ids?.length ? [...ids] : null; atlas.update({ highlight: highlighted }); };
   const lanesData = await getJson<LanesData>("lanes.json");
   const [assessDoc, auditDoc, claimsDoc, viewsDoc] = await Promise.all([
     getJson<AssessDoc>("assessments.json"), getJson<AuditDoc>("audit.json"), getJson<ClaimsDoc>("claims.json"), getJson<ViewsDoc>("views.json")]);
@@ -217,6 +219,7 @@ async function main() {
     args: obj({ tool: { type: "string" }, input: { type: "object" } }, ["tool"]),
     run: async ({ tool, input }) => { const result = await eaTool(tool, input ?? {}); lastCloudResult = result; return `Ran Embedding Atlas tool ${tool}.`; } });
   let lastCloudResult: unknown = null;
+  provide({ key: "highlight", get: () => ({ rows: highlighted }), apply: (st: { rows: number[] | null }) => { highlight(st.rows); } });
   provide({ key: "cloud", get: () => {
       const st = cloudState();
       return { viewport: st.viewport ?? null, brush: st.brush ?? null, legend: st.legend?.selection ?? null } as Json;

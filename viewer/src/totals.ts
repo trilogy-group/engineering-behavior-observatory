@@ -69,7 +69,7 @@ export function renderTotals(view: HTMLElement, task: string, lanes: LaneMeta[],
   const share = (us: Unit[], k: string) => (us.length ? us.filter((u) => u.cat === k).length / us.length : NaN);
   const dcell = (p: Unit[], r: Unit[], k: string) => {
     const sp = share(p, k), sr = share(r, k);
-    if (!p.length || Number.isNaN(sp)) return `<td class="num muted">—</td>`;
+    if (Number.isNaN(sp) || Number.isNaN(sr)) return `<td class="num muted" title="No tool calls ${Number.isNaN(sp) ? "inside" : "outside"} the windows to compare">—</td>`;
     const d = (sp - sr) * 100, w = Math.min(40, Math.abs(d) * 1.2);
     return `<td class="num" title="${esc(k)}: ${pct(sp)} in windows vs ${pct(sr)} elsewhere">${pct(sp)} <span class="muted">vs ${pct(sr)}</span>
       <span class="dbar"><span class="${d >= 0 ? "pos" : "neg"}" style="width:${w.toFixed(0)}px"></span> ${d >= 0 ? "+" : ""}${d.toFixed(0)} pp</span></td>`;

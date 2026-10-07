@@ -44,8 +44,8 @@ const FAILURE_OCC = ["failure-then-same-tool", "failure-then-other-tool", "conse
 export const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 /** A class-name token from bundle data: anything outside [A-Za-z0-9_-] becomes "_" (bundle content is untrusted). */
 export const cls = (s: unknown) => String(s ?? "").replace(/[^A-Za-z0-9_-]/g, "_");
-/** A number from bundle data for markup; anything else renders as NaN, never as markup. */
-export const num = (x: unknown) => String(Number(x));
+/** A number from bundle data for markup; a missing or non-numeric value renders as "—" (unavailable), never 0 or markup. */
+export const num = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? String(x) : "—");
 const fmtTok = (n: number | null) => n == null ? "" : n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(0) + "k" : String(n);
 export const fmtDur = (ms: number) => {
   const s = Math.round(ms / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
@@ -187,9 +187,13 @@ export class SwimlanesPanel {
   /** Called from the cluster × arm panel: emphasize one cluster; switch to the task where it is most common if absent here. */
   async focusCluster(id: number, label: string) {
     this.focus = { id, label };
-    const res = await this.coordinator.query(`SELECT task_id, count(*) AS n FROM units WHERE cluster_id = ${id} GROUP BY 1 ORDER BY n DESC`);
+    const res = await this.coordinator.query(`SELECT task_id, count(*) AS n FROM units WHERE cluster_id = ${Number(id)} GROUP BY 1 ORDER BY n DESC`);
     const counts = rowsOf(res);
-    if (counts.length && !counts.some((c) => c.task_id === this.task)) { this.task = counts[0].task_id; this.mode = "lanes"; await this.load(); }
+    if (counts.length && !counts.some((c) => c.task_id === this.task)) {
+      this.task = counts[0].task_id; this.mode = "lanes";
+      if (this.armFilter !== "all" && !this.arms().includes(this.armFilter)) this.armFilter = "all";
+      await this.load();
+    }
     else this.render();
   }
 

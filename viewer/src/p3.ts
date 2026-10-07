@@ -187,7 +187,7 @@ export class Evidence {
     let body = r.text ?? "";
     if (!r.truncated) { try { body = JSON.stringify(JSON.parse(body), null, 1); } catch { /* not JSON */ } }
     return `<div class="rec"><div class="rec-h"><b>${esc(r.part ?? "")}</b> ${esc(r.path ?? r.artifact)} <span class="mono">${esc(r.locator)}</span>
-      · ${Number(r.chars ?? 0).toLocaleString()} chars${r.truncated ? " (middle omitted)" : ""} · sha256 <span class="mono" title="${esc(r.sha256 ?? "")}">${short(r.sha256)}…</span></div>
+      · ${typeof r.chars === "number" ? r.chars.toLocaleString() : "—"} chars${r.truncated ? " (middle omitted)" : ""} · sha256 <span class="mono" title="${esc(r.sha256 ?? "")}">${short(r.sha256)}…</span></div>
       ${body.length > SHOW_MAX ? `<pre class="rec-t">${esc(body.slice(0, SHOW_MAX))}</pre><p class="small muted">Showing the first ${SHOW_MAX.toLocaleString()} of ${body.length.toLocaleString()} chars (display only; the record is complete). <button class="link" data-full="${esc(r.sha256 ?? "")}">Show full record</button></p><template data-full-text="${esc(r.sha256 ?? "")}">${esc(body)}</template>`
         : `<pre class="rec-t">${esc(body)}</pre>`}</div>`;
   }
@@ -247,12 +247,12 @@ export class Evidence {
     const A = this.audit?.attempts[attemptId];
     const m = this.meta.get(attemptId);
     if (!A || !m) return;
-    const runCell = (r: Run | null | undefined) => r ? `<button class="link" data-row="${num(r.row_id)}" ${target("openUnit", `${attemptId}:${r.row_id}`)}>step ${num(r.step)}</button> · ${fmtT(r.t_ms)}${r.status === "error" ? ` · <span class="bad">failed</span>` : ""}${r.exit_code != null ? ` · exit ${r.exit_code}` : ""}${r.output_redirected ? ` · <span class="muted">output redirected</span>` : ""}` : `<span class="muted">none captured</span>`;
+    const runCell = (r: Run | null | undefined) => r ? `<button class="link" data-row="${num(r.row_id)}" ${target("openUnit", `${attemptId}:${r.row_id}`)}>step ${num(r.step)}</button> · ${fmtT(r.t_ms)}${r.status === "error" ? ` · <span class="bad">failed</span>` : ""}${r.exit_code != null ? ` · exit ${num(r.exit_code)}` : ""}${r.output_redirected ? ` · <span class="muted">output redirected</span>` : ""}` : `<span class="muted">none captured</span>`;
     const finalHtml = () => {
       if (!A.final) return `<p class="muted">No final assistant message captured.</p>`;
       let t = esc(A.final.text);
       for (const c of A.final.claims) { const s = esc(c.text); if (s && t.includes(s)) t = t.split(s).join(`<mark>${s}</mark>`); }
-      return `<p class="muted small">${Number(A.final.chars).toLocaleString()} chars · <button class="link" data-row="${num(A.final.row_id)}" ${target("openUnit", `${attemptId}:${A.final.row_id}`)}>open native record</button> · highlighted: lines that name a check with a pass word</p><pre class="rec-t final">${t}</pre>`;
+      return `<p class="muted small">${typeof A.final.chars === "number" ? A.final.chars.toLocaleString() : "—"} chars · <button class="link" data-row="${num(A.final.row_id)}" ${target("openUnit", `${attemptId}:${A.final.row_id}`)}>open native record</button> · highlighted: lines that name a check with a pass word</p><pre class="rec-t final">${t}</pre>`;
     };
     const asm = this.assessmentsOf(attemptId);
     this.drawer.open({ kind: "audit", attemptId }, `Audit · trial ${m.trial_id} ${m.short}`, () => `

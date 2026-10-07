@@ -79,6 +79,18 @@ for (const tab of tabs) {
   await page.evaluate(() => window.ebo.run("closeDrawer"));
 }
 
+// Undo restores the state before the last change, including the cloud highlight.
+report.undo = await page.evaluate(async () => {
+  await window.ebo.run("openTab", { tab: "lanes" });
+  const attempt = document.querySelector(".lane-label")?.dataset.lane;
+  const before = JSON.stringify(window.ebo.getState().highlight);
+  await window.ebo.run("highlightAttempt", { attemptId: attempt });
+  const during = window.ebo.getState().highlight.rows?.length ?? 0;
+  await window.ebo.run("undo");
+  return { highlighted: during, restored: JSON.stringify(window.ebo.getState().highlight) === before };
+});
+if (!report.undo.highlighted || !report.undo.restored) failures.push({ undo: report.undo });
+
 // The cloud: viewport and brush settable and readable through commands (needs WebGPU, so HEADED=1 on macOS).
 const hasCloud = await page.evaluate(() => window.ebo.listCloudTools().length > 0 && window.ebo.getState().cloud !== undefined);
 report.cloudTools = await page.evaluate(() => window.ebo.listCloudTools().map((t) => t.name));
