@@ -20,6 +20,12 @@ npm test
 git diff --check
 ```
 
+The Atlas viewer is an npm workspace in `viewer/`; the root `npm ci` installs it.
+`npm run build:viewer` builds `viewer/dist`, which `npm pack` includes, and
+`npm run typecheck --workspace viewer` checks it. With a bundle served by
+`ebo atlas serve --bundle`, `npm run smoke --workspace viewer` drives the viewer
+through its commands in an installed Chrome (`HEADED=1` renders the WebGPU cloud).
+
 The test suite is deterministic by default. Live provider smokes are opt-in,
 consume external capacity, and require approved credentials. Their instructions
 belong in the relevant harness guide. Do not treat a skipped live test as proof

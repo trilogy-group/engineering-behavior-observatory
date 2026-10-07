@@ -127,7 +127,11 @@ ebo comparison check <request.json>
 ebo aggregate build <request.json> <output.json>
 ebo atlas build <request.json> <output-root> [--share] [--filter <name=value>]
 ebo atlas serve <request.json> [--port <port>]
+ebo atlas serve --bundle <bundle-dir> [--port <port>]
 ```
+
+`atlas serve --bundle` shows one Atlas bundle in the interactive viewer at
+`http://127.0.0.1:13012` (see the [Behavior Atlas guide](../guides/atlas.md#interactive-viewer)).
 
 ## Operational behavior
 

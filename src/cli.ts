@@ -46,6 +46,7 @@ import {
   type SemanticJudgeRequest,
 } from "./semantic-judge.js";
 import { createRetainedStructuralObservationSet } from "./structural-observations.js";
+import { serveAtlasBundle } from "./atlas-viewer.js";
 import { DEFAULT_RATING_POLICY, rateRetainedOccurrences, type OccurrenceRatings } from "./occurrence-ratings.js";
 import { prepareRetainedJudgeRequest, type JudgePrepareSpec } from "./judge-prepare.js";
 import { checkRetainedClaims, DEFAULT_CLAIM_CHECK_POLICY } from "./claim-checks.js";
@@ -89,6 +90,7 @@ const usage = `Usage: ebo [--help] | validate <artifact.json>... | task-packet <
        ebo aggregate build <request.json> <output.json>
        ebo atlas build <request.json> <output-root> [--share] [--filter <name=value>]
        ebo atlas serve <request.json> [--port <port>]
+       ebo atlas serve --bundle <bundle-dir> [--port <port>]
        ebo observations create <run-bundle-root> <output.json>
        ebo observations corpus <corpus-root> <index.jsonl> <output-root> [corpus query flags]
        ebo occurrences rate <run-bundle-root> <observations.json> <output.json> --provider <typesafe|fireworks> [--model <id>] [--choice-confidence <0-1>] [--noul-margin <0-0.5>] [--fallback-model <codex-model> [--fallback-effort <effort>]]
@@ -205,13 +207,19 @@ export function main(
   if (args[0] === "atlas") {
     return (async () => {
     try {
+      if (args[1] === "serve" && args[2] === "--bundle" && args[3] && (args.length === 4 || (args.length === 6 && args[4] === "--port"))) {
+        const server = await serveAtlasBundle(args[3], args[5] === undefined ? 13012 : Number(args[5]));
+        const address = server.address();
+        write(`Atlas viewer listening at http://127.0.0.1:${typeof address === "object" && address ? address.port : 13012}\n`);
+        return 0;
+      }
       if (args[1] === "serve" && args[2] && (args.length === 3 || (args.length === 5 && args[3] === "--port"))) {
         const server = await serveAtlas(args[2], args[4] === undefined ? 13011 : Number(args[4]));
         const address = server.address();
         write(`Atlas listening at http://127.0.0.1:${typeof address === "object" && address ? address.port : 13011}\n`);
         return 0;
       }
-      if (args[1] !== "build" || !args[2] || !args[3]) throw new Error("Usage: ebo atlas build <request.json> <output-root> [--share] [--filter <name=value>] | atlas serve <request.json> [--port <port>]");
+      if (args[1] !== "build" || !args[2] || !args[3]) throw new Error("Usage: ebo atlas build <request.json> <output-root> [--share] [--filter <name=value>] | atlas serve <request.json> [--port <port>] | atlas serve --bundle <bundle-dir> [--port <port>]");
       const filters: AtlasFilters = {};
       let share = false;
       for (let i = 4; i < args.length; i++) {

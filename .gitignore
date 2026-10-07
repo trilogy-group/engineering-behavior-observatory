@@ -1,5 +1,5 @@
 
-node_modules/
+node_modules
 dist/
 *.log
 .DS_Store
@@ -27,3 +27,6 @@ credentials/
 !.opensymphony/memory/
 .opensymphony/memory/*
 !.opensymphony/memory/memory.yaml
+
+# Built Atlas viewer (shipped in the npm package, not in git)
+/viewer/dist/

@@ -1,0 +1,106 @@
+/* GENERATED from design/DESIGN.md by design/build-tokens.mjs (@google/design.md@0.4.0); do not edit. */
+:root {
+  color-scheme: light;
+  --primary: #2268c0;
+  --on-primary: #ffffff;
+  --surface-0: #f4f3f0;
+  --surface-1: #fcfcfb;
+  --surface-2: #ffffff;
+  --border: #dedcd5;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #706e68;
+  --div-pos: #2a78d6;
+  --div-neg: #e34948;
+  --div-mid: #d9d7cf;
+  --fam-messages: #2a78d6;
+  --fam-episodes: #eb6834;
+  --fam-tools: #1baf7a;
+  --cat-inspect: #2a78d6;
+  --cat-edit: #eb6834;
+  --cat-read: #1baf7a;
+  --cat-check: #eda100;
+  --cat-shell: #e87ba4;
+  --cat-vcs: #4a3aa7;
+  --cat-other: #a3a29b;
+  --status-critical: #d03b3b;
+  --status-good: #1a7f52;
+  --ribbon: #2a78d6;
+  --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --size-body: 13px;
+  --weight-body: 400;
+  --font-small: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --size-small: 11px;
+  --weight-small: 400;
+  --font-heading: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --size-heading: 14px;
+  --weight-heading: 600;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --size-mono: 12px;
+  --weight-mono: 400;
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --r-pill: 999px;
+  --s-xs: 2px;
+  --s-sm: 4px;
+  --s-md: 8px;
+  --s-lg: 12px;
+  --s-xl: 16px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --primary: #3987e5;
+    --surface-0: #121211;
+    --surface-1: #1a1a19;
+    --surface-2: #222220;
+    --border: #353532;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #9a998f;
+    --div-pos: #3987e5;
+    --div-neg: #e66767;
+    --div-mid: #55554f;
+    --fam-messages: #3987e5;
+    --fam-episodes: #d95926;
+    --fam-tools: #199e70;
+    --cat-inspect: #3987e5;
+    --cat-edit: #d95926;
+    --cat-read: #199e70;
+    --cat-check: #c98500;
+    --cat-shell: #d55181;
+    --cat-vcs: #9085e9;
+    --cat-other: #6f6e68;
+    --status-critical: #e66767;
+    --status-good: #3fbf86;
+    --ribbon: #3987e5;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --primary: #3987e5;
+  --surface-0: #121211;
+  --surface-1: #1a1a19;
+  --surface-2: #222220;
+  --border: #353532;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #9a998f;
+  --div-pos: #3987e5;
+  --div-neg: #e66767;
+  --div-mid: #55554f;
+  --fam-messages: #3987e5;
+  --fam-episodes: #d95926;
+  --fam-tools: #199e70;
+  --cat-inspect: #3987e5;
+  --cat-edit: #d95926;
+  --cat-read: #199e70;
+  --cat-check: #c98500;
+  --cat-shell: #d55181;
+  --cat-vcs: #9085e9;
+  --cat-other: #6f6e68;
+  --status-critical: #e66767;
+  --status-good: #3fbf86;
+  --ribbon: #3987e5;
+}
