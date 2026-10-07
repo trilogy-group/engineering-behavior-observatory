@@ -26,7 +26,7 @@ export interface Assessment {
 }
 export interface AttemptMeta { attempt_id: string; short: string; condition: string; task_id: string; trial_id: string; harness_id: string; model_id: string; terminal_state: string; failure_class: string; cohorts: string[]; bundle: string; native_span_seconds: number | null;
   native_record_count?: number | null; unmapped_record_count?: number | null; event_count?: number | null; event_types?: Record<string, number>; units?: number; tool_calls?: number }
-interface CertCell { group: Record<string, string>; category: string; counts: Record<string, number>; denominator: number; assertions: string[] }
+interface CertCell { group: Record<string, string>; category: string; counts: Record<string, number>; denominator: number; assertions: string[]; conditions?: string[] }
 export interface AssessDoc {
   study: string; cohorts: { id: string; title: string; certified: boolean; report: string | null }[]; attempts: AttemptMeta[]; assessments: Assessment[];
   certified: Record<string, { source: string; generated_at: string; group_by: string[]; cells: CertCell[] }>; notes: string[];
@@ -435,9 +435,19 @@ export class MatrixPanel {
   private cats() { return [...new Set(this.ev.doc.assessments.map((a) => a.category))].sort(); }
   private certCell(cat: string, arm: string) {
     const c = this.ev.doc.certified[this.cohort];
-    if (!c || this.task !== "all") return null;
+    if (!c) return null;
     const m = this.ev.doc.attempts.find((x) => x.condition === arm);
     if (!m) return null;
+    // EBO bundles record each cell's arms. Only cells covering this arm alone are comparable with it; report groups
+    // partition attempts, so the arm's cells (one per task, say) add up to the arm's certified counts.
+    if (c.cells.some((x) => x.conditions)) {
+      const own = c.cells.filter((x) => x.category === cat && x.conditions?.length === 1 && x.conditions[0] === arm && (this.task === "all" || x.group.task === this.task));
+      if (!own.length || (this.task !== "all" && !own.every((x) => "task" in x.group))) return null;
+      const counts: Record<string, number> = {};
+      for (const x of own) for (const [k, v] of Object.entries(x.counts)) counts[k] = (counts[k] ?? 0) + v;
+      return { group: own[0]!.group, category: cat, counts, denominator: own.reduce((sum, x) => sum + x.denominator, 0), assertions: own.flatMap((x) => x.assertions), conditions: [arm] };
+    }
+    if (this.task !== "all") return null;
     return c.cells.find((x) => x.category === cat && (x.group.model ?? m.model_id) === m.model_id && (x.group.harness ?? m.harness_id) === m.harness_id && (!x.group.task || x.group.task === m.task_id)) ?? null;
   }
   render() {

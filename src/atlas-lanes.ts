@@ -47,7 +47,9 @@ export function laneData(attempt: Attempt, units: readonly AtlasUnit[], events: 
     else if (semantics === "cumulative-snapshot" && carried !== null) snapshots.push([carried, total(a)]);
     // A final record counts only when it carries token dimensions (a duration- or cost-only final is not usage).
     else if (semantics === "cumulative-final") {
-      if (["totalTokens", "inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"].some((k) => typeof a[k] === "number")) { final.records += 1; final.tokens += total(a); }
+      // Tokens only from a complete final: a reported total, or both input and output (cache counts may be absent).
+      // A partial final (one dimension) is not a total.
+      if (typeof a.totalTokens === "number" || (typeof a.inputTokens === "number" && typeof a.outputTokens === "number")) { final.records += 1; final.tokens += total(a); }
       if (typeof a.totalCostUsd === "number") final.cost = (final.cost ?? 0) + a.totalCostUsd;
     }
   }

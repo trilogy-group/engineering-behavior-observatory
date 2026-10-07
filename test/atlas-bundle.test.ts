@@ -10,6 +10,7 @@ import { ATLAS_TABLES, buildAtlasBundle, flattenText, verifyAtlasBundle, type At
 import { loadAtlas } from "../src/atlas.js";
 import { laneData } from "../src/atlas-lanes.js";
 import { nativeRecordDigest } from "../src/atlas-evidence.js";
+import { validateClaims } from "../src/atlas-claims.js";
 import { createHash } from "node:crypto";
 import { main } from "../src/cli.js";
 import { createAtlasFixture } from "./atlas-fixture.js";
@@ -122,4 +123,27 @@ test("native record digests: a line record hashes its line, any other locator th
   assert.equal(nativeRecordDigest(file, "")!.sha256, createHash("sha256").update(file).digest("hex"));
   assert.equal(nativeRecordDigest(Buffer.from([0x1f, 0x8b, 0, 1]), "#/workspace")!.binary, true, "binary files keep their digest, not their text");
   assert.equal(nativeRecordDigest(null, "line:1"), undefined);
+});
+
+test("claims: a certified filter on a dimension the report does not group by fails instead of widening the population", async () => {
+  const db = await DuckDBInstance.create(":memory:", { autoinstall_known_extensions: "false", autoload_known_extensions: "false" });
+  const connection = await db.connect();
+  try {
+    await connection.run("CREATE TABLE assessments (assertion_id VARCHAR)");
+    const cells = [{ group: { model: "m", task: "t" }, category: "verification", counts: { constructive: 2 }, denominator: 3 }];
+    const claim = (where: Record<string, string>) => ({ study: "s", source: { file: "f", title: "t" }, number_kinds: {},
+      claims: [{ id: "C1", type: "descriptive", text: "x", source_section: "s", support: [], numbers: [{ id: "n", label: "n", value: 2, kind: "certified" as const, expr: { cohort: "c", where, outcome: "constructive" } }] }] });
+    const context = { connection, certified: { c: { cells } }, reports: {}, assessments: [], audits: {}, attempts: {}, viewIds: new Set<string>(), recordSha256: () => undefined };
+    assert.equal((await validateClaims(claim({ model: "m" }), context)).validated, true);
+    const bad = await validateClaims(claim({ model: "m", trial: "1" }), context);
+    assert.equal(bad.validated, false);
+    assert.match(bad.failures[0]!, /not grouped by trial/u);
+  } finally { connection.closeSync(); db.closeSync(); }
+});
+
+test("lane usage: a final with one token dimension is not a token total", () => {
+  const event = (attributes: Record<string, unknown>) => ({ nativeTime: { status: "known", value: "2026-10-07T00:00:00.000Z" }, attributes }) as never;
+  const attempt = { attempt_id: "a", task_id: null, condition: null, trial_id: null, harness_id: null, model_id: null, terminal_state: null, failure_class: null, capture_qualification: null };
+  const lane = laneData(attempt, [], [event({ resourceSemantics: "increment", inputTokens: 10 }), event({ resourceSemantics: "cumulative-final", outputTokens: 4 })]).lane;
+  assert.deepEqual([lane.usage_semantics, lane.tokens_total], ["per-turn", 10], "the increments stand; the output-only final does not override them");
 });

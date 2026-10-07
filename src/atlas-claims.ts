@@ -60,7 +60,11 @@ export async function validateClaims(source: ClaimsSource, context: {
         computed = typeof v === "number" ? v : Number.NaN;
         how = `report ${e.report.cohort} at ${e.report.pointer}`;
       } else if ("cohort" in e) {
-        computed = (context.certified[e.cohort]?.cells ?? []).filter((c) => Object.entries(e.where ?? {}).every(([k, v]) => k === "category" ? c.category === v : !["model", "harness", "task"].includes(k) || c.group[k] === v))
+        // Every filter key must be the behavior category or a dimension the cohort's report groups by.
+        const cells = context.certified[e.cohort]?.cells ?? [];
+        const unsupported = Object.keys(e.where ?? {}).filter((k) => k !== "category" && !cells.every((c) => k in c.group));
+        if (unsupported.length) failures.push(`${claim.id}.${n.id}: cohort ${e.cohort} is not grouped by ${unsupported.join(", ")}`);
+        computed = unsupported.length || !cells.length ? Number.NaN : cells.filter((c) => Object.entries(e.where ?? {}).every(([k, v]) => (k === "category" ? c.category === v : c.group[k] === v)))
           .reduce((sum, c) => sum + (e.outcome === "*denominator" ? c.denominator : c.counts[e.outcome] ?? 0), 0);
         how = `cohort report ${e.cohort}, ${JSON.stringify(e.where ?? {})}, outcome ${e.outcome}`;
       } else if ("sql" in e) {
