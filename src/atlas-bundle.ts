@@ -56,6 +56,8 @@ export type AtlasBundleManifest = {
   request: { digest: `sha256:${string}` };
   cohorts: Array<{ id: string; title: string; sourceDigest: string; cohortDigest: string; attempts: number; assertions: number; report: string }>;
   unitsVersion: typeof ATLAS_UNITS_VERSION;
+  /** A packet's shared copy of a bundle names the bundle it was derived from and the variant. */
+  derivedFrom?: { bundle: string; manifestSha256: `sha256:${string}`; variant: "partner" | "restricted" };
   /** The cloud's units and their embeddings; the viewer lays them out with Embedding Atlas (UMAP and clustering). */
   cloud: { units: number; embeddings: { file: string; provider: "local" | "fireworks"; model: string; dimensions: number } };
   tables: Record<string, { path: string; rows: number; sha256: `sha256:${string}` }>;

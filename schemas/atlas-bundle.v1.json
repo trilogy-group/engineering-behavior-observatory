@@ -51,6 +51,10 @@
         },
         "tablesVersion": { "type": "string", "minLength": 1 },
         "unitsVersion": { "type": "string", "minLength": 1 },
+        "derivedFrom": {
+          "type": "object", "additionalProperties": false, "required": ["bundle", "manifestSha256", "variant"],
+          "properties": { "bundle": { "$ref": "#/$defs/identifier" }, "manifestSha256": { "$ref": "#/$defs/digest" }, "variant": { "enum": ["partner", "restricted"] } }
+        },
         "cloud": {
           "type": "object", "additionalProperties": false, "required": ["units", "embeddings"],
           "properties": {

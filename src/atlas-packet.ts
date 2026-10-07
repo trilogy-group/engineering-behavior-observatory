@@ -5,6 +5,7 @@ import { DuckDBInstance } from "@duckdb/node-api";
 import { makeVector, tableFromIPC, tableToIPC, Table, vectorFromArray, Utf8, type Vector } from "apache-arrow";
 
 import { assertContainedPath, ATLAS_TABLES, flattenText, verifyAtlasBundle, type AtlasBundleManifest } from "./atlas-bundle.js";
+import { LOCAL_EMBEDDING_MODEL, localEmbeddings } from "./atlas-embeddings.js";
 import { ATLAS_VIEWER_ROOT } from "./atlas-viewer.js";
 import { containsPortableLocalHomePath, containsPortableLocalPath, containsPortableSecretPattern, environmentSensitiveValues, redactLocalIdentifiers, visibleEvidence } from "./exports.js";
 import { isSecretFieldName, redactSecrets, SECRET_PLACEHOLDER } from "./redaction.js";
@@ -279,7 +280,8 @@ async function writePacket({ bundleRoot, bundle, out, variant, viewerRoot, now }
   // L5 / L4: the bundle under viewer/bundle/, filtered and redacted for the variant.
   cpSync(viewerRoot, join(out, "viewer"), { recursive: true });
   for (const f of readdirSync(join(out, "viewer"), { recursive: true }) as string[]) if (statSync(join(out, "viewer", f)).isFile()) layerOf.set(`viewer/${f.replace(/\\/gu, "/")}`, "L5");
-  const bundleFiles = [...bundle.files.map(({ path, role }) => ({ path, role })), { path: "manifest.json", role: "bundle-manifest" }];
+  // The bundle manifest is copied for internal packets and regenerated for shared ones (below).
+  const bundleFiles = [...bundle.files.map(({ path, role }) => ({ path, role })), ...(variant === "internal" ? [{ path: "manifest.json", role: "bundle-manifest" }] : [])];
   for (const { path, role } of bundleFiles) {
     const source = join(bundleRoot, path);
     const target = `viewer/bundle/${path}`;
@@ -288,7 +290,8 @@ async function writePacket({ bundleRoot, bundle, out, variant, viewerRoot, now }
       withheld.push({ path: target, layer, sha256: sha256(readFileSync(source)), reason: "native records, attempt audits and tables are withheld in the restricted variant" });
       continue;
     }
-    if (variant === "internal" || role === "cloud-embeddings") { mkdirSync(dirname(join(out, target)), { recursive: true }); cpSync(source, join(out, target)); layerOf.set(target, layer); continue; }
+    if (variant === "internal") { mkdirSync(dirname(join(out, target)), { recursive: true }); cpSync(source, join(out, target)); layerOf.set(target, layer); continue; }
+    if (role === "cloud-embeddings") continue;   // recomputed from the shared unit text below
     if (role === "table") {
       mkdirSync(dirname(join(out, target)), { recursive: true });
       redactionsOf.set(target, await rewriteParquet(source, join(out, target), basename(path, ".parquet"), transform, variant));
@@ -307,6 +310,27 @@ async function writePacket({ bundleRoot, bundle, out, variant, viewerRoot, now }
       continue;
     }
     mkdirSync(dirname(join(out, target)), { recursive: true }); cpSync(source, join(out, target)); layerOf.set(target, layer);
+  }
+
+  // Shared variants: embeddings of the source text are a derivative of it, so the cloud is re-embedded locally from
+  // the shared unit text; and the bundle manifest is regenerated to describe the shared files, naming its source.
+  if (variant !== "internal") {
+    const units = tableFromIPC(readFileSync(join(out, "viewer/bundle/units.arrow")));
+    const texts = Array.from({ length: units.numRows }, (_, i) => String(units.getChild("embed_text")?.get(i) ?? ""));
+    const vectors = localEmbeddings(texts, bundle.cloud.embeddings.dimensions);
+    put(`viewer/bundle/${bundle.cloud.embeddings.file}`, "L5", Buffer.from(vectors.buffer, vectors.byteOffset, vectors.byteLength));
+    const shared = (path: string) => existsSync(join(out, "viewer/bundle", path));
+    const describe = (path: string) => { const bytes = readFileSync(join(out, "viewer/bundle", path)); return { bytes: bytes.length, sha256: sha256(bytes) }; };
+    const derived: AtlasBundleManifest = {
+      ...bundle,
+      title: transform(bundle.title),
+      cohorts: bundle.cohorts.map((c) => ({ ...c, title: transform(c.title) })),
+      derivedFrom: { bundle: bundle.id, manifestSha256: sha256(readFileSync(join(bundleRoot, "manifest.json"))), variant },
+      cloud: { ...bundle.cloud, embeddings: { ...bundle.cloud.embeddings, provider: "local", model: LOCAL_EMBEDDING_MODEL } },
+      tables: Object.fromEntries(Object.entries(bundle.tables).filter(([, t]) => shared(t.path)).map(([name, t]) => [name, { ...t, sha256: describe(t.path).sha256 }])),
+      files: bundle.files.filter(({ path }) => shared(path)).map(({ path, role }) => ({ path, role, ...describe(path) })),
+    };
+    put("viewer/bundle/manifest.json", "L5", `${JSON.stringify(derived, null, 2)}\n`);
   }
 
   // Pages (tier A: open from disk), built from the packet's own (variant) data.

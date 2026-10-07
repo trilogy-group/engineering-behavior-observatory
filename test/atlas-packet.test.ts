@@ -48,6 +48,13 @@ test("evidence packets: three variants, verification, withholding and claims tha
     assert.equal(existsSync(join(root, "packet-restricted", "evidence")), false);
     const restrictedAssessments = readFileSync(join(root, "packet-restricted", "viewer/bundle/assessments.json"), "utf8");
     assert.equal(/"text":/u.test(restrictedAssessments.replace(/"claims":\[[^\]]*\]/gu, "")), false, "cited native text is withheld");
+    // Shared variants carry a bundle manifest describing their own files (it verifies), naming its source, and
+    // embeddings recomputed locally from the shared unit text.
+    for (const variant of ["partner", "restricted"] as const) {
+      assert.deepEqual(verifyPacketBundle(join(root, `packet-${variant}`, "viewer/bundle")), { ok: true, changed: [], missing: [], unlisted: [] }, variant);
+      const derived = JSON.parse(readFileSync(join(root, `packet-${variant}`, "viewer/bundle/manifest.json"), "utf8")) as { derivedFrom?: { variant: string }; cloud: { embeddings: { provider: string } } };
+      assert.deepEqual([derived.derivedFrom?.variant, derived.cloud.embeddings.provider], [variant, "local"]);
+    }
     // Shared variants drop local paths and keep no write paths in restricted units.
     const partnerAssessments = readFileSync(join(root, "packet-partner", "viewer/bundle/assessments.json"), "utf8");
     assert.equal(/"(path|bundle|bundle_root)":/u.test(partnerAssessments), false, "local paths are dropped from shared documents");
