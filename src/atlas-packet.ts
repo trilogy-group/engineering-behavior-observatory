@@ -105,6 +105,7 @@ export function withoutHiddenReasoning(value: unknown): unknown {
 function assertShareable(text: string, where: string, variant: PacketVariant, media = "text/plain") {
   if (containsPortableSecretPattern(text, media)) throw new Error(`The ${variant} packet still contains a credential pattern in ${where}.`);
   if (containsPortableLocalPath(text, media)) throw new Error(`The ${variant} packet still contains an absolute local path in ${where}.`);
+  if (hasFileUri(text)) throw new Error(`The ${variant} packet still contains a local file URI in ${where}.`);
   if (containsPortableLocalHomePath(text, media)) throw new Error(`The ${variant} packet still contains a local home path in ${where}.`);
 }
 /** Apply shareNativeRecord to every native record inside a document (citations' `native`, units' `parts`). */
@@ -133,9 +134,12 @@ const withoutEnvironment = (s: string) => {
   for (const value of environmentValues) if (out.includes(value)) out = out.replaceAll(value, SECRET_PLACEHOLDER);
   return out;
 };
+// file:// URIs name local paths too (the general rule skips them: a slash follows the first one).
+const FILE_URI = /file:\/\/(?:localhost)?\/[^\s"'`)<>\]]*/giu;
+const hasFileUri = (s: string) => /file:\/\/(?:localhost)?\//iu.test(s);
 export const sharedText = (s: string) => {
-  const t = redactLocalIdentifiers(secrets(withoutEnvironment(s)).replace(HOME, (_, prefix: string) => `${prefix}[LOCAL_PATH]`));
-  return containsPortableSecretPattern(t, "text/plain") || containsPortableLocalPath(t) || containsPortableLocalHomePath(t) ? WITHHELD_BY_SCAN : t;
+  const t = redactLocalIdentifiers(secrets(withoutEnvironment(s)).replace(FILE_URI, "file://[LOCAL_PATH]").replace(HOME, (_, prefix: string) => `${prefix}[LOCAL_PATH]`));
+  return containsPortableSecretPattern(t, "text/plain") || containsPortableLocalPath(t) || containsPortableLocalHomePath(t) || hasFileUri(t) ? WITHHELD_BY_SCAN : t;
 };
 /** Code in prose: fenced blocks and code spans. */
 const code = (s: string) => s.replace(/```[\s\S]*?```/gu, "[code redacted]").replace(/`[^`\n]+`/gu, "[code redacted]");
@@ -247,6 +251,7 @@ export async function buildPacket(bundleRoot: string, destination: string, optio
   const claims = existsSync(join(bundleRoot, "claims.json")) ? JSON.parse(readFileSync(join(bundleRoot, "claims.json"), "utf8")) as Claims : null;
   const claimIds = (claims?.claims ?? []).map(({ id }) => id);
   if (new Set(claimIds).size !== claimIds.length) throw new Error("Claim ids must be unique in a packet (each claim has its own page).");
+  if (variant !== "internal" && !claims) throw new Error(`A ${variant} packet needs validated claims; this bundle has none (add a claims file to the bundle request).`);
   if (variant !== "internal" && claims && !claims.validated) throw new Error(`A ${variant} packet needs validated claims; claims.json reports: ${claims.failures.slice(0, 5).join("; ")}.`);
   if (existsSync(destination) && readdirSync(destination).length) throw new Error(`Packet output ${destination} is not empty; choose a new directory.`);
   const viewerRoot = options.viewerRoot ?? ATLAS_VIEWER_ROOT;

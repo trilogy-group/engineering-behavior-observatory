@@ -23,11 +23,14 @@ ebo packet verify <packet-dir>
 - `internal`: all data, no redactions.
 - `partner`: all data, shared by the export pipeline's rules in every
   text-bearing file, including Parquet tables and the cloud's units: secrets
-  redacted (secret-named fields replaced whole), absolute local paths and home
+  redacted (secret-named fields replaced whole), environment values of the
+  building process redacted, absolute local paths, `file://` URIs and home
   directories as `[LOCAL_PATH]`, user assignments as `[LOCAL_USER]`, local path
   fields dropped, and hidden reasoning removed from native records and event
-  content. A string the final scan still flags is withheld whole. The manifest
-  records the number of redactions per file.
+  content. A string the final scan still flags is withheld whole. The cloud is
+  re-embedded locally from the shared unit text, and `viewer/bundle/manifest.json`
+  is regenerated for the shared files with `derivedFrom` naming the source
+  bundle. The manifest records the number of redactions per file.
 - `restricted`: narrative, claims, evaluations, metrics and the viewer. Unit
   text becomes a structural label (kind, role, tool, check, status); commands,
   targets and error text are removed; code in judgments is redacted; cited
@@ -39,7 +42,8 @@ length, with the original's as `source_sha256`. A final scan (credential
 patterns, absolute local paths, home paths) runs over every shared text file
 and every Parquet and Arrow value; any finding fails the build.
 
-Partner and restricted packets are built only when every claim validates; an
+Partner and restricted packets are built only from a bundle with claims, and
+only when every claim validates; an
 internal packet shows a claim that no longer holds as such. A packet is built in
 a temporary sibling directory and published by rename; the destination must be
 new or empty.

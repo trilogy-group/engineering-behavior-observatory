@@ -104,6 +104,10 @@ test("evidence packets: three variants, verification, withholding and claims tha
     const failingPage = readdirSync(join(root, "packet-failing-internal", "claims")).find((f) => f.startsWith("C1-"))!;
     assert.match(readFileSync(join(root, "packet-failing-internal", "claims", failingPage), "utf8"), /does not hold/u);
     await assert.rejects(buildPacket(join(root, "bundle-failing"), join(root, "packet-failing-partner"), { variant: "partner", viewerRoot: viewer }), /needs validated claims/u);
+    // A shared packet needs claims at all: a bundle without a claims file builds only internal packets.
+    writeFileSync(join(root, "request.json"), JSON.stringify({ ...request, claims: undefined }));
+    await buildAtlasBundle(join(root, "request.json"), join(root, "bundle-unclaimed"));
+    await assert.rejects(buildPacket(join(root, "bundle-unclaimed"), join(root, "packet-unclaimed"), { variant: "restricted", viewerRoot: viewer }), /has none/u);
     assert.equal(existsSync(join(root, "packet-failing-partner")), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -112,6 +116,7 @@ test("evidence packets: three variants, verification, withholding and claims tha
 
 test("shared native records drop hidden reasoning blocks and fields", () => {
   assert.equal(sharedText("cd /Users/alex/repo && ls /workspace/acme/private.ts src/app.ts"), "cd [LOCAL_PATH]/repo && ls [LOCAL_PATH] src/app.ts", "home directories and absolute local paths go, workspace-relative paths stay");
+  assert.equal(sharedText("open file:///workspace/acme/private.ts now"), "open file://[LOCAL_PATH] now", "file URIs name local paths");
   assert.equal(sharedText(`${"-".repeat(5)}BEGIN RSA PRIVATE KEY${"-".repeat(5)}\nMIIE\n${"-".repeat(5)}END RSA PRIVATE KEY${"-".repeat(5)}`).includes("MIIE"), false);
   const record = { type: "assistant", message: { content: [{ type: "thinking", thinking: "private", signature: "sig" }, { type: "text", text: "visible" }], reasoning_content: "private" } };
   assert.deepEqual(withoutHiddenReasoning(record), { type: "assistant", message: { content: [{ type: "text", text: "visible" }] } });
