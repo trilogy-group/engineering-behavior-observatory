@@ -700,9 +700,16 @@ async function runClaimCheckCommand(args: string[], write: (message: string) => 
     assertDerivedDestination(bundleRoot, outputPath);
     const confidence = options["--choice-confidence"] === undefined ? DEFAULT_CLAIM_CHECK_POLICY.choiceConfidence : Number(options["--choice-confidence"]);
     if (!(confidence >= 0 && confidence <= 1)) throw new Error("--choice-confidence must be a number from 0 to 1.");
+    if (existsSync(resolve(outputPath))) throw new Error("Claim checks destination already exists.");
+    // Decision records are appended as calls finish; the partial log is removed once the artifact is written.
+    const partialPath = `${resolve(outputPath)}.decisions.partial.jsonl`;
+    if (existsSync(partialPath)) throw new Error("A partial decision log from an interrupted run exists for this destination; keep it and choose a new destination.");
+    prepareDerivedParent(bundleRoot, partialPath);
     const checks = await checkRetainedClaims(bundleRoot, readJson(assertionPath) as ClaimAssertion,
-      { provider: provider as DecisionProviderId, ...(options["--model"] === undefined ? {} : { model: options["--model"] }) }, { policy: { choiceConfidence: confidence } });
+      { provider: provider as DecisionProviderId, ...(options["--model"] === undefined ? {} : { model: options["--model"] }) },
+      { policy: { choiceConfidence: confidence }, onDecision: (record, claimId) => appendFileSync(partialPath, `${JSON.stringify({ claimId, record })}\n`, { mode: 0o600 }) });
     await writeObservationReport(outputPath, checks, bundleRoot);
+    rmSync(partialPath, { force: true });
     const { coverage } = checks;
     write(`Checked ${String(coverage.checked)} of ${String(coverage.claims)} claims: ${String(coverage.supported)} supported, ${String(coverage.flagged)} flagged for review, ${String(coverage.failedDecisions)} failed decision(s).\n`);
     return coverage.failedDecisions === 0 ? 0 : 1;

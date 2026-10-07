@@ -64,7 +64,7 @@ export async function checkClaims(
   assertion: BehaviorAssertion,
   capture: NormalizationInput<unknown>,
   config: DecisionProviderConfig,
-  options: DecideOptions & { policy?: { choiceConfidence: number }; concurrency?: number } = {},
+  options: DecideOptions & { policy?: { choiceConfidence: number }; concurrency?: number; onDecision?: (record: DecisionRecord, claimId: string) => void } = {},
 ): Promise<ClaimChecks> {
   const policy = options.policy ?? DEFAULT_CLAIM_CHECK_POLICY;
   const claims = assertion.judgment.claims ?? [];
@@ -77,6 +77,7 @@ export async function checkClaims(
       const claim = claims[index]!;
       const record = await decide(config, claimState(claim, capture), { support: CLAIM_SUPPORT_QUESTION }, options);
       decisions[index] = record;
+      options.onDecision?.(record, claim.id);
       const answer = record.answers?.support;
       if (record.status !== "completed" || answer?.type !== "choice") continue;
       const label = answer.choice as ClaimCheck["label"];

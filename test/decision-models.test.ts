@@ -202,7 +202,9 @@ test("claim checks route unsupported or uncertain claims to review and bind to t
     return new Response(JSON.stringify({ model: "jev-1.13.0", usage: { input_tokens: 5, output_tokens: 1 },
       answers: { support: { type: "choice", choice: supported ? "supported" : "insufficient", probabilities, confidence: supported ? 0.95 : 0.7 } } }));
   }) as typeof fetch;
-  const checks = await checkClaims(assertion, capture, { provider: "typesafe" }, { fetch: fetchImpl, env });
+  const streamed: string[] = [];
+  const checks = await checkClaims(assertion, capture, { provider: "typesafe" }, { fetch: fetchImpl, env, onDecision: (_record, claimId) => streamed.push(claimId) });
+  assert.deepEqual(streamed.sort(), ["passed", "typed"], "each decision is handed to the caller as it finishes");
   assert.deepEqual(checks.checks.map(({ claimId, label, flagged }) => [claimId, label, flagged]), [["passed", "supported", false], ["typed", "insufficient", true]]);
   assert.deepEqual(checks.coverage, { claims: 2, checked: 2, failedDecisions: 0, supported: 1, flagged: 1 });
   assert.equal(JSON.stringify(seen).includes("SECRET-THOUGHT"), false, "hidden reasoning is not sent");
@@ -268,6 +270,16 @@ test("question set 1.1: silent success is a rule rating, source changes between 
   const forged = structuredClone(ratings);
   forged.ratings.find(({ source }) => source === "fallback")!.label = "unclear";
   assert.throws(() => validateOccurrenceRatings(forged), /Fallback rating/u);
+  const banana = structuredClone(ratings);
+  const fallbackRating = banana.ratings.find(({ source }) => source === "fallback")!;
+  const record = banana.fallbackDecisions![fallbackRating.fallback!]!;
+  (record.response as { answers: Array<{ occurrenceId: string; questionId: string; label: string }> }).answers
+    .find(({ occurrenceId, questionId }) => occurrenceId === fallbackRating.occurrenceId && questionId === fallbackRating.questionId)!.label = "banana";
+  fallbackRating.label = "banana";
+  assert.throws(() => validateOccurrenceRatings(banana), /Fallback rating/u, "a fallback label must be one the question allows");
+  const legacy = structuredClone(ratings);
+  legacy.questionSetVersion = "1.0.0";
+  assert.throws(() => validateOccurrenceRatings(legacy), /question set/u, "1.0 artifacts are checked against the 1.0 questions");
 
   const broken = await rateOccurrences(observationSet, events, ({ recordLocator }) => content[recordLocator], { provider: "typesafe" }, { fetch: fetchImpl, env,
     fallback: { ...fallback, run: async () => ({ status: "completed" as const, raw: {}, response: { answers: [] } }) } });
