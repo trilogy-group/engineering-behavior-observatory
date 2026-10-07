@@ -52,6 +52,26 @@ incompatible input fails rather than returning an old aggregate. `--port <port>`
 changes the listener; set `atlasUrl` to the same port before rebuilding dashboards.
 This is a local research workbench, not a hosted multi-user service.
 
+## Interactive viewer
+
+The interactive viewer puts behavior units in an Embedding Atlas cloud beside
+cluster × arm statistics, swimlanes, the assessments matrix, claims, figures and
+an evidence drawer that opens native records. All panels share one DuckDB-WASM
+database in the browser, so a brush in the cloud re-scopes every panel. Numbers
+computed in the viewer are exploratory unless a panel marks them as matching an
+EBO report tally.
+
+```sh
+ebo atlas serve --bundle <bundle-dir> [--port <port>]
+```
+
+Open `http://127.0.0.1:13012` in a browser with WebGPU (Chrome, Edge or Safari
+26); the cloud needs it, the other panels do not. The server binds only to
+`127.0.0.1`, serves the packaged viewer and the bundle's files read-only, and
+refuses paths that leave either directory. `viewer/README.md` in the source repository
+lists the bundle files, URL parameters and the command registry that every
+control, link and test goes through.
+
 ## Grafana
 
 Install official **Grafana OSS 13.2.0** for your operating system, then start a

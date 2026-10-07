@@ -35,10 +35,11 @@
     "acceptance": "node scripts/release-acceptance.mjs",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc -p tsconfig.json",
-    "prepack": "npm run build",
+    "prepack": "npm run build && npm run build:viewer",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "npm run build && node --test dist/test/*.test.js",
-    "ebo": "node dist/src/cli.js"
+    "ebo": "node dist/src/cli.js",
+    "build:viewer": "npm run build --workspace viewer"
   },
   "files": [
     "contracts/",
@@ -68,6 +69,7 @@
     "release/1.1.2/",
     "release/1.1.3/",
     "release/1.2.0/",
+    "viewer/dist/",
     "schemas/",
     "scripts/atlas-grafana.sh"
   ],
@@ -85,5 +87,8 @@
     "@types/node": "^24.10.0",
     "@types/proper-lockfile": "4.1.4",
     "typescript": "^5.9.3"
-  }
+  },
+  "workspaces": [
+    "viewer"
+  ]
 }

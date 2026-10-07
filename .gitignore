@@ -27,3 +27,6 @@ credentials/
 !.opensymphony/memory/
 .opensymphony/memory/*
 !.opensymphony/memory/memory.yaml
+
+# Built Atlas viewer (shipped in the npm package, not in git)
+/viewer/dist/

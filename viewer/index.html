@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EBO Atlas</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">EBO Atlas</div>
+      <div id="bundle-title" class="bundle-title"></div>
+      <div id="status" class="status" role="status">Loading…</div>
+    </header>
+    <main class="layout">
+      <section id="atlas" class="atlas" aria-label="Behavior unit cloud"></section>
+      <div class="splitter" id="splitter" role="separator" aria-orientation="horizontal" tabindex="0"></div>
+      <section id="panel" class="panel" aria-label="Panels"></section>
+    </main>
+    <!-- Agent Mode mount point (roadmap): empty until a packet enables an assistant. -->
+    <aside id="assistant" class="assistant" hidden aria-label="Assistant"></aside>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

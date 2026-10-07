@@ -9,7 +9,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir, userInfo } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -69,11 +69,31 @@ try {
       throw new Error("Package contains restricted evidence, test fixtures, credentials, or orchestration state.");
     }
     const tracked = new Set(output("git", ["ls-files", "-z"]).split("\0").filter(Boolean));
-    const unbound = first.files.filter(({ path }) => !path.startsWith("dist/") && !tracked.has(path));
+    const unbound = first.files.filter(({ path }) => !path.startsWith("dist/") && !path.startsWith("viewer/dist/") && !tracked.has(path));
     if (unbound.length > 0) throw new Error(`Package contains inputs not bound to the source commit: ${unbound.map(({ path }) => path).join(", ")}.`);
     checkPackageLinks(first.files);
+    // The built viewer is generated from the tracked viewer sources and lockfile-pinned dependencies, whose minified
+    // code is full of credential-shaped identifiers (fetch `credentials`, parser `token` fields). Scan what we author
+    // with the standard scan, and the generated output for what a build could leak: this machine's home directory,
+    // user name, checkout path and secret environment values. Source maps are never shipped.
+    const viewerSources = [...tracked].filter((path) => /^viewer\/(?:src\/|index\.html$|scripts\/|design\/)/u.test(path));
+    for (const path of viewerSources) {
+      const text = readFileSync(join(root, path), "utf8");
+      const sourceCode = /\.(?:[cm]?js|[cm]?ts)$/u.test(path);
+      if (containsPortableLocalHomePath(text, "text/plain") || containsPortableSecretPattern(sourceCode ? maskSourceIdentifierAssignments(text, path, typescript) : text, "text/plain")) {
+        throw new Error(`Viewer source ${path} contains a local identifier or secret-like value.`);
+      }
+    }
+    const machineValues = [homedir(), root, `/${userInfo().username}/`,
+      ...Object.entries(process.env).filter(([name, value]) => /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/iu.test(name) && (value ?? "").length >= 12).map(([, value]) => value)];
+    for (const { path } of first.files.filter(({ path }) => path.startsWith("viewer/dist/"))) {
+      if (path.endsWith(".map")) throw new Error(`Package ships a source map: ${path}.`);
+      const bytes = readFileSync(join(root, path));
+      if (machineValues.some((value) => bytes.includes(value))) throw new Error(`Built viewer file ${path} contains a value from the build machine.`);
+    }
     for (const { path } of first.files) {
       const source = join(root, path);
+      if (path.startsWith("viewer/dist/")) continue;
       if (!existsSync(source) || statSync(source).isDirectory()) continue;
       const text = readFileSync(source, "utf8");
       const sourceCode = /\.(?:[cm]?js|[cm]?ts)$/u.test(path);

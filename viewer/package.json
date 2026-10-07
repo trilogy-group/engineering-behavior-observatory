@@ -1,0 +1,32 @@
+{
+  "name": "@ebo/atlas-viewer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "EBO Atlas viewer: Embedding Atlas and EBO panels on one Mosaic/DuckDB-WASM data layer",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "smoke": "node scripts/smoke.mjs",
+    "check-upgrades": "node scripts/check-upgrades.mjs",
+    "tokens": "node design/build-tokens.mjs"
+  },
+  "dependencies": {
+    "@duckdb/duckdb-wasm": "1.33.1-dev57.0",
+    "@uwdata/mosaic-core": "0.32.0",
+    "@uwdata/mosaic-spec": "0.32.0",
+    "@uwdata/mosaic-sql": "0.32.0",
+    "@uwdata/vgplot": "0.32.0",
+    "apache-arrow": "21.2.0",
+    "embedding-atlas": "0.25.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "svelte": "5.57.1"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.2"
+  }
+}
