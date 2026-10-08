@@ -24,7 +24,7 @@ export type AtlasUnit = {
 export type AtlasUnitEvent = { unit_id: string; event_key: string; part: string };
 
 const MESSAGE_CHARS = 1200, EPISODE_MESSAGE_CHARS = 600, SUMMARY_CHARS = 1500;   // embedding input only; stored text is complete
-const SHELL = new Set(["bash", "shell", "exec_command", "commandexecution", "run_terminal_cmd", "execute", "terminal", "bashoutput", "killshell"]);
+const SHELL = new Set(["bash", "shell", "exec", "exec_command", "commandexecution", "run_terminal_cmd", "execute", "terminal", "bashoutput", "killshell"]);
 const READ = new Set(["read", "view", "read_file", "cat", "open_file", "notebookread"]);
 const EDIT = new Set(["edit", "write", "multiedit", "apply_patch", "str_replace", "str_replace_editor", "create", "write_file", "edit_file", "notebookedit", "patch", "filechange"]);
 const SEARCH = new Set(["glob", "grep", "find", "search", "ls", "list", "list_dir", "codebase_search", "file_search", "rg"]);
@@ -173,6 +173,7 @@ function messageRole(event: UniformEvent): string | undefined {
       if (type === "assistant" && event.actor.kind === "model") return "assistant";
       if (type === "user" && event.actor.kind === "harness") return "harness";
       return type === "UserPromptSubmit" ? "user" : undefined;
+    case "devin-cli": return event.attributes.sessionUpdate === "agent_message_chunk" ? "assistant" : event.attributes.sessionUpdate === "user_message_chunk" || type === "session/prompt" ? "user" : undefined;
     default:
       if (event.phase === "before" || event.phase === "during" || /chunk|delta|start/u.test(type)) return undefined;
       return role === "user" || role === "assistant" || role === "agent" ? role : event.actor.kind === "user" ? "user" : event.actor.kind === "model" || event.actor.kind === "agent" ? "assistant" : undefined;
@@ -283,16 +284,27 @@ export function deriveUnits({ attemptId, events, occurrences, resolveContent }: 
     drafts.push(unit);
   }
 
-  for (const event of events) {
+  // Devin streams one message as consecutive same-type chunks; a run of them is one message unit.
+  for (let e = 0; e < events.length; e++) {
+    const event = events[e]!;
     if (claimed.has(event.id) || (event.family !== "message" && nativeEventType(event) !== "UserPromptSubmit")) continue;
     const role = messageRole(event);
     if (!role) continue;
-    const text = contentOf(event).flatMap((v) => visibleText(v)).join("\n").trim();
+    const parts = [[event.id, "message"] as [string, string]];
+    const texts2 = [contentOf(event).flatMap((v) => visibleText(v)).join("\n")];
+    if (event.source.harness === "devin-cli") {
+      while (e + 1 < events.length && !claimed.has(events[e + 1]!.id) && events[e + 1]!.attributes.sessionUpdate === event.attributes.sessionUpdate) {
+        e++;
+        parts.push([events[e]!.id, "message"]);
+        texts2.push(contentOf(events[e]!).flatMap((v) => visibleText(v)).join("\n"));
+      }
+    }
+    const text = texts2.join("").trim();
     // An Agent SDK continuation message opens a compacted session; the compaction unit carries it.
     if (!text || (role === "harness" && text.startsWith("This session is being continued"))) continue;
     const unit = blank("message", event);
     unit.role = role; unit.subkind = role;
-    unit.eventParts = [[event.id, "message"]];
+    unit.eventParts = parts;
     texts.set(unit, text);
     drafts.push(unit);
   }

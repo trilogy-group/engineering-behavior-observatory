@@ -9,6 +9,7 @@ import { tableFromIPC } from "apache-arrow";
 import { ATLAS_TABLES, buildAtlasBundle, flattenText, verifyAtlasBundle, type AtlasBundleRequest } from "../src/atlas-bundle.js";
 import { loadAtlas } from "../src/atlas.js";
 import { laneData } from "../src/atlas-lanes.js";
+import { deriveUnits } from "../src/atlas-units.js";
 import { nativeRecordDigest } from "../src/atlas-evidence.js";
 import { validateClaims } from "../src/atlas-claims.js";
 import { createHash } from "node:crypto";
@@ -169,4 +170,53 @@ test("lane cost: per-request cost adds up when no final cost is reported", () =>
   const attempt = { attempt_id: "a", task_id: null, condition: null, trial_id: null, harness_id: null, model_id: null, terminal_state: null, failure_class: null, capture_qualification: null };
   const lane = laneData(attempt, [], [event({ resourceSemantics: "increment", totalTokens: 5, totalCostUsd: 0.25 }), event({ resourceSemantics: "increment", totalTokens: 5, totalCostUsd: 0.5 })]).lane;
   assert.equal(lane.cost_usd, 0.75);
+});
+
+test("devin usage: identical consecutive context snapshots are one report; used of size is the context series", () => {
+  const event = (attributes: Record<string, unknown>, at = "2026-10-08T00:00:00.000Z") => ({ nativeTime: { status: "known", value: at }, attributes }) as never;
+  const attempt = { attempt_id: "a", task_id: null, condition: null, trial_id: null, harness_id: null, model_id: null, terminal_state: null, failure_class: null, capture_qualification: null };
+  const snapshot = (used: number, inputTokens: number, outputTokens: number, at: string) =>
+    event({ usageSemantics: "request-context-snapshot", used, size: 262000, inputTokens, outputTokens }, at);
+  const events = [
+    snapshot(1000, 900, 100, "2026-10-08T00:00:01.000Z"), snapshot(1000, 900, 100, "2026-10-08T00:00:01.100Z"),
+    snapshot(2000, 1800, 200, "2026-10-08T00:00:02.000Z"), snapshot(2000, 1800, 200, "2026-10-08T00:00:02.100Z"),
+    event({ resourceSemantics: "cumulative-final", inputTokens: 50, outputTokens: 20, cachedInputTokens: 2630 }, "2026-10-08T00:00:03.000Z"),
+  ];
+  const lanes = laneData(attempt, [], events);
+  assert.deepEqual(lanes.context, [[Date.parse("2026-10-08T00:00:01.000Z"), 1000], [Date.parse("2026-10-08T00:00:02.000Z"), 2000]], "each report's context fill, deduplicated");
+  assert.equal(lanes.usage!.at(-1)![1], 3000, "per-request input plus output sums the two deduplicated reports");
+  assert.deepEqual([lanes.lane.usage_semantics, lanes.lane.tokens_total, lanes.lane.context_max, lanes.lane.output_tokens],
+    ["per-turn", 2700, 2000, "per-request"], "the cumulative final (input + output + cached input) wins the total");
+  const interrupted = laneData(attempt, [], events.slice(0, 4));
+  assert.equal(interrupted.lane.tokens_total, 3000, "without a final, the deduplicated request sum is the total");
+});
+
+test("devin messages: consecutive same-update chunks merge into one message unit, thoughts stay hidden", () => {
+  const chunk = (id: string, order: number, update: string, family: string, actor: string) => ({
+    id, runId: "r", attemptId: "a",
+    source: { harness: "devin-cli", nativeType: `session/update:${update}`, nativeReference: { artifactId: "session", recordLocator: `line:${order}` } },
+    nativeOrder: { status: "known", value: order, domain: "devin-acp-stdio" },
+    nativeTime: { status: "known", value: `2026-10-08T00:00:0${order}.000Z` },
+    actor: { kind: actor }, family, phase: "instant",
+    scope: { kind: "session", id: "s" },
+    relations: { parent: { status: "unknown" }, known: [] },
+    attributes: { method: "session/update", sessionUpdate: update },
+    content: { status: "known", value: [{ nativeReference: { artifactId: "session", recordLocator: `line:${order}#/text` }, mediaType: "application/json" }] },
+  }) as never;
+  const events = [
+    chunk("u1", 1, "user_message_chunk", "message", "user"),
+    chunk("m1", 2, "agent_message_chunk", "message", "agent"), chunk("m2", 3, "agent_message_chunk", "message", "agent"),
+    chunk("th", 4, "agent_thought_chunk", "reasoning", "agent"),
+    chunk("m3", 5, "agent_message_chunk", "message", "agent"),
+  ];
+  const texts = new Map([[1, "do it"], [2, "Hello "], [3, "world"], [4, "secret reasoning"], [5, "done"]]);
+  const resolve = (reference: { recordLocator: string }) => ({ status: "resolved" as const,
+    value: { type: "text", text: texts.get(Number(reference.recordLocator.match(/line:(\d+)/u)![1])) } });
+  const { units, links } = deriveUnits({ attemptId: "a", events, occurrences: [], resolveContent: resolve });
+  const messages = units.filter((u) => u.unit_kind === "message");
+  assert.equal(messages.length, 3, "two merged runs plus the user message; the thought chunk is not a message");
+  assert.equal(messages[1]!.embed_text, "Hello world");
+  assert.equal(messages[1]!.event_count, 2);
+  assert.equal(messages[1]!.role, "assistant");
+  assert.ok(links.some((l) => l.event_key === "a/m2"), "every merged chunk is a linked event part");
 });

@@ -172,10 +172,11 @@ export const DEVIN_CLI_CAPABILITIES = {
     "session/update:plan",
     AGENT_STOPPED,
     "server-request",
+    "session/prompt",
     "session/prompt:response",
   ],
   families: {
-    message: { status: "partial", detail: "ACP emits message chunks without a completed-message record; each chunk is projected." },
+    message: { status: "partial", detail: "The owned session/prompt request is the user message; agent messages arrive only as chunks, so each chunk is projected." },
     "model-request": { status: "unsupported", detail: "Inference requests are not inferred from ACP updates; OTLP api_request records stay telemetry evidence." },
     tool: { status: "partial", detail: "tool_call starts and completed/failed tool_call_update records are projected; progress updates stay native." },
     context: { status: "partial", detail: "ACP plan updates are projected when emitted." },
@@ -677,7 +678,14 @@ function mapDevinRecord(
   let contentPath: string;
   let parent: string | undefined;
   let label = record.method.replaceAll("/", "-");
-  if (record.kind === "request" && record.source === DEVIN_HARNESS && record.method === PERMISSION_REQUEST) {
+  if (record.kind === "request" && record.source === DEVIN_CLIENT && record.method === "session/prompt") {
+    if (owned.promptRequestId === undefined || record.id !== owned.promptRequestId) return undefined;
+    family = "message";
+    actor = "user";
+    phase = "before";
+    contentPath = "#/payload/prompt";
+    label = "session-prompt";
+  } else if (record.kind === "request" && record.source === DEVIN_HARNESS && record.method === PERMISSION_REQUEST) {
     if (text(payload.sessionId) !== owned.sessionId) return undefined;
     family = "permission";
     phase = "before";
