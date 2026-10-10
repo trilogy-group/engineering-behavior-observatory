@@ -30,3 +30,6 @@ credentials/
 
 # Built Atlas viewer (shipped in the npm package, not in git)
 /viewer/dist/
+
+# Uncompressed media masters (web encodes are committed)
+docs/assets/*.master.*

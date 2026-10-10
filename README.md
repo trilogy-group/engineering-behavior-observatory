@@ -9,7 +9,13 @@ record of an open-ended engineering task.
 
 [Quickstart](docs/guides/quickstart.md) · [Documentation](docs/README.md) ·
 [CLI reference](docs/reference/cli.md) ·
-[Releases](https://github.com/trilogy-group/engineering-behavior-observatory/releases)
+[Releases](https://github.com/trilogy-group/engineering-behavior-observatory/releases) ·
+[Website](https://trilogy-group.github.io/engineering-behavior-observatory/)
+
+[![The Behavior Atlas: an embedding cloud of agent actions above per-trial swimlanes](https://raw.githubusercontent.com/trilogy-group/engineering-behavior-observatory/main/docs/assets/ebo-atlas.png)](https://github.com/trilogy-group/engineering-behavior-observatory/blob/main/docs/assets/ebo-promo.mp4)
+
+▶ **[Watch the four-minute tour](https://github.com/trilogy-group/engineering-behavior-observatory/blob/main/docs/assets/ebo-promo.mp4)**
+(MP4, 1080p): capture, the uniform schema, evaluation, claims, cohorts and the Atlas.
 
 ## Install
 

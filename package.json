@@ -46,6 +46,7 @@
     "dist/contracts/",
     "dist/src/",
     "docs/",
+    "!docs/assets/",
     "examples/",
     "ontology/",
     "release/README.md",

@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Engineering Behavior Observatory</title>
+  <meta name="description" content="EBO captures an engineering agent's native trajectory and workspace changes, then connects behavioral assessments to the evidence behind them.">
+  <meta property="og:title" content="Engineering Behavior Observatory">
+  <meta property="og:description" content="Capture and evaluate how engineering agents work. Every finding ties back to the native line behind it.">
+  <meta property="og:image" content="https://trilogy-group.github.io/engineering-behavior-observatory/assets/ebo-promo-poster.jpg">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23121211'/%3E%3Crect x='6' y='9' width='12' height='3' rx='1.5' fill='%233987e5'/%3E%3Crect x='6' y='14.5' width='20' height='3' rx='1.5' fill='%23d95926'/%3E%3Crect x='6' y='20' width='15' height='3' rx='1.5' fill='%23199e70'/%3E%3C/svg%3E">
+  <script>try { const t = localStorage.getItem("ebo-theme"); if (t) document.documentElement.dataset.theme = t; } catch {}</script>
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top" aria-label="EBO home">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect x="4" y="8" width="13" height="3.2" rx="1.6" fill="var(--cat-inspect)"/><rect x="4" y="14.4" width="24" height="3.2" rx="1.6" fill="var(--cat-edit)"/><rect x="4" y="20.8" width="17" height="3.2" rx="1.6" fill="var(--cat-read)"/></svg>
+        <span>EBO</span>
+      </a>
+      <nav aria-label="Primary">
+        <a href="#how">How it works</a>
+        <a href="#harnesses">Harnesses</a>
+        <a href="#tour">Tour</a>
+        <a href="https://github.com/trilogy-group/engineering-behavior-observatory/blob/main/docs/README.md">Docs</a>
+        <a class="gh" href="https://github.com/trilogy-group/engineering-behavior-observatory" aria-label="GitHub repository">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          <span>GitHub</span>
+        </a>
+        <button class="theme" type="button" aria-label="Toggle light and dark theme" title="Toggle theme">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 3v1.5M12 19.5V21M4.6 4.6l1.1 1.1M18.3 18.3l1.1 1.1M3 12h1.5M19.5 12H21M4.6 19.4l1.1-1.1M18.3 5.7l1.1-1.1"/><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="wrap">
+        <p class="eyebrow"><span class="accent">EBO</span> Engineering Behavior Observatory</p>
+        <h1>Capture and evaluate how engineering agents&nbsp;work.</h1>
+        <p class="lede">EBO records an agent's native trajectory and workspace changes, then connects every behavioral assessment to the evidence behind it. Investigate a refactor, compare repeated trials, examine failures, or share a reviewable record of an open-ended engineering task.</p>
+
+        <ol class="chain" aria-label="Every finding resolves to a native line">
+          <li><span>finding</span></li><li><span>claim</span></li><li><span>judgment</span></li><li><span>native line</span></li>
+        </ol>
+
+        <div class="actions">
+          <a class="btn primary" href="https://github.com/trilogy-group/engineering-behavior-observatory/blob/main/docs/guides/quickstart.md">Read the quickstart</a>
+          <a class="btn" href="#tour"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 2.8v10.4a.6.6 0 00.9.5l8.4-5.2a.6.6 0 000-1L4.9 2.3a.6.6 0 00-.9.5z"/></svg>Watch the tour <span class="muted">4 min</span></a>
+          <div class="install">
+            <code><span class="prompt" aria-hidden="true">$</span> npm install -g engineering-behavior-observatory</code>
+            <button type="button" class="copy" data-copy="npm install -g engineering-behavior-observatory" aria-label="Copy install command">Copy</button>
+          </div>
+        </div>
+      </div>
+
+      <figure class="shot wrap">
+        <div class="frame">
+          <div class="frame-bar" aria-hidden="true"><i></i><i></i><i></i><span>EBO Atlas · Claude Opus 5.5 · direct / Seatbelt / Seatbelt 1M</span></div>
+          <img src="assets/ebo-atlas.png" width="3024" height="1964" alt="The Behavior Atlas: an embedding cloud of 15,894 agent actions coloured by study arm, with a unit's fields open, above per-trial swimlanes of tool calls, errors and context use.">
+        </div>
+        <figcaption>The Behavior Atlas: every action an agent took, embedded and clustered, above per-trial swimlanes. Any point or lane bar opens the native record it came from.</figcaption>
+      </figure>
+    </section>
+
+    <section class="facts">
+      <div class="wrap facts-grid">
+        <div><strong>7</strong><span>native harnesses, each through its own official boundary</span></div>
+        <div><strong>10</strong><span>uniform event families, normalized only after capture qualification</span></div>
+        <div><strong>SHA-256</strong><span>on every cited native line, re-hashed when a claim is checked</span></div>
+        <div><strong>3</strong><span>packet variants: internal, partner and restricted</span></div>
+      </div>
+    </section>
+
+    <section class="section" id="how">
+      <div class="wrap">
+        <header class="section-head">
+          <p class="eyebrow">How it works</p>
+          <h2>From a frozen task to a claim you can verify.</h2>
+          <p class="sub">Execution completion, capture quality and task quality are different facts. EBO keeps them apart, and native evidence stays authoritative: derived views never replace it.</p>
+        </header>
+
+        <ol class="steps">
+          <li class="step">
+            <p class="num">01 <span>Capture</span></p>
+            <h3>Seven harnesses, one capture path</h3>
+            <p>Messages, tool activity, exposed lifecycle hooks, usage and workspace outcomes are retained as each harness emits them. Observational tasks need no reference solution or pass/fail verifier.</p>
+          </li>
+          <li class="step">
+            <p class="num">02 <span>Ontology</span></p>
+            <h3>One schema for every harness</h3>
+            <p>A Codex <code>commandExecution</code> and a Pi <code>bash</code> call both land as a <code>tool</code> event; an Agent SDK <code>PreCompact</code> hook becomes <code>context · before</code>. Missing evidence stays explicit, never zero.</p>
+            <ul class="families" aria-label="Uniform event families">
+              <li>message</li><li>model-request</li><li>tool</li><li>context</li><li>permission</li><li>delegation</li><li>artifact</li><li>validation</li><li>runtime</li><li>outcome</li>
+            </ul>
+          </li>
+          <li class="step">
+            <p class="num">03 <span>Evaluation</span></p>
+            <h3>Judgments grounded in cited lines</h3>
+            <p>Structural extractors report exact facts. An LLM judge sees an explicit evidence selection, optionally blinded to the evaluated model's identity, must weigh an alternative explanation, and may abstain.</p>
+            <p class="ratings" aria-label="Assessment ratings"><span class="r pos">constructive</span><span class="r neg">adverse</span><span class="r mid">mixed</span><span class="r ctx">context-dependent</span></p>
+          </li>
+          <li class="step">
+            <p class="num">04 <span>Claims</span></p>
+            <h3>Every number recomputes</h3>
+            <p>A claim carries its numbers and how they are computed, its supporting judgments, and each citation's path, line number and SHA-256. The validator recomputes the numbers and re-hashes every cited line.</p>
+          </li>
+          <li class="step">
+            <p class="num">05 <span>Cohorts</span></p>
+            <h3>Any experimental design</h3>
+            <p>Compare matched conditions across models, harnesses or configurations, over repeated trials. Add human review or calibration when the experiment calls for it; it is recorded separately.</p>
+          </li>
+          <li class="step">
+            <p class="num">06 <span>Atlas &amp; packets</span></p>
+            <h3>Explore, then share what holds</h3>
+            <p>Browse clusters by arm, swimlanes and assessments in the Atlas. Ship an evidence packet, from narrative to native records, that a partner can verify against its manifest offline.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section alt" id="atlas">
+      <div class="wrap split">
+        <div>
+          <p class="eyebrow">The Behavior Atlas</p>
+          <h2>From a bar in a lane to the native record.</h2>
+          <p class="sub">Each trial is a lane of actions in order: inspect, edit, read, check, shell and version control, with errors, failure chains and compactions marked. Context per request rides underneath. Click any bar to open the record the agent produced, verbatim.</p>
+          <ul class="ticks">
+            <li>Cluster × arm enrichment with observed, expected and adjusted residuals</li>
+            <li>Aligned diffs between trials, and Perfetto trace export</li>
+            <li>Assessments matrix, claims ledger and attempt audits</li>
+          </ul>
+          <p class="note">Numbers computed in the viewer are exploratory; certified tallies come from EBO's aggregation reports.</p>
+        </div>
+        <figure class="lanes-fig">
+          <div class="lanes" id="lanes" role="img" aria-label="Illustrative swimlanes: three trials as sequences of coloured action bars"></div>
+          <ul class="legend" aria-label="Action categories">
+            <li><i style="background:var(--cat-inspect)"></i>inspect</li>
+            <li><i style="background:var(--cat-edit)"></i>edit / write</li>
+            <li><i style="background:var(--cat-read)"></i>read</li>
+            <li><i style="background:var(--cat-check)"></i>check</li>
+            <li><i style="background:var(--cat-shell)"></i>other shell</li>
+            <li><i style="background:var(--cat-vcs)"></i>git / vcs</li>
+            <li><i class="x">×</i>error</li>
+          </ul>
+          <figcaption>Illustrative lanes, not study data.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section" id="harnesses">
+      <div class="wrap">
+        <header class="section-head">
+          <p class="eyebrow">Supported harnesses</p>
+          <h2>Native first, every time.</h2>
+          <p class="sub">Each adapter keeps its harness's own methods, identities, lifecycle and completion semantics. Support is capability-specific: not every harness exposes the same hooks, histories or telemetry.</p>
+        </header>
+        <ul class="harnesses">
+          <li><img src="https://github.com/anthropics.png?size=64" alt="" width="32" height="32" loading="lazy"><div><h3>Claude Agent SDK</h3><p>Direct TypeScript SDK</p><code>ebo agent-sdk run</code></div></li>
+          <li><img src="https://github.com/openai.png?size=64" alt="" width="32" height="32" loading="lazy"><div><h3>Codex</h3><p>Owned app-server over JSON-RPC stdio</p><code>ebo codex run</code></div></li>
+          <li><img src="https://github.com/CognitionAI.png?size=64" alt="" width="32" height="32" loading="lazy"><div><h3>Devin CLI</h3><p>Owned <code>devin acp</code> over JSON-RPC stdio</p><code>ebo devin run</code></div></li>
+          <li><img src="https://github.com/cursor.png?size=64" alt="" width="32" height="32" loading="lazy"><div><h3>Cursor</h3><p>Direct TypeScript SDK</p><code>ebo cursor run</code></div></li>
+          <li><img src="https://github.com/earendil-works.png?size=64" alt="" width="32" height="32" loading="lazy"><div><h3>Pi</h3><p>TypeScript session and extension APIs</p><code>ebo pi run</code></div></li>
+          <li><img src="https://github.com/OpenHands.png?size=64" alt="" width="32" height="32" loading="lazy"><div><h3>OpenHands</h3><p>Agent Server REST / WebSocket</p><code>library API</code></div></li>
+          <li><img src="https://github.com/deepseek-ai.png?size=64" alt="" width="32" height="32" loading="lazy"><div><h3>DeepSeek Harness</h3><p>Official TypeScript JSON-RPC client</p><code>library API</code></div></li>
+          <li class="more-card"><a href="https://github.com/trilogy-group/engineering-behavior-observatory/blob/main/docs/harnesses/README.md"><h3>Choose a harness</h3><p>Prerequisites, evidence coverage and known gaps for each</p><span>Compare harnesses →</span></a></li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="section alt" id="tour">
+      <div class="wrap">
+        <header class="section-head center">
+          <p class="eyebrow">The tour</p>
+          <h2>Four minutes, end to end.</h2>
+          <p class="sub">Capture, the uniform schema, evaluation, claims, cohorts and the Atlas, on real studies.</p>
+        </header>
+        <div class="video">
+          <video controls preload="none" playsinline poster="assets/ebo-promo-poster.jpg" width="1920" height="1080">
+            <source src="assets/ebo-promo.mp4" type="video/mp4">
+            <a href="assets/ebo-promo.mp4">Download the tour (MP4)</a>
+          </video>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="start">
+      <div class="wrap split">
+        <div>
+          <p class="eyebrow">Get started</p>
+          <h2>A first report in a few minutes, no credentials.</h2>
+          <p class="sub">The bundled synthetic demo makes no model calls. It shows evidence drilldown, review states, missing evidence and comparison caveats. Requires Node.js 24.19.0, Git and npm.</p>
+          <div class="actions">
+            <a class="btn primary" href="https://github.com/trilogy-group/engineering-behavior-observatory/blob/main/docs/guides/quickstart.md">Quickstart</a>
+            <a class="btn" href="https://github.com/trilogy-group/engineering-behavior-observatory/blob/main/docs/reference/cli.md">CLI reference</a>
+            <a class="btn" href="https://github.com/trilogy-group/engineering-behavior-observatory/releases">Releases</a>
+          </div>
+        </div>
+        <pre class="code" aria-label="Quickstart commands"><code><span class="c"># from a source checkout</span>
+git clone \
+  https://github.com/trilogy-group/engineering-behavior-observatory.git
+cd engineering-behavior-observatory
+nvm use &amp;&amp; npm ci &amp;&amp; npm run build &amp;&amp; npm link
+
+<span class="c"># explore a synthetic trajectory report</span>
+node dist/test/atlas-fixture.js .ebo/first-look
+ebo corpus query .ebo/first-look/index.jsonl
+ebo atlas build .ebo/first-look/atlas.json .ebo/first-report
+<span class="c"># open .ebo/first-report/index.html</span></code></pre>
+      </div>
+    </section>
+
+    <section class="principles">
+      <div class="wrap principles-grid">
+        <div><h3>Native evidence is authoritative</h3><p>Sessions, streams, events and hooks are semantic evidence; OpenTelemetry is timing and resources; the workspace is the outcome.</p></div>
+        <div><h3>Nothing is synthesized</h3><p>Missing or unsupported evidence is represented explicitly, never turned into <code>false</code> or zero.</p></div>
+        <div><h3>Partial runs are kept</h3><p>Failed and interrupted attempts stay valid partial bundles. A retry is a new linked attempt, never a replacement.</p></div>
+        <div><h3>Export fails closed</h3><p>Unknown sharing classification blocks export. Secrets, environment values, local identifiers and hidden reasoning are excluded.</p></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <p><span class="brand-sm">Engineering Behavior Observatory</span> · Apache-2.0</p>
+      <p class="links">
+        <a href="https://github.com/trilogy-group/engineering-behavior-observatory">GitHub</a>
+        <a href="https://github.com/trilogy-group/engineering-behavior-observatory/blob/main/docs/README.md">Documentation</a>
+        <a href="https://www.npmjs.com/package/engineering-behavior-observatory">npm</a>
+        <a href="https://github.com/trilogy-group/engineering-behavior-observatory/blob/main/LICENSE">License</a>
+      </p>
+    </div>
+  </footer>
+
+  <script src="site.js" defer></script>
+</body>
+</html>
