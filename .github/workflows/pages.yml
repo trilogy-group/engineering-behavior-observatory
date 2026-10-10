@@ -5,7 +5,6 @@ on:
     paths:
       - 'site/**'
       - 'docs/assets/**'
-      - 'viewer/src/tokens.css'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 permissions:
@@ -24,8 +23,11 @@ jobs:
       - name: Assemble the site
         run: |
           mkdir -p _site/assets
-          cp site/index.html site/style.css site/site.js viewer/src/tokens.css _site/
+          cp site/index.html site/style.css site/site.js site/tokens.css _site/
           cp docs/assets/ebo-atlas.png docs/assets/ebo-promo.mp4 docs/assets/ebo-promo-poster.jpg _site/assets/
+          version=$(node -p 'require("./package.json").version')
+          sed -i "s|<span id=\"build\">local preview</span>|<span id=\"build\">v${version} · main@${GITHUB_SHA::7}</span>|" _site/index.html
+          grep -q "main@${GITHUB_SHA::7}" _site/index.html
           touch _site/.nojekyll
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
