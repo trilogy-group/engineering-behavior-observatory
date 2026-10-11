@@ -52,7 +52,7 @@ export type FactoryRuntimeEvidence = {
   schemaVersion: "ebo.factory-runtime/v1";
   runtime: { executable: string; version: string; sdkVersion: string; adapterVersion: string; binaryDigest: string; protocolVersion: string };
   effectiveConfiguration: { model: string; reasoningEffort: string; autonomyLevel: string; permissionDecision: string;
-    modelSelection?: ReturnType<typeof factoryModelSelection>; credentialEnv?: string; environmentKeys: string[]; userConfiguration: "isolated"; settings?: unknown };
+    modelSelection?: ReturnType<typeof factoryModelSelection>; credentialEnv?: string; customModelSource?: "attempt-settings-override"; environmentKeys: string[]; userConfiguration: "isolated"; settings?: unknown };
   diagnostics?: Omit<ProtocolProcessResult["stderr"], "bytes">;
   telemetry: { receipt: { status: "not-checked" }; contentCapture: "not-requested" };
 };
@@ -89,13 +89,14 @@ class RecordingFactoryTransport implements StringFramedDroidClientTransport {
   public fatal: Promise<never>;
   private rejectFatal!: (error: Error) => void;
 
-  constructor(request: FactoryCaptureRequest, env: NodeJS.ProcessEnv) {
+  constructor(request: FactoryCaptureRequest, env: NodeJS.ProcessEnv, settingsOverride?: string) {
     this.shutdownGraceMs = request.shutdownGraceMs ?? FACTORY_DEFAULT_SHUTDOWN_GRACE_MS;
     this.fatal = new Promise((_, reject) => { this.rejectFatal = reject; });
     void this.fatal.catch(() => undefined);
     this.child = spawnProtocolProcess({
       command: request.configuration.executable,
-      args: [...(request.configuration.executableArgs ?? []), "exec", "--input-format", "stream-jsonrpc", "--output-format", "stream-jsonrpc"],
+      args: [...(request.configuration.executableArgs ?? []), "exec", "--input-format", "stream-jsonrpc", "--output-format", "stream-jsonrpc",
+        ...(settingsOverride === undefined ? [] : ["--settings", settingsOverride])],
       cwd: request.workspacePath, env, source: FACTORY_HARNESS, evidencePath: request.evidencePath,
       ...(request.stderrPath === undefined ? {} : { stderrPath: request.stderrPath }),
       shutdownGraceMs: request.shutdownGraceMs ?? FACTORY_DEFAULT_SHUTDOWN_GRACE_MS,
@@ -217,9 +218,11 @@ export async function captureFactoryDroid(request: FactoryCaptureRequest): Promi
         ...(selection.route.extraArgs === undefined ? {} : { extraArgs: selection.route.extraArgs }) }] } : {}) }), { mode: 0o600 });
     await writeFile(join(home, ".factory", "hooks.json"), "{}", { mode: 0o600 });
     if (request.signal?.aborted) throw new Error("Factory capture interrupted before launch.");
-    transport = new RecordingFactoryTransport({ ...request, configuration: { ...request.configuration, executable: runtime.path } }, environment);
+    transport = new RecordingFactoryTransport({ ...request, configuration: { ...request.configuration, executable: runtime.path } }, environment,
+      selection.route.kind === "byok" ? join(home, ".factory", "settings.json") : undefined);
     await transport.child.evidence.recordCapability({ source: FACTORY_HARNESS, name: "runtime-composition", status: "available", details: {
       version: runtime.version, sdkVersion: FACTORY_SDK_VERSION, adapterVersion: FACTORY_ADAPTER_VERSION, binaryDigest, protocolVersion: FACTORY_PROTOCOL_VERSION, modelSelection: selection,
+      ...(selection.route.kind === "byok" ? { customModelSource: "attempt-settings-override" } : {}),
     } });
     const created = createSession({ transport, cwd: request.workspacePath,
       modelId: selection.nativeModelId, reasoningEffort: request.configuration.reasoningEffort as ReasoningEffort,
@@ -280,7 +283,8 @@ export async function captureFactoryDroid(request: FactoryCaptureRequest): Promi
   const telemetry: FactoryRuntimeEvidence = {
     schemaVersion: "ebo.factory-runtime/v1",
     runtime: { executable: runtime.path, version: runtime.version, sdkVersion: FACTORY_SDK_VERSION, adapterVersion: FACTORY_ADAPTER_VERSION, binaryDigest, protocolVersion: FACTORY_PROTOCOL_VERSION },
-    effectiveConfiguration: { model: request.configuration.model, modelSelection: selection, credentialEnv, reasoningEffort: request.configuration.reasoningEffort,
+    effectiveConfiguration: { model: request.configuration.model, modelSelection: selection, credentialEnv,
+      ...(selection.route.kind === "byok" ? { customModelSource: "attempt-settings-override" as const } : {}), reasoningEffort: request.configuration.reasoningEffort,
       autonomyLevel: request.configuration.autonomyLevel, permissionDecision: request.configuration.permissionDecision,
       environmentKeys: Object.keys(environment).sort(), userConfiguration: "isolated", ...(settings === undefined ? {} : { settings }) },
     diagnostics: { text: processResult.stderr.text, sizeBytes: processResult.stderr.sizeBytes, truncated: processResult.stderr.truncated, maxBytes: processResult.stderr.maxBytes },

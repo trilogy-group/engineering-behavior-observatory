@@ -65,7 +65,10 @@ For Fireworks BYOK, freeze this model record instead:
 
 The `model` field names the upstream API model. EBO generates the native
 selector `custom:ebo-byok` and one custom-model definition inside the temporary
-home, using an environment reference for its API key. `route.kind` can also be
+home, using an environment reference for its API key. EBO passes this file through
+Droid's `--settings` override, so repository custom-model definitions cannot
+replace the frozen route. Retained readback requires that override provenance
+for BYOK captures. `route.kind` can also be
 `factory-managed`; omitting `route` selects that default. Managed GLM uses
 `model: "glm-5.3-flash"`. The `provider` label records provenance; the explicit
 route controls dispatch. The same harness supports both arms.

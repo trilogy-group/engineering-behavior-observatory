@@ -392,6 +392,7 @@ test("Factory BYOK isolates credentials and corroborates retained upstream routi
       configuration: { ...config(), route: byokRoute }, prompt: "Create a result file." });
     assert.equal(result.manifest.terminal.state, "completed");
     const isolation = JSON.parse(await readFile(join(workspace, "isolation.json"), "utf8"));
+    assert.equal(isolation.hasSettingsOverride, true);
     assert.equal(isolation.hasFactoryCredential, false); assert.equal(isolation.hasByokCredential, true);
     assert.equal(isolation.hasSourceCredential, false);
     assert.equal(isolation.settings.customModels[0].apiKey, "${EBO_FACTORY_BYOK_API_KEY}");
@@ -407,6 +408,12 @@ test("Factory BYOK isolates credentials and corroborates retained upstream routi
     // Alter the route and its artifact digest together: native composition must still corroborate it.
     const descriptor = result.manifest.evidence.find(e => e.id === "telemetry")!;
     const path = join(bundle, descriptor.relativePath), telemetry = JSON.parse(await readFile(path, "utf8"));
+    delete telemetry.effectiveConfiguration.customModelSource;
+    const unbound = Buffer.from(JSON.stringify(telemetry)); writeFileSync(path, unbound);
+    descriptor.digest = `sha256:${digestBytes(unbound).value}`; descriptor.sizeBytes = unbound.length;
+    writeFileSync(join(bundle, "manifest.json"), JSON.stringify(result.manifest));
+    await assert.rejects(createRetainedBehaviorEvidence(bundle), /lacks an attempt-owned settings override/);
+    telemetry.effectiveConfiguration.customModelSource = "attempt-settings-override";
     telemetry.effectiveConfiguration.modelSelection.route.baseUrl = "https://other.example/v1";
     const bytes = Buffer.from(JSON.stringify(telemetry)); writeFileSync(path, bytes);
     descriptor.digest = `sha256:${digestBytes(bytes).value}`; descriptor.sizeBytes = bytes.length;
@@ -456,6 +463,14 @@ test("pinned native Factory BYOK uses Chat Completions through EBO without Facto
     const baseline = join(root, "baseline"), workspace = join(root, "workspace"); await mkdir(baseline); await mkdir(workspace);
     const d = definition(join(root, "bundle")); d.run.model = { provider: "fireworks", id: "accounts/fireworks/models/glm-5p3-flash" };
     const address = server.address() as { port: number };
+    // Project configuration has higher priority than ordinary HOME settings.
+    // The attempt-owned CLI override must keep the frozen upstream route authoritative.
+    await mkdir(join(workspace, ".factory"));
+    const project = { customModels: [{ id: FACTORY_BYOK_MODEL_ID, index: 0, displayName: "project-override",
+      model: "project-override", provider: "generic-chat-completion-api", baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: "${EBO_FACTORY_BYOK_API_KEY}", maxOutputTokens: 128, extraArgs: { temperature: 1 } }] };
+    writeFileSync(join(workspace, ".factory/settings.json"), JSON.stringify(project));
+    writeFileSync(join(workspace, ".factory/settings.local.json"), JSON.stringify(project));
     const result = await captureFactoryDroidRun({ definition: d, startingWorkspacePath: baseline,
       workspace: { setup: () => ({ status: "ready", path: workspace, artifactId: "workspace", retained: true }) },
       configuration: { ...config(), executable: nativeFactory!, executableArgs: undefined, model: d.run.model.id,
@@ -465,6 +480,7 @@ test("pinned native Factory BYOK uses Chat Completions through EBO without Facto
     assert.ok(requests.length >= 2); assert.ok(requests.every(r => r.path === "/v1/chat/completions" && r.model === d.run.model.id && r.authorization === `Bearer ${CREDENTIAL_VALUE}`));
     assert.ok(requests.every(r => r.body.temperature === 0 && r.body.reasoning_effort === "low"));
     assert.ok(!result.capture!.telemetry.effectiveConfiguration.environmentKeys.includes("FACTORY_API_KEY"));
+    assert.equal(result.capture!.telemetry.effectiveConfiguration.customModelSource, "attempt-settings-override");
     assert.equal((await readFile(join(workspace, "capture-proof.txt"), "utf8")).trim(), "EBO_FACTORY_OK");
     const retained = await createRetainedBehaviorEvidence(d.bundleRoot);
     assert.ok(retained.dataset.events.some(e => e.family === "tool"));

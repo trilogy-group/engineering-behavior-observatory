@@ -50,7 +50,7 @@ input.on('line', raw => {
     if (mode === 'settings-mismatch') settings.modelId = 'wrong-model';
     result = { sessionId, session: { messages: [] }, settings };
     writeFileSync('isolation.json', JSON.stringify({ hasUnrelatedSecret: process.env.EBO_FACTORY_UNRELATED !== undefined,
-      hasFactoryCredential: Boolean(process.env.FACTORY_API_KEY), hasByokCredential: Boolean(process.env.EBO_FACTORY_BYOK_API_KEY),
+      hasSettingsOverride: process.argv.includes("--settings"), hasFactoryCredential: Boolean(process.env.FACTORY_API_KEY), hasByokCredential: Boolean(process.env.EBO_FACTORY_BYOK_API_KEY),
       hasSourceCredential: Boolean(process.env.EBO_FAKE_FACTORY_KEY), home: process.env.HOME, updater: process.env.FACTORY_DROID_AUTO_UPDATE_ENABLED,
       settings: JSON.parse(readFileSync(join(process.env.HOME, '.factory/settings.json'), 'utf8')),
       hasUserHooks: existsSync(join(process.env.HOME, '.factory/hooks.json')) }));

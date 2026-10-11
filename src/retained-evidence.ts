@@ -187,6 +187,8 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
     if (effective.settings?.modelId !== undefined && effective.settings.modelId !== selection.nativeModelId) throw new Error("Retained Factory effective selector differs from its route.");
     if (initialization !== undefined && (initialization.payload as Record<string, any>)?.params?.modelId !== selection.nativeModelId) throw new Error("Retained Factory initialization model differs from the manifest.");
     const composition = native.records.find(({ record }) => record.capability === "runtime-composition")?.record.evidence as Record<string, unknown> | undefined;
+    if (selection.route.kind === "byok" && (effective.customModelSource !== "attempt-settings-override"
+      || composition?.customModelSource !== "attempt-settings-override")) throw new Error("Retained Factory BYOK route lacks an attempt-owned settings override.");
     if (effective.modelSelection !== undefined && digestMetadata(composition?.modelSelection ?? null).value !== digestMetadata(selection).value) throw new Error("Retained Factory route differs from recorded composition.");
     if (composition?.binaryDigest !== runtime.binaryDigest || composition?.protocolVersion !== runtime.protocolVersion) {
       throw new Error("Retained Factory runtime digest or protocol differs from native composition.");
