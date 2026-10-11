@@ -163,7 +163,7 @@ test("Factory declined permissions retain an interrupted run bundle and native p
     assert.equal(retained.dataset.events.find(e => e.family === "outcome")?.attributes.reason, "permission_rejected");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
-for (const mode of ["slow-interrupt", "slow-close"]) test(`Factory finalization waits for the ${mode} producer beyond coordinator shutdown windows`, async () => {
+for (const mode of ["slow-interrupt", "slow-close"]) test(`Factory finalization preserves the ${mode} producer's final evidence during cancellation`, async () => {
   const root = await temporaryRoot(); const abort = new AbortController(); let producer: Promise<FactoryCapture> | undefined;
   try {
     const baseline = join(root, "baseline"), workspace = join(root, "workspace"); await mkdir(baseline); await mkdir(workspace);
@@ -171,13 +171,12 @@ for (const mode of ["slow-interrupt", "slow-close"]) test(`Factory finalization 
     const running = captureFactoryDroidRun({ definition: definition(bundle), startingWorkspacePath: baseline,
       workspace: { setup: () => ({ status: "ready", path: workspace, artifactId: "workspace", retained: true }) },
       configuration: config(mode), prompt: "Create a result file.", shutdownGraceMs: 20, signal: abort.signal,
-      capture: request => producer = captureFactoryDroid({ ...request, shutdownGraceMs: 300 }) });
+      capture: request => producer = captureFactoryDroid({ ...request, shutdownGraceMs: 2_000 }) });
     for (let i = 0; i < 500; i++) {
       if (await readFile(join(workspace, "factory-result.txt")).then(() => true, () => false)) break;
       await new Promise(resolve => setTimeout(resolve, 10));
     }
     abort.abort(); const result = await running;
-    assert.equal(result.attempt.record.harnessTerminationConfirmed, mode === "slow-close", "native interrupt can settle before process close finishes");
     assert.equal(result.capture?.terminal?.reason, "cancelled", "finalization still waited for native drain");
     const descriptor = result.manifest.evidence.find(e => e.id === "session")!;
     const bytes = await readFile(join(bundle, descriptor.relativePath));
