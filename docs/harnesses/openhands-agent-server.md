@@ -7,34 +7,32 @@ loop.
 
 ## Pinned boundary
 
-The runtime pin is Agent Server `1.46.0`. The matching release OpenAPI digest,
-server commit, image, event discriminator list, WebSocket route, and
+The runtime pin is Agent Server `1.54.0`. The matching release OpenAPI digest,
+server commit, image, WebSocket route, and
 authentication mode are recorded in the
-[contract manifest](../../contracts/openhands-agent-server-v1.46.0.json).
+[contract manifest](../../contracts/openhands-agent-server-v1.54.0.json).
 
-The 1.46.0 upgrade preserves the existing conversation endpoints and consumed
-event schemas. The upstream schema changes concern ACP agents and skill requests,
-which this adapter does not use. Historical 1.44.1 fixtures and the contract
-manifest remain unchanged; retained evaluation keeps their original runtime and
-adapter identity.
+The pinned OpenAPI retains EBO's conversation paths and event-search parameters.
+Retained 1.44.1 and 1.46.0 captures keep their original runtime and adapter
+identities. Their contract snapshots and fixtures remain available.
 
 For a native macOS ARM64 installation, download the release's
-`agent-server-1.46.0-macos-arm64` and verify it against `SHA256SUMS` (also pinned
+`agent-server-1.54.0-macos-arm64` and verify it against `SHA256SUMS` (also pinned
 in the contract manifest). Mark the binary executable and launch it with:
 
 ```sh
-agent-server-1.46.0-macos-arm64 --host 127.0.0.1 --port 18080
+agent-server-1.54.0-macos-arm64 --host 127.0.0.1 --port 18080
 curl --fail http://127.0.0.1:18080/server_info
 ```
 
-The identity response must report `1.46.0`. Server readiness does not establish
+The identity response must report `1.54.0`. Server readiness does not establish
 a working model route; the opt-in conversation smoke below verifies that separately.
 
-`@openhands/typescript-client` `1.39.0` was checked against that contract. Its
-generated types target Agent Server `1.44.0`, and its WebSocket wrapper neither
-exposes reconnect lifecycle evidence nor uses the current first-message
-authentication path. EBO therefore uses Node's native `fetch` and `WebSocket`
-APIs for this boundary and does not add the client as a runtime dependency.
+`@openhands/typescript-client` `1.54.0` targets Agent Server `1.54.0` and supports
+first-message WebSocket authentication. EBO uses Node's native `fetch` and
+`WebSocket` APIs to own raw receipt, reconnect observations and final-event
+reconciliation. The comparison client is recorded in the contract manifest;
+it is outside EBO's runtime dependencies.
 
 ## Capture flow
 
@@ -44,7 +42,7 @@ The run configuration must expose the actual model at `agent.llm.model` or
 `agent_settings.llm.model`; EBO rejects a request whose executable model differs
 from the run manifest identity.
 
-1. Verify `/server_info` reports exactly `1.46.0`.
+1. Verify `/server_info` reports exactly `1.54.0`.
 2. Create one conversation with the supplied agent configuration and the
    workspace path visible to the server. Authenticated REST requests use the
    pinned server's `X-Session-API-Key` header.
@@ -124,7 +122,7 @@ mkdir -p "$EBO_LIVE_OPENHANDS_WORKSPACE_ROOT"
 docker run --rm --name ebo-openhands-smoke -p 127.0.0.1:8010:8000 \
   -v "$EBO_LIVE_OPENHANDS_WORKSPACE_ROOT:$EBO_LIVE_OPENHANDS_WORKSPACE_ROOT" \
   -e SESSION_API_KEY \
-  ghcr.io/openhands/agent-server:1.46.0-python --host 0.0.0.0
+  ghcr.io/openhands/agent-server:1.54.0-python --host 0.0.0.0
 
 npm run build
 EBO_LIVE_OPENHANDS_SMOKE=1 \
@@ -146,8 +144,8 @@ from the operator's `ZAI_API_KEY` environment variable.
 
 Set `EBO_LIVE_OPENHANDS_KEEP_ARTIFACTS=1` to retain the smoke directory and print
 its location, including on failure. These native artifacts remain restricted.
-On the tested macOS installation, the default tmux pool failed during tool
-initialization. `EBO_LIVE_OPENHANDS_TERMINAL_TYPE=subprocess` selects OpenHands'
-supported subprocess terminal for this smoke. With that setting, the 1.46.0
-server completed the Z.ai run, verified the workspace, and produced normalized
-events with the declared EventLog completeness gap.
+For a native macOS smoke, `EBO_LIVE_OPENHANDS_TERMINAL_TYPE=subprocess` selects
+OpenHands' supported subprocess terminal. Agent Server 1.54.0 completed a
+Fireworks `accounts/fireworks/models/glm-5p3-flash` run with authenticated
+REST/WebSocket capture, a verified workspace and normalized events. EventLog
+completeness remains an explicit qualification gap.

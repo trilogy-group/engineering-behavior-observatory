@@ -1,8 +1,9 @@
 # Harbor execution boundary
 
-Harbor 0.22.0 owns task schema 1.4, content hashing, instruction composition,
-task setup, multi-step policy, verification, locks and cleanup. Smol Python SDK
-1.18.2 supplies the microVM provider and bundled libkrun on Apple Silicon.
+Harbor 0.24.0 owns task schema 1.4, content hashing, instruction composition,
+task setup, multi-step policy, verification, locks and cleanup. Its native
+`harbor.environments.smol` adapter uses Smol Python SDK 1.26.1 and its bundled
+SmolVM/libkrun runtime on Apple Silicon.
 EBO owns study governance and source-native trajectory capture. The boundary is an official
 Harbor `BaseAgent` extension launched by `Trial.create`, not a copy of its loop.
 
@@ -88,7 +89,7 @@ credentials are injected only into attempt children.
 Smol's bundled disk-capacity fix must pass the direct and separate-process
 branching gate. Public-egress image-backed execution also needs its full live gate.
 No-network image import and allowlist/virtio-net are not qualified. Reject these
-policies instead of substituting public egress. Harbor 0.23 remains deferred.
+policies instead of substituting public egress.
 
 Native step bundles remain usable before behavioral assessment. Harbor rewards
 are retained as source outcomes; structural extractors and judges do not inherit

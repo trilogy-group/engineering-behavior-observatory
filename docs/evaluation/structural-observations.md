@@ -1,8 +1,9 @@
 # Outcome ingestion and structural observations
 
-Retained native loading accepts the implemented source versions: OpenHands
-1.44.1/1.46.0, DeepSeek SDK 0.1.7-rc.2, and Codex 0.150.1/0.153.4/0.157.0. Unsupported versions
-fail explicitly rather than receiving a different adapter's provenance.
+Retained native loading accepts OpenHands 1.44.1, 1.46.0 and 1.54.0; DeepSeek SDK
+0.1.1-rc.2, 0.1.7-rc.2 and 0.2.0-rc.2; and Codex 0.150.1, 0.153.4, 0.157.0 and
+0.162.1. Unsupported versions fail explicitly rather than receiving a different
+adapter's provenance.
 Completed Codex bundles require exactly one matching owned native terminal to
 report completion; duplicate owned terminals reject. Qualified failed/partial
 evidence remains separate.
@@ -44,7 +45,7 @@ loader supplies judge input, assertion validation, calibration, and aggregation.
 Unsupported source fields remain unavailable; native schemas and identities
 are preserved. Supplemental bundle metadata is retained separately as
 `outcomeCapture`, so it cannot replace source-native session records.
-OpenHands datasets retain their captured runtime version (`1.44.1` or `1.46.0`).
+OpenHands datasets retain their captured runtime version (`1.44.1`, `1.46.0` or `1.54.0`).
 DeepSeek reapplies its native composition, capability, initialization, prompt,
 and completed receipt-to-idle/runtime-reap gate before normalization; qualified
 partial captures remain qualified-with-gaps. Physical JSONL locators stay

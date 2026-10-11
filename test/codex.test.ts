@@ -62,7 +62,7 @@ import {
 } from "../src/index.js";
 
 const fixture = resolve("test/fixtures/codex/fake-app-server.mjs");
-const contractRoot = resolve("contracts/codex-app-server-0.157.0");
+const contractRoot = resolve("contracts/codex-app-server-0.162.1");
 const reasoningSentinel = "EBO_RAW_REASONING_SENTINEL";
 
 for (const networkAccess of [undefined, true, false]) {
@@ -172,6 +172,18 @@ for (const mode of ["history-paginated", "history-summary", "history-not-loaded"
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 }
+
+test("retained Codex runtime versions preserve their adapter identities", async () => {
+  const root = await temporaryRoot();
+  try {
+    const capture = await runFake(root, "success");
+    for (const version of ["0.150.1", "0.153.4", "0.157.0", CODEX_APP_SERVER_VERSION]) {
+      const { dataset } = await describeAndValidateCodexDataset(capture, version);
+      assert.equal(dataset.adapter.id, `ebo-codex-app-server-v${version}`);
+      assert.ok(dataset.events.length > 0);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test("approved existing-auth native capture smoke", { skip: process.env.EBO_LIVE_CODEX_CAPTURE_SMOKE !== "1" }, async (context) => {
   const model = process.env.EBO_LIVE_CODEX_CAPTURE_MODEL;

@@ -160,7 +160,7 @@ async function finishPreparation(
     }),
     environment: {
       profile: execution.profile,
-      provider: execution.profile === "smol" ? "smol.harbor:SmolEnvironment" : execution.profile === "docker" ? "harbor-docker" : "ebo-local-fs-test",
+      provider: execution.profile === "smol" ? "harbor.environments.smol:SmolEnvironment" : execution.profile === "docker" ? "harbor-docker" : "ebo-local-fs-test",
       containerized: execution.profile === "docker",
       enforcement: execution.profile === "smol" ? "microvm" : execution.profile === "docker" ? "docker" : "none",
       dockerImage: resolution.environment.dockerImage,

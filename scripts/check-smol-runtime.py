@@ -1,6 +1,6 @@
 """Opt-in, no-model Smol/Harbor compatibility gate. Creates only owned local VMs.
 
-Install harbor==0.22.0 and smolmachines[harbor]==1.18.2.
+Install harbor[smol]==0.24.0 and smolmachines==1.26.1.
 Run with that isolated interpreter; an optional argv[1] selects an OCI
 image (prefer a digest for recorded conformance). --direct removes Harbor and
 the OCI workload from the execution path. No Docker daemon or cloud is used.
@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 
 from smol import ConnectOptions, Machine, MachineConfig, ResourceSpec
-from smol.harbor import SmolEnvironment
+from harbor.environments.smol import SmolEnvironment
 from harbor.models.task.config import EnvironmentConfig, NetworkMode, NetworkPolicy
 from harbor.models.trial.paths import TrialPaths
 
@@ -36,7 +36,7 @@ async def borrower(parent, image, label):
             target="local", auto_checkpoint=False, fork_batch_window_ms=0,
         )
         # Contract-test this single pinned provider member before execution.
-        from smol.harbor import _checkpoint
+        from harbor.environments.smol import _checkpoint
         env._checkpoints[env.environment_id] = _checkpoint({
             "machine": parent, "resources": {"cpus": 1, "memory_mb": 512, "storage_mb": 1024},
             "network_mode": "public",
@@ -54,8 +54,8 @@ async def borrower(parent, image, label):
 
 
 def main():
-    assert importlib.metadata.version("smolmachines") == "1.18.2"
-    assert importlib.metadata.version("harbor") == "0.22.0"
+    assert importlib.metadata.version("smolmachines") == "1.26.1"
+    assert importlib.metadata.version("harbor") == "0.24.0"
     if sys.argv[1:2] == ["--borrower"]:
         asyncio.run(borrower(*sys.argv[2:]))
         return

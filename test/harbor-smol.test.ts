@@ -32,6 +32,9 @@ with patch.object(smol, '__file__', str(package / '__init__.py')), \
      patch.object(e.platform, 'system', return_value='Darwin'), \
      patch.object(e.platform, 'machine', return_value='arm64'):
     assert e.runtime_provenance(manifest)['libkrunSha256'] == manifest['libkrunSha256']
+    with patch.dict(os.environ):
+        del os.environ['SMOLVM_LIB_DIR']
+        assert e.runtime_provenance(manifest)['libkrunSha256'] == manifest['libkrunSha256']
     with patch.object(e.platform, 'system', return_value='Linux'):
         rejects('only on Apple Silicon macOS')
     with patch.object(e.platform, 'machine', return_value='x86_64'):
@@ -144,6 +147,7 @@ async def check():
         await agent.download_dir(source_dir='/remote', target_dir=root)
         download.assert_awaited_once_with('/remote', root)
     grader = envs[1]
+    assert grader._enable_environment_dir_upload is False
     with patch.object(grader, 'upload_dir', new_callable=AsyncMock) as upload:
         await grader._upload_environment_dir_after_start()
         upload.assert_awaited_once_with(grader.environment_dir, '/tests')

@@ -13,18 +13,23 @@ separate control runtime with Python 3.14:
 
 ```sh
 python3 -m venv .harbor-venv
-.harbor-venv/bin/pip install 'smolmachines[harbor]==1.18.2' harbor==0.22.0
+.harbor-venv/bin/pip install 'harbor[smol]==0.24.0' smolmachines==1.26.1
 .harbor-venv/bin/pip check
 export EBO_HARBOR_PYTHON="$PWD/.harbor-venv/bin/python"
 unset SMOLVM_LIB_DIR
 ebo harbor doctor
 ```
 
+Harbor supplies the provider adapter through its `smol` extra. The Smol wheel
+pins the bundled VM runtime. Rebuild worker archives and freeze a fresh
+environment manifest when upgrading: image/runtime bindings and the bundled
+`libkrunSha256` identify the selected execution condition.
+
 Keep the virtual environment in a durable location,
 not under `/tmp`. Temporary-directory cleanup can remove a venv's `pyvenv.cfg`
 without removing its packages, after which the interpreter silently stops
 resolving the environment and every Harbor command fails with a misleading
-"No Python interpreter with harbor==0.22.0 was found". Point
+"No Python interpreter with harbor==0.24.0 was found". Point
 `EBO_HARBOR_PYTHON` at a path that survives reboots and long unattended runs.
 
 A frozen task whose snapshot fails content verification reports
@@ -95,10 +100,9 @@ The host Python extension launches an EBO **TypeScript worker inside Harbor's
 environment**. SDK tools and subprocesses therefore see its actual filesystem.
 Python carries control messages only; it does not capture or normalize sessions.
 
-Verified multi-step tasks require a separate verifier environment for every
-step. Harbor 0.22.0 leaves shared-verifier tests in the agent environment until
-the next verification phase, where a later candidate step could read them.
-EBO rejects that configuration during admission rather than changing the task.
+EBO qualifies verified multi-step tasks with a separate verifier environment
+for every step. Admission requires that profile; Harbor owns setup, verification
+and cleanup.
 Single-step shared verification retains its weaker, candidate-modified trust
 boundary; it is not independent grading.
 

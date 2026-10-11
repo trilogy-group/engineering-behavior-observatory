@@ -6,7 +6,7 @@ Agent SDK remains EBO's primary Anthropic capture path. Codex native protocol
 records remain authoritative, OTLP is separately retained timing/resource
 evidence, and uniform events are a digest-checked projection after capture.
 
-The supported runtime is `codex-cli 0.157.0`. EBO rejects a different executable
+The supported runtime is `codex-cli 0.162.1`. EBO rejects a different executable
 version, starts a new child for each attempt, and never connects to the desktop
 daemon or changes `~/.codex/config.toml`.
 
@@ -23,7 +23,7 @@ names, never their values.
 
 ## Generated contract
 
-[`contracts/codex-app-server-0.157.0/manifest.json`](../../contracts/codex-app-server-0.157.0/manifest.json)
+[`contracts/codex-app-server-0.162.1/manifest.json`](../../contracts/codex-app-server-0.162.1/manifest.json)
 pins the generated root digests and the small schema/type subset used by the
 adapter and its fixtures. Regenerate the source contracts with the pinned CLI:
 
@@ -36,11 +36,11 @@ The adapter uses the stable initialize/thread/turn lifecycle, plus generated
 leaf contracts for initialized, `thread/read`, `turn/interrupt`, and token usage.
 Unknown notifications are retained unchanged and listed as unmapped.
 
-The 0.157.0 generated contract preserves the RPC, approval, sandbox, interruption,
+The 0.162.1 generated contract preserves the RPC, approval, sandbox, interruption,
 and usage fields used by EBO. Initialization lives in the generated `v1` schema
 directory. The generated subset also includes thread/turn start parameters; the
-current schema adds optional Daybreak and multimodal input fields that EBO leaves
-under native protocol ownership.
+current turn-start schema includes optional parent/root turn identities that EBO
+leaves under native protocol ownership.
 New captures explicitly select legacy history; paginated or summary-only
 readback is retained with a gap instead of being claimed as complete history.
 The pinned runtime treats `writableRoots` as additional to the effective `cwd`
@@ -49,10 +49,11 @@ workspace, rejects additional roots, and requires the requested network and
 temporary-directory restrictions. Initial thread effort and sandbox overrides
 match the explicit turn policy.
 
-Existing 0.150.1 bundles remain readable through their original normalization
-profile and dataset identity. The legacy contract snapshot stays checked in;
+Existing 0.150.1, 0.153.4 and 0.157.0 bundles remain readable through their
+original normalization profile and dataset identity. Legacy contract snapshots
+stay checked in;
 a captured synthetic 0.150.1 bundle and its pre-upgrade normalized dataset test
-exact readback. New captures use the 0.157.0 profile. Frozen run configurations
+exact readback. New captures use the 0.162.1 profile. Frozen run configurations
 for the older executable are not rewritten: new execution requires fresh
 configuration references carrying the new runtime version and contract digest.
 
@@ -63,7 +64,7 @@ the actual provider model and effort. A minimal observational configuration is:
 
 ```json
 { "schemaVersion": "ebo.codex-config/v1", "kind": "model", "provider": "openai", "model": "gpt-5.6-sol", "effort": "high" }
-{ "schemaVersion": "ebo.codex-config/v1", "kind": "harness", "adapter": "codex-app-server", "executable": "/opt/homebrew/bin/codex", "version": "0.157.0", "contractDigest": "sha256:dae22897ba9e48d9f3a8f65c4353f2a62b4c24be31bd9893f7cd8e1c7601076c" }
+{ "schemaVersion": "ebo.codex-config/v1", "kind": "harness", "adapter": "codex-app-server", "executable": "/opt/homebrew/bin/codex", "version": "0.162.1", "contractDigest": "sha256:5c0ee37a723e4672108aa5c68b0c63cd540e17d408ca2f8ac1e7ebf76e737ac2" }
 { "schemaVersion": "ebo.codex-config/v1", "kind": "native-limits", "shutdownGraceMs": 2000 }
 { "schemaVersion": "ebo.codex-config/v1", "kind": "native-tool-policy", "approvalPolicy": "never", "sandbox": "workspace-write", "networkAccess": true }
 { "schemaVersion": "ebo.codex-config/v1", "kind": "capture-profile", "telemetrySignals": ["logs", "traces", "metrics"], "workspaceOutcome": { "excludeDirectoryNames": ["node_modules"] } }
@@ -98,7 +99,7 @@ effort from the native response.
 {
   "schemaVersion": "ebo.codex-config/v1", "kind": "harness",
   "adapter": "codex-app-server", "executable": "/path/to/codex",
-  "version": "0.157.0", "contractDigest": "sha256:…",
+  "version": "0.162.1", "contractDigest": "sha256:…",
   "arguments": [
     "-c", "features.multi_agent=false",
     "-c", "features.apps=false",

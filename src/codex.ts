@@ -4,12 +4,12 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 
-import type { ClientNotification } from "../contracts/codex-app-server-0.157.0/types/ClientNotification.js";
-import type { AskForApproval } from "../contracts/codex-app-server-0.157.0/types/AskForApproval.js";
-import type { SandboxMode } from "../contracts/codex-app-server-0.157.0/types/SandboxMode.js";
-import type { ThreadReadParams } from "../contracts/codex-app-server-0.157.0/types/ThreadReadParams.js";
-import type { TokenUsageBreakdown } from "../contracts/codex-app-server-0.157.0/types/TokenUsageBreakdown.js";
-import type { TurnInterruptParams } from "../contracts/codex-app-server-0.157.0/types/TurnInterruptParams.js";
+import type { ClientNotification } from "../contracts/codex-app-server-0.162.1/types/ClientNotification.js";
+import type { AskForApproval } from "../contracts/codex-app-server-0.162.1/types/AskForApproval.js";
+import type { SandboxMode } from "../contracts/codex-app-server-0.162.1/types/SandboxMode.js";
+import type { ThreadReadParams } from "../contracts/codex-app-server-0.162.1/types/ThreadReadParams.js";
+import type { TokenUsageBreakdown } from "../contracts/codex-app-server-0.162.1/types/TokenUsageBreakdown.js";
+import type { TurnInterruptParams } from "../contracts/codex-app-server-0.162.1/types/TurnInterruptParams.js";
 import { digestMetadata } from "./artifacts.js";
 
 import {
@@ -37,9 +37,9 @@ import {
   type UniformEvent,
 } from "./uniform-events.js";
 
-export const CODEX_APP_SERVER_VERSION = "0.157.0";
+export const CODEX_APP_SERVER_VERSION = "0.162.1";
 /** App-server versions whose retained bundles EBO reads back; the pinned version alone is used for capture. */
-export const RETAINED_CODEX_APP_SERVER_VERSIONS: readonly string[] = [CODEX_APP_SERVER_VERSION, "0.153.4", "0.150.1"];
+export const RETAINED_CODEX_APP_SERVER_VERSIONS: readonly string[] = [CODEX_APP_SERVER_VERSION, "0.157.0", "0.153.4", "0.150.1"];
 export const CODEX_ADAPTER_VERSION = "0.1.0";
 export const CODEX_HARNESS = "codex-app-server";
 export const CODEX_DEFAULT_SHUTDOWN_GRACE_MS = 2_000;
@@ -204,6 +204,11 @@ const CODEX_0_150_1_CAPABILITIES = {
 const CODEX_0_153_4_CAPABILITIES = {
   ...CODEX_0_150_1_CAPABILITIES,
   adapterId: "ebo-codex-app-server-v0.153.4",
+} as const satisfies AdapterCapabilityProfile;
+
+const CODEX_0_157_0_CAPABILITIES = {
+  ...CODEX_0_153_4_CAPABILITIES,
+  adapterId: "ebo-codex-app-server-v0.157.0",
 } as const satisfies AdapterCapabilityProfile;
 
 export const CODEX_APP_SERVER_CAPABILITIES = {
@@ -660,7 +665,8 @@ export async function describeAndValidateCodexDataset(
     capture,
     normalization,
     capabilityProfile: runtimeVersion === "0.150.1" ? CODEX_0_150_1_CAPABILITIES
-      : runtimeVersion === "0.153.4" ? CODEX_0_153_4_CAPABILITIES : CODEX_APP_SERVER_CAPABILITIES,
+      : runtimeVersion === "0.153.4" ? CODEX_0_153_4_CAPABILITIES
+      : runtimeVersion === "0.157.0" ? CODEX_0_157_0_CAPABILITIES : CODEX_APP_SERVER_CAPABILITIES,
     adapterVersion: CODEX_ADAPTER_VERSION,
     nativeType: codexNativeType,
   });

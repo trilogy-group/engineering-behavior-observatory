@@ -3,8 +3,8 @@
   "kind": "harness",
   "adapter": "codex-app-server",
   "executable": "/path/to/codex",
-  "version": "0.157.0",
-  "contractDigest": "sha256:dae22897ba9e48d9f3a8f65c4353f2a62b4c24be31bd9893f7cd8e1c7601076c",
+  "version": "0.162.1",
+  "contractDigest": "sha256:5c0ee37a723e4672108aa5c68b0c63cd540e17d408ca2f8ac1e7ebf76e737ac2",
   "arguments": [
     "-c", "features.multi_agent=false",
     "-c", "features.multi_agent_v2=false",

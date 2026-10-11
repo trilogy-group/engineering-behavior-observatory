@@ -31,7 +31,7 @@ jobs:
           python-version: '3.14'
       - run: npm ci
       - run: npm run build && npm run typecheck
-      - run: python -m venv .harbor-venv && .harbor-venv/bin/pip install 'smolmachines[harbor]==1.18.2' harbor==0.22.0 && .harbor-venv/bin/pip check
+      - run: python -m venv .harbor-venv && .harbor-venv/bin/pip install 'harbor[smol]==0.24.0' smolmachines==1.26.1 && .harbor-venv/bin/pip check
       - name: Native worker and admission regression checks
         run: node --test dist/test/harbor.test.js dist/test/harbor-worker.test.js dist/test/harbor-trial.test.js dist/test/harbor-smol.test.js dist/test/factory-droid.test.js dist/test/release-source-scan.test.js
         env:

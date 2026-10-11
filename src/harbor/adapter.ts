@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { HARBOR_ADAPTER_PROTOCOL_VERSION, HARBOR_ADAPTER_SCRIPT } from "./adapter-script.js";
 
 /** Exact-version pin of the official Harbor package used for task semantics. */
-export const HARBOR_PACKAGE_PIN = "0.22.0";
+export const HARBOR_PACKAGE_PIN = "0.24.0";
 /** Task schema version observed at the pinned Harbor release (informational; Harbor validates it). */
 export const HARBOR_TASK_SCHEMA_VERSION = "1.4";
 /** Environment variable that overrides Python interpreter resolution. */

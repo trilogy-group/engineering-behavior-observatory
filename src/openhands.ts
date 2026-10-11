@@ -8,17 +8,17 @@ import type {
   UniformEvent,
 } from "./uniform-events.js";
 
-export const OPENHANDS_AGENT_SERVER_VERSION = "1.46.0";
+export const OPENHANDS_AGENT_SERVER_VERSION = "1.54.0";
 /** Agent Server versions whose retained bundles EBO reads back; the pinned version alone is used for capture. */
-export const RETAINED_OPENHANDS_AGENT_SERVER_VERSIONS: readonly string[] = [OPENHANDS_AGENT_SERVER_VERSION, "1.44.1"];
-export const OPENHANDS_TYPESCRIPT_CLIENT_VERSION = "1.39.0";
+export const RETAINED_OPENHANDS_AGENT_SERVER_VERSIONS: readonly string[] = [OPENHANDS_AGENT_SERVER_VERSION, "1.46.0", "1.44.1"];
+export const OPENHANDS_TYPESCRIPT_CLIENT_VERSION = "1.54.0";
 export const OPENHANDS_DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 export const OPENHANDS_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 export const OPENHANDS_DEFAULT_MAX_CAPTURE_BYTES = 256 * 1024 * 1024;
 export const OPENHANDS_MAX_CAPTURE_BYTES = 1024 * 1024 * 1024;
 export const OPENHANDS_AGENT_SERVER_CAPABILITIES = {
   schemaVersion: "ebo.adapter-capability-profile/v1",
-  adapterId: "openhands-agent-server-v1.46.0",
+  adapterId: "openhands-agent-server-v1.54.0",
   harness: "openhands-agent-server",
   nativeTypes: [
     "MessageEvent",

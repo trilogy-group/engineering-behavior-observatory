@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "ebo.openhands-agent-server-contract/v1",
+  "server": {
+    "version": "1.54.0",
+    "gitCommit": "1d471742ea7be017d013eaaa3080f5d28d5490cb",
+    "image": "ghcr.io/openhands/agent-server:1.54.0-python",
+    "openapiUrl": "https://github.com/OpenHands/software-agent-sdk/releases/download/v1.54.0/openapi.json",
+    "openapiSha256": "24f6a926008727f28dc6ca351b72d7478ee9c3b9c9ed17961948bf172aec0d2b",
+    "macosArm64": {
+      "url": "https://github.com/OpenHands/software-agent-sdk/releases/download/v1.54.0/agent-server-1.54.0-macos-arm64",
+      "sha256": "7368b3379018b16fe5b1ce6c95cc18ae3c6b55f42da6616caae0e6299b67bfd5"
+    }
+  },
+  "rest": {
+    "authenticationHeader": "X-Session-API-Key",
+    "serverIdentity": "GET /server_info",
+    "createConversation": "POST /api/conversations",
+    "sendMessage": "POST /api/conversations/{conversation_id}/events",
+    "readConversation": "GET /api/conversations/{conversation_id}",
+    "searchEvents": "GET /api/conversations/{conversation_id}/events/search",
+    "deleteConversation": "DELETE /api/conversations/{conversation_id}",
+    "eventSearchSortOrder": "TIMESTAMP",
+    "eventSearchPageLimit": 100
+  },
+  "websocket": {
+    "sourceUrl": "https://github.com/OpenHands/software-agent-sdk/blob/1d471742ea7be017d013eaaa3080f5d28d5490cb/openhands-agent-server/openhands/agent_server/sockets.py",
+    "path": "/sockets/events/{conversation_id}",
+    "authentication": "first-message",
+    "initialResendMode": "all",
+    "reconnectResendMode": "since",
+    "reconnectCursor": "after_timestamp"
+  },
+  "typescriptClient": {
+    "version": "1.54.0",
+    "generatedForServer": "1.54.0",
+    "decision": "direct-rest-websocket",
+    "reason": "EBO owns raw REST/WebSocket receipt, connection lifecycle and final-event reconciliation through native Node transports."
+  },
+  "compatibility": {
+    "priorRuntime": "1.46.0",
+    "rest": "Consumed conversation paths and event-search parameters remain available in the release OpenAPI.",
+    "legacyEvidence": "Retained 1.44.1 and 1.46.0 captures preserve their original adapter identities.",
+    "completeInProcessEventLogDelivery": "unknown"
+  }
+}

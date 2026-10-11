@@ -26,9 +26,9 @@ import type {
   UniformEventFamily,
 } from "./uniform-events.js";
 
-export const DEEPSEEK_SDK_VERSION = "0.1.7-rc.2";
+export const DEEPSEEK_SDK_VERSION = "0.2.0-rc.2";
 /** DeepSeek client versions whose retained bundles EBO reads back; the pinned version alone is used for capture. */
-export const RETAINED_DEEPSEEK_SDK_VERSIONS: readonly string[] = [DEEPSEEK_SDK_VERSION, "0.1.1-rc.2"];
+export const RETAINED_DEEPSEEK_SDK_VERSIONS: readonly string[] = [DEEPSEEK_SDK_VERSION, "0.1.7-rc.2", "0.1.1-rc.2"];
 export const DEEPSEEK_ADAPTER_ID = "deepseek-harness-sdk";
 export const DEEPSEEK_HARNESS_ID = "deepseek-harness";
 

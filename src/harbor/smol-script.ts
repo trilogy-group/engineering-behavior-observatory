@@ -6,14 +6,14 @@ import platform
 import shutil
 import uuid
 from smol import AsyncMachine, MachineConfig, ConnectOptions, ExecOptions
-from smol.harbor import SmolEnvironment, _checkpoint
+from harbor.environments.smol import SmolEnvironment, _checkpoint
 from harbor.models.task.task import Task
-from harbor.models.task.verifier_mode import resolve_effective_verifier_env_config
+from harbor.models.task.verifier_mode import resolve_effective_verifier_env_config, resolve_verifier_environment_definition
 from harbor.publisher.packager import Packager
 from harbor.environments.factory import EnvironmentFactory
 
-SMOL_VERSION = '1.18.2'
-HARBOR_VERSION = '0.22.0'
+SMOL_VERSION = '1.26.1'
+HARBOR_VERSION = '0.24.0'
 
 def json_write(path, value):
     path = Path(path)
@@ -55,12 +55,13 @@ async def boot_identity(machine):
 def runtime_provenance(manifest):
     versions = {name: importlib.metadata.version(name) for name in ('smolmachines', 'harbor')}
     if versions != {'smolmachines': SMOL_VERSION, 'harbor': HARBOR_VERSION}:
-        raise ValueError('Requires smolmachines==1.18.2 and harbor==0.22.0: ' + str(versions))
+        raise ValueError('Requires smolmachines==1.26.1 and harbor==0.24.0: ' + str(versions))
     if platform.system() != 'Darwin' or platform.machine() != 'arm64':
         raise ValueError('This Smol runtime is qualified only on Apple Silicon macOS')
     import smol
     package = Path(smol.__file__).resolve().parent
-    if Path(os.environ['SMOLVM_LIB_DIR']).resolve() != package:
+    # Smol wires its bundled library on first local use, rather than on import.
+    if Path(os.environ.get('SMOLVM_LIB_DIR', package)).resolve() != package:
         raise ValueError('Smol must use its bundled libkrun; unset SMOLVM_LIB_DIR override')
     library = package / 'libkrun.dylib'
     if not library.is_file():
@@ -251,13 +252,14 @@ async def preparation_environments(trial, binding):
     yield trial.agent_environment, binding['agent']
     if trial.config.verifier.disable: return
     for step in trial.task.config.steps or [None]:
-        env_config = resolve_effective_verifier_env_config(trial.task.config, step)
-        if env_config is None: continue
-        plan = trial._network_plan(step)
+        definition = resolve_verifier_environment_definition(trial.task.config, trial.task.paths, step)
+        if definition is None: continue
+        plan = trial._network_plan(step, env_config=definition.config)
         env = EnvironmentFactory.create_environment_from_config(
-            config=trial.config.environment, environment_dir=trial._verifier_env_build_context(step),
+            config=trial.config.environment, environment_dir=definition.directory,
+            enable_environment_dir_upload=not definition.bundled_tests,
             environment_name=trial.task.short_name, session_id='ebo-prepare-grader',
-            trial_paths=trial.paths, task_env_config=env_config,
+            trial_paths=trial.paths, task_env_config=definition.config,
             network_policy=plan.verifier_env_baseline, phase_network_policies=[plan.verifier_phase])
         trial._validate_separate_verifier_env_policies(env, plan=plan)
         yield env, binding['graders'][step.name if step else 'single']

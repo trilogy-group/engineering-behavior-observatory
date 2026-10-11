@@ -45,7 +45,8 @@ test("Harbor OpenHands wrapper binds its conversation to the actual workspace", 
 
 test("retained OpenHands profiles preserve historical runtime identities", () => {
   assert.equal(openHandsCapabilityProfile("1.44.1").adapterId, "openhands-agent-server-v1.44.1");
-  assert.deepEqual(openHandsCapabilityProfile("1.46.0"), OPENHANDS_AGENT_SERVER_CAPABILITIES);
+  assert.equal(openHandsCapabilityProfile("1.46.0").adapterId, "openhands-agent-server-v1.46.0");
+  assert.deepEqual(openHandsCapabilityProfile("1.54.0"), OPENHANDS_AGENT_SERVER_CAPABILITIES);
   assert.throws(() => openHandsCapabilityProfile("1.45.0"), /Unsupported retained/);
 });
 
@@ -323,7 +324,7 @@ test("declares source-specific capabilities without behavioral comparison claims
     },
   };
 
-  assert.equal(adapter.capture.id, "openhands-agent-server-v1.46.0");
+  assert.equal(adapter.capture.id, "openhands-agent-server-v1.54.0");
   assert.equal(adapter.normalization.capabilityProfile, OPENHANDS_AGENT_SERVER_CAPABILITIES);
   assert.deepEqual(
     Object.keys(OPENHANDS_AGENT_SERVER_CAPABILITIES.families).filter((family) =>
@@ -1655,7 +1656,7 @@ test("retains progressively written native evidence when lifecycle cancellation 
 
 test("pins the exact upstream OpenAPI and TypeScript-client comparison artifacts", () => {
   const contract = JSON.parse(readFileSync(
-    join(repositoryRoot, "contracts/openhands-agent-server-v1.46.0.json"),
+    join(repositoryRoot, "contracts/openhands-agent-server-v1.54.0.json"),
     "utf8",
   )) as {
     server: { version: string; openapiSha256: string };
@@ -1664,9 +1665,9 @@ test("pins the exact upstream OpenAPI and TypeScript-client comparison artifacts
   };
 
   assert.equal(contract.server.version, OPENHANDS_AGENT_SERVER_VERSION);
-  assert.equal(contract.server.openapiSha256, "8eb95317fbbaa5022afdabb195a8f1638a536c788645469010c46b8aa8306472");
+  assert.equal(contract.server.openapiSha256, "24f6a926008727f28dc6ca351b72d7478ee9c3b9c9ed17961948bf172aec0d2b");
   assert.equal(contract.typescriptClient.version, OPENHANDS_TYPESCRIPT_CLIENT_VERSION);
-  assert.equal(contract.typescriptClient.generatedForServer, "1.44.0");
+  assert.equal(contract.typescriptClient.generatedForServer, "1.54.0");
   assert.equal(contract.typescriptClient.decision, "direct-rest-websocket");
   assert.equal(contract.websocket.path, "/sockets/events/{conversation_id}");
   assert.equal(contract.websocket.authentication, "first-message");

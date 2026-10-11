@@ -1,10 +1,11 @@
 # DeepSeek Harness adapter
 
 EBO drives DeepSeek Harness out of process through the pinned public package
-roots `@deepseek-ai/dsh-sdk-client@0.1.7-rc.2` and
-`@deepseek-ai/dsh-sdk-protocol@0.1.7-rc.2`. It does not import source modules,
+roots `@deepseek-ai/dsh-sdk-client@0.2.0-rc.2` and
+`@deepseek-ai/dsh-sdk-protocol@0.2.0-rc.2`. It does not import source modules,
 embed the agent loop, or implement JSON-RPC framing, correlation,
-subscriptions, or process teardown.
+subscriptions, or process teardown. These pins follow upstream's release-candidate
+channel.
 
 The upstream contracts are the official
 [TypeScript client](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sdk/client/README.md),
@@ -15,33 +16,24 @@ and [session telemetry](https://github.com/deepseek-ai/deepseek-harness/blob/mas
 
 ## Live verification
 
-The September 9 release audit ran the installed `@deepseek-ai/dsh@0.1.1-rc.2`
-runtime with matching `dsh-sdk-jsonrpc-server` and `dsh-llm-pi-ai` packages.
-The npm CLI at that version has no shipped `sdk` profile. A custom profile's
-`package.json` selected `dsh.profile.bundles: ["@deepseek-ai/dsh-base"]`;
-its patch mounted the official JSON-RPC server and configured the existing
-`llm-pi-ai` plugin. No agent loop or protocol implementation was added to EBO.
+The 0.2.0-rc.2 release audit ran the installed `@deepseek-ai/dsh` runtime
+with its matching official client and protocol packages. The shipped
+`sdk-minimal` profile supplied the agent and JSON-RPC server. A digest-bound
+Cordis overlay selected the existing `dsh-llm-pi-ai` plugin and workspace-write
+sandbox policy. EBO added no agent loop or protocol implementation.
 
-The provider configuration used `api: openai-completions`,
+The route used `api: openai-completions`,
 `baseURL: https://api.z.ai/api/coding/paas/v4`, `apiKeyEnv: ZAI_API_KEY`,
-and model `glm-5.3-flash`. The key was supplied only through the recorded child
-environment allowlist. The permission preset explicitly paired workspace-write
-sandboxing with unattended approval; module reload, generated session titles,
-and native telemetry were disabled for this smoke.
+and model `glm-5.3-flash`. Only the recorded child environment allowlist carried
+the credential. The run wrote the requested file, retained 27 client
+observations, completed the durable receipt-to-idle gate, and passed native
+normalization. The official client reaped its runtime on shutdown.
 
-The run wrote `done` to the requested file in 12 seconds and retained 206
-client observations, including 196 native session notifications. All 35
-sequenced events in the persisted session log matched delivered native events;
-the stream also carries chunk events stored compactly by the runtime.
-Receipt-to-idle completion and client-owned process teardown passed.
-Capture qualification and validation of 202 projected events passed after
-expanding the uniform relation bound to preserve large native source sets.
-
-This proves the tested Z.ai composition, not every provider or plugin choice.
-The runtime reported server version `0.0.1`; installed npm package versions
-and the runtime/configuration digests identify the actual software. Native
-telemetry was disabled and is not live-verified by this smoke. Capture/judge
-and release checks do not turn a successful file-write smoke into a quality score.
+The runtime reported server version `0.0.1`; installed npm package versions and
+the runtime/configuration digests identify the software. This smoke qualifies
+the tested composition. Native telemetry, other provider routes and MCP
+integration require their own validation; a file-write smoke is not a quality
+score. Retained 0.1.1-rc.2 and 0.1.7-rc.2 captures keep their captured versions.
 
 ## Runtime composition
 
