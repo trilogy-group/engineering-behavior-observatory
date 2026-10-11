@@ -57,7 +57,7 @@
     ]
   },
   "fixtures": {
-    ".github/workflows/harbor.yml": "bdba47264f54504387caedb1daddd67ca1542b3e4b11e53276f24478eda5339d",
+    ".github/workflows/harbor.yml": "fe86cee4398a1c176293055dfb465bf9a06fbe50143b834a669252a3567cba52",
     "AGENTS.md": "214e448cb14392dc8480088ae83e68f57f286f737b0b1e51440c5acae97c0026",
     "README.md": "4c62300d410694ce4844732c8d12da6e8393888b5365478c167825088ca58b19",
     "contracts/codex-app-server-0.153.4/manifest.json": "e62281ff5e5d1cc71d07763b85e997ccc9ddbad9aa82a469da4181ee4b1890a8",
@@ -112,7 +112,7 @@
     "scripts/build-harbor-runtime.mjs": "a6dede7c2e03360f6ca457408ef61c6e8d36009e2eaf66a577e43d4813e61f51",
     "scripts/check-smol-runtime.py": "71e9b50f8790af1f54a52f11818a31758e446d91b9f3f664a97c0f164747a6d2",
     "scripts/release-acceptance.mjs": "1060a4285d74fc1d5953550c20b913cc7c0e27779465234ae516ff84de79144d",
-    "scripts/release-source-scan.mjs": "1cbaae881b9ba70335bded292c0109df080d687b4b3aa2add552c324692540eb",
+    "scripts/release-source-scan.mjs": "00073c353b9cd1044ad6ed3ecf130b56e805da19f0a28fa671ebb4bfaa248269",
     "src/atlas-units.ts": "5939ba3e0c36199a0ebf32004a935274f322bcf9bf7fe2e87b096861f8a4e75a",
     "src/cli.ts": "9805ae3083e1b755705cb0306a1674b57d4c4a022c797ff244f2174cdbbee7c3",
     "src/codex-run.ts": "51ac014433646b46bd9c2e61326bac854ff3a31aa0e4dcd855c1a4a6daeb4291",
@@ -122,8 +122,8 @@
     "src/devin-run.ts": "b00286a6a5986358512283995742cdb2edc44967a99bc51bc81d66d7a4dac375",
     "src/devin.ts": "8274ce98cb379a2671ca4b3bc335b643827e111f3f46f0500aaa4c43c52577e9",
     "src/exports.ts": "f1bba5c698536215165e364dd56f3f0df3eef3206b1e48af7a34b58115cb4c29",
-    "src/factory-droid.ts": "d6e23a750a765edc5506de4750cf6127f69c74893f64ad2defd41f131105dded",
-    "src/factory-model.ts": "7982ecfc8470241b13a5920ec9f568e6ade87047ad3d99d79505f74fb76b639d",
+    "src/factory-droid.ts": "7d1c568dd0364d3350ef9cf0ecc78764caa446568e6e92a7b8cbd5a18b5119b5",
+    "src/factory-model.ts": "fff9aa11c048c50d8399c5b392fe92356936cccc1e5f1b5eb604f0c08f2e8c64",
     "src/factory-run.ts": "e355dbd685e9faaee12dbd724deba1b26d247393b564d64081258634103e3c79",
     "src/harbor/harnesses.ts": "786ab8b1d1da0570ae278a637aeecb0b8c7f94361e290f70355ab12a0e242d35",
     "src/harbor/index.ts": "b92c22d23ee8054f1efa8375deec08311911b476013f528ededf784b1f3221fb",
@@ -179,7 +179,7 @@
     "test/openhands.test.ts": "2f6b895f21aeaa55f3cc1462b83494a7b2d86c44236856fe8b9ac82ed2110142",
     "test/pi.test.ts": "6dcda92d8e7eaaa8eb5f1dc0a2d320af8ef2623072de079ca01509658b46136d",
     "test/redaction.test.ts": "08957c32333dfae000627b6a28608cd97b4dcd2411e24c9bf72427fd1eac92b8",
-    "test/release-source-scan.test.ts": "e4876dea594b7d6bf4ad03a6ef8f2433b0dce6d08c877dc7991a476a8e1389fe",
+    "test/release-source-scan.test.ts": "e8eec8d6d55d9b8aefaaf86f574fa2aa36dd8fe92b77e1ded042afc71df96eb2",
     "test/retained-versions.test.ts": "4308d86e43a9f7d870ffaf859434e275ec3bb58aa3bae02d96e70f6b394202e5",
     "test/semantic-judge.test.ts": "4fe7320097500e919da8abf2abac954b0aebd7b422fba91a7e2530a4a96a3c7d",
     "tests/fixtures/task-packet.valid.v1.json": "ac2ef1043c0cc16bf4c21d05c1dc880ca1b4b8cc2f9ea7653328e91f0b0e2681"

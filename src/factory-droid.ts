@@ -1,4 +1,4 @@
-import { FACTORY_BYOK_CREDENTIAL, factoryCredentialEnvironment, factoryModelSelection, type FactoryModelRoute } from "./factory-model.js";
+import { FACTORY_BYOK_ENV_NAME, factoryCredentialEnvironment, factoryModelSelection, type FactoryModelRoute } from "./factory-model.js";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -176,9 +176,11 @@ export async function captureFactoryDroid(request: FactoryCaptureRequest): Promi
   const home = await mkdtemp(join(tmpdir(), "ebo-factory-home-"));
   const environment: NodeJS.ProcessEnv = {
     PATH: process.env.PATH, HOME: home, XDG_CONFIG_HOME: join(home, ".config"),
-    TMPDIR: join(home, "tmp"), [selection.route.kind === "byok" ? FACTORY_BYOK_CREDENTIAL : "FACTORY_API_KEY"]: credential, FACTORY_DROID_AUTO_UPDATE_ENABLED: "false",
+    TMPDIR: join(home, "tmp"), FACTORY_DROID_AUTO_UPDATE_ENABLED: "false",
     TERM: "dumb", NO_COLOR: "1", OTEL_LOG_MESSAGE_CONTENT: "false", OTEL_TELEMETRY_GRANULARITY: "aggregate",
   };
+  if (selection.route.kind === "byok") environment[FACTORY_BYOK_ENV_NAME] = credential;
+  else environment.FACTORY_API_KEY = credential;
   const gaps: FactoryCaptureGap[] = [];
   let transport: RecordingFactoryTransport | undefined;
   let session: DroidSession | undefined;

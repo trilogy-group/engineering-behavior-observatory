@@ -1,6 +1,6 @@
 /** Secret-free provider selection shared by capture, frozen configuration and retained readback. */
 export const FACTORY_BYOK_MODEL_ID = "custom:ebo-byok";
-export const FACTORY_BYOK_CREDENTIAL = "EBO_FACTORY_BYOK_API_KEY";
+export const FACTORY_BYOK_ENV_NAME = "EBO_FACTORY_BYOK_API_KEY";
 export type FactoryModelRoute = { kind: "factory-managed" } | {
   kind: "byok";
   provider: "generic-chat-completion-api";
@@ -45,7 +45,8 @@ export function factoryModelSelection(model: string, route: FactoryModelRoute = 
 }
 
 export function factoryCredentialEnvironment(route?: FactoryModelRoute): string {
-  return route?.kind === "byok" ? "FIREWORKS_API_KEY" : "FACTORY_API_KEY";
+  if (route?.kind === "byok") return "FIREWORKS_API_KEY";
+  return "FACTORY_API_KEY";
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {

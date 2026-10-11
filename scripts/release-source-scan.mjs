@@ -21,7 +21,7 @@ function isSourceReference(node, ts) {
   if (ts.isIdentifier(node)) return true;
   if (ts.isPropertyAccessExpression(node)) return isSourceReference(node.expression, ts);
   if (ts.isElementAccessExpression(node)) return isSourceReference(node.expression, ts)
-    && (ts.isIdentifier(node.argumentExpression) || ts.isStringLiteral(node.argumentExpression)
+    && (isSourceReference(node.argumentExpression, ts) || ts.isStringLiteral(node.argumentExpression)
       && /^[A-Za-z_][A-Za-z0-9_]*$/u.test(node.argumentExpression.text));
   if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isNonNullExpression(node)) return isSourceReference(node.expression, ts);
   // A Bearer template containing only a source reference has no credential literal.

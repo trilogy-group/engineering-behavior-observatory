@@ -21,5 +21,5 @@ test("release source scan accepts reference-only Bearer headers and rejects cred
     '// Authorization: Bearer syntheticcredentialvalue',
     'const headers = { apiKey: "syntheticcredentialvalue" };',
   ]) assert.equal(scan(source), true, source);
-  assert.equal(scan(readFileSync("src/atlas-embeddings.ts", "utf8")), false);
+  for (const path of ["src/atlas-embeddings.ts", "src/factory-droid.ts", "src/factory-model.ts", "src/decision-models.ts"]) assert.equal(scan(readFileSync(path, "utf8")), false, path);
 });
