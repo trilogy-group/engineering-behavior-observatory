@@ -1,0 +1,5 @@
+{
+  "schemaVersion": "ebo.factory-config/v1",
+  "kind": "native-limits",
+  "shutdownGraceMs": 2000
+}

@@ -145,6 +145,7 @@ configuration files at `/tmp/ebo-worker/config/<locator>`.
 | Claude Agent SDK | SDK archive and authorized route | Direct SDK query, hooks and session capture |
 | Pi | SDK archive and selected provider key | Fresh Pi session, native tools and persistence |
 | Cursor | SDK archive, `CURSOR_API_KEY`, required local system tools | Direct SDK, HTTP/1.1 and native recovery |
+| Factory Droid | SDK archive built with `--factory`, pinned Linux Droid CLI and selected Factory key | Official SDK with native recording; fresh owned session per step |
 | Codex | Pinned Linux app-server executable declared in harness config | Owned stdio child; no host daemon |
 | DeepSeek Harness | Named Linux runtime/plugin composition and its installed runtime | Official TypeScript JSON-RPC client |
 | OpenHands | Pinned Agent Server started inside the task container | Loopback REST/WebSocket, same working directory |

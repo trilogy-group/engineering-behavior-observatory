@@ -15,6 +15,7 @@ const result = spawnSync('docker', ['run', '--rm',
     cp /source/package.json /source/package-lock.json /runtime/
     cd /runtime
     npm ci --omit=dev --no-audit --no-fund
+    ${process.argv.includes('--factory') ? 'npm install --prefix factory-cli --save-exact @factory/cli@0.238.0 --omit=dev --no-audit --no-fund; factory-cli/node_modules/.bin/droid --version' : ''}
     cp /usr/local/bin/node ./node
     cp -R /source/dist ./dist
     cp -R /source/schemas ./schemas

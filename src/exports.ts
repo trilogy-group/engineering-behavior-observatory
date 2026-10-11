@@ -645,7 +645,50 @@ function stripNativeReasoning(
   kind: PortableKind | undefined,
   counts: Map<TransformationAction, number>,
 ): unknown {
-  return stripDevinReasoning(stripPiReasoning(stripCodexReasoning(value, kind, counts), kind, counts), kind, counts);
+  return stripFactoryReasoning(stripDevinReasoning(stripPiReasoning(stripCodexReasoning(value, kind, counts), kind, counts), kind, counts), counts);
+}
+
+const FACTORY_THINKING_TYPES = new Set(["thinkingtextdelta", "thinkingtextcomplete", "thinking", "redactedthinking"]);
+const FACTORY_PRIVATE_FIELDS = new Set(["signature", "thoughtsignature", "geminithoughtsignature", "openaiencryptedcontent",
+  "openaireasoningid", "openaireasoningsummary", "chatcompletionreasoningcontent", "chatcompletionreasoningfield"]);
+
+/** Factory protocol frames duplicate parsed payloads in raw JSON. Drop the raw copy and sanitize every typed block. */
+function stripFactoryReasoning(value: unknown, counts: Map<TransformationAction, number>, factory = false): unknown {
+  if (Array.isArray(value)) return value.map((entry) => stripFactoryReasoning(entry, counts, factory));
+  if (!isRecord(value)) return value;
+  factory ||= value.source === "factory-droid" || value.source === "ebo-factory-client" || value.schemaVersion === "ebo.factory-runtime/v1";
+  const privateBlock = typeof value.type === "string" && FACTORY_THINKING_TYPES.has(normalizeFieldName(value.type));
+  const output: Record<string, unknown> = Object.create(null);
+  for (const [key, entry] of Object.entries(value)) {
+    const normalized = normalizeFieldName(key);
+    if (privateBlock && !["type", "messageId", "blockIndex", "id"].includes(key)
+      || FACTORY_PRIVATE_FIELDS.has(normalized) && (normalized !== "signature" || factory || privateBlock)
+      || key === "raw" && (factory || typeof entry === "string" && rawContainsFactoryReasoning(entry))) {
+      increment(counts, "removed-field");
+      continue;
+    }
+    output[key] = stripFactoryReasoning(entry, counts, factory);
+  }
+  return output;
+}
+
+function rawContainsFactoryReasoning(raw: string): boolean {
+  try { return valueContainsFactoryReasoning(JSON.parse(raw)); } catch { return /thinking[_-]?text|openaiEncryptedContent|chatCompletionReasoningContent/iu.test(raw); }
+}
+function valueContainsFactoryReasoning(value: unknown, factory = false): boolean {
+  if (Array.isArray(value)) return value.some((entry) => valueContainsFactoryReasoning(entry, factory));
+  if (!isRecord(value)) return false;
+  factory ||= value.source === "factory-droid" || value.source === "ebo-factory-client" || value.schemaVersion === "ebo.factory-runtime/v1";
+  const privateBlock = typeof value.type === "string" && FACTORY_THINKING_TYPES.has(normalizeFieldName(value.type));
+  return Object.entries(value).some(([key, entry]) => privateBlock && !["type", "messageId", "blockIndex", "id"].includes(key)
+    || FACTORY_PRIVATE_FIELDS.has(normalizeFieldName(key)) && (normalizeFieldName(key) !== "signature" || factory || privateBlock)
+    || key === "raw" && (factory || typeof entry === "string" && rawContainsFactoryReasoning(entry))
+    || valueContainsFactoryReasoning(entry, factory));
+}
+function containsFactoryReasoningContent(text: string, mediaType: string): boolean {
+  if (mediaType === "application/json") return valueContainsFactoryReasoning(parseJson(Buffer.from(text), "Factory reasoning scan"));
+  if (mediaType === "application/x-ndjson") return text.split(/\r?\n/gu).filter(Boolean).some((line) => valueContainsFactoryReasoning(parseJson(Buffer.from(line), "Factory reasoning scan")));
+  return false;
 }
 
 const DEVIN_TELEMETRY_SCHEMA = "ebo.devin-telemetry/v1";
@@ -850,6 +893,7 @@ function scanPortableTree(
       ["Codex reasoning content", containsCodexReasoningContent(text, mediaType)],
       ["Pi private reasoning content", containsPiReasoningContent(text, mediaType)],
       ["Devin thought content", containsDevinReasoningContent(text, mediaType)],
+      ["Factory private reasoning content", containsFactoryReasoningContent(text, mediaType)],
     ].find(([, matched]) => matched);
     if (failure !== undefined) {
       resetPatterns();

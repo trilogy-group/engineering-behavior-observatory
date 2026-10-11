@@ -75,6 +75,8 @@ authoritative; derived views never replace it.
 | <img src="https://github.com/OpenHands.png?size=48" width="28" height="28" alt="OpenHands"> **[OpenHands](docs/harnesses/openhands-agent-server.md)** | Agent Server REST/WebSocket · library API | Stream/final event reconciliation, conversation state, exposed hooks, workspace |
 | <img src="https://github.com/deepseek-ai.png?size=48" width="28" height="28" alt="DeepSeek"> **[DeepSeek Harness](docs/harnesses/deepseek-harness.md)** | Official TypeScript JSON-RPC client · library API | Durable session events, lifecycle notifications, selected runtime/plugin composition |
 
+| <img src="https://github.com/Factory-AI.png?size=48" width="28" height="28" alt="Factory"> **[Factory Droid](docs/harnesses/factory-droid.md)** | Official TypeScript SDK with owned native JSON-RPC child · `ebo factory run` | Frames before SDK parsing, session/turn identity, tools, permissions, compaction, child identities and usage |
+
 Icons identify the upstream projects or publishers. Support is **capability-specific**:
 not every harness exposes the same hooks, histories, or telemetry.
 [Choose a harness](docs/harnesses/README.md) for prerequisites and limitations.

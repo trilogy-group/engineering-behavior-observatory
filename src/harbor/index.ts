@@ -82,6 +82,8 @@ export {
   createDeepSeekHarborExecutor,
   createOpenHandsHarborExecutor,
   createPiHarborExecutor,
+  createFactoryHarborExecutor,
+  type FactoryHarborExecutorOptions,
   harborStepBundleDefinition,
   type ClaudeAgentSdkHarborExecutorOptions,
   type CodexHarborExecutorOptions,

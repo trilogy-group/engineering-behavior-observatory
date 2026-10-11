@@ -30,7 +30,8 @@ the `ebo` command is installed as described in the quickstart.
 [Codex](harnesses/codex-harness.md) · [Devin CLI](harnesses/devin-cli.md) ·
 [Cursor](harnesses/cursor-sdk.md) ·
 [Pi](harnesses/pi-sdk.md) · [OpenHands](harnesses/openhands-agent-server.md) ·
-[DeepSeek Harness](harnesses/deepseek-harness.md)
+[DeepSeek Harness](harnesses/deepseek-harness.md) ·
+[Factory Droid](harnesses/factory-droid.md)
 
 These guides own runtime pins, configuration, native evidence, and known gaps.
 

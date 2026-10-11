@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "ebo.factory-config/v1",
+  "kind": "harness",
+  "adapter": "factory-droid",
+  "executable": "/opt/ebo/factory-cli/node_modules/.bin/droid",
+  "version": "0.238.0",
+  "sdkVersion": "0.9.1",
+  "contractDigest": "sha256:1acc8e9dff25e52b9b7b905e6b19b0da79d01a86864b3cd5a01f415158ec78ce"
+}

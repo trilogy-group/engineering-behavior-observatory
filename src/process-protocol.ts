@@ -35,6 +35,8 @@ export type ProtocolObservation = {
 };
 
 export type ProtocolObservationInput = {
+  /** Exact outbound frame retained before writing to the protocol channel. */
+  raw?: string;
   source: string;
   method: string;
   id?: ProtocolIdentity;

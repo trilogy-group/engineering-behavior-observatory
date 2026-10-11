@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "ebo.factory-config/v1",
+  "kind": "capture-profile",
+  "workspaceOutcome": {
+    "excludeDirectoryNames": [
+      "node_modules"
+    ]
+  }
+}

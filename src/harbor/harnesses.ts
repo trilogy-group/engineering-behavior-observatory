@@ -1,3 +1,5 @@
+import { captureFactoryDroidRun, resolveFactoryConfigurationRecord } from "../factory-run.js";
+import { probeFactoryRuntime, type FactoryDroidConfiguration } from "../factory-droid.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { digestMetadata } from "../artifacts.js";
@@ -193,6 +195,72 @@ export function createClaudeAgentSdkHarborExecutor(options: ClaudeAgentSdkHarbor
       qualification: result.qualification,
       attempt: result.attempt,
       manifest: result.manifest as unknown as StepManifestView,
+    });
+  };
+}
+
+/* ------------------------------------- Factory Droid ------------------------------------- */
+
+export type FactoryHarborExecutorOptions = {
+  studyRoot: string;
+  configuration: HarborHarnessConfigurationReferences;
+  probeRuntime?: (executable: string) => Promise<{ path: string; version: string }>;
+  executableArgs?: readonly string[];
+  signal?: AbortSignal;
+};
+
+export function createFactoryHarborExecutor(options: FactoryHarborExecutorOptions): HarborHarnessStepExecutor {
+  return async (input: HarborStepExecutorInput): Promise<HarborStepExecution> => {
+    const model = resolveFactoryConfigurationRecord(options.studyRoot, options.configuration.model, "model");
+    const harness = resolveFactoryConfigurationRecord(options.studyRoot, options.configuration.harness, "harness");
+    const limits = resolveFactoryConfigurationRecord(options.studyRoot, options.configuration.nativeLimits, "native-limits");
+    const toolPolicy = resolveFactoryConfigurationRecord(options.studyRoot, options.configuration.nativeToolPolicy, "native-tool-policy");
+    const captureProfile = resolveFactoryConfigurationRecord(options.studyRoot, options.configuration.captureProfile, "capture-profile");
+    if (input.prepared.run.harnessId !== "factory-droid") throw new Error("Factory Harbor executor requires the factory-droid harness.");
+    const runtime = await (options.probeRuntime ?? probeFactoryRuntime)(harness.executable);
+    if (runtime.version !== harness.version) {
+      throw new Error(`Factory ${harness.version} is required; received ${runtime.version}.`);
+    }
+    const definition = harborStepBundleDefinition(input.prepared, input.step, input.stepBundleRoot, {
+      harnessId: "factory-droid",
+      harnessVersion: harness.version,
+      modelId: model.model,
+      provider: model.provider,
+      configurationDigests: {
+        model: options.configuration.model.digest.value,
+        harness: options.configuration.harness.digest.value,
+        captureProfile: options.configuration.captureProfile.digest.value,
+        nativeLimits: options.configuration.nativeLimits.digest.value,
+        nativeToolPolicy: options.configuration.nativeToolPolicy.digest.value,
+      },
+    });
+    const configuration: FactoryDroidConfiguration = {
+      executable: runtime.path,
+      ...(options.executableArgs === undefined ? {} : { executableArgs: options.executableArgs }),
+      version: harness.version,
+      model: model.model,
+      reasoningEffort: model.reasoningEffort,
+      sdkVersion: harness.sdkVersion,
+      autonomyLevel: toolPolicy.autonomyLevel,
+      permissionDecision: toolPolicy.permissionDecision,
+      ...(model.credentialEnv === undefined ? {} : { credentialEnv: model.credentialEnv }),
+    };
+    const result = await captureFactoryDroidRun({
+      definition,
+      startingWorkspacePath: input.startingWorkspacePath,
+      workspace: harborWorkspaceCoordinator(input.workspacePath),
+      configuration,
+      prompt: input.step.effectiveInstruction,
+      ...workspaceCaptureOptions(captureProfile.workspaceOutcome),
+      maxWallClockMs: input.maxWallClockMs,
+      ...(limits.shutdownGraceMs === undefined ? {} : { shutdownGraceMs: limits.shutdownGraceMs }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+    return stepExecutionFromCapture(input, {
+      qualification: result.qualification,
+      attempt: result.attempt,
+      manifest: { terminal: result.manifest.terminal, run: (result.manifest as unknown as { run?: { native?: { sessionId?: string } } }).run },
     });
   };
 }

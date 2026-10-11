@@ -30,6 +30,10 @@ or implement beyond the assigned issue.
 - Integrate Pi and Cursor through their pinned public TypeScript
   SDKs with attempt-owned native persistence, passive observation, and explicit
   local execution policies. SDK execution is not an OS sandbox.
+- Integrate Factory Droid through its pinned official TypeScript SDK with an
+  EBO-owned native JSON-RPC child and recording before SDK validation. Bind
+  terminal session/turn identities; keep cumulative usage and child contributions
+  separate from the owned turn total.
 - Keep source control protocols separate from EBO's small uniform event
   projection. Each adapter retains its own methods, identities, lifecycle, and
   completion semantics.

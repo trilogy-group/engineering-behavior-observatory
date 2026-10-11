@@ -918,6 +918,17 @@ function parseNativeJsonl(bytes: Buffer): { hookNames: string[]; sessionIds: str
 function nativeRecordSummary(records: unknown[]): { hookNames: string[]; sessionIds: string[] } {
   const hookNames: string[] = [];
   const sessionIds: string[] = [];
+  // Factory notifications can include foreign/child sessions. Only the owned
+  // initialization request/response establishes this attempt's root identity.
+  const factoryInitializations = records.filter((record) => isRecord(record) && record.source === "ebo-factory-client"
+    && record.kind === "request" && record.method === "droid.initialize_session");
+  if (factoryInitializations.length === 1 && isRecord(factoryInitializations[0])) {
+    const initialization = factoryInitializations[0];
+    const responses = records.filter((record) => isRecord(record) && record.source === "factory-droid" && record.kind === "frame"
+      && isRecord(record.payload) && record.payload.type === "response" && record.payload.id === initialization.id);
+    if (responses.length === 1 && isRecord(responses[0]) && isRecord(responses[0].payload) && isRecord(responses[0].payload.result)
+      && typeof responses[0].payload.result.sessionId === "string") sessionIds.push(responses[0].payload.result.sessionId);
+  }
   for (const record of records) {
     if (!isRecord(record)) continue;
     const hook = typeof record.hook === "string" ? record.hook

@@ -61,6 +61,7 @@ ebo agent-sdk run <bundle-root> <queue.json> <run-id> <output-root> [--workspace
 ebo codex run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 ebo devin run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 ebo cursor run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
+ebo factory run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 ebo pi run <bundle-root> <queue.json> <run-id> <output-root> [--workspace-root <path>]
 ```
 

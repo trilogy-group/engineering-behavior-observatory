@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "ebo.factory-config/v1",
+  "kind": "model",
+  "provider": "factory",
+  "model": "<Factory model ID>",
+  "reasoningEffort": "low",
+  "credentialEnv": "FACTORY_API_KEY"
+}

@@ -1,0 +1,6 @@
+{
+  "schemaVersion": "ebo.factory-config/v1",
+  "kind": "native-tool-policy",
+  "autonomyLevel": "off",
+  "permissionDecision": "proceed_once"
+}

@@ -1,3 +1,4 @@
+import { FACTORY_HARNESS, FACTORY_ADAPTER_VERSION, FACTORY_SDK_VERSION, qualifyFactoryCapture, describeAndValidateFactoryDataset } from "./factory-droid.js";
 import { join } from "node:path";
 import { CLAUDE_AGENT_SDK_HARNESS, readQualifiedRunCapture, createAgentSdkNativeEvidenceResolver, type AgentSdkNativeRecord } from "./agent-sdk-normalizer.js";
 import { createAgentSdkBehaviorEvidence } from "./behavior-assertions.js";
@@ -42,7 +43,7 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
     const evidence = await createAgentSdkBehaviorEvidence(bundleRoot);
     return { ...evidence, outcomeCapture: evidence.capture };
   }
-  if (![CODEX_HARNESS, DEVIN_HARNESS, "openhands-agent-server", DEEPSEEK_HARNESS_ID, PI_HARNESS].includes(harness)) {
+  if (![CODEX_HARNESS, DEVIN_HARNESS, FACTORY_HARNESS, "openhands-agent-server", DEEPSEEK_HARNESS_ID, PI_HARNESS].includes(harness)) {
     throw new Error(`Unsupported retained harness ${harness}; refusing Agent SDK fallback normalization.`);
   }
   if (harness === "openhands-agent-server") openHandsCapabilityProfile(manifest.run.harness.version);
@@ -155,6 +156,33 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
       throw new Error("Retained Codex capture requires unambiguous matching owned terminal evidence.");
     }
     dataset = (await describeAndValidateCodexDataset(native, manifest.run.harness.version)).dataset;
+  } else if (harness === FACTORY_HARNESS) {
+    const expected = new Map([[FACTORY_HARNESS, { source: "Factory", version: manifest.run.harness.version }],
+      ["@factory/droid-sdk", { source: "Factory", version: FACTORY_SDK_VERSION }],
+      ["factory-adapter", { source: "EBO", version: FACTORY_ADAPTER_VERSION }]]);
+    for (const [name, identity] of expected) {
+      const matches = manifest.run.runtime.filter((runtime) => runtime.name === name);
+      if (matches.length !== 1 || matches[0]!.source !== identity.source || matches[0]!.version !== identity.version) {
+        throw new Error(`Retained Factory runtime identity ${name} differs from the manifest.`);
+      }
+    }
+    const runtimeDocuments = outcomeCapture.records.filter(({ record }) => record.kind === "telemetry")
+      .map(({ record }) => record.document as Record<string, any> | undefined);
+    const runtime = runtimeDocuments[0]?.runtime;
+    if (runtimeDocuments.length !== 1 || runtimeDocuments[0]?.schemaVersion !== "ebo.factory-runtime/v1"
+      || runtime?.version !== manifest.run.harness.version || runtime?.sdkVersion !== FACTORY_SDK_VERSION
+      || runtime?.adapterVersion !== FACTORY_ADAPTER_VERSION) throw new Error("Retained Factory runtime document differs from the manifest.");
+    if (runtimeDocuments[0]?.effectiveConfiguration?.model !== manifest.run.model.id) throw new Error("Retained Factory model differs from the run manifest.");
+    const native = qualifyFactoryCapture(capture as NormalizationInput<ProtocolObservation>, {
+      sessionId: manifest.run.native?.sessionId, expectsCompletion, cliVersion: manifest.run.harness.version, sdkVersion: runtime.sdkVersion,
+    });
+    const initialization = native.records.find(({ record }) => record.source === "ebo-factory-client" && record.method === "droid.initialize_session")?.record;
+    if (initialization !== undefined && (initialization.payload as Record<string, any>)?.params?.modelId !== manifest.run.model.id) throw new Error("Retained Factory initialization model differs from the manifest.");
+    const composition = native.records.find(({ record }) => record.capability === "runtime-composition")?.record.evidence as Record<string, unknown> | undefined;
+    if (composition?.binaryDigest !== runtime.binaryDigest || composition?.protocolVersion !== runtime.protocolVersion) {
+      throw new Error("Retained Factory runtime digest or protocol differs from native composition.");
+    }
+    dataset = (await describeAndValidateFactoryDataset(native)).dataset;
   } else if (harness === DEVIN_HARNESS) {
     // The native runtime document is the only runtime-version evidence; never fall back to the manifest pin alone.
     const telemetryDocuments = outcomeCapture.records.filter(({ record }) => record.kind === "telemetry").map(({ record }) => record.document as Record<string, any> | undefined);
@@ -213,6 +241,11 @@ function assertNativeEnvelope(harness: string, value: unknown, line: number): vo
   if (value === null || typeof value !== "object" || Array.isArray(value)) fail();
   const record = value as Record<string, unknown>;
   if (!Number.isSafeInteger(line) || line < 1 || record.sequence !== line) fail();
+  if (harness === FACTORY_HARNESS) {
+    assertProtocolObservation(value, line);
+    if (value.source !== FACTORY_HARNESS && value.source !== "ebo-factory-client") fail();
+    return;
+  }
   if (harness === DEVIN_HARNESS) {
     assertProtocolObservation(value, line);
     if (value.source !== DEVIN_HARNESS && value.source !== "ebo-devin-client") fail();

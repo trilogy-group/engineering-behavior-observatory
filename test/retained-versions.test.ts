@@ -10,12 +10,16 @@ import {
   RETAINED_DEVIN_CLI_VERSIONS,
   RETAINED_OPENHANDS_AGENT_SERVER_VERSIONS,
   RETAINED_PI_SDK_VERSIONS,
+  RETAINED_FACTORY_CLI_VERSIONS,
+  RETAINED_FACTORY_SDK_VERSIONS,
 } from "../src/index.js";
 
 // A pin bump appends to the retained list: captures made by any released pin stay readable.
 test("every harness version pinned by a release stays readable as retained evidence", () => {
   const retained: Record<string, readonly string[]> = {
     piSdk: RETAINED_PI_SDK_VERSIONS,
+    factoryCli: RETAINED_FACTORY_CLI_VERSIONS,
+    factorySdk: RETAINED_FACTORY_SDK_VERSIONS,
     deepseekClient: RETAINED_DEEPSEEK_SDK_VERSIONS,
     codexAppServer: RETAINED_CODEX_APP_SERVER_VERSIONS,
     devinCli: RETAINED_DEVIN_CLI_VERSIONS,

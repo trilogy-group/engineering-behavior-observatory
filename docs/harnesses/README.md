@@ -13,7 +13,9 @@ different tools or context policies is a different experimental condition.
 | [OpenHands](openhands-agent-server.md) | `captureOpenHandsAgentServerRun` library API | REST final events reconciled with WebSocket receipts | Full internal EventLog completeness cannot be proven through this boundary |
 | [DeepSeek Harness](deepseek-harness.md) | Source-specific library API | Durable events, lifecycle, runtime/plugin composition | Prompt response is enqueue acknowledgement; documented status/events determine completion |
 
-All seven have retained-evidence paths for normalization and behavioral analysis.
+| [Factory Droid](factory-droid.md) | `ebo factory run` | Owned native JSON-RPC child through the official SDK, with recording before validation | Complete child histories, model-request internals and OTLP unsupported; live routes require qualification |
+
+All eight have retained-evidence paths for normalization and behavioral analysis.
 That does not mean their capabilities are identical or every provider route is
 live-qualified. Consult the [release support record](../../release/0.2.1/KNOWN_LIMITATIONS.md)
 and each guide before selecting a route.
