@@ -1,3 +1,4 @@
+import { maskSourceIdentifierAssignments } from "./release-source-scan.mjs";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -203,31 +204,6 @@ function forbiddenPackagePath(path) {
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
-}
-
-function maskSourceIdentifierAssignments(source, path, ts) {
-  const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true,
-    path.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS);
-  const ranges = [];
-  const visit = (node) => {
-    const value = ts.isPropertyAssignment(node) ? node.initializer
-      : ts.isVariableDeclaration(node) ? node.initializer
-        : ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken ? node.right
-          : undefined;
-    if (value !== undefined && isSourceReference(value, ts)) ranges.push([value.getStart(file), value.end]);
-    ts.forEachChild(node, visit);
-  };
-  visit(file);
-  for (const [start, end] of ranges.sort(([left], [right]) => right - left)) {
-    source = `${source.slice(0, start)}[REDACTED_SECRET]${source.slice(end)}`;
-  }
-  return source;
-}
-
-function isSourceReference(node, ts) {
-  if (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) return true;
-  if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isNonNullExpression(node)) return isSourceReference(node.expression, ts);
-  return false;
 }
 
 function writeResult(result) {

@@ -1,3 +1,4 @@
+import { FACTORY_BYOK_CREDENTIAL, factoryCredentialEnvironment, factoryModelSelection, type FactoryModelRoute } from "./factory-model.js";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -36,6 +37,7 @@ export type FactoryDroidConfiguration = {
   autonomyLevel: FactoryAutonomyLevel;
   permissionDecision: FactoryPermissionDecision;
   credentialEnv?: string;
+  route?: FactoryModelRoute;
   /** Test fixture prefix; never read from frozen configuration or a CLI flag. */
   executableArgs?: readonly string[];
 };
@@ -50,7 +52,7 @@ export type FactoryRuntimeEvidence = {
   schemaVersion: "ebo.factory-runtime/v1";
   runtime: { executable: string; version: string; sdkVersion: string; adapterVersion: string; binaryDigest: string; protocolVersion: string };
   effectiveConfiguration: { model: string; reasoningEffort: string; autonomyLevel: string; permissionDecision: string;
-    environmentKeys: string[]; userConfiguration: "isolated"; settings?: unknown };
+    modelSelection?: ReturnType<typeof factoryModelSelection>; credentialEnv?: string; environmentKeys: string[]; userConfiguration: "isolated"; settings?: unknown };
   diagnostics?: Omit<ProtocolProcessResult["stderr"], "bytes">;
   telemetry: { receipt: { status: "not-checked" }; contentCapture: "not-requested" };
 };
@@ -167,13 +169,14 @@ export async function captureFactoryDroid(request: FactoryCaptureRequest): Promi
   const runtime = await probeFactoryRuntime(request.configuration.executable, request.configuration.executableArgs);
   if (runtime.version !== FACTORY_CLI_VERSION) throw new Error(`Factory CLI ${FACTORY_CLI_VERSION} is required; received ${runtime.version}.`);
   const binaryDigest = `sha256:${digestBytes(await readFile(runtime.path)).value}`;
-  const credentialEnv = request.configuration.credentialEnv ?? "FACTORY_API_KEY";
+  const selection = factoryModelSelection(request.configuration.model, request.configuration.route);
+  const credentialEnv = request.configuration.credentialEnv ?? factoryCredentialEnvironment(selection.route);
   const credential = process.env[credentialEnv];
   if (!credential?.trim()) throw new Error(`${credentialEnv} is required for Factory Droid.`);
   const home = await mkdtemp(join(tmpdir(), "ebo-factory-home-"));
   const environment: NodeJS.ProcessEnv = {
     PATH: process.env.PATH, HOME: home, XDG_CONFIG_HOME: join(home, ".config"),
-    TMPDIR: join(home, "tmp"), FACTORY_API_KEY: credential, FACTORY_DROID_AUTO_UPDATE_ENABLED: "false",
+    TMPDIR: join(home, "tmp"), [selection.route.kind === "byok" ? FACTORY_BYOK_CREDENTIAL : "FACTORY_API_KEY"]: credential, FACTORY_DROID_AUTO_UPDATE_ENABLED: "false",
     TERM: "dumb", NO_COLOR: "1", OTEL_LOG_MESSAGE_CONTENT: "false", OTEL_TELEMETRY_GRANULARITY: "aggregate",
   };
   const gaps: FactoryCaptureGap[] = [];
@@ -204,16 +207,20 @@ export async function captureFactoryDroid(request: FactoryCaptureRequest): Promi
   try {
     await mkdir(join(home, ".factory"), { recursive: true });
     await mkdir(join(home, "tmp"));
-    // Empty user settings and hooks. Repository instructions/hooks remain native task inputs.
-    await writeFile(join(home, ".factory", "settings.json"), JSON.stringify({ cloudSessionSync: false, telemetry: { logMessageContent: false, granularity: "aggregate" } }), { mode: 0o600 });
+    // Isolated user settings and hooks. Repository instructions/hooks remain native task inputs.
+    await writeFile(join(home, ".factory", "settings.json"), JSON.stringify({ cloudSessionSync: false, telemetry: { logMessageContent: false, granularity: "aggregate" },
+      ...(selection.route.kind === "byok" ? { customModels: [{ id: selection.nativeModelId, index: 0, displayName: "EBO BYOK",
+        model: selection.model, baseUrl: selection.route.baseUrl, provider: selection.route.provider,
+        apiKey: "${EBO_FACTORY_BYOK_API_KEY}", maxOutputTokens: selection.route.maxOutputTokens,
+        ...(selection.route.extraArgs === undefined ? {} : { extraArgs: selection.route.extraArgs }) }] } : {}) }), { mode: 0o600 });
     await writeFile(join(home, ".factory", "hooks.json"), "{}", { mode: 0o600 });
     if (request.signal?.aborted) throw new Error("Factory capture interrupted before launch.");
     transport = new RecordingFactoryTransport({ ...request, configuration: { ...request.configuration, executable: runtime.path } }, environment);
     await transport.child.evidence.recordCapability({ source: FACTORY_HARNESS, name: "runtime-composition", status: "available", details: {
-      version: runtime.version, sdkVersion: FACTORY_SDK_VERSION, adapterVersion: FACTORY_ADAPTER_VERSION, binaryDigest, protocolVersion: FACTORY_PROTOCOL_VERSION,
+      version: runtime.version, sdkVersion: FACTORY_SDK_VERSION, adapterVersion: FACTORY_ADAPTER_VERSION, binaryDigest, protocolVersion: FACTORY_PROTOCOL_VERSION, modelSelection: selection,
     } });
     const created = createSession({ transport, cwd: request.workspacePath,
-      modelId: request.configuration.model, reasoningEffort: request.configuration.reasoningEffort as ReasoningEffort,
+      modelId: selection.nativeModelId, reasoningEffort: request.configuration.reasoningEffort as ReasoningEffort,
       autonomyLevel: request.configuration.autonomyLevel as AutonomyLevel, interactionMode: DroidInteractionMode.Auto,
       permissionHandler: (event) => {
         const selected = request.configuration.permissionDecision;
@@ -229,7 +236,7 @@ export async function captureFactoryDroid(request: FactoryCaptureRequest): Promi
     session = await Promise.race([created, transport.fatal, aborted]);
     if (session.id !== transport.sessionId) throw new Error("Factory SDK session differs from native initialization.");
     settings = structuredClone(session.settings);
-    if (session.settings.modelId !== request.configuration.model || session.settings.reasoningEffort !== request.configuration.reasoningEffort
+    if (session.settings.modelId !== selection.nativeModelId || session.settings.reasoningEffort !== request.configuration.reasoningEffort
       || session.settings.autonomyLevel !== request.configuration.autonomyLevel || session.settings.interactionMode !== DroidInteractionMode.Auto) {
       throw new Error("Factory effective settings differ from the frozen model/tool configuration.");
     }
@@ -271,7 +278,7 @@ export async function captureFactoryDroid(request: FactoryCaptureRequest): Promi
   const telemetry: FactoryRuntimeEvidence = {
     schemaVersion: "ebo.factory-runtime/v1",
     runtime: { executable: runtime.path, version: runtime.version, sdkVersion: FACTORY_SDK_VERSION, adapterVersion: FACTORY_ADAPTER_VERSION, binaryDigest, protocolVersion: FACTORY_PROTOCOL_VERSION },
-    effectiveConfiguration: { model: request.configuration.model, reasoningEffort: request.configuration.reasoningEffort,
+    effectiveConfiguration: { model: request.configuration.model, modelSelection: selection, credentialEnv, reasoningEffort: request.configuration.reasoningEffort,
       autonomyLevel: request.configuration.autonomyLevel, permissionDecision: request.configuration.permissionDecision,
       environmentKeys: Object.keys(environment).sort(), userConfiguration: "isolated", ...(settings === undefined ? {} : { settings }) },
     diagnostics: { text: processResult.stderr.text, sizeBytes: processResult.stderr.sizeBytes, truncated: processResult.stderr.truncated, maxBytes: processResult.stderr.maxBytes },
@@ -287,6 +294,7 @@ export function validateFactoryConfiguration(config: FactoryDroidConfiguration):
   if (!["off", "low", "medium", "high"].includes(config.autonomyLevel)
     || !["none", "dynamic", "off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(config.reasoningEffort)
     || !["proceed_once", "cancel"].includes(config.permissionDecision)) throw new Error("Invalid Factory model/tool policy.");
+  factoryModelSelection(config.model, config.route);
   if (config.credentialEnv !== undefined && !/^[A-Z][A-Z0-9_]*$/u.test(config.credentialEnv)) throw new Error("Factory credentialEnv must name an environment variable.");
 }
 

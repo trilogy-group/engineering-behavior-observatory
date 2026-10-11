@@ -83,3 +83,10 @@ two byte-identical package builds. It writes under
 
 See [release records](../../release/README.md). A documentation edit after a
 tag belongs to a later change; do not move an existing release tag to include it.
+
+A new release candidate needs its own package/lockfile version and
+`release/<version>/reproducibility.json` with reviewed fixture digests. The gate
+compares the current checkout to that version's manifest. Preserve published
+manifests and tags when development changes their pinned files. Source scanning
+accepts reference-only Bearer header construction and keeps credential literals
+visible to the shared export scanner.

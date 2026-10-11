@@ -4,5 +4,8 @@
   "provider": "factory",
   "model": "<Factory model ID>",
   "reasoningEffort": "low",
-  "credentialEnv": "FACTORY_API_KEY"
+  "credentialEnv": "FACTORY_API_KEY",
+  "route": {
+    "kind": "factory-managed"
+  }
 }

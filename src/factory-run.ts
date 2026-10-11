@@ -1,3 +1,4 @@
+import { validateFactoryModelRoute, type FactoryModelRoute } from "./factory-model.js";
 import { randomUUID } from "node:crypto";
 import { cp, lstat, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -62,13 +63,14 @@ const REASONING_EFFORTS: readonly FactoryReasoningEffort[] = ["none", "dynamic",
 export type FactoryModelConfiguration = {
   schemaVersion: typeof FACTORY_CONFIG_SCHEMA_VERSION;
   kind: "model";
-  /** Provider label is provenance; the Factory-managed model route is selected by model ID. */
+  /** Provider label is provenance; route selects managed or BYOK dispatch. */
   provider: string;
-  /** Native Factory model ID. */
+  /** Managed model ID or upstream BYOK API model ID. */
   model: string;
   reasoningEffort: FactoryReasoningEffort;
-  /** Environment variable copied into the isolated child for authentication; defaults to FACTORY_API_KEY. */
+  /** Environment variable copied into the isolated child for authentication; defaults to FACTORY_API_KEY or FIREWORKS_API_KEY by route. */
   credentialEnv?: string;
+  route?: FactoryModelRoute;
 };
 
 export type FactoryHarnessConfiguration = {
@@ -446,6 +448,7 @@ export async function runFactoryQueueEntry(options: RunFactoryQueueEntryOptions)
         autonomyLevel: toolPolicy.autonomyLevel,
         permissionDecision: toolPolicy.permissionDecision,
         ...(model.credentialEnv === undefined ? {} : { credentialEnv: model.credentialEnv }),
+        ...(model.route === undefined ? {} : { route: model.route }),
       },
       prompt: packet.agentInput.prompt,
       ...(verifierReference === undefined ? {} : {
@@ -522,9 +525,11 @@ export function resolveFactoryConfigurationRecord<Kind extends FactoryConfigurat
 
 function validateConfiguration(record: Record<string, unknown>, kind: FactoryConfigurationKind, reference: ArtifactReference): void {
   if (kind === "model") {
-    keys(record, ["schemaVersion", "kind", "provider", "model", "reasoningEffort", "credentialEnv"], ["provider", "model", "reasoningEffort"], reference);
+    keys(record, ["schemaVersion", "kind", "provider", "model", "reasoningEffort", "credentialEnv", "route"], ["provider", "model", "reasoningEffort"], reference);
     requiredText(record.provider, "provider", reference);
     requiredText(record.model, "model", reference);
+    if ((record.model as string).startsWith("custom:")) throw configError(reference, "model must be an upstream ID, not a custom selector");
+    if (record.route !== undefined) validateFactoryModelRoute(record.route);
     if (!REASONING_EFFORTS.includes(record.reasoningEffort as FactoryReasoningEffort)) throw configError(reference, "reasoningEffort is invalid");
     if (record.credentialEnv !== undefined && (typeof record.credentialEnv !== "string" || !/^[A-Z][A-Z0-9_]*$/.test(record.credentialEnv))) throw configError(reference, "credentialEnv must be an environment variable name");
   } else if (kind === "harness") {

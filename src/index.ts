@@ -672,3 +672,5 @@ export { selectAggregationAttempts } from "./aggregation.js";
 
 export * from "./factory-droid.js";
 export * from "./factory-run.js";
+
+export { FACTORY_BYOK_MODEL_ID, type FactoryModelRoute } from "./factory-model.js";

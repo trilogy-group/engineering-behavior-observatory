@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "ebo.factory-config/v1",
+  "kind": "model",
+  "provider": "fireworks",
+  "model": "accounts/fireworks/models/glm-5p3-flash",
+  "reasoningEffort": "low",
+  "credentialEnv": "FIREWORKS_API_KEY",
+  "route": {
+    "kind": "byok",
+    "provider": "generic-chat-completion-api",
+    "baseUrl": "https://api.fireworks.ai/inference/v1",
+    "maxOutputTokens": 4096
+  }
+}

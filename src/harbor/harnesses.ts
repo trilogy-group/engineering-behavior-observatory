@@ -244,6 +244,7 @@ export function createFactoryHarborExecutor(options: FactoryHarborExecutorOption
       autonomyLevel: toolPolicy.autonomyLevel,
       permissionDecision: toolPolicy.permissionDecision,
       ...(model.credentialEnv === undefined ? {} : { credentialEnv: model.credentialEnv }),
+      ...(model.route === undefined ? {} : { route: model.route }),
     };
     const result = await captureFactoryDroidRun({
       definition,

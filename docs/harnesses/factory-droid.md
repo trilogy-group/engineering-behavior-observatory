@@ -21,13 +21,17 @@ executable digest, and disables the standalone updater in the child environment.
 The npm distribution also disables its updater. Run install scripts so the npm
 launcher resolves to the platform binary rather than a JavaScript shim.
 
-Supply `FACTORY_API_KEY` through your runtime's secret mechanism. A model record
-can name a different `credentialEnv`; EBO forwards its value as `FACTORY_API_KEY`.
-EBO records the credential variable name and supplies its value to the child
-environment. Native evidence is restricted; portable export sanitizes it.
-Use a Factory-managed model ID with a supported reasoning effort. The provider
-label records provenance; it does not select an arbitrary provider endpoint.
-BYOK settings and additional provider credentials need separate qualification.
+Select a managed route or a BYOK route in the frozen model record. Managed
+routes use `FACTORY_API_KEY`; BYOK defaults to `FIREWORKS_API_KEY`. Either can
+name a different `credentialEnv`. EBO copies only that credential into the
+isolated child: managed credentials become `FACTORY_API_KEY`, and BYOK
+credentials become `EBO_FACTORY_BYOK_API_KEY`. BYOK does not require a Factory
+credential. Personal login state and custom models are not imported.
+
+EBO records environment variable names and secret-free model selection. Native
+evidence is restricted; portable export sanitizes it. Inject credentials through
+your runtime's secret mechanism. Keep credential values out of model records,
+URLs, task files and provider arguments.
 
 ## Freeze the condition
 
@@ -39,6 +43,49 @@ The files under `examples/factory/` are configuration templates.
 ```json
 {"schemaVersion":"ebo.factory-config/v1","kind":"model","provider":"factory","model":"<Factory model ID>","reasoningEffort":"low","credentialEnv":"FACTORY_API_KEY"}
 ```
+
+For Fireworks BYOK, freeze this model record instead:
+
+```json
+{
+  "schemaVersion": "ebo.factory-config/v1",
+  "kind": "model",
+  "provider": "fireworks",
+  "model": "accounts/fireworks/models/glm-5p3-flash",
+  "reasoningEffort": "low",
+  "credentialEnv": "FIREWORKS_API_KEY",
+  "route": {
+    "kind": "byok",
+    "provider": "generic-chat-completion-api",
+    "baseUrl": "https://api.fireworks.ai/inference/v1",
+    "maxOutputTokens": 4096
+  }
+}
+```
+
+The `model` field names the upstream API model. EBO generates the native
+selector `custom:ebo-byok` and one custom-model definition inside the temporary
+home, using an environment reference for its API key. `route.kind` can also be
+`factory-managed`; omitting `route` selects that default. Managed GLM uses
+`model: "glm-5.3-flash"`. The `provider` label records provenance; the explicit
+route controls dispatch. The same harness supports both arms.
+
+BYOK currently supports the Chat Completions dialect with
+`provider: "generic-chat-completion-api"`. The route requires an absolute
+HTTP(S) `baseUrl` without credentials, query or fragment, and a positive
+`maxOutputTokens`. Optional `extraArgs` accepts `temperature` (0–2), `top_p`
+(0–1, exclusive of zero), `reasoning_effort` (`none`, `low`, `medium`, `high`,
+`max`), and `thinking: {"type":"enabled"}` or `{"type":"disabled"}`. Unknown
+fields and dispatch overrides are rejected. Freeze provider reasoning arguments
+separately from the SDK's `reasoningEffort`; their effect needs provider validation.
+
+For matched comparisons, hold the SDK/CLI, task, prompts, tools, autonomy and
+budgets constant. Record both model IDs, route and effective settings. Compare
+Factory consumption and Fireworks charges separately. Matching model names does
+not establish identical serving configurations. Qualify tool calls, reasoning,
+compaction and any auxiliary routing for the selected provider before a study.
+Factory's published plan allowances are a commercial policy separate from EBO's
+credential-free Factory BYOK launch path; consult [current pricing](https://factory.com/pricing).
 
 ```json
 {"schemaVersion":"ebo.factory-config/v1","kind":"harness","adapter":"factory-droid","executable":"<absolute Droid binary path>","version":"0.238.0","sdkVersion":"0.9.1","contractDigest":"<adapter contract digest>"}
@@ -115,7 +162,9 @@ establish completion. Native rejection, cancellation, provider failure and
 persistence failure reasons remain inspectable independently of task quality.
 
 Readback checks runtime composition, manifest pins, ordered owned initialization
-and prompt identities, and terminal ownership before normalization. Unknown
+and prompt identities, and terminal ownership before normalization. BYOK readback
+also checks the upstream ID, native custom selector, route, and effective model
+against the recorded runtime composition and native initialization. Unknown
 notifications remain resolvable unmapped records. Failed or interrupted attempts
 retain their partial stream and workspace; capture corruption is reported as a
 gap and may prevent behavioral analysis.
@@ -168,27 +217,66 @@ node scripts/build-harbor-runtime.mjs .ebo/harbor-runtime --factory
 ```
 
 Use `/opt/ebo/factory-cli/node_modules/.bin/droid` in the guest harness record.
-Declare `FACTORY_API_KEY` (or the selected credential variable) in the worker
+Declare `FACTORY_API_KEY` for managed models or `FIREWORKS_API_KEY` for BYOK
+(or the selected credential variable) in the worker
 runtime's `environmentKeys`. The builder archives the CLI's npm lockfile and
 platform binary with the SDK worker. Follow the [runtime image and Smol binding
 instructions](../guides/harbor-tasks.md#build-and-pin-the-guest-runtime); the
 archive, guest image and model configuration are distinct frozen inputs.
 
-## Verification status
+## Verification and live qualification
 
 Deterministic tests use the actual SDK 0.9.1 against a fixture subprocess. They
-cover raw recording, settings, tools, permissions, unknown notifications,
-foreign/absent/duplicate terminals, failure, interruption, retained analysis,
-sanitization, packet execution and Harbor worker dispatch. They make no model
-calls and do not establish live CLI/provider or Smol VM compatibility.
+cover managed/BYOK configuration, credential isolation, raw recording, settings,
+tools, permissions, unknown notifications, foreign/absent/duplicate terminals,
+failure, interruption, retained route tampering, sanitization, packet execution
+and Harbor worker dispatch. They make no provider calls.
 
-A live smoke is opt-in. Supply the pinned CLI, authorized credentials and model
-through the variables documented in `test/factory-droid.test.ts`, then run its
-live test. Inspect a real tool action, workspace change, owned terminal,
-qualification and sanitized readback. Repeat inside the pinned Harbor guest
-before treating a provider/image combination as live-qualified.
+An optional native check uses the pinned Droid binary against a local mock
+Chat Completions server through EBO. It exercises a native file tool, retained
+readback and export without a Factory credential:
+
+```sh
+npm run build
+EBO_NATIVE_FACTORY_EXECUTABLE="$PWD/factory-runtime/node_modules/.bin/droid" \
+  node --test --test-name-pattern='pinned native Factory BYOK' dist/test/factory-droid.test.js
+```
+
+This checks the native BYOK protocol, not Fireworks service compatibility. For a
+live Fireworks smoke, inject `FIREWORKS_API_KEY` through your secret mechanism:
+
+```sh
+EBO_LIVE_FACTORY_CAPTURE_SMOKE=1 EBO_LIVE_FACTORY_ROUTE=byok \
+EBO_LIVE_FACTORY_EXECUTABLE="$PWD/factory-runtime/node_modules/.bin/droid" \
+EBO_LIVE_FACTORY_MODEL=accounts/fireworks/models/glm-5p3-flash \
+EBO_LIVE_FACTORY_EFFORT=low \
+  node --test --test-name-pattern='live Factory CLI' dist/test/factory-droid.test.js
+```
+
+For the managed arm, use `EBO_LIVE_FACTORY_ROUTE=managed`,
+`EBO_LIVE_FACTORY_MODEL=glm-5.3-flash`, and inject `FACTORY_API_KEY`.
+The live smoke retains its evidence path and checks a real tool action, workspace
+change, owned terminal, retained analysis and sanitized export.
+
+The separate VM check requires the [qualified Smol host and guest runtime](../guides/harbor-tasks.md#build-and-pin-the-guest-runtime).
+Build with `--factory`, then bind the runtime archive, `image-build.json`, a
+registry-accessible Linux ARM64 execution-image digest, and the bundled libkrun
+digest. Set `EBO_HARBOR_PYTHON`, `EBO_HARBOR_RUNTIME`, `EBO_SMOL_IMAGE`, and
+`EBO_SMOL_LIBKRUN_SHA256`. With the selected model and credential supplied:
+
+```sh
+EBO_LIVE_FACTORY_SMOL=1 EBO_LIVE_FACTORY_ROUTE=byok \
+EBO_LIVE_FACTORY_MODEL=accounts/fireworks/models/glm-5p3-flash \
+  node --test dist/test/factory-smol-live.test.js
+```
+
+This creates one synthetic verified task and checks native capture, retained
+analysis, sanitized export and VM-owner cleanup. Repeat for the managed arm.
+Passing mock-provider or no-model Smol tests does not qualify a live provider/image
+combination. The deterministic release gate excludes live inference tests.
 
 Upstream contracts: [TypeScript SDK](https://docs.factory.com/sdk/typescript),
 [Droid Exec](https://docs.factory.com/droid-exec/overview),
+[BYOK](https://docs.factory.com/model-independence/byok),
 [settings](https://docs.factory.com/droid-cli/settings),
 [telemetry privacy](https://docs.factory.com/enterprise/telemetry/privacy).

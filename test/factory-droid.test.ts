@@ -1,3 +1,6 @@
+import { createServer } from "node:http";
+import { existsSync } from "node:fs";
+import { FACTORY_BYOK_MODEL_ID, type FactoryModelRoute } from "../src/factory-model.js";
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
@@ -21,6 +24,7 @@ import { laneData } from "../src/atlas-lanes.js";
 import { deriveUnits } from "../src/atlas-units.js";
 import { ownPointer } from "../src/atlas-bundle.js";
 
+const byokRoute: FactoryModelRoute = { kind: "byok", provider: "generic-chat-completion-api", baseUrl: "https://api.fireworks.ai/inference/v1", maxOutputTokens: 4096 };
 const fixture = resolve("test/fixtures/factory/fake-droid.mjs");
 const CREDENTIAL_ENV = "EBO_FAKE_FACTORY_KEY";
 const CREDENTIAL_VALUE = "factory-fixture-credential";
@@ -257,10 +261,10 @@ test("Factory CLI exposes the packet runner and rejects incomplete syntax", asyn
   output = ""; assert.equal(await main(["factory", "run"], message => { output += message; }), 1); assert.ok(output.includes("Usage: ebo factory run"));
 });
 
-test("Factory frozen queue execution uses the same native capture core", async () => {
+for (const byok of [false, true]) test(`Factory frozen queue execution uses the same native capture core (BYOK=${byok})`, async () => {
   const root = await temporaryRoot();
   try {
-    const q = createQueueFixture(root);
+    const q = createQueueFixture(root, process.execPath, byok);
     const result = await runFactoryQueueEntry({ ...q, outputRoot: join(root, "runs"), workspaceRoot: join(root, "workspaces"),
       probeRuntime: async () => ({ path: process.execPath, version: FACTORY_CLI_VERSION }), executableArgs: [fixture] });
     assert.equal(result.terminal.state, "completed"); assert.ok(result.normalizedEvents > 0);
@@ -268,12 +272,12 @@ test("Factory frozen queue execution uses the same native capture core", async (
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("Factory Harbor executor and real worker dispatch retain the task filesystem", async () => {
+for (const byok of [false, true]) test(`Factory Harbor executor and real worker dispatch retain the task filesystem (BYOK=${byok})`, async () => {
   const root = await temporaryRoot();
   try {
     const executable = join(root, "droid-fixture.mjs");
     writeFileSync(executable, `#!${process.execPath}\nawait import(${JSON.stringify(pathToFileURL(fixture).href)});\n`, { mode: 0o700 });
-    const q = createQueueFixture(root, executable);
+    const q = createQueueFixture(root, executable, byok);
     const queue = JSON.parse(await readFile(q.queuePath, "utf8")); const entry = queue.entries[0];
     const configuration = { ...entry.configuration, captureProfile: queue.captureProfile };
     const input = harborStepFixture(root, "factory-droid");
@@ -290,7 +294,7 @@ test("Factory Harbor executor and real worker dispatch retain the task filesyste
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-function createQueueFixture(parent: string, executable = process.execPath): { bundleRoot: string; queuePath: string; runId: string } {
+function createQueueFixture(parent: string, executable = process.execPath, byok = false): { bundleRoot: string; queuePath: string; runId: string } {
   const bundleRoot = join(parent, "queue-bundle");
   mkdirSync(bundleRoot, { recursive: true });
   const packet = JSON.parse(readFileSync(resolve("tests/fixtures/task-packet.valid.v1.json"), "utf8")) as Extract<TaskPacket, { assessmentMode: "verified" }>;
@@ -320,7 +324,7 @@ function createQueueFixture(parent: string, executable = process.execPath): { bu
   freezeTaskPacket(bundleRoot, "packets/task.json");
 
   const configs = {
-    model: { schemaVersion: "ebo.factory-config/v1", kind: "model", provider: "factory", model: "fixture-model", reasoningEffort: "low", credentialEnv: CREDENTIAL_ENV },
+    model: { schemaVersion: "ebo.factory-config/v1", kind: "model", provider: "factory", model: "fixture-model", reasoningEffort: "low", credentialEnv: CREDENTIAL_ENV, ...(byok ? { route: byokRoute } : {}) },
     harness: { schemaVersion: "ebo.factory-config/v1", kind: "harness", adapter: "factory-droid", executable, version: FACTORY_CLI_VERSION, sdkVersion: FACTORY_SDK_VERSION, contractDigest: FACTORY_CONTRACT_DIGEST },
     limits: { schemaVersion: "ebo.factory-config/v1", kind: "native-limits", shutdownGraceMs: 1_000 },
     tools: { schemaVersion: "ebo.factory-config/v1", kind: "native-tool-policy", autonomyLevel: "off", permissionDecision: "proceed_once" },
@@ -378,11 +382,105 @@ function fixtureArchive(): Buffer {
 }
 
 
+test("Factory BYOK isolates credentials and corroborates retained upstream routing", async () => {
+  const root = await temporaryRoot();
+  try {
+    const baseline = join(root, "baseline"), workspace = join(root, "workspace"); await mkdir(baseline); await mkdir(workspace);
+    const bundle = join(root, "bundle"), d = definition(bundle); d.run.model.provider = "fireworks";
+    const result = await captureFactoryDroidRun({ definition: d, startingWorkspacePath: baseline,
+      workspace: { setup: () => ({ status: "ready", path: workspace, artifactId: "workspace", retained: true }) },
+      configuration: { ...config(), route: byokRoute }, prompt: "Create a result file." });
+    assert.equal(result.manifest.terminal.state, "completed");
+    const isolation = JSON.parse(await readFile(join(workspace, "isolation.json"), "utf8"));
+    assert.equal(isolation.hasFactoryCredential, false); assert.equal(isolation.hasByokCredential, true);
+    assert.equal(isolation.hasSourceCredential, false);
+    assert.equal(isolation.settings.customModels[0].apiKey, "${EBO_FACTORY_BYOK_API_KEY}");
+    assert.equal(isolation.settings.customModels[0].model, d.run.model.id);
+    assert.equal(isolation.settings.customModels[0].id, FACTORY_BYOK_MODEL_ID);
+    const retained = await createRetainedBehaviorEvidence(bundle);
+    assert.ok(retained.dataset.events.some(e => e.family === "tool"));
+    await createRetainedStructuralObservationSet(bundle);
+    const policy: PortableExportPolicy = { sharingClass: "partner", maxStringBytes: 65536, maxArtifactBytes: 1024 * 1024, sensitiveValues: [CREDENTIAL_VALUE] };
+    const exported = await createPortableRunBundleExport({ sourceRoot: bundle, destinationRoot: join(root, "export"), policy });
+    for (const artifact of exported.artifacts) assert.equal((await readFile(join(root, "export", artifact.relativePath), "utf8")).includes(CREDENTIAL_VALUE), false);
+    await readPortableRunBundleExport(join(root, "export"), policy);
+    // Alter the route and its artifact digest together: native composition must still corroborate it.
+    const descriptor = result.manifest.evidence.find(e => e.id === "telemetry")!;
+    const path = join(bundle, descriptor.relativePath), telemetry = JSON.parse(await readFile(path, "utf8"));
+    telemetry.effectiveConfiguration.modelSelection.route.baseUrl = "https://other.example/v1";
+    const bytes = Buffer.from(JSON.stringify(telemetry)); writeFileSync(path, bytes);
+    descriptor.digest = `sha256:${digestBytes(bytes).value}`; descriptor.sizeBytes = bytes.length;
+    writeFileSync(join(bundle, "manifest.json"), JSON.stringify(result.manifest));
+    await assert.rejects(createRetainedBehaviorEvidence(bundle), /route differs from recorded composition/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("Factory BYOK rejects secrets, route overrides and invalid provider settings before launch", async () => {
+  const root = await temporaryRoot();
+  try {
+    for (const override of [ { apiKey: "literal-secret" }, { baseUrl: "https://user:pass@example.com/v1" },
+      { baseUrl: "https://example.com/v1?api_key=value" }, { provider: "openai" }, { maxOutputTokens: 0 },
+      { extraArgs: { model: "override" } }, { extraArgs: { apiKey: "literal-secret" } }, { extraArgs: { temperature: 9 } } ]) {
+      await assert.rejects(runFake(root, "success", { route: { ...byokRoute, ...override } as FactoryModelRoute }));
+    }
+    await assert.rejects(runFake(root, "success", { model: "custom:unbound" }), /custom selector/);
+    const partial = await runFake(root, "provider-error", { route: byokRoute });
+    assert.equal(partial.terminalStatus, "failed");
+    assert.equal(partial.telemetry.effectiveConfiguration.modelSelection?.nativeModelId, FACTORY_BYOK_MODEL_ID);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+const nativeFactory = process.env.EBO_NATIVE_FACTORY_EXECUTABLE;
+test("pinned native Factory BYOK uses Chat Completions through EBO without Factory credentials", {
+  skip: !nativeFactory || !existsSync(nativeFactory), timeout: 90_000,
+}, async () => {
+  const root = await temporaryRoot(), requests: { path: string; model: string; authorization: string; body: any }[] = [];
+  const server = createServer(async (req, res) => {
+    try {
+      let raw = ""; for await (const chunk of req) raw += chunk;
+      const body = JSON.parse(raw); requests.push({ path: req.url!, model: body.model, authorization: req.headers.authorization!, body });
+      const tools = body.tools ?? [], create = tools.find((tool: any) => tool.function?.name === "Create");
+      const done = body.messages.some((message: any) => message.role === "tool");
+      const delta = !done && create ? { role: "assistant", tool_calls: [{ index: 0, id: "ebo-create", type: "function", function: {
+        name: "Create", arguments: JSON.stringify({ file_path: join(root, "workspace/capture-proof.txt"), content: "EBO_FACTORY_OK" }) } }] }
+        : { role: "assistant", content: "BYOK_PROBE_OK" };
+      const common = { id: "chatcmpl-ebo-native", object: "chat.completion.chunk", created: 1, model: body.model };
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: " + JSON.stringify({ ...common, choices: [{ index: 0, delta, finish_reason: null }] }) + "\n\n");
+      res.write("data: " + JSON.stringify({ ...common, choices: [{ index: 0, delta: {}, finish_reason: delta.tool_calls ? "tool_calls" : "stop" }], usage: { prompt_tokens: 4, completion_tokens: 4, total_tokens: 8 } }) + "\n\n");
+      res.end("data: [DONE]\n\n");
+    } catch { res.writeHead(500); res.end("{}"); }
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const baseline = join(root, "baseline"), workspace = join(root, "workspace"); await mkdir(baseline); await mkdir(workspace);
+    const d = definition(join(root, "bundle")); d.run.model = { provider: "fireworks", id: "accounts/fireworks/models/glm-5p3-flash" };
+    const address = server.address() as { port: number };
+    const result = await captureFactoryDroidRun({ definition: d, startingWorkspacePath: baseline,
+      workspace: { setup: () => ({ status: "ready", path: workspace, artifactId: "workspace", retained: true }) },
+      configuration: { ...config(), executable: nativeFactory!, executableArgs: undefined, model: d.run.model.id,
+        route: { ...byokRoute, baseUrl: `http://127.0.0.1:${address.port}/v1`, extraArgs: { temperature: 0, reasoning_effort: "low" } } },
+      prompt: "Use Create to write capture-proof.txt containing EBO_FACTORY_OK, then reply DONE.", signal: AbortSignal.timeout(60_000) });
+    assert.equal(result.manifest.terminal.state, "completed", JSON.stringify(result.capture?.gaps));
+    assert.ok(requests.length >= 2); assert.ok(requests.every(r => r.path === "/v1/chat/completions" && r.model === d.run.model.id && r.authorization === `Bearer ${CREDENTIAL_VALUE}`));
+    assert.ok(requests.every(r => r.body.temperature === 0 && r.body.reasoning_effort === "low"));
+    assert.ok(!result.capture!.telemetry.effectiveConfiguration.environmentKeys.includes("FACTORY_API_KEY"));
+    assert.equal((await readFile(join(workspace, "capture-proof.txt"), "utf8")).trim(), "EBO_FACTORY_OK");
+    const retained = await createRetainedBehaviorEvidence(d.bundleRoot);
+    assert.ok(retained.dataset.events.some(e => e.family === "tool"));
+    const policy: PortableExportPolicy = { sharingClass: "partner", maxStringBytes: 65536, maxArtifactBytes: 8 * 1024 * 1024, sensitiveValues: [CREDENTIAL_VALUE] };
+    await createPortableRunBundleExport({ sourceRoot: d.bundleRoot, destinationRoot: join(root, "export"), policy });
+    await readPortableRunBundleExport(join(root, "export"), policy);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await rm(root, { recursive: true, force: true }); }
+});
+
 // Opt-in live check: credentials are supplied through the process environment.
 // EBO_LIVE_FACTORY_EXECUTABLE must be the absolute pinned binary path.
 // EBO_LIVE_FACTORY_MODEL and EBO_LIVE_FACTORY_EFFORT select the authorized condition.
 test("live Factory CLI tool capture and retained readback", { skip: process.env.EBO_LIVE_FACTORY_CAPTURE_SMOKE !== "1", timeout: 180_000 }, async t => {
-  assert.ok(process.env.FACTORY_API_KEY);
+  const byok = process.env.EBO_LIVE_FACTORY_ROUTE === "byok";
+  const credentialEnv = byok ? "FIREWORKS_API_KEY" : "FACTORY_API_KEY";
+  assert.ok(process.env[credentialEnv]);
   assert.ok(process.env.EBO_LIVE_FACTORY_EXECUTABLE);
   assert.ok(process.env.EBO_LIVE_FACTORY_MODEL);
   const root = await temporaryRoot();
@@ -391,7 +489,7 @@ test("live Factory CLI tool capture and retained readback", { skip: process.env.
   const model = process.env.EBO_LIVE_FACTORY_MODEL!;
   const d = definition(join(root, "bundle")); d.run.model.id = model;
   const configuration: FactoryDroidConfiguration = { ...config(), executable: process.env.EBO_LIVE_FACTORY_EXECUTABLE!, executableArgs: undefined,
-    credentialEnv: "FACTORY_API_KEY", model, reasoningEffort: (process.env.EBO_LIVE_FACTORY_EFFORT ?? "low") as FactoryDroidConfiguration["reasoningEffort"] };
+    credentialEnv, ...(byok ? { route: byokRoute } : {}), model, reasoningEffort: (process.env.EBO_LIVE_FACTORY_EFFORT ?? "low") as FactoryDroidConfiguration["reasoningEffort"] };
   const result = await captureFactoryDroidRun({ definition: d, startingWorkspacePath: baseline,
     workspace: { setup: () => ({ status: "ready", path: workspace, artifactId: "workspace", retained: true }) }, configuration,
     prompt: "Synthetic capture qualification. Create capture-proof.txt containing exactly EBO_FACTORY_OK using a native file or shell tool, then reply DONE. Do nothing else.",

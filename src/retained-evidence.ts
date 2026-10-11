@@ -1,3 +1,5 @@
+import { digestMetadata } from "./artifacts.js";
+import { factoryModelSelection } from "./factory-model.js";
 import { FACTORY_HARNESS, FACTORY_ADAPTER_VERSION, FACTORY_SDK_VERSION, qualifyFactoryCapture, describeAndValidateFactoryDataset } from "./factory-droid.js";
 import { join } from "node:path";
 import { CLAUDE_AGENT_SDK_HARNESS, readQualifiedRunCapture, createAgentSdkNativeEvidenceResolver, type AgentSdkNativeRecord } from "./agent-sdk-normalizer.js";
@@ -177,8 +179,15 @@ export async function createRetainedBehaviorEvidence(bundleRoot: string): Promis
       sessionId: manifest.run.native?.sessionId, expectsCompletion, cliVersion: manifest.run.harness.version, sdkVersion: runtime.sdkVersion,
     });
     const initialization = native.records.find(({ record }) => record.source === "ebo-factory-client" && record.method === "droid.initialize_session")?.record;
-    if (initialization !== undefined && (initialization.payload as Record<string, any>)?.params?.modelId !== manifest.run.model.id) throw new Error("Retained Factory initialization model differs from the manifest.");
+    const effective = runtimeDocuments[0]!.effectiveConfiguration;
+    const selection = effective.modelSelection === undefined ? factoryModelSelection(manifest.run.model.id)
+      : factoryModelSelection(effective.modelSelection.model, effective.modelSelection.route);
+    if (selection.model !== manifest.run.model.id || effective.modelSelection !== undefined
+      && digestMetadata(selection).value !== digestMetadata(effective.modelSelection).value) throw new Error("Retained Factory model route is invalid.");
+    if (effective.settings?.modelId !== undefined && effective.settings.modelId !== selection.nativeModelId) throw new Error("Retained Factory effective selector differs from its route.");
+    if (initialization !== undefined && (initialization.payload as Record<string, any>)?.params?.modelId !== selection.nativeModelId) throw new Error("Retained Factory initialization model differs from the manifest.");
     const composition = native.records.find(({ record }) => record.capability === "runtime-composition")?.record.evidence as Record<string, unknown> | undefined;
+    if (effective.modelSelection !== undefined && digestMetadata(composition?.modelSelection ?? null).value !== digestMetadata(selection).value) throw new Error("Retained Factory route differs from recorded composition.");
     if (composition?.binaryDigest !== runtime.binaryDigest || composition?.protocolVersion !== runtime.protocolVersion) {
       throw new Error("Retained Factory runtime digest or protocol differs from native composition.");
     }
