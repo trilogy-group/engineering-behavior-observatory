@@ -503,7 +503,7 @@ test("live Factory CLI tool capture and retained readback", { skip: process.env.
   t.diagnostic(`Retained live evidence: ${root}`);
   const baseline = join(root, "baseline"), workspace = join(root, "workspace"); await mkdir(baseline); await mkdir(workspace);
   const model = process.env.EBO_LIVE_FACTORY_MODEL!;
-  const d = definition(join(root, "bundle")); d.run.model.id = model;
+  const d = definition(join(root, "bundle")); d.run.model = { provider: byok ? "fireworks" : "factory", id: model };
   const configuration: FactoryDroidConfiguration = { ...config(), executable: process.env.EBO_LIVE_FACTORY_EXECUTABLE!, executableArgs: undefined,
     credentialEnv, ...(byok ? { route: byokRoute } : {}), model, reasoningEffort: (process.env.EBO_LIVE_FACTORY_EFFORT ?? "low") as FactoryDroidConfiguration["reasoningEffort"] };
   const result = await captureFactoryDroidRun({ definition: d, startingWorkspacePath: baseline,
@@ -514,7 +514,7 @@ test("live Factory CLI tool capture and retained readback", { skip: process.env.
   assert.equal((await readFile(join(workspace, "capture-proof.txt"), "utf8")).trim(), "EBO_FACTORY_OK");
   const retained = await createRetainedBehaviorEvidence(d.bundleRoot);
   assert.ok(retained.dataset.events.some(event => event.family === "tool"));
-  const policy: PortableExportPolicy = { sharingClass: "partner", maxArtifactBytes: 8 * 1024 * 1024, maxStringBytes: 65536 };
+  const policy: PortableExportPolicy = { sharingClass: "partner", maxArtifactBytes: 8 * 1024 * 1024, maxStringBytes: 65536, sensitiveValues: [process.env[credentialEnv]!] };
   await createPortableRunBundleExport({ sourceRoot: d.bundleRoot, destinationRoot: join(root, "export"), policy });
   await readPortableRunBundleExport(join(root, "export"), policy);
 });

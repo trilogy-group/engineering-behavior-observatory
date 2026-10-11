@@ -245,8 +245,11 @@ EBO_NATIVE_FACTORY_EXECUTABLE="$PWD/factory-runtime/node_modules/.bin/droid" \
   node --test --test-name-pattern='pinned native Factory BYOK' dist/test/factory-droid.test.js
 ```
 
-This checks the native BYOK protocol, not Fireworks service compatibility. For a
-live Fireworks smoke, inject `FIREWORKS_API_KEY` through your secret mechanism:
+For a live Fireworks smoke, inject `FIREWORKS_API_KEY` through your secret
+mechanism. BYOK uses the same native Droid child, SDK recording, retained
+analysis and export path. This check requires provider access and credit;
+Factory login, a paid Factory plan and `FACTORY_API_KEY` are unnecessary for
+the pinned BYOK runtime:
 
 ```sh
 EBO_LIVE_FACTORY_CAPTURE_SMOKE=1 EBO_LIVE_FACTORY_ROUTE=byok \
@@ -256,10 +259,12 @@ EBO_LIVE_FACTORY_EFFORT=low \
   node --test --test-name-pattern='live Factory CLI' dist/test/factory-droid.test.js
 ```
 
-For the managed arm, use `EBO_LIVE_FACTORY_ROUTE=managed`,
+For a Factory-hosted inference check, use `EBO_LIVE_FACTORY_ROUTE=managed`,
 `EBO_LIVE_FACTORY_MODEL=glm-5.3-flash`, and inject `FACTORY_API_KEY`.
 The live smoke retains its evidence path and checks a real tool action, workspace
-change, owned terminal, retained analysis and sanitized export.
+change, owned terminal, retained analysis and sanitized export. The Fireworks
+GLM-5.3-Flash smoke passed with Droid 0.238.0 and SDK 0.9.1 without Factory
+credentials. A Factory-hosted versus BYOK benchmark is a separate study.
 
 The separate VM check requires the [qualified Smol host and guest runtime](../guides/harbor-tasks.md#build-and-pin-the-guest-runtime).
 Build with `--factory`, then bind the runtime archive, `image-build.json`, a
@@ -274,9 +279,9 @@ EBO_LIVE_FACTORY_MODEL=accounts/fireworks/models/glm-5p3-flash \
 ```
 
 This creates one synthetic verified task and checks native capture, retained
-analysis, sanitized export and VM-owner cleanup. Repeat for the managed arm.
-Passing mock-provider or no-model Smol tests does not qualify a live provider/image
-combination. The deterministic release gate excludes live inference tests.
+analysis, sanitized export and VM-owner cleanup. Qualify each selected live
+provider/image combination before a study. The deterministic release gate
+excludes live inference tests.
 
 Upstream contracts: [TypeScript SDK](https://docs.factory.com/sdk/typescript),
 [Droid Exec](https://docs.factory.com/droid-exec/overview),
