@@ -34,21 +34,21 @@ resolving the environment and every Harbor command fails with a misleading
 
 A frozen task whose snapshot fails content verification reports
 `Harbor task status: changed`. Confirm `EBO_HARBOR_PYTHON`
-are exported before assuming the snapshot actually changed.
+is exported before checking the snapshot's contents.
 
 The current runtime profile targets Apple Silicon macOS with Smol's bundled
 libkrun. The environment manifest pins that library's SHA-256. Do not override
-`SMOLVM_LIB_DIR`. Harbor 0.23 remains outside this qualified profile.
+`SMOLVM_LIB_DIR`.
 Docker is used only to build images, not to execute tasks or graders.
 `local-fs-test` supports preparation tests only; old Docker queues remain
 readable but must be explicitly recompiled as new Smol conditions to run.
 
 The worker runtime's `environmentKeys` allowlist passes selected host values as
 plaintext into the attempt child. Keep it minimal: an agent with shell access
-inside the guest can read those values. Smol 1.18 adds host-side credential
-substitution for HTTPS headers, but its current Python `MachineConfig` does not
-expose that binding. EBO does not claim host-held credentials for this SDK path.
-Use a separately approved route for experiments that require that boundary;
+inside the guest can read those values. Smol 1.26.1 exposes host-side HTTPS
+header substitution through `MachineConfig.credentials` and `CredentialSpec`.
+EBO's qualified Harbor worker path uses the environment allowlist. Use a
+separately approved route for experiments that require host-held credentials;
 gateway configuration belongs to the operator, not to a frozen task or EBO.
 
 ## Prepare, review and freeze
