@@ -93,8 +93,9 @@ use `captureFactoryDroidRun`, or `captureFactoryDroid` for the native capture
 boundary. Both accept an abort signal. SIGINT/SIGTERM in the CLI requests native
 interruption, drains evidence within bounded shutdown windows, then terminates
 the owned child if needed.
-Bundle finalization waits for the native capture producer to stop before hashing
-its stream, including when a coordinator shutdown deadline expires.
+Workspace snapshots and bundle finalization wait for the native capture producer
+to stop before recording final state or hashing its stream, including when a
+coordinator shutdown deadline expires.
 
 Retained files include:
 

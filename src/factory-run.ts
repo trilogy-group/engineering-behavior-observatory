@@ -161,6 +161,9 @@ export async function captureFactoryDroidRun(options: CaptureFactoryDroidRunOpti
   let telemetryEvidenceRegistered = false;
 
   const captureWorkspace = async (context?: VerifierExecutionContext): Promise<CapturedWorkspaceOutcome> => {
+    // Native interruption can settle before transport close and final writes.
+    // Apply the barrier to cleanup as well as the final packaging path.
+    await capturePromise?.catch(() => undefined);
     if (workspaceOutcome !== undefined) return workspaceOutcome;
     if (workspace?.status !== "ready" || workspace.path === undefined || workspace.artifactId === undefined) {
       throw new Error("Factory capture requires a ready retained workspace before outcome packaging.");

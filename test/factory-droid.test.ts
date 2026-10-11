@@ -163,26 +163,29 @@ test("Factory declined permissions retain an interrupted run bundle and native p
     assert.equal(retained.dataset.events.find(e => e.family === "outcome")?.attributes.reason, "permission_rejected");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
-test("Factory finalization waits for a producer that outlives coordinator shutdown windows", async () => {
+for (const mode of ["slow-interrupt", "slow-close"]) test(`Factory finalization waits for the ${mode} producer beyond coordinator shutdown windows`, async () => {
   const root = await temporaryRoot(); const abort = new AbortController(); let producer: Promise<FactoryCapture> | undefined;
   try {
     const baseline = join(root, "baseline"), workspace = join(root, "workspace"); await mkdir(baseline); await mkdir(workspace);
     const bundle = join(root, "bundle");
     const running = captureFactoryDroidRun({ definition: definition(bundle), startingWorkspacePath: baseline,
       workspace: { setup: () => ({ status: "ready", path: workspace, artifactId: "workspace", retained: true }) },
-      configuration: config("slow-interrupt"), prompt: "Create a result file.", shutdownGraceMs: 20, signal: abort.signal,
+      configuration: config(mode), prompt: "Create a result file.", shutdownGraceMs: 20, signal: abort.signal,
       capture: request => producer = captureFactoryDroid({ ...request, shutdownGraceMs: 300 }) });
     for (let i = 0; i < 500; i++) {
       if (await readFile(join(workspace, "factory-result.txt")).then(() => true, () => false)) break;
       await new Promise(resolve => setTimeout(resolve, 10));
     }
     abort.abort(); const result = await running;
-    assert.equal(result.attempt.record.harnessTerminationConfirmed, false, "the coordinator stopped waiting before the producer settled");
+    assert.equal(result.attempt.record.harnessTerminationConfirmed, mode === "slow-close", "native interrupt can settle before process close finishes");
     assert.equal(result.capture?.terminal?.reason, "cancelled", "finalization still waited for native drain");
     const descriptor = result.manifest.evidence.find(e => e.id === "session")!;
     const bytes = await readFile(join(bundle, descriptor.relativePath));
     assert.equal(descriptor.digest, `sha256:${digestBytes(bytes).value}`);
     assert.ok(bytes.toString("utf8").includes('"kind":"process"'));
+    if (mode === "slow-close") {
+      assert.ok((await readFile(join(bundle, "workspace.patch"), "utf8")).includes("workspace write during native close"), "workspace snapshot includes writes made after interrupt completed");
+    }
     await createRetainedBehaviorEvidence(bundle);
   } finally { await producer?.catch(() => undefined); await rm(root, { recursive: true, force: true }); }
 });
