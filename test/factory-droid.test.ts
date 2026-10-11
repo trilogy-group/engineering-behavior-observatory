@@ -16,6 +16,7 @@ import { visibleEvidence } from "../src/exports.js";
 import { createFactoryHarborExecutor } from "../src/harbor/harnesses.js";
 import { createNativeHarborExecutor, runHarborWorker, type HarborWorkerInput } from "../src/harbor/worker.js";
 import { harborStepFixture } from "./harbor-step-helper.js";
+import { laneData } from "../src/atlas-lanes.js";
 
 const fixture = resolve("test/fixtures/factory/fake-droid.mjs");
 const CREDENTIAL_ENV = "EBO_FAKE_FACTORY_KEY";
@@ -41,7 +42,7 @@ test("Factory real SDK records native frames before filtering and completes only
   const root = await temporaryRoot();
   try {
     const capture = await runFake(root);
-    assert.equal(capture.terminalStatus, "completed", JSON.stringify(capture.gaps));
+    assert.equal(capture.terminalStatus, "completed", JSON.stringify({ gaps: capture.gaps, process: capture.process }));
     assert.equal(capture.sessionId, "fixture-factory-session");
     assert.ok(capture.process.droppedObservations > 0);
     assert.ok(capture.records.length > capture.process.observations.length);
@@ -63,6 +64,10 @@ test("Factory real SDK records native frames before filtering and completes only
     assert.ok(dataset.events.some(e => e.family === "delegation"));
     assert.ok(dataset.events.every(e => e.scope.id === capture.sessionId));
     assert.equal(dataset.events.find(e => e.family === "outcome")?.attributes.inputTokens, 4);
+    const lane = laneData({ attempt_id: capture.attemptId, task_id: null, condition: null, trial_id: null,
+      harness_id: "factory-droid", model_id: "fixture-model", terminal_state: "completed", failure_class: null,
+      capture_qualification: "qualified" }, [], dataset.events);
+    assert.equal(lane.lane.tokens_total, 10, "owned turn input/output/cache counts once, including child work");
     assert.ok(dataset.unmapped.some(({ reference }) => capture.records.find(r => r.reference.recordLocator === reference.recordLocator)?.record.raw?.includes("future_fixture_event")));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -94,10 +99,10 @@ for (const permissionDecision of ["proceed_once", "cancel"] as const) {
   });
 }
 
-test("Factory cancellation interrupts a live prompt and drains partial evidence", async () => {
+for (const mode of ["hang", "delayed-interrupt"]) test(`Factory cancellation drains the ${mode} terminal after interrupt acknowledgement`, async () => {
   const root = await temporaryRoot(); const abort = new AbortController();
   try {
-    const running = runFake(root, "hang", {}, abort.signal);
+    const running = runFake(root, mode, {}, abort.signal);
     for (let i = 0; i < 500; i++) {
       if (await readFile(join(root, "workspace/factory-result.txt")).then(() => true, () => false)) break;
       await new Promise(resolve => setTimeout(resolve, 10));
@@ -105,6 +110,9 @@ test("Factory cancellation interrupts a live prompt and drains partial evidence"
     abort.abort(); const capture = await running;
     assert.equal(capture.terminalStatus, "interrupted");
     assert.ok(capture.records.some(({ record }) => record.method === "droid.interrupt_session"));
+    assert.equal(capture.terminal?.reason, "cancelled", "delayed terminal and its usage survive interruption");
+    assert.equal((capture.terminal?.tokenUsage as any)?.cacheReadTokens, 1);
+    assert.notEqual(capture.process.termination, "interrupted", "OS interrupt is a fallback after draining");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -150,6 +158,10 @@ test("Factory run bundles reopen for retained behavioral and structural analysis
     assert.ok(retained.coverage); assert.ok(retained.dataset.events.some(e => e.family === "tool"));
     const observations = await createRetainedStructuralObservationSet(bundle);
     assert.ok(observations);
+    assert.deepEqual(observations.observations.find(o => o.extractor.id === "cache-read-input-token-count")?.value,
+      { status: "known", value: 1, unit: "tokens" });
+    assert.deepEqual(observations.observations.find(o => o.extractor.id === "cache-creation-input-token-count")?.value,
+      { status: "known", value: 3, unit: "tokens" });
     const policy: PortableExportPolicy = { sharingClass: "partner", maxStringBytes: 65536, maxArtifactBytes: 1024 * 1024, sensitiveValues: [CREDENTIAL_VALUE] };
     const exported = await createPortableRunBundleExport({ sourceRoot: bundle, destinationRoot: join(root, "export"), policy });
     assert.ok(exported);

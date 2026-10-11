@@ -5,7 +5,7 @@ import { FACTORY_PROTOCOL_VERSION } from '@factory/droid-sdk';
 if (process.argv.includes('--version')) { console.log('0.238.0'); process.exit(0); }
 const mode = process.argv.find(arg => arg.startsWith('--mode='))?.slice(7) ?? 'success';
 const sessionId = 'fixture-factory-session';
-const usage = { inputTokens: 4, outputTokens: 2, cacheReadTokens: 1, cacheCreationTokens: 0, thinkingTokens: 0 };
+const usage = { inputTokens: 4, outputTokens: 2, cacheReadTokens: 1, cacheCreationTokens: 3, thinkingTokens: 0 };
 const frame = value => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', factoryApiVersion: '1.0.0', factoryProtocolVersion: FACTORY_PROTOCOL_VERSION, ...value }) + '\n');
 const notify = (notification, id = sessionId) => frame({ type: 'notification', method: 'droid.session_notification', params: { sessionId: id, notification } });
 let turnId;
@@ -57,7 +57,11 @@ input.on('line', raw => {
   }
   frame({ type: 'response', id: request.id, result });
   if (request.method === 'droid.close_session') { input.close(); setTimeout(() => process.exit(0), 5); }
-  if (request.method === 'droid.interrupt_session') notify({ type: 'agent_turn_completed', turnId, reason: 'cancelled', tokenUsage: usage });
+  if (request.method === 'droid.interrupt_session') {
+    const terminal = () => notify({ type: 'agent_turn_completed', turnId, reason: 'cancelled', tokenUsage: usage });
+    if (mode === 'delayed-interrupt') setTimeout(terminal, 40);
+    else terminal();
+  }
   if (request.method !== 'droid.add_user_message') return;
   turnId = request.params.messageId;
   writeFileSync('factory-result.txt', 'native fixture workspace change\n');
@@ -65,7 +69,7 @@ input.on('line', raw => {
   if (mode === 'crash') { process.stderr.write('fixture process crash\n'); process.exit(2); }
   if (mode === 'malformed') { process.stdout.write('{bad json\n'); return; }
   if (mode === 'oversized') { process.stdout.write('x'.repeat(10000) + '\n'); return; }
-  if (mode === 'hang') return;
+  if (mode === 'hang' || mode === 'delayed-interrupt') return;
   if (mode === 'permission') {
     permissionId = 'permission-fixture';
     frame({ type: 'request', id: permissionId, method: 'droid.request_permission', params: {

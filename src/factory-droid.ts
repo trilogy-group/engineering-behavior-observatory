@@ -82,10 +82,13 @@ class RecordingFactoryTransport implements StringFramedDroidClientTransport {
   private handler?: (raw: string) => void;
   private errorHandler?: (error: Error) => void;
   private closing = false;
+  private closePromise?: Promise<void>;
+  private readonly shutdownGraceMs: number;
   public fatal: Promise<never>;
   private rejectFatal!: (error: Error) => void;
 
   constructor(request: FactoryCaptureRequest, env: NodeJS.ProcessEnv) {
+    this.shutdownGraceMs = request.shutdownGraceMs ?? FACTORY_DEFAULT_SHUTDOWN_GRACE_MS;
     this.fatal = new Promise((_, reject) => { this.rejectFatal = reject; });
     void this.fatal.catch(() => undefined);
     this.child = spawnProtocolProcess({
@@ -143,7 +146,14 @@ class RecordingFactoryTransport implements StringFramedDroidClientTransport {
       await writeProtocolLine(this.child.stdin!, frame);
     } catch (error) { this.fail(asError(error)); throw error; }
   }
-  async close(): Promise<void> { this.closing = true; await this.child.shutdown(); }
+  close(): Promise<void> {
+    return this.closePromise ??= (async () => {
+      this.closing = true;
+      this.child.stdin.end();
+      await bounded(this.child.wait(), this.shutdownGraceMs);
+      await this.child.shutdown();
+    })();
+  }
   private fail(error: Error): void { this.rejectFatal(error); this.errorHandler?.(error); }
 }
 
@@ -171,6 +181,8 @@ export async function captureFactoryDroid(request: FactoryCaptureRequest): Promi
   let session: DroidSession | undefined;
   let settings: unknown;
   let sdkResult: unknown;
+  let streamPromise: Promise<void> | undefined;
+  let streamDrained = false;
   let stopped = false;
   let shutdownPromise: Promise<void> | undefined;
   let rejectAbort!: (error: Error) => void;
@@ -178,8 +190,13 @@ export async function captureFactoryDroid(request: FactoryCaptureRequest): Promi
   void aborted.catch(() => undefined);
   const shutdown = (): Promise<void> => shutdownPromise ??= (async () => {
     stopped = true;
-    if (session !== undefined) await bounded(session.interrupt().catch(() => undefined), grace);
-    if (transport !== undefined) await transport.child.interrupt(grace);
+    const deadline = Date.now() + grace;
+    const remaining = (): number => Math.max(0, deadline - Date.now());
+    if (session !== undefined) await bounded(session.interrupt().catch(() => undefined), remaining());
+    // Interrupt acknowledgement only enqueues cancellation. Keep consuming until
+    // the SDK observes the native terminal, or the single drain deadline expires.
+    if (streamPromise !== undefined) await bounded(streamPromise.catch(() => undefined), remaining());
+    if (transport !== undefined && !streamDrained) await transport.child.interrupt(grace);
   })();
   const abort = (): void => { rejectAbort(new Error("Factory capture interrupted.")); void shutdown(); };
   request.signal?.addEventListener("abort", abort, { once: true });
@@ -216,12 +233,13 @@ export async function captureFactoryDroid(request: FactoryCaptureRequest): Promi
       || session.settings.autonomyLevel !== request.configuration.autonomyLevel || session.settings.interactionMode !== DroidInteractionMode.Auto) {
       throw new Error("Factory effective settings differ from the frozen model/tool configuration.");
     }
-    const stream = (async () => {
+    streamPromise = (async () => {
       for await (const message of session!.stream(request.prompt, { includePartialMessages: true })) {
         if (message.type === "result") sdkResult = message;
       }
+      streamDrained = true;
     })();
-    await Promise.race([stream, transport.fatal, aborted]);
+    await Promise.race([streamPromise, transport.fatal, aborted]);
     if (transport.terminal === undefined || object(sdkResult)?.sessionId !== transport.sessionId
       || transport.terminal.reason === "completed" && object(sdkResult)?.subtype !== "success") throw new Error("Factory stream lacks an owned native terminal and SDK result.");
   } catch (error) {
@@ -417,8 +435,10 @@ export async function normalizeFactoryCapture(input: QualifiedNativeCapture<Prot
         family = "outcome"; phase = "after"; attributes.reason = String(n.reason);
         attributes.usageSemantics = "turn-inclusive-children";
         const usage = object(n.tokenUsage);
-        for (const key of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheCreationTokens", "thinkingTokens", "factoryCredits"]) {
-          if (typeof usage?.[key] === "number" && Number.isFinite(usage[key])) attributes[key] = usage[key];
+        for (const [native, uniform] of Object.entries({ inputTokens: "inputTokens", outputTokens: "outputTokens",
+          cacheReadTokens: "cacheReadInputTokens", cacheCreationTokens: "cacheCreationInputTokens",
+          thinkingTokens: "thinkingTokens", factoryCredits: "factoryCredits" })) {
+          if (typeof usage?.[native] === "number" && Number.isFinite(usage[native])) attributes[uniform] = usage[native];
         }
         if (typeof n.durationMs === "number") attributes.durationMs = n.durationMs;
       }
