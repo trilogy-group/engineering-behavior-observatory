@@ -11,12 +11,15 @@ import { captureFactoryDroid, FACTORY_CLI_VERSION, FACTORY_SDK_VERSION, qualifyF
 import { FACTORY_CONTRACT_DIGEST, captureFactoryDroidRun, runFactoryQueueEntry } from "../src/factory-run.js";
 import { compileRunQueue, createPortableRunBundleExport, createRetainedBehaviorEvidence, createRetainedStructuralObservationSet,
   digestBytes, digestMetadata, freezeTaskPacket, main, readPortableRunBundleExport, writeRunQueue,
-  type ExperimentConfiguration, type PortableExportPolicy, type RunBundleDefinition, type TaskPacket } from "../src/index.js";
+  selectReviewSample, writeReviewPacket,
+  type BehaviorAssertion, type ExperimentConfiguration, type PortableExportPolicy, type RunBundleDefinition, type TaskPacket } from "../src/index.js";
 import { visibleEvidence } from "../src/exports.js";
 import { createFactoryHarborExecutor } from "../src/harbor/harnesses.js";
 import { createNativeHarborExecutor, runHarborWorker, type HarborWorkerInput } from "../src/harbor/worker.js";
 import { harborStepFixture } from "./harbor-step-helper.js";
 import { laneData } from "../src/atlas-lanes.js";
+import { deriveUnits } from "../src/atlas-units.js";
+import { ownPointer } from "../src/atlas-bundle.js";
 
 const fixture = resolve("test/fixtures/factory/fake-droid.mjs");
 const CREDENTIAL_ENV = "EBO_FAKE_FACTORY_KEY";
@@ -160,6 +163,29 @@ test("Factory declined permissions retain an interrupted run bundle and native p
     assert.equal(retained.dataset.events.find(e => e.family === "outcome")?.attributes.reason, "permission_rejected");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+test("Factory finalization waits for a producer that outlives coordinator shutdown windows", async () => {
+  const root = await temporaryRoot(); const abort = new AbortController(); let producer: Promise<FactoryCapture> | undefined;
+  try {
+    const baseline = join(root, "baseline"), workspace = join(root, "workspace"); await mkdir(baseline); await mkdir(workspace);
+    const bundle = join(root, "bundle");
+    const running = captureFactoryDroidRun({ definition: definition(bundle), startingWorkspacePath: baseline,
+      workspace: { setup: () => ({ status: "ready", path: workspace, artifactId: "workspace", retained: true }) },
+      configuration: config("slow-interrupt"), prompt: "Create a result file.", shutdownGraceMs: 20, signal: abort.signal,
+      capture: request => producer = captureFactoryDroid({ ...request, shutdownGraceMs: 300 }) });
+    for (let i = 0; i < 500; i++) {
+      if (await readFile(join(workspace, "factory-result.txt")).then(() => true, () => false)) break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    abort.abort(); const result = await running;
+    assert.equal(result.attempt.record.harnessTerminationConfirmed, false, "the coordinator stopped waiting before the producer settled");
+    assert.equal(result.capture?.terminal?.reason, "cancelled", "finalization still waited for native drain");
+    const descriptor = result.manifest.evidence.find(e => e.id === "session")!;
+    const bytes = await readFile(join(bundle, descriptor.relativePath));
+    assert.equal(descriptor.digest, `sha256:${digestBytes(bytes).value}`);
+    assert.ok(bytes.toString("utf8").includes('"kind":"process"'));
+    await createRetainedBehaviorEvidence(bundle);
+  } finally { await producer?.catch(() => undefined); await rm(root, { recursive: true, force: true }); }
+});
 test("Factory run bundles reopen for retained behavioral and structural analysis and sanitized portable export", async () => {
   const root = await temporaryRoot();
   try {
@@ -177,6 +203,30 @@ test("Factory run bundles reopen for retained behavioral and structural analysis
       { status: "known", value: 1, unit: "tokens" });
     assert.deepEqual(observations.observations.find(o => o.extractor.id === "cache-creation-input-token-count")?.value,
       { status: "known", value: 3, unit: "tokens" });
+    const units = deriveUnits({ attemptId: retained.dataset.attemptId, events: retained.dataset.events,
+      occurrences: observations.occurrences ?? [], resolveContent: reference => {
+        const [locator, pointer = ""] = reference.recordLocator.split("#");
+        const record = retained.capture.records.find(r => r.reference.artifactId === reference.artifactId && r.reference.recordLocator === locator)?.record;
+        return ownPointer(record, pointer.split("/").slice(1).map(t => t.replace(/~1/gu, "/").replace(/~0/gu, "~")));
+      } });
+    assert.ok(units.units.some(u => u.unit_kind === "message" && u.role === "user" && u.embed_text.includes("Create a result file.")), "Atlas retains the outbound prompt");
+    assert.equal(units.units.filter(u => u.unit_kind === "message" && u.role === "assistant").length, 1);
+    assert.equal(JSON.stringify(units).includes("FACTORY-HIDDEN-SENTINEL"), false);
+    const cited = retained.dataset.events.find(e => e.family === "message" && e.actor.kind === "agent")!;
+    const assertion: BehaviorAssertion = { schemaVersion: "ebo.behavior-assertion/v1", id: "factory-review",
+      runId: retained.dataset.runId, attemptId: retained.dataset.attemptId,
+      dataset: { schemaVersion: retained.dataset.schemaVersion, digest: `sha256:${digestMetadata(retained.dataset).value}` },
+      behavior: { vocabularyVersion: "1.0.0", categoryId: "verification-completion", dimensionId: "verification-completion" },
+      rubric: { id: "fixture-rubric", version: "1.0.0" }, evaluator: { id: "fixture-judge", version: "1.0.0" },
+      judgment: { disposition: "assessed", assessment: "context-dependent", confidence: { value: 0.8, scale: "evaluator-reported-0-to-1" },
+        rationale: "The agent reports completion.", alternativeExplanation: "A completion message alone does not establish verification.",
+        citations: [{ eventId: cited.id, nativeReference: cited.source.nativeReference }] } };
+    const assertionPath = join(root, "assertion.json"); writeFileSync(assertionPath, JSON.stringify(assertion));
+    const selection = await selectReviewSample({ schemaVersion: "ebo.review-source-set/v1", sources: [{ bundleRoot: bundle, assertionPath, taskContext: "Create a result file." }] },
+      { schemaVersion: "ebo.review-sample-criteria/v1", seed: "factory", strata: [{ id: "all", sampleSize: 1, filters: {} }] });
+    const packetRoot = join(root, "review-packet"); await writeReviewPacket(selection, packetRoot);
+    const packet = JSON.parse(await readFile(join(packetRoot, "packet.json"), "utf8"));
+    assert.ok((await readFile(join(packetRoot, packet.items[0].citations[0].href), "utf8")).includes("droid.session_notification"), "restricted human drilldown preserves the native frame");
     const policy: PortableExportPolicy = { sharingClass: "partner", maxStringBytes: 65536, maxArtifactBytes: 1024 * 1024, sensitiveValues: [CREDENTIAL_VALUE] };
     const exported = await createPortableRunBundleExport({ sourceRoot: bundle, destinationRoot: join(root, "export"), policy });
     assert.ok(exported);

@@ -166,6 +166,7 @@ function messageRole(event: UniformEvent): string | undefined {
   const type = nativeEventType(event);
   const role = typeof event.attributes.role === "string" ? event.attributes.role : undefined;
   switch (event.source.harness) {
+    case "factory-droid": return type === "droid.add_user_message" ? "user" : type === "create_message" ? "assistant" : undefined;
     case "codex-app-server": return type === "agentMessage" ? "agent" : type === "userMessage" ? "user" : undefined;
     case "deepseek-harness": return type === "assistant/message" ? "assistant" : type === "user/message" ? "user" : undefined;
     case "pi-sdk": return event.source.nativeType === "history:message" && (role === "user" || role === "assistant") ? role : undefined;

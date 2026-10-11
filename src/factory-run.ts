@@ -155,6 +155,8 @@ export async function captureFactoryDroidRun(options: CaptureFactoryDroidRunOpti
   let workspaceOutcomePromise: Promise<CapturedWorkspaceOutcome> | undefined;
   let verifierResult: VerifierResult | undefined;
   let capture: FactoryCapture | undefined;
+  let capturePromise: Promise<FactoryCapture> | undefined;
+  let nativeEvidenceRegistration: Promise<void> | undefined;
   let sessionEvidenceRegistered = false;
   let telemetryEvidenceRegistered = false;
 
@@ -185,29 +187,40 @@ export async function captureFactoryDroidRun(options: CaptureFactoryDroidRunOpti
   };
 
   const registerNativeEvidence = async (): Promise<void> => {
-    if (!sessionEvidenceRegistered && await nonempty(`${assembler.bundleRoot}/session.jsonl`)) {
-      await assembler.registerArtifact({
-        id: "session",
-        source: FACTORY_HARNESS,
-        kind: "session",
-        mediaType: "application/x-ndjson",
-        sharingClass: "restricted",
-        relativePath: "session.jsonl",
-        ...(capture?.sessionId === undefined ? {} : { nativeReference: { type: "session", id: capture.sessionId } }),
-      });
-      sessionEvidenceRegistered = true;
-    }
-    if (!telemetryEvidenceRegistered && capture !== undefined) {
-      await assembler.writeJsonArtifact({
-      id: "telemetry",
-      source: FACTORY_HARNESS,
-      kind: "telemetry",
-      mediaType: "application/json",
-      sharingClass: "restricted",
-      relativePath: "telemetry/factory.json",
-      }, capture.telemetry);
-      telemetryEvidenceRegistered = true;
-    }
+    const producer = capturePromise;
+    if (producer === undefined) return;
+    if (nativeEvidenceRegistration !== undefined) return nativeEvidenceRegistration;
+    const registration = (async () => {
+      // Coordinator deadlines may expire before native shutdown/drain. Never
+      // hash an active stream, even when a lifecycle flush itself times out.
+      await producer.then((value) => { capture = value; }, () => undefined);
+      if (!sessionEvidenceRegistered && await nonempty(`${assembler.bundleRoot}/session.jsonl`)) {
+        await assembler.registerArtifact({
+          id: "session",
+          source: FACTORY_HARNESS,
+          kind: "session",
+          mediaType: "application/x-ndjson",
+          sharingClass: "restricted",
+          relativePath: "session.jsonl",
+          ...(capture?.sessionId === undefined ? {} : { nativeReference: { type: "session", id: capture.sessionId } }),
+        });
+        sessionEvidenceRegistered = true;
+      }
+      if (!telemetryEvidenceRegistered && capture !== undefined) {
+        await assembler.writeJsonArtifact({
+          id: "telemetry",
+          source: FACTORY_HARNESS,
+          kind: "telemetry",
+          mediaType: "application/json",
+          sharingClass: "restricted",
+          relativePath: "telemetry/factory.json",
+        }, capture.telemetry);
+        telemetryEvidenceRegistered = true;
+      }
+    })();
+    nativeEvidenceRegistration = registration;
+    try { await registration; }
+    finally { if (nativeEvidenceRegistration === registration) nativeEvidenceRegistration = undefined; }
   };
 
   const coordinatedWorkspace: WorkspaceCoordinator = {
@@ -243,7 +256,7 @@ export async function captureFactoryDroidRun(options: CaptureFactoryDroidRunOpti
     workspace: coordinatedWorkspace,
     harness: async ({ signal, registerShutdown }) => {
       if (workspace?.status !== "ready" || workspace.path === undefined) throw new Error("Factory run requires a ready workspace.");
-      capture = await performCapture({
+      capturePromise = performCapture({
         runId: options.definition.run.id,
         attemptId: options.definition.attempt.id,
         workspacePath: workspace.path,
@@ -254,6 +267,7 @@ export async function captureFactoryDroidRun(options: CaptureFactoryDroidRunOpti
         registerShutdown,
         shutdownGraceMs,
       });
+      capture = await capturePromise;
       if (capture.terminalStatus === "completed") {
         return { status: "completed", completionEvidence: capture.terminal, evidence: durableCaptureEvidence(capture) };
       }
@@ -287,8 +301,8 @@ export async function captureFactoryDroidRun(options: CaptureFactoryDroidRunOpti
     ...(options.maxWallClockMs === undefined ? {} : { maxWallClockMs: options.maxWallClockMs }),
     shutdownGraceMs,
   });
-  if (workspace?.status === "ready") await captureWorkspace().catch(() => undefined);
   await registerNativeEvidence();
+  if (workspace?.status === "ready") await captureWorkspace().catch(() => undefined);
 
   const missingEvidence: CaptureMissingEvidence[] = [];
   if (capture?.sessionId === undefined) missingEvidence.push({

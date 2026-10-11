@@ -93,6 +93,8 @@ use `captureFactoryDroidRun`, or `captureFactoryDroid` for the native capture
 boundary. Both accept an abort signal. SIGINT/SIGTERM in the CLI requests native
 interruption, drains evidence within bounded shutdown windows, then terminates
 the owned child if needed.
+Bundle finalization waits for the native capture producer to stop before hashing
+its stream, including when a coordinator shutdown deadline expires.
 
 Retained files include:
 
@@ -116,6 +118,11 @@ and prompt identities, and terminal ownership before normalization. Unknown
 notifications remain resolvable unmapped records. Failed or interrupted attempts
 retain their partial stream and workspace; capture corruption is reported as a
 gap and may prevent behavioral analysis.
+
+Retained bundles also supply Atlas message/tool units and
+[human review packets](../evaluation/human-calibration.md). Atlas includes the
+outbound prompt and completed assistant messages. Human packets preserve exact
+native citations within their restricted local evidence boundary.
 
 ## Evidence coverage and accounting
 

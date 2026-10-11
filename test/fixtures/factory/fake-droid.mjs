@@ -59,7 +59,7 @@ input.on('line', raw => {
   if (request.method === 'droid.close_session') { input.close(); setTimeout(() => process.exit(0), 5); }
   if (request.method === 'droid.interrupt_session') {
     const terminal = () => notify({ type: 'agent_turn_completed', turnId, reason: 'cancelled', tokenUsage: usage });
-    if (mode === 'delayed-interrupt') setTimeout(terminal, 40);
+    if (mode === 'delayed-interrupt' || mode === 'slow-interrupt') setTimeout(terminal, mode === 'slow-interrupt' ? 150 : 40);
     else terminal();
   }
   if (request.method !== 'droid.add_user_message') return;
@@ -69,7 +69,7 @@ input.on('line', raw => {
   if (mode === 'crash') { process.stderr.write('fixture process crash\n'); process.exit(2); }
   if (mode === 'malformed') { process.stdout.write('{bad json\n'); return; }
   if (mode === 'oversized') { process.stdout.write('x'.repeat(10000) + '\n'); return; }
-  if (mode === 'hang' || mode === 'delayed-interrupt') return;
+  if (mode === 'hang' || mode === 'delayed-interrupt' || mode === 'slow-interrupt') return;
   if (mode === 'permission') {
     permissionId = 'permission-fixture';
     frame({ type: 'request', id: permissionId, method: 'droid.request_permission', params: {

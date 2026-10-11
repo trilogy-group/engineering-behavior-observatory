@@ -402,9 +402,11 @@ export async function normalizeFactoryCapture(input: QualifiedNativeCapture<Prot
     let phase: UniformEvent["phase"] = "instant";
     let actor: UniformEvent["actor"]["kind"] = "harness";
     let parent: string | undefined;
+    let contentPointer = "/payload";
     const id = `factory:${record.sequence}`;
     if (record.source === FACTORY_CLIENT && frame?.method === "droid.add_user_message" && params?.messageId === capture.turnId) {
       family = "message"; actor = "user"; phase = "before";
+      contentPointer = "/payload/params/text";
     } else if (record.kind === "frame" && frame?.method === "droid.request_permission" && RequestPermissionRequestSchema.safeParse(frame).success) {
       family = "permission"; phase = "before";
     } else if (record.kind === "frame" && frame?.method === "droid.session_notification" && params?.sessionId === capture.sessionId && SessionNotificationSchema.safeParse(frame).success) {
@@ -451,7 +453,7 @@ export async function normalizeFactoryCapture(input: QualifiedNativeCapture<Prot
       nativeTime: { status: "known", value: record.observedAt }, actor: { kind: actor }, family, phase,
       scope: { kind: "session", id: capture.sessionId },
       relations: { parent: parent === undefined ? { status: "unknown", reason: "No exposed native parent." } : { status: "known", value: parent }, known: [] },
-      attributes, content: { status: "known", value: [{ nativeReference: { ...reference, recordLocator: `${reference.recordLocator}#/payload` }, mediaType: "application/json" }] },
+      attributes, content: { status: "known", value: [{ nativeReference: { ...reference, recordLocator: `${reference.recordLocator}#${contentPointer}` }, mediaType: "application/json" }] },
     });
     if (type === "agent_turn_completed" && family === "outcome") {
       events.push({ ...events[events.length - 1]!, id: `${id}:usage`, family: "runtime",
