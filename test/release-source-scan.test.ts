@@ -16,6 +16,8 @@ test("release source scan accepts reference-only Bearer headers and rejects cred
     'const headers = {Authorization: `Bearer syntheticcredentialvalue${key}`};',
     'const headers = {Authorization: `Bearer ${"syntheticcredentialvalue"}`};',
     'const headers = {Authorization: `Bearer ${key}syntheticcredentialvalue`};',
+    'const headers = {Authorization: `Bearer ${({value:"syntheticcredentialvalue"}).value}`};',
+    'const headers = {Authorization: `Bearer ${["syntheticcredentialvalue"][0]}`};',
     '// Authorization: Bearer syntheticcredentialvalue',
     'const headers = { apiKey: "syntheticcredentialvalue" };',
   ]) assert.equal(scan(source), true, source);

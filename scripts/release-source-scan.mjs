@@ -18,7 +18,11 @@ export function maskSourceIdentifierAssignments(source, path, ts) {
 }
 
 function isSourceReference(node, ts) {
-  if (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) return true;
+  if (ts.isIdentifier(node)) return true;
+  if (ts.isPropertyAccessExpression(node)) return isSourceReference(node.expression, ts);
+  if (ts.isElementAccessExpression(node)) return isSourceReference(node.expression, ts)
+    && (ts.isIdentifier(node.argumentExpression) || ts.isStringLiteral(node.argumentExpression)
+      && /^[A-Za-z_][A-Za-z0-9_]*$/u.test(node.argumentExpression.text));
   if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isNonNullExpression(node)) return isSourceReference(node.expression, ts);
   // A Bearer template containing only a source reference has no credential literal.
   // Keep mixed literals and literal interpolations visible to the shared scanner.
@@ -28,4 +32,3 @@ function isSourceReference(node, ts) {
   }
   return false;
 }
-

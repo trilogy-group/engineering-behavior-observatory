@@ -112,7 +112,7 @@
     "scripts/build-harbor-runtime.mjs": "a6dede7c2e03360f6ca457408ef61c6e8d36009e2eaf66a577e43d4813e61f51",
     "scripts/check-smol-runtime.py": "71e9b50f8790af1f54a52f11818a31758e446d91b9f3f664a97c0f164747a6d2",
     "scripts/release-acceptance.mjs": "1060a4285d74fc1d5953550c20b913cc7c0e27779465234ae516ff84de79144d",
-    "scripts/release-source-scan.mjs": "54713947abc2a7ec0202f0e310f4bc84b3ad447f551c66896dd311c863c4a0a3",
+    "scripts/release-source-scan.mjs": "1cbaae881b9ba70335bded292c0109df080d687b4b3aa2add552c324692540eb",
     "src/atlas-units.ts": "5939ba3e0c36199a0ebf32004a935274f322bcf9bf7fe2e87b096861f8a4e75a",
     "src/cli.ts": "9805ae3083e1b755705cb0306a1674b57d4c4a022c797ff244f2174cdbbee7c3",
     "src/codex-run.ts": "51ac014433646b46bd9c2e61326bac854ff3a31aa0e4dcd855c1a4a6daeb4291",
@@ -179,7 +179,7 @@
     "test/openhands.test.ts": "2f6b895f21aeaa55f3cc1462b83494a7b2d86c44236856fe8b9ac82ed2110142",
     "test/pi.test.ts": "6dcda92d8e7eaaa8eb5f1dc0a2d320af8ef2623072de079ca01509658b46136d",
     "test/redaction.test.ts": "08957c32333dfae000627b6a28608cd97b4dcd2411e24c9bf72427fd1eac92b8",
-    "test/release-source-scan.test.ts": "61b9759f6fbdf51b4fac038a675f8e77fbe119e1a90ee243a029e367e956bf21",
+    "test/release-source-scan.test.ts": "e4876dea594b7d6bf4ad03a6ef8f2433b0dce6d08c877dc7991a476a8e1389fe",
     "test/retained-versions.test.ts": "4308d86e43a9f7d870ffaf859434e275ec3bb58aa3bae02d96e70f6b394202e5",
     "test/semantic-judge.test.ts": "4fe7320097500e919da8abf2abac954b0aebd7b422fba91a7e2530a4a96a3c7d",
     "tests/fixtures/task-packet.valid.v1.json": "ac2ef1043c0cc16bf4c21d05c1dc880ca1b4b8cc2f9ea7653328e91f0b0e2681"
