@@ -356,10 +356,10 @@ export function createCursorHarborExecutor(options: CursorHarborExecutorOptions)
     await assertCursorWorkspaceIsolation(input.workspacePath);
     const definition = harborStepBundleDefinition(input.prepared, input.step, input.stepBundleRoot, {
       harnessId: input.prepared.run.harnessId,
-      harnessVersion: "1.0.31",
+      harnessVersion: "1.0.37",
       modelId: model.model.id,
       provider: "cursor",
-      runtime: [{ source: "cursor", name: "cursor-sdk", version: "1.0.31" }, { source: "cursor", name: "local-agent-runtime", version: "not-exposed" }],
+      runtime: [{ source: "cursor", name: "cursor-sdk", version: "1.0.37" }, { source: "cursor", name: "local-agent-runtime", version: "not-exposed" }],
       configurationDigests: {
         model: options.configuration.model.digest.value,
         harness: options.configuration.harness.digest.value,

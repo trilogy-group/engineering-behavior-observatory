@@ -317,7 +317,7 @@ function validateConfigurationRecord(record: Record<string, unknown>, kind: Curs
       return;
     case "capture-profile":
       assertRecordKeys(record, ["nativeOtlp", "workspaceOutcome"], ["nativeOtlp"], reference);
-      if (record.nativeOtlp !== "unsupported") throw configurationError(reference, 'nativeOtlp must be "unsupported" for SDK 1.0.31');
+      if (record.nativeOtlp !== "unsupported") throw configurationError(reference, 'nativeOtlp must be "unsupported" for SDK 1.0.37');
       if (record.workspaceOutcome !== undefined) {
         if (!isRecord(record.workspaceOutcome)) throw configurationError(reference, "workspaceOutcome must be an object");
         assertKeys(record.workspaceOutcome, ["excludeDirectoryNames", "respectGitignore", "omitEmptyDirectories"], ["excludeDirectoryNames"], reference);

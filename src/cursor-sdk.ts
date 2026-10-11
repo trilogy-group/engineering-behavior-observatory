@@ -65,9 +65,9 @@ import {
 import type { VerifierResult } from "./verifiers.js";
 import { readBoundedFile } from "./scheduler.js";
 
-export const CURSOR_SDK_VERSION = "1.0.31";
+export const CURSOR_SDK_VERSION = "1.0.37";
 /** Cursor SDK versions whose retained bundles EBO reads back; the pinned version alone is used for capture. */
-export const RETAINED_CURSOR_SDK_VERSIONS: readonly string[] = [CURSOR_SDK_VERSION];
+export const RETAINED_CURSOR_SDK_VERSIONS: readonly string[] = [CURSOR_SDK_VERSION, "1.0.31"];
 export const CURSOR_SDK_HARNESS = "cursor-sdk";
 export const CURSOR_SDK_ADAPTER_ID = "ebo-cursor-sdk-v1";
 export const CURSOR_SDK_ADAPTER_VERSION = "0.1.0";
@@ -361,7 +361,7 @@ export async function captureCursorSdkRun(options: CaptureCursorSdkRunOptions): 
 
   const captureFailure = errors.some((error) => !error.startsWith("billing:"));
   const missingEvidence: CaptureMissingEvidence[] = [
-    { kind: "telemetry", reason: "unsupported", affects: ["timing-resource"], detail: "@cursor/sdk 1.0.31 exposes no SDK-local per-run OTLP configuration or receipt API." },
+    { kind: "telemetry", reason: "unsupported", affects: ["timing-resource"], detail: "@cursor/sdk 1.0.37 exposes no SDK-local per-run OTLP configuration or receipt API." },
     ...(captureFailure ? [{ kind: "session", reason: "not-collected" as const, affects: ["semantic" as const], detail: errors.join("; ").slice(0, 4096) }] : []),
     ...(terminalResult === undefined ? [{ kind: "session-completion", reason: attempt.terminal.state === "interrupted" ? "process-interrupted" as const : "not-emitted" as const, affects: ["semantic" as const] }] : []),
     ...(workspaceOutcome === undefined && workspaceCaptureError !== undefined ? [{ kind: "workspace", reason: "not-collected" as const, affects: ["outcome" as const], detail: workspaceCaptureError.slice(0, 4096) }] : []),

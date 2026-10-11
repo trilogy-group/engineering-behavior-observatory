@@ -1,14 +1,14 @@
 # Cursor TypeScript SDK harness
 
 EBO can execute one selected frozen queue entry through the first-party
-`@cursor/sdk` local-agent API. The integration pins SDK `1.0.31`, creates an
+`@cursor/sdk` local-agent API. The integration pins SDK `1.0.37`, creates an
 attempt-owned `JsonlLocalAgentStore`, and retains stream messages, detailed
 callbacks, terminal `wait()` evidence, conversation history, billing readback,
 the official native store, and the final workspace before normalization.
 
 The SDK package version does not freeze Cursor's service, selected model, or
 separately deployed local runtime. The selected model must be an exact result
-from `Cursor.models.list()` at launch. SDK `1.0.31` does not expose a separate
+from `Cursor.models.list()` at launch. SDK `1.0.37` does not expose a separate
 local-runtime version or SDK-local per-run OTLP configuration/receipt surface,
 so EBO records those capabilities as `not-exposed` and `unsupported` instead of
 inventing identities or spans.
@@ -54,9 +54,8 @@ Existing frozen policies with retries disabled are rejected at launch, not
 silently overridden. Prepare new configuration records and a new queue for
 future runs; preserve earlier frozen experiments and captures unchanged.
 
-SDK `1.0.31` treats an ancestor Git checkout as the local project root. EBO
-therefore rejects a materialized workspace nested under another `.git` path
-before starting the SDK. Use the default system temporary parent or pass a
+EBO rejects a materialized workspace nested under another `.git` path before
+starting the SDK. Use the default system temporary parent or pass a
 `--workspace-root` outside the invoking checkout; this prevents accidental
 ancestor-project routing but is not OS containment.
 
@@ -85,7 +84,7 @@ provider ID containing dots.
 ```
 
 ```json
-{ "schemaVersion": "ebo.cursor-sdk-config/v1", "kind": "harness", "adapter": "cursor-sdk", "sdkVersion": "1.0.31" }
+{ "schemaVersion": "ebo.cursor-sdk-config/v1", "kind": "harness", "adapter": "cursor-sdk", "sdkVersion": "1.0.37" }
 ```
 
 ```json
@@ -152,7 +151,7 @@ source artifacts are unchanged.
 | usage | available | per-turn stream increments; cumulative/billing channels remain separate |
 | terminal outcome | available | exact owned `run.wait()` result |
 | parentage/native time | partial | exposed identities and adapter receipt order only |
-| SDK-local OTLP configuration/receipt | unsupported | no public SDK `1.0.31` per-run API |
+| SDK-local OTLP configuration/receipt | unsupported | no public SDK `1.0.37` per-run API |
 | Enterprise team OTLP export | not checked | server-side metrics/logs exist, but no destination or exact SDK run correlation was verified |
 | OS containment | unsupported | SDK sandbox policy is not an OS/container boundary |
 

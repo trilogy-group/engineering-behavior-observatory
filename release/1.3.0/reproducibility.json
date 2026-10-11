@@ -6,7 +6,7 @@
   },
   "runtime": {
     "node": "24.19.0",
-    "claudeAgentSdk": "0.3.282",
+    "claudeAgentSdk": "0.3.296",
     "openhandsAgentServer": "1.46.0",
     "deepseekClient": "0.1.7-rc.2",
     "deepseekProtocol": "0.1.7-rc.2",
@@ -15,7 +15,7 @@
     "grafana": "13.2.0",
     "grafanaInfinity": "4.0.0",
     "piSdk": "0.87.1",
-    "cursorSdk": "1.0.31",
+    "cursorSdk": "1.0.37",
     "harbor": "0.22.0",
     "smolPythonSdk": "1.18.2",
     "devinCli": "3000.11.3",

@@ -87,7 +87,7 @@ test("runs one frozen Cursor SDK entry through native store, export, observation
     const manifest = readManifest(summary.bundlePath);
     assert.equal(manifest.run.model.provider, "cursor");
     assert.deepEqual(manifest.run.runtime, [
-      { source: "cursor", name: "cursor-sdk", version: "1.0.31" },
+      { source: "cursor", name: "cursor-sdk", version: "1.0.37" },
       { source: "cursor", name: "local-agent-runtime", version: "not-exposed" },
     ]);
     assert.ok(manifest.evidence.some(({ id }) => id === "cursor-store-checkpoints"));
@@ -571,7 +571,7 @@ function createCursorFixture(): Fixture {
 
   const records = {
     model: { schemaVersion: "ebo.cursor-sdk-config/v1", kind: "model", provider: "cursor", model: MODEL },
-    harness: { schemaVersion: "ebo.cursor-sdk-config/v1", kind: "harness", adapter: "cursor-sdk", sdkVersion: "1.0.31" },
+    harness: { schemaVersion: "ebo.cursor-sdk-config/v1", kind: "harness", adapter: "cursor-sdk", sdkVersion: "1.0.37" },
     limits: { schemaVersion: "ebo.cursor-sdk-config/v1", kind: "native-limits", shutdownGraceMs: 500, maxNativeRecordBytes: 1024 * 1024 },
     tools: {
       schemaVersion: "ebo.cursor-sdk-config/v1", kind: "native-tool-policy",
