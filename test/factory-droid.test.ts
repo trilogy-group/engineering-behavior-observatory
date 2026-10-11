@@ -90,7 +90,7 @@ for (const permissionDecision of ["proceed_once", "cancel"] as const) {
     const root = await temporaryRoot();
     try {
       const capture = await runFake(root, "permission", { permissionDecision });
-      assert.equal(capture.terminalStatus, permissionDecision === "cancel" ? "failed" : "completed", JSON.stringify(capture.gaps));
+      assert.equal(capture.terminalStatus, permissionDecision === "cancel" ? "interrupted" : "completed", JSON.stringify(capture.gaps));
       const decision = JSON.parse(await readFile(join(root, "workspace/permission.json"), "utf8"));
       assert.equal(decision.selectedOption, permissionDecision);
       assert.ok(capture.records.some(({ record }) => record.source === "ebo-factory-client" && record.id === "permission-fixture"));
@@ -145,6 +145,21 @@ function definition(bundleRoot: string): RunBundleDefinition {
     harness: { id: "factory-droid", version: FACTORY_CLI_VERSION }, runtime: [] }, attempt: { id: "attempt-factory", number: 1 },
     configuration: { digest: `sha256:${"2".repeat(64)}`, budgetDigest: `sha256:${"3".repeat(64)}`, toolPolicyDigest: `sha256:${"4".repeat(64)}` } };
 }
+test("Factory declined permissions retain an interrupted run bundle and native policy reason", async () => {
+  const root = await temporaryRoot();
+  try {
+    const baseline = join(root, "baseline"), workspace = join(root, "workspace"); await mkdir(baseline); await mkdir(workspace);
+    const bundle = join(root, "bundle");
+    const result = await captureFactoryDroidRun({ definition: definition(bundle), startingWorkspacePath: baseline,
+      workspace: { setup: () => ({ status: "ready", path: workspace, artifactId: "workspace", retained: true }) },
+      configuration: { ...config("permission"), permissionDecision: "cancel" }, prompt: "Create a result file.", shutdownGraceMs: 100 });
+    assert.equal(result.attempt.classification.kind, "interrupted");
+    assert.equal(result.manifest.terminal.state, "interrupted");
+    assert.equal(result.capture?.terminal?.reason, "permission_rejected");
+    const retained = await createRetainedBehaviorEvidence(bundle);
+    assert.equal(retained.dataset.events.find(e => e.family === "outcome")?.attributes.reason, "permission_rejected");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 test("Factory run bundles reopen for retained behavioral and structural analysis and sanitized portable export", async () => {
   const root = await temporaryRoot();
   try {

@@ -258,7 +258,7 @@ export async function captureFactoryDroidRun(options: CaptureFactoryDroidRunOpti
         return { status: "completed", completionEvidence: capture.terminal, evidence: durableCaptureEvidence(capture) };
       }
       if (capture.terminalStatus === "interrupted") {
-        return { status: "interrupted", reason: "Factory turn was cancelled.", evidence: durableCaptureEvidence(capture) };
+        return { status: "interrupted", reason: `Factory turn stopped: ${String(capture.terminal?.reason ?? "interrupted")}.`, evidence: durableCaptureEvidence(capture) };
       }
       return {
         status: "failed",

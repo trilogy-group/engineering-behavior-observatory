@@ -67,6 +67,8 @@ From a built source checkout, import `./dist/src/index.js` instead.
 `autonomyLevel` accepts `off`, `low`, `medium`, or `high`. The unattended client
 answers permission requests using `proceed_once` or `cancel`; requests and
 responses remain native evidence. Questions to the user receive a cancellation.
+Declined permissions end the attempt as interrupted, retaining the native
+`permission_rejected` reason.
 EBO selects the SDK's `auto` interaction mode and preserves Factory's default
 system prompt. Mission mode is a separate, unsupported condition.
 

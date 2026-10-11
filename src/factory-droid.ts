@@ -266,7 +266,8 @@ export async function captureFactoryDroid(request: FactoryCaptureRequest): Promi
   catch (error) { gaps.push({ kind: "native-qualification", detail: redactError(error, credential) }); }
   if (native.terminal === undefined) gaps.push({ kind: "native-terminal", detail: "No unambiguous owned agent_turn_completed was retained." });
   const terminalStatus = gaps.length > 0 ? request.signal?.aborted ? "interrupted" : "failed"
-    : native.terminal?.reason === "completed" ? "completed" : native.terminal?.reason === "cancelled" ? "interrupted" : "failed";
+    : native.terminal?.reason === "completed" ? "completed"
+      : ["cancelled", "permission_rejected"].includes(String(native.terminal?.reason)) ? "interrupted" : "failed";
   const telemetry: FactoryRuntimeEvidence = {
     schemaVersion: "ebo.factory-runtime/v1",
     runtime: { executable: runtime.path, version: runtime.version, sdkVersion: FACTORY_SDK_VERSION, adapterVersion: FACTORY_ADAPTER_VERSION, binaryDigest, protocolVersion: FACTORY_PROTOCOL_VERSION },
