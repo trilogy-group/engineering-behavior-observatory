@@ -316,6 +316,36 @@ test("retains verifier-backed semantics when the frozen Pi task is verified", as
   }
 });
 
+test("native Pi settled abort takes precedence over an assistant stop", async () => {
+  const fixture = createPiFixture();
+  try {
+    const summary = await runPiQueueEntry({ ...fixture, createSession: fakePiSessionFactory(true).createSession });
+    assert.equal(summary.classification, "interrupted");
+    assert.equal(summary.terminal.state, "interrupted");
+    assert.ok(readJsonl(join(summary.bundlePath, "pi-events.jsonl")).some((record) => record.nativeType === "agent_settled"
+      && (record.payload as { aborted?: boolean }).aborted === true));
+  } finally { rmSync(fixture.parent, { recursive: true, force: true }); }
+});
+
+test("completed retained Pi evidence rejects an aborted settled terminal", async () => {
+  const fixture = createPiFixture();
+  try {
+    const summary = await runPiQueueEntry({ ...fixture, createSession: fakePiSessionFactory().createSession });
+    const path = join(summary.bundlePath, "pi-events.jsonl");
+    const records = readJsonl(path);
+    const settled = records.find((record) => record.nativeType === "agent_settled")!;
+    (settled.payload as { aborted: boolean }).aborted = true;
+    const bytes = Buffer.from(`${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+    writeFileSync(path, bytes);
+    const manifest = readManifest(summary.bundlePath);
+    const descriptor = manifest.evidence.find(({ id }) => id === "pi-events")!;
+    descriptor.digest = `sha256:${digestBytes(bytes).value}`;
+    descriptor.sizeBytes = bytes.length;
+    writeFileSync(join(summary.bundlePath, "manifest.json"), JSON.stringify(manifest));
+    await assert.rejects(createRetainedBehaviorEvidence(summary.bundlePath), /settled terminal evidence/u);
+  } finally { rmSync(fixture.parent, { recursive: true, force: true }); }
+});
+
 test("retained Pi readback rejects unsupported versions, identity mismatches, and corrupt native lineage", async () => {
   const fixture = createPiFixture();
   try {
@@ -593,7 +623,7 @@ test("aborts through the public Pi session API and retains the interrupted attem
           if (messages.length > 0) return;
           const assistant = { role: "assistant", content: [], provider: input.model.provider, model: input.model.model, stopReason: "aborted", timestamp: Date.now(), usage: zeroUsage() };
           messages.push(assistant);
-          emit(listeners, { type: "agent_settled" } as AgentSessionEvent);
+          emit(listeners, { type: "agent_settled", aborted: true } as AgentSessionEvent);
           resolvePrompt?.();
           throw new Error("synthetic signal abort failure");
         },
@@ -902,7 +932,7 @@ export default function (pi) {
   return { parent, bundleRoot, queuePath, runId: queue.entries[0]!.runId, outputRoot: join(parent, "runs"), workspaceRoot };
 }
 
-function fakePiSessionFactory(): { createSession: PiSessionFactory; calls(): number; disposals(): number } {
+function fakePiSessionFactory(settledAborted = false): { createSession: PiSessionFactory; calls(): number; disposals(): number } {
   let calls = 0;
   let disposals = 0;
   const createSession: PiSessionFactory = async (input) => {
@@ -979,7 +1009,7 @@ function fakePiSessionFactory(): { createSession: PiSessionFactory; calls(): num
         emit(listeners, { type: "future_event", payload: { retained: true } } as unknown as AgentSessionEvent);
         emit(listeners, { type: "turn_end", turnIndex: 1, message: finalAssistant, toolResults: [] } as unknown as AgentSessionEvent);
         emit(listeners, { type: "agent_end", messages: [finalAssistant], willRetry: false } as unknown as AgentSessionEvent);
-        emit(listeners, { type: "agent_settled" } as AgentSessionEvent);
+        emit(listeners, { type: "agent_settled", aborted: settledAborted } as AgentSessionEvent);
       },
       async waitForIdle() {},
       async abort() {},

@@ -81,7 +81,7 @@
     "@deepseek-ai/dsh-sdk-client": "0.2.0-rc.2",
     "@deepseek-ai/dsh-sdk-protocol": "0.2.0-rc.2",
     "@duckdb/node-api": "1.5.4-r.1",
-    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@earendil-works/pi-coding-agent": "1.1.0",
     "@factory/droid-sdk": "0.9.1",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",

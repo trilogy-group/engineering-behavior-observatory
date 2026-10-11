@@ -14,7 +14,7 @@
     "codexAppServer": "0.162.1",
     "grafana": "13.2.0",
     "grafanaInfinity": "4.0.0",
-    "piSdk": "0.87.1",
+    "piSdk": "1.1.0",
     "cursorSdk": "1.0.37",
     "harbor": "0.24.0",
     "smolPythonSdk": "1.26.1",

@@ -66,9 +66,9 @@ import { cleanupWorkspace, materializeWorkspace } from "./workspaces.js";
 export const PI_HARNESS = "pi-sdk";
 export const PI_CONFIG_SCHEMA_VERSION = "ebo.pi-config/v1";
 export const PI_ADAPTER_VERSION = "1.0.0";
-export const PINNED_PI_SDK_VERSION = "0.87.1";
+export const PINNED_PI_SDK_VERSION = "1.1.0";
 /** Pi SDK versions whose retained bundles EBO reads back; the pinned version alone is used for capture. */
-export const RETAINED_PI_SDK_VERSIONS: readonly string[] = [PINNED_PI_SDK_VERSION, "0.85.1"];
+export const RETAINED_PI_SDK_VERSIONS: readonly string[] = [PINNED_PI_SDK_VERSION, "0.87.1", "0.85.1"];
 
 const ATTEMPT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -310,6 +310,7 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
   let sessionExportFailed = false;
   let terminalEvidenceObserved = false;
   let agentSettledObserved = false;
+  let agentSettledAborted = false;
   let adapterFinalized = true;
   let adapterFinalizationTimedOut = false;
   let adapterFinalizationFailure: string | undefined;
@@ -415,12 +416,19 @@ export async function capturePiSdkRun(options: CapturePiSdkRunOptions): Promise<
             payload: piComposition(options, session.getActiveToolNames()),
           });
           unsubscribe = session.subscribe((event) => {
-            if (event.type === "agent_settled") agentSettledObserved = true;
+            if (event.type === "agent_settled") {
+              agentSettledObserved = true;
+              agentSettledAborted ||= event.aborted === true;
+            }
             void stream.record({ channel: "stream", nativeType: event.type, sessionId, payload: compactPiStreamEvent(event) });
           });
           if (signal.aborted) return { status: "interrupted", reason: "Pi session was aborted before prompting.", evidence: piEvidence(sessionId, session) };
           await session.prompt(options.prompt, { expandPromptTemplates: false, source: "extension" });
           await session.waitForIdle();
+          if (agentSettledAborted) {
+            terminalEvidenceObserved = true;
+            return { status: "interrupted", reason: "Pi reported an aborted agent_settled terminal.", evidence: piEvidence(sessionId, session) };
+          }
           const lastAssistant = [...session.messages].reverse().find((message) => isRecord(message) && message.role === "assistant") as Record<string, unknown> | undefined;
           if (lastAssistant === undefined) {
             failure = new Error("Pi prompt settled without an assistant terminal message.");
@@ -1105,9 +1113,10 @@ export function qualifyRetainedPiCapture(
     throw new Error("Retained Pi capture contains a selected extension hook failure.");
   }
   if (expectsCompletion) {
-    const settled = capture.records.some(({ record }) => record.channel === "stream" && record.nativeType === "agent_settled");
+    const settled = capture.records.filter(({ record }) => record.channel === "stream" && record.nativeType === "agent_settled");
     const lastAssistant = history.filter(({ type, message }) => type === "message" && isRecord(message) && message.role === "assistant").at(-1)?.message;
-    if (!settled || !isRecord(lastAssistant) || !["stop", "length"].includes(String(lastAssistant.stopReason))) {
+    if (settled.length === 0 || settled.some(({ record }) => isRecord(record.payload) && record.payload.aborted === true)
+        || !isRecord(lastAssistant) || !["stop", "length"].includes(String(lastAssistant.stopReason))) {
       throw new Error("Completed retained Pi capture lacks matching native settled terminal evidence.");
     }
     const historyCalls = new Set(history.flatMap(({ type, message }) => {

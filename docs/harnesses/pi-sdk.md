@@ -1,6 +1,14 @@
 # Pi TypeScript SDK harness
 
-EBO integrates `@earendil-works/pi-coding-agent` `0.87.1` directly through its public TypeScript SDK. `ebo pi run` executes one caller-selected frozen queue entry; it does not add RPC, ACP, a Pi fork, or another scheduler.
+EBO integrates `@earendil-works/pi-coding-agent` `1.1.0` directly through its public TypeScript SDK. `ebo pi run` executes one caller-selected frozen queue entry; it does not add RPC, ACP, a Pi fork, or another scheduler.
+
+Pi 1.1.0 supplies an explicit `aborted` flag on `agent_settled`. EBO retains it,
+classifies that terminal as interrupted, and rejects completed retained evidence
+that contradicts it. Retained 0.85.1 and 0.87.1 captures remain readable.
+
+EBO supplies its own resource loader and exact tool list. The loader admits only
+digest-bound resources and the selected passive observer. Freeze fresh harness
+configuration records for 1.1.0; preserve existing experiments and captures.
 
 ## Operator command
 
