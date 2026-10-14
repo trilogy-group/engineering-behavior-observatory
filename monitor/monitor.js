@@ -22,13 +22,14 @@ const STATES = [["pending", "pending"], ["running", "running"], ["quiet", "runni
 function stateOf(a) {
   if (!a || a.state === "pending") return "pending";
   if (a.state === "running") return a.quiet ? "quiet" : "running";
+  if (a.taskAssessment?.status === "failed") return "failed";
   if (a.spend?.budgetStopped || (a.exitCode != null && a.exitCode !== 0) || a.state === "failed" || a.state === "stopped" || (a.terminal && a.terminal.state !== "completed")) return "failed";
   if (a.qualification === "qualified") return "ok";
   if (a.qualification === "qualified-with-gaps") return "gaps";
   if (a.qualification === "unqualified") return "failed";
   return a.state === "failed" ? "failed" : "ok";
 }
-const stateLabel = (a) => ({ pending: "pending", running: "running", quiet: "quiet", ok: a?.qualification ?? "done", gaps: "with gaps", failed: a?.terminal?.state ?? a?.state ?? "failed" })[stateOf(a)];
+const stateLabel = (a) => a?.taskAssessment?.status === "failed" ? "task failure" : ({ pending: "pending", running: "running", quiet: "quiet", ok: a?.qualification ?? "done", gaps: "with gaps", failed: a?.terminal?.state ?? a?.state ?? "failed" })[stateOf(a)];
 
 let snap = null, selected = null, lastFrame = 0;
 
@@ -77,12 +78,25 @@ function render() {
   $("progress-legend").textContent = `${t.running} running · ${t.pending} pending · concurrency ${t.running}/${c.maxConcurrent ?? "—"}`;
   $("charged").textContent = usd(t.chargedUsd);
   $("charged-sub").textContent = `+${usd(t.reservedUsd)} reserved in flight · probes ${usd(t.probeChargedUsd)}`;
-  if (c.creditAtStartUsd != null) {
-    const left = c.creditAtStartUsd - t.chargedUsd;
+  if (t.estimatedUsd) $("charged-sub").textContent += ` · ${usd(t.estimatedUsd)} estimated usage, not included`;
+  if (c.currentCreditUsd != null || c.creditAtStartUsd != null) {
+    const live = c.currentCreditUsd != null;
+    const left = live ? c.currentCreditUsd : c.creditAtStartUsd - t.chargedUsd;
+    $("credit-label").textContent = live ? "Account credit" : "Account credit (est.)";
     $("credit").textContent = usd(left);
-    $("credit-bar").style.width = `${Math.max(0, Math.min(100, (left / c.creditAtStartUsd) * 100))}%`;
+    $("credit-bar").style.width = `${Math.max(0, Math.min(100, (left / Math.max(left, c.creditAtStartUsd ?? 0, 1)) * 100))}%`;
     const pendingBudget = atts.filter((a) => a.state === "pending" && a.budgetUsd).reduce((n, a) => n + a.budgetUsd, 0);
-    $("credit-sub").innerHTML = `of ${usd(c.creditAtStartUsd)} at start` + (pendingBudget > left ? ` · <span class="warn">below ${usd(pendingBudget, 0)} of pending budgets</span>` : "");
+    const updated = c.creditUpdatedAt ? `Updated ${new Date(c.creditUpdatedAt).toLocaleTimeString()}` : "Update time unavailable";
+    const stale = c.creditRefreshFailed === true || (c.creditUpdatedAt && Date.now() - c.creditUpdatedAt > 90000);
+    // A live balance without a refresh timestamp or refresh result cannot be shown as current.
+    const unknown = live && !stale && (c.creditUpdatedAt == null || c.creditRefreshFailed == null);
+    const creditInfo = [live ? "Refreshes every 30s" : "Estimated from starting credit", ...(stale ? ["Stale; refresh unavailable"] : []), ...(unknown ? ["Refresh status unknown"] : []), ...(pendingBudget > left ? [`Below ${usd(pendingBudget, 0)} of pending budgets`] : [])].join(" · ");
+    const creditSub = $("credit-sub");
+    // Keep the focused trigger mounted across live snapshots.
+    if (!creditSub.querySelector(".credit-info")) creditSub.innerHTML = `<span class="credit-time"></span> <span class="credit-info"><button type="button" aria-label="Account credit details" aria-describedby="credit-tooltip">ⓘ</button><span id="credit-tooltip" role="tooltip"></span></span>`;
+    creditSub.querySelector(".credit-time").textContent = live ? updated : `of ${usd(c.creditAtStartUsd)} at start`;
+    creditSub.querySelector("button").classList.toggle("warn", !!stale || unknown || pendingBudget > left);
+    $("credit-tooltip").textContent = creditInfo;
   }
   $("deadline-sub").textContent = s.deadline ? `${new Date(s.deadline).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })} · running ${dur(Date.now() - s.startedAt)}` : "";
   $("requests").textContent = int(t.requests);
@@ -103,8 +117,9 @@ function renderMatrix() {
       html += `<tr><th><span class="sw" style="background:${hcolor(h)}"></span>${esc(h)}</th>`;
       for (const r of reps) {
         const a = atts.find((x) => x.model === m && x.harness === h && x.replicate === r);
+        if (!a) { html += `<td class="muted">—</td>`; continue; }
         const st = stateOf(a);
-        const meta = !a || st === "pending" ? (a?.budgetUsd ? `budget ${usd(a.budgetUsd, 0)}` : "no budget cap") : `${usd(a.spend?.chargedUsd)} · ${dur(a.elapsedMs)}`;
+        const meta = !a || st === "pending" ? (a?.budgetUsd ? `budget ${usd(a.budgetUsd, 0)}` : "no budget cap") : `${a.spend?.estimated ? "~" : ""}${usd(a.spend?.chargedUsd)} · ${dur(a.elapsedMs)}`;
         html += `<td><button type="button" data-s="${st}" ${a?.id ? `data-id="${esc(a.id)}"` : "disabled"} aria-pressed="${a?.id && a.id === selected}"><span class="st">${esc(stateLabel(a))}</span><span class="meta">${meta}</span></button></td>`;
       }
       html += "</tr>";
@@ -115,14 +130,19 @@ function renderMatrix() {
   $("state-legend").innerHTML = STATES.map(([k, l]) => `<li data-s="${k}"><i></i>${l}</li>`).join("");
 }
 
-function sparkline(points, color, { area = null } = {}) {
+function sparkline(points, color, { area = null, unit = "tokens" } = {}) {
   if (points.length < 2) return `<svg viewBox="0 0 200 54"><text x="0" y="30" fill="var(--text-muted)" font-size="11">waiting for requests</text></svg>`;
-  const W = 200, H = 50, xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
-  const x0 = Math.min(...xs), x1 = Math.max(...xs), y1 = Math.max(...ys, ...(area ?? []).map((p) => p[1])) || 1;
-  const X = (x) => ((x - x0) / (x1 - x0 || 1)) * W, Y = (y) => H - (y / y1) * (H - 4) + 2;
+  const W = 200, H = 54, xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const step = niceStep((Math.max(...ys, ...(area ?? []).map((p) => p[1])) || 1) / 2), y1 = step * 2;
+  const X = (x) => ((x - x0) / (x1 - x0 || 1)) * W, Y = (y) => 6 + (1 - y / y1) * (H - 12);
+  const ticks = [y1, step, 0];
+  const label = (v) => unit === "usd" ? usd(v, Math.max(2, Math.min(6, -Math.floor(Math.log10(step))))) : big(v);
+  const axis = `<div class="spark-axis" aria-hidden="true">${ticks.map((v) => `<span>${label(v)}</span>`).join("")}</div>`;
+  const grid = ticks.map((v) => `<line class="grid-line" x1="0" x2="${W}" y1="${Y(v)}" y2="${Y(v)}" vector-effect="non-scaling-stroke"/>`).join("");
   const line = (ps) => ps.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join("");
-  const areaPath = area ? `<path d="${line(area)}L${X(area.at(-1)[0])},${H + 2}L${X(area[0][0])},${H + 2}Z" fill="color-mix(in srgb, ${color} 18%, transparent)"/>` : "";
-  return `<svg viewBox="0 0 ${W} 54" preserveAspectRatio="none">${areaPath}<path d="${line(points)}" fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
+  const areaPath = area ? `<path d="${line(area)}L${X(area.at(-1)[0])},${Y(0)}L${X(area[0][0])},${Y(0)}Z" fill="color-mix(in srgb, ${color} 18%, transparent)"/>` : "";
+  return `<div class="spark-chart">${axis}<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${unit === "usd" ? "Cumulative cost in dollars" : "Context and cached tokens"}, scale 0 to ${esc(label(y1))}">${grid}${areaPath}<path d="${line(points)}" fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg></div>`;
 }
 
 function renderRunning() {
@@ -147,7 +167,7 @@ function renderRunning() {
       <div class="facts"><span><b>${int(a.spend?.requests)}</b> requests</span><span><b>${a.native.toolCalls ?? "n/a"}</b> tool calls</span><span><b>${int(a.native.lines)}</b> native records</span><span><b>${big(a.tokens.prompt)}</b> prompt tokens, ${a.tokens.prompt ? Math.round((a.tokens.cached / a.tokens.prompt) * 100) : 0}% cached</span>${a.spend?.accountingErrors ? `<span class="warn">${a.spend.accountingErrors} accounting errors</span>` : ""}</div>
       <div class="spark">
         <figure><figcaption>Context per request (prompt tokens, cached shaded) · last ${big(ctx.at(-1)?.[1])}</figcaption>${sparkline(ctx, color, { area: cached })}</figure>
-        <figure><figcaption>Cumulative cost · ${usd(cost.at(-1)?.[1] ?? 0)}</figcaption>${sparkline(cost, color)}</figure>
+        <figure><figcaption>Cumulative cost · ${usd(cost.at(-1)?.[1] ?? 0)}</figcaption>${sparkline(cost, color, { unit: "usd" })}</figure>
       </div>
     </article>`;
   }).join("");
@@ -208,8 +228,9 @@ function renderDetail() {
   const rows = [
     ["Attempt", `<code>${esc(a.id)}</code>`], ["Harness · model", `${esc(a.harness)} · ${esc(a.model)} · ${esc(a.api)}`],
     ["State", `<span class="q" data-s="${stateOf(a)}">${esc(stateLabel(a))}</span>${a.terminal ? ` · terminal ${esc(a.terminal.state)}, failure ${esc(a.terminal.failureClass)}` : ""}`],
+    ...(a.taskAssessment ? [["Task assessment", `${esc(a.taskAssessment.status)} · ${esc(a.taskAssessment.reasonCode)}: ${esc(a.taskAssessment.reason)}`]] : []),
     ["Started", a.startedAt ? `${clock(a.startedAt)} · ${dur(a.elapsedMs)}${a.maxWallClockMs ? ` of ${dur(a.maxWallClockMs)}` : ""}` : "—"],
-    ["Charged", `${usd(a.spend?.chargedUsd, 4)}${a.spend?.reservedUsd ? ` + ${usd(a.spend.reservedUsd)} reserved` : ""}${a.budgetUsd ? ` · budget ${usd(a.budgetUsd, 0)}` : " · no budget cap"}${a.spend?.budgetStopped ? ' · <span class="warn">budget stop</span>' : ""}`],
+    [a.spend?.estimated ? "Estimated" : "Charged", `${usd(a.spend?.chargedUsd, 4)}${a.spend?.reservedUsd ? ` + ${usd(a.spend.reservedUsd)} reserved` : ""}${a.budgetUsd ? ` · budget ${usd(a.budgetUsd, 0)}` : " · no budget cap"}${a.spend?.budgetStopped ? ' · <span class="warn">budget stop</span>' : ""}`],
     ["Requests", `${int(a.spend?.requests)} · last response ${a.spend?.lastResponseAt ? clock(a.spend.lastResponseAt) : "—"}`],
     ["Tokens", `${big(a.tokens?.prompt)} prompt (${big(a.tokens?.cached)} cached) · ${big(a.tokens?.completion)} completion · ${big(a.tokens?.reasoning)} reasoning`],
     ["Capture", `${esc(a.qualification ?? "not qualified yet")}${a.captureState ? ` · live state ${esc(a.captureState)}` : ""}`],

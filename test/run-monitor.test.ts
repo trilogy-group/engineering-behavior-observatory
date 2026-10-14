@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -87,6 +87,98 @@ test("the run monitor combines campaign status with run bundles into an allowlis
 
     writeFileSync(statusPath, JSON.stringify({ format: "something-else" }));
     assert.throws(() => monitor.snapshot(), /ebo\.campaign-status\/v1/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a task failure assessment preserves native terminal and capture qualification", () => {
+  const { root, statusPath, rewrite } = fixture();
+  try {
+    rewrite("finished");
+    const status = JSON.parse(readFileSync(statusPath, "utf8"));
+    status.attempts[0].taskAssessment = { status: "failed", reasonCode: "PREMATURE_TERMINATION", reason: "No implementation changes", assessedAt: iso(1000), secret: "never-expose" };
+    writeFileSync(statusPath, JSON.stringify(status));
+    const s = createRunMonitor(statusPath).snapshot();
+    assert.equal(s.probes[0]!.taskAssessment.status, "failed");
+    assert.equal(s.probes[0]!.terminal?.state, "completed");
+    assert.equal(s.probes[0]!.qualification, "qualified");
+    assert.ok(!JSON.stringify(s).includes("never-expose"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("live account credit preserves top-ups and refresh timestamps independently of campaign spend", () => {
+  const { root, statusPath } = fixture();
+  try {
+    const status = { format: "ebo.campaign-status/v1", campaign: { id: "credits" }, account: { creditAtStartUsd: 50, currentCreditUsd: 80, creditUpdatedAt: iso(1000), creditRefreshFailed: false, apiKey: "never-expose" }, attempts: [] };
+    writeFileSync(statusPath, JSON.stringify(status));
+    const monitor = createRunMonitor(statusPath);
+    const s = monitor.snapshot();
+    assert.equal(s.config.currentCreditUsd, 80);
+    assert.equal(s.config.creditUpdatedAt, 1000);
+    assert.equal(s.config.creditRefreshFailed, false);
+    assert.ok(!JSON.stringify(s).includes("never-expose"));
+    status.account.creditRefreshFailed = true;
+    writeFileSync(statusPath, JSON.stringify(status));
+    assert.equal(monitor.snapshot().config.creditRefreshFailed, true);
+    assert.equal(monitor.snapshot().config.currentCreditUsd, 80);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("estimated usage is reported apart from provider charges and never counted twice", () => {
+  const { root, statusPath } = fixture();
+  try {
+    const status = JSON.parse(readFileSync(statusPath, "utf8"));
+    status.attempts.push({ id: "run-g", model: "google/model-b", harness: "pi-sdk", replicate: 1, state: "finished", spend: { chargedUsd: 12, estimated: true, requests: 40 } });
+    writeFileSync(statusPath, JSON.stringify(status));
+    const s = createRunMonitor(statusPath).snapshot();
+    assert.equal(s.totals.chargedUsd, 0.75);
+    assert.equal(s.totals.estimatedUsd, 12);
+    assert.equal(s.totals.probeChargedUsd, 0.02);
+    assert.equal(s.attempts.find((a: { id: string }) => a.id === "run-g")?.spend?.estimated, true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("an absent credit refresh result stays unknown instead of becoming a success", () => {
+  const { root, statusPath } = fixture();
+  try {
+    const status = { format: "ebo.campaign-status/v1", campaign: { id: "credits" }, account: { currentCreditUsd: 80 }, attempts: [] };
+    writeFileSync(statusPath, JSON.stringify(status));
+    const monitor = createRunMonitor(statusPath);
+    assert.equal(monitor.snapshot().config.creditRefreshFailed, null);
+    assert.equal(monitor.snapshot().config.creditUpdatedAt, null);
+    writeFileSync(statusPath, JSON.stringify({ ...status, account: { currentCreditUsd: 80, creditRefreshFailed: "no" } }));
+    assert.equal(monitor.snapshot().config.creditRefreshFailed, null);
+    writeFileSync(statusPath, JSON.stringify({ ...status, account: { currentCreditUsd: 80, creditRefreshFailed: false } }));
+    assert.equal(monitor.snapshot().config.creditRefreshFailed, false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Messages usage includes fresh input, cache reads and writes in context without double counting snapshots", () => {
+  const { root, statusPath } = fixture();
+  try {
+    const log = join(root, "attempts", "run-a", "usage.jsonl");
+    const rows = [
+      { endpoint: "messages", usage: { input_tokens: 391, cache_read_input_tokens: 103540, cache_creation_input_tokens: null, output_tokens: 1076, output_tokens_details: { thinking_tokens: 73 }, cost: 0.05 } },
+      { usage: { input_tokens: 10, cache_read_input_tokens: 20, cache_creation_input_tokens: 30, output_tokens: 4 } },
+      { endpoint: "messages", usage: { input_tokens: 0, output_tokens: 0 } },
+      { endpoint: "messages", usage: {} },
+    ];
+    writeFileSync(log, rows.map((r, i) => JSON.stringify({ ...r, requestNumber: i + 1 })).join("\n") + "\n");
+    const monitor = createRunMonitor(statusPath);
+    const a = monitor.snapshot().attempts.find((x) => x.id === "run-a")!;
+    assert.deepEqual(a.tokens, { prompt: 103991, completion: 1080, cached: 103560, reasoning: 73 });
+    assert.deepEqual(a.requests.map((r) => r.slice(2)), [
+      [103931, 1076, 103540, 0.05], [60, 4, 20, null], [0, 0, null, null], [null, null, null, null],
+    ]);
+    assert.deepEqual(monitor.snapshot().attempts.find((x) => x.id === "run-a")!.tokens, a.tokens);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Responses usage includes cached input once and retains output reasoning counts", () => {
+  const { root, statusPath } = fixture();
+  try {
+    writeFileSync(join(root, "attempts", "run-a", "usage.jsonl"), JSON.stringify({ endpoint: "responses", usage: { input_tokens: 27287, input_tokens_details: { cached_tokens: 24969 }, output_tokens: 189, output_tokens_details: { reasoning_tokens: 108 } } }) + "\n");
+    const a = createRunMonitor(statusPath).snapshot().attempts.find((x) => x.id === "run-a")!;
+    assert.deepEqual(a.tokens, { prompt: 27287, completion: 189, cached: 24969, reasoning: 108 });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

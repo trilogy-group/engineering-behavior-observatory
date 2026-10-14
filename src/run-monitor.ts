@@ -92,9 +92,15 @@ export function createRunMonitor(statusPath: string) {
     if (!a) { a = { requests: [], reasoning: 0, types: new Map(), lines: 0, tools: 0, toolsKnown: false }; acc.set(id, a); }
     const log = at(entry.requestLog);
     if (log) for (const r of tail.read(log)) {
-      const u = r?.usage ?? {};
-      a.requests.push([num(r?.requestNumber), time(r?.at), num(u.prompt_tokens), num(u.completion_tokens), num(u.prompt_tokens_details?.cached_tokens), num(r?.costUsd ?? r?.cost ?? u.cost)]);
-      a.reasoning += num(u.completion_tokens_details?.reasoning_tokens) ?? 0;
+      const u = r?.usage && typeof r.usage === "object" ? r.usage : {};
+      const messages = r?.endpoint === "messages" || "cache_read_input_tokens" in u || "cache_creation_input_tokens" in u;
+      // Messages input_tokens excludes cache reads and writes; context includes all three.
+      const input = num(u.input_tokens);
+      const cached = messages ? num(u.cache_read_input_tokens) : num(u.prompt_tokens_details?.cached_tokens) ?? num(u.input_tokens_details?.cached_tokens);
+      // Responses input_tokens already includes cached input.
+      const prompt = messages && input !== null ? input + (cached ?? 0) + (num(u.cache_creation_input_tokens) ?? 0) : num(u.prompt_tokens) ?? input;
+      a.requests.push([num(r?.requestNumber), time(r?.at), prompt, messages ? num(u.output_tokens) : num(u.completion_tokens) ?? num(u.output_tokens), cached, num(r?.costUsd ?? r?.cost ?? u.cost)]);
+      a.reasoning += (messages ? num(u.output_tokens_details?.thinking_tokens) : num(u.completion_tokens_details?.reasoning_tokens) ?? num(u.output_tokens_details?.reasoning_tokens)) ?? 0;
     }
     const state = str(entry.state) ?? "pending";
     let terminal: Json = null, qualification: string | null = null, captureState: string | null = null, harnessVersion: string | null = null;
@@ -131,9 +137,13 @@ export function createRunMonitor(statusPath: string) {
       directory: dir ? within(dir) : null,
       startedAt, endedAt, elapsedMs: startedAt ? (endedAt ?? now) - startedAt : null,
       maxWallClockMs: num(entry.maxWallClockMs), budgetUsd: num(entry.budgetUsd),
-      spend: s && { chargedUsd: num(s.chargedUsd), reservedUsd: num(s.reservedUsd), requests: num(s.requests), accountingErrors: num(s.accountingErrors), budgetStopped: s.budgetStopped === true, lastResponseAt },
+      spend: s && { chargedUsd: num(s.chargedUsd), estimated: s.estimated === true, reservedUsd: num(s.reservedUsd), requests: num(s.requests), accountingErrors: num(s.accountingErrors), budgetStopped: s.budgetStopped === true, lastResponseAt },
       quiet: state === "running" && lastResponseAt !== null && now - lastResponseAt > QUIET_MS,
       terminal, qualification, captureState,
+      taskAssessment: entry.taskAssessment && {
+        status: str(entry.taskAssessment.status), reasonCode: str(entry.taskAssessment.reasonCode),
+        reason: str(entry.taskAssessment.reason), assessedAt: time(entry.taskAssessment.assessedAt),
+      },
       tokens: { prompt: sum(2), completion: sum(3), cached: sum(4), reasoning: a.reasoning },
       requests: a.requests,
       native: { lines: a.lines, toolCalls: a.toolsKnown ? a.tools : null, types: [...a.types].sort((x, y) => y[1] - x[1]).slice(0, 12) },
@@ -154,6 +164,8 @@ export function createRunMonitor(statusPath: string) {
     }
     transitions.splice(0, Math.max(0, transitions.length - 200));
     const charged = (xs: MonitorAttemptLike[]) => xs.reduce((n, a) => n + (a.spend?.chargedUsd ?? 0), 0);
+    // Provider charges and usage estimates are separate quantities; each amount belongs to exactly one total.
+    const billed = (xs: MonitorAttemptLike[]) => xs.filter((a) => !a.spend?.estimated), estimated = (xs: MonitorAttemptLike[]) => xs.filter((a) => a.spend?.estimated);
     const pid = num(c.runnerPid);
     return {
       format: MONITOR_SNAPSHOT_FORMAT, generatedAt: now, campaign: str(c.id) ?? basename(root),
@@ -164,10 +176,14 @@ export function createRunMonitor(statusPath: string) {
         maxConcurrent: num(status.limits?.maxConcurrent), plannedAttempts: attempts.length,
         budgetPerAttemptUsd: num(status.limits?.budgetPerAttemptUsd), wallClockPerAttemptMs: num(status.limits?.wallClockPerAttemptMs),
         creditAtStartUsd: num(status.account?.creditAtStartUsd), provider: str(status.account?.provider),
+        currentCreditUsd: num(status.account?.currentCreditUsd), creditUpdatedAt: time(status.account?.creditUpdatedAt),
+        // Unknown stays null: an absent flag is not evidence that the last refresh succeeded.
+        creditRefreshFailed: typeof status.account?.creditRefreshFailed === "boolean" ? status.account.creditRefreshFailed : null,
         models: Array.isArray(status.models) ? status.models.filter((m: unknown) => typeof m === "string") : [...new Set(attempts.map((a: MonitorAttemptLike) => a.model))],
       },
       totals: {
-        chargedUsd: charged(attempts), reservedUsd: attempts.reduce((n: number, a: MonitorAttemptLike) => n + (a.spend?.reservedUsd ?? 0), 0), probeChargedUsd: charged(probes),
+        chargedUsd: charged(billed(attempts)), reservedUsd: attempts.reduce((n: number, a: MonitorAttemptLike) => n + (a.spend?.reservedUsd ?? 0), 0), probeChargedUsd: charged(billed(probes)),
+        estimatedUsd: charged(estimated(attempts)),
         requests: attempts.reduce((n: number, a: MonitorAttemptLike) => n + (a.spend?.requests ?? 0), 0),
         pending: attempts.filter((a: MonitorAttemptLike) => a.state === "pending").length,
         running: attempts.filter((a: MonitorAttemptLike) => a.state === "running").length,
@@ -178,7 +194,7 @@ export function createRunMonitor(statusPath: string) {
   }
   return { snapshot };
 }
-type MonitorAttemptLike = { id: string; probe: boolean; model: string; state: string; spend: { chargedUsd: number | null; reservedUsd: number | null; requests: number | null; lastResponseAt: number | null } | null };
+type MonitorAttemptLike = { id: string; probe: boolean; model: string; state: string; spend: { chargedUsd: number | null; estimated?: boolean; reservedUsd: number | null; requests: number | null; lastResponseAt: number | null } | null };
 
 function pidAlive(pid: number): boolean { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; } }
 
